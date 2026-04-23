@@ -119,13 +119,17 @@ async function createCampaignWallet(creatorPublicKey) {
 }
 
 /**
- * Submit a simple payment contribution (XLM or USDC direct).
- * For custodial users the backend signs on their behalf.
+ * Build and sign a custodial payment contribution; returns XDR for audit + submission.
  */
-async function submitPayment({ senderSecret, destinationPublicKey, asset, amount, memo }) {
+async function prepareSignedContributionPayment({
+  senderSecret,
+  destinationPublicKey,
+  asset,
+  amount,
+  memo,
+}) {
   const senderKeypair = Keypair.fromSecret(senderSecret);
   const senderAccount = await server.loadAccount(senderKeypair.publicKey());
-
   const stellarAsset = toStellarAsset(asset);
 
   const tx = new TransactionBuilder(senderAccount, {
@@ -143,28 +147,37 @@ async function submitPayment({ senderSecret, destinationPublicKey, asset, amount
     .setTimeout(30)
     .build();
 
+  const unsignedXdr = tx.toXDR();
   tx.sign(senderKeypair);
-  const result = await server.submitTransaction(tx);
-  return result.hash;
+  const signedXdr = tx.toXDR();
+  return { unsignedXdr, signedXdr };
 }
 
 /**
- * Submit a path payment contribution.
- * The contributor sends any asset; the campaign receives exactly `destAmount` USDC.
- * Stellar's DEX finds the conversion path automatically.
+ * Submit a simple payment contribution (XLM or USDC direct).
+ * For custodial users the backend signs on their behalf.
  */
-async function submitPathPayment({
+async function submitPayment(params) {
+  const { signedXdr } = await prepareSignedContributionPayment(params);
+  return submitPreparedTransaction(signedXdr);
+}
+
+/**
+ * Build and sign a path payment contribution; `destAssetCode` is the asset the campaign receives.
+ */
+async function prepareSignedContributionPathPayment({
   senderSecret,
   destinationPublicKey,
   sendAsset,
   sendMax,
   destAmount,
+  destAssetCode,
   memo,
 }) {
   const senderKeypair = Keypair.fromSecret(senderSecret);
   const senderAccount = await server.loadAccount(senderKeypair.publicKey());
-
   const sourceStellarAsset = toStellarAsset(sendAsset);
+  const destStellarAsset = toStellarAsset(destAssetCode);
 
   const tx = new TransactionBuilder(senderAccount, {
     fee: BASE_FEE,
@@ -175,7 +188,7 @@ async function submitPathPayment({
         sendAsset: sourceStellarAsset,
         sendMax: String(sendMax),
         destination: destinationPublicKey,
-        destAsset: USDC,
+        destAsset: destStellarAsset,
         destAmount: String(destAmount),
         path: [], // empty path lets Stellar use direct market routing
       })
@@ -184,9 +197,23 @@ async function submitPathPayment({
     .setTimeout(30)
     .build();
 
+  const unsignedXdr = tx.toXDR();
   tx.sign(senderKeypair);
-  const result = await server.submitTransaction(tx);
-  return result.hash;
+  const signedXdr = tx.toXDR();
+  return { unsignedXdr, signedXdr };
+}
+
+/**
+ * Submit a path payment contribution.
+ * The contributor sends `sendAsset`; the campaign receives exactly `destAmount` of `destAssetCode`.
+ */
+async function submitPathPayment(params) {
+  const destAssetCode = params.destAssetCode || 'USDC';
+  const { signedXdr } = await prepareSignedContributionPathPayment({
+    ...params,
+    destAssetCode,
+  });
+  return submitPreparedTransaction(signedXdr);
 }
 
 /**
@@ -266,10 +293,14 @@ function signatureCountFromXdr(xdr) {
   return tx.signatures.length;
 }
 
-async function submitSignedWithdrawal({ xdr }) {
+async function submitPreparedTransaction(xdr) {
   const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
   const result = await server.submitTransaction(tx);
   return result.hash;
+}
+
+async function submitSignedWithdrawal({ xdr }) {
+  return submitPreparedTransaction(xdr);
 }
 
 /**
@@ -300,8 +331,11 @@ module.exports = {
   createCampaignWallet,
   toStellarAsset,
   getSupportedAssetCodes,
+  prepareSignedContributionPayment,
+  prepareSignedContributionPathPayment,
   submitPayment,
   submitPathPayment,
+  submitPreparedTransaction,
   getPathPaymentQuote,
   buildWithdrawalTransaction,
   getAccountMultisigConfig,
