@@ -1,4 +1,6 @@
 require('dotenv').config();
+require('./config/env').validateEnv();
+
 const express = require('express');
 const cors = require('cors');
 const { startLedgerMonitor, getLedgerStreamHealth } = require('./services/ledgerMonitor');
@@ -7,6 +9,7 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(requestIdMiddleware);
 
 app.use('/api/users', require('./routes/users'));
 app.use('/api/campaigns', require('./routes/campaigns'));
