@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useCallback } from 'react';
+import { api } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -12,25 +13,26 @@ export function AuthProvider({ children }) {
     }
     return parsed;
   });
-  const [token, setToken] = useState(() => localStorage.getItem('cp_token'));
 
-  function login(userData, jwt) {
+  const login = useCallback(async (userData, jwt) => {
     const normalized = { ...userData, role: userData.role || (userData.is_admin ? 'admin' : 'contributor') };
     setUser(normalized);
-    setToken(jwt);
+    api.setToken(jwt);
     localStorage.setItem('cp_user', JSON.stringify(normalized));
-    localStorage.setItem('cp_token', jwt);
-  }
+  }, []);
 
-  function logout() {
+  const logout = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch {
+    }
     setUser(null);
-    setToken(null);
+    api.setToken(null);
     localStorage.removeItem('cp_user');
-    localStorage.removeItem('cp_token');
-  }
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout }}>
+    <AuthContext.Provider value={{ user, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

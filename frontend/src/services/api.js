@@ -1,5 +1,8 @@
 const BASE = '/api';
 
+let accessToken = null;
+let refreshPromise = null;
+
 function authHeaders(token) {
   return {
     'Content-Type': 'application/json',
@@ -8,7 +11,7 @@ function authHeaders(token) {
 }
 
 async function request(method, path, body, token, options = {}) {
-  const { query } = options;
+  const { query, _retry = false } = options;
   let url = `${BASE}${path}`;
   if (query && Object.keys(query).length) {
     const params = new URLSearchParams();
@@ -18,10 +21,13 @@ async function request(method, path, body, token, options = {}) {
     url += `?${params.toString()}`;
   }
 
+  const activeToken = token || accessToken;
+
   const res = await fetch(url, {
     method,
-    headers: authHeaders(token),
+    headers: authHeaders(activeToken),
     body: body ? JSON.stringify(body) : undefined,
+    credentials: 'include',
   });
 
   const text = await res.text();
@@ -31,6 +37,18 @@ async function request(method, path, body, token, options = {}) {
       data = JSON.parse(text);
     } catch {
       throw new Error('Unexpected server response. Please try again.');
+    }
+  }
+
+  if (res.status === 401 && !_retry && path !== '/auth/refresh' && path !== '/auth/login') {
+    const promise = refresh();
+    if (promise) {
+      try {
+        const result = await promise;
+        return request(method, path, body, result.token, { ...options, _retry: true });
+      } catch {
+        throw new Error('Session expired. Please log in again.');
+      }
     }
   }
 
@@ -44,9 +62,69 @@ async function request(method, path, body, token, options = {}) {
   return data;
 }
 
+async function refresh() {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  refreshPromise = (async () => {
+    const res = await fetch(`${BASE}/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      let error = 'Refresh failed';
+      try {
+        const data = JSON.parse(text);
+        error = data.error || error;
+      } catch {}
+      refreshPromise = null;
+      throw new Error(error);
+    }
+
+    const data = await res.json();
+    accessToken = data.token;
+    refreshPromise = null;
+    return data;
+  })();
+
+  return refreshPromise;
+}
+
+async function logout() {
+  const res = await fetch(`${BASE}/auth/logout`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    let error = 'Logout failed';
+    try {
+      const data = JSON.parse(text);
+      error = data.error || error;
+    } catch {}
+    throw new Error(error);
+  }
+
+  accessToken = null;
+  return { message: 'Logged out' };
+}
+
+function setToken(t) {
+  accessToken = t;
+}
+
 export const api = {
-  register: (body) => request('POST', '/users/register', body),
-  login: (body) => request('POST', '/users/login', body),
+  register: (body) => request('POST', '/auth/register', body),
+  login: (body) => request('POST', '/auth/login', body),
+  logout: () => logout(),
+  refresh,
+  setToken,
+  getToken: () => accessToken,
+
   getMyCampaigns: (token) => request('GET', '/users/me/campaigns', null, token),
   getMyStats: (token) => request('GET', '/users/me/stats', null, token),
   getMyContributions: (token) => request('GET', '/users/me/contributions', null, token),
