@@ -140,6 +140,8 @@ export const api = {
 
   getContributions: (campaignId) => request('GET', `/contributions/campaign/${campaignId}`),
   contribute: (body, token) => request('POST', '/contributions', body, token),
+  prepareContribution: (body, token) => request('POST', '/contributions/prepare', body, token),
+  submitSignedContribution: (body, token) => request('POST', '/contributions/submit-signed', body, token),
   quoteContribution: ({ send_asset, dest_asset, dest_amount }, token) =>
     request('GET', '/contributions/quote', null, token, {
       query: { send_asset, dest_asset, dest_amount },

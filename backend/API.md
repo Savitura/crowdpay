@@ -42,7 +42,7 @@ Errors:
 
 ### `POST /api/contributions`
 
-Submit a contribution (direct payment or path payment).
+Submit a contribution through the existing custodial wallet flow (direct payment or path payment).
 
 Body:
 
@@ -74,6 +74,71 @@ Errors:
 - `400` missing fields / unsupported assets
 - `404` campaign not found or not active
 - `422` no conversion path found for requested asset pair
+
+### `POST /api/contributions/prepare`
+
+Prepare an unsigned Stellar transaction for a Freighter contribution without submitting it.
+
+Body:
+
+- `campaign_id` (required)
+- `amount` (required): amount the campaign must receive in campaign asset
+- `send_asset` (required): `XLM` or `USDC`
+- `sender_public_key` (required): contributor wallet public key from Freighter
+
+Success response (`200`):
+
+```json
+{
+  "unsigned_xdr": "AAAAAgAAA...",
+  "prepare_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "conversion_quote": null,
+  "sender_public_key": "G...",
+  "network_passphrase": "Test SDF Network ; September 2015",
+  "network_name": "TESTNET"
+}
+```
+
+`prepare_token` is short-lived and must be returned with the signed XDR to `/api/contributions/submit-signed`.
+
+Errors:
+
+- `400` missing fields / invalid Stellar public key / unsupported asset
+- `404` campaign not found or not active
+- `422` no conversion path found for requested asset pair
+
+### `POST /api/contributions/submit-signed`
+
+Submit a Freighter-signed contribution transaction after backend validation.
+
+Body:
+
+- `prepare_token` (required): opaque token returned by `/prepare`
+- `signed_xdr` (required): transaction signed in Freighter
+
+Success response (`202`):
+
+```json
+{
+  "tx_hash": "c8d6...",
+  "stellar_transaction_id": "0f3f...",
+  "message": "Transaction submitted",
+  "conversion_quote": null
+}
+```
+
+Validation performed before submission:
+
+- signed transaction source account must match `sender_public_key`
+- signed transaction body hash must match the prepared unsigned XDR exactly
+- signed transaction must contain a valid signature for the contributor public key
+
+Errors:
+
+- `400` missing fields / invalid prepare token
+- `403` prepare token belongs to a different authenticated user
+- `422` signed XDR does not match the prepared transaction
+- `502` Stellar rejected the signed transaction
 
 ### `GET /api/contributions/campaign/:campaignId`
 

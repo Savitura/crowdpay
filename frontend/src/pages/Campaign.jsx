@@ -162,7 +162,7 @@ export default function Campaign() {
               <Link to="/register" style={{ color: '#7c3aed', fontWeight: 600 }}>
                 create an account
               </Link>{' '}
-              to contribute. You will get a custodial Stellar wallet automatically.
+              to contribute. You can pay with your CrowdPay custodial wallet or with Freighter when it is installed.
             </p>
           )
         ) : (

@@ -3,9 +3,40 @@ const assert = require('node:assert/strict');
 const express = require('express');
 const request = require('supertest');
 const proxyquire = require('proxyquire').noCallThru();
+const {
+  Account,
+  Asset,
+  BASE_FEE,
+  Keypair,
+  Networks,
+  Operation,
+  TransactionBuilder,
+} = require('@stellar/stellar-sdk');
+
+const TESTNET_PASSPHRASE = Networks.TESTNET;
+
+function buildUnsignedPaymentXdr({ senderPublicKey, destinationPublicKey, amount, asset = 'XLM' }) {
+  return new TransactionBuilder(new Account(senderPublicKey, '1'), {
+    fee: BASE_FEE,
+    networkPassphrase: TESTNET_PASSPHRASE,
+  })
+    .addOperation(
+      Operation.payment({
+        destination: destinationPublicKey,
+        asset: asset === 'XLM' ? Asset.native() : new Asset('USDC', 'GISSUER'),
+        amount,
+      })
+    )
+    .addMemo(require('@stellar/stellar-sdk').Memo.text('cp-c-1'))
+    .setTimeout(30)
+    .build()
+    .toXDR();
+}
 
 function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
   const stellarStub = {
+    buildUnsignedContributionPayment: async () => 'unsigned-xdr',
+    buildUnsignedContributionPathPayment: async () => 'unsigned-xdr',
     prepareSignedContributionPayment: async () => ({
       unsignedXdr: 'unsigned-xdr',
       signedXdr: 'signed-xdr',
@@ -27,6 +58,10 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
   };
 
   const router = proxyquire('./contributions', {
+    '../config/stellar': {
+      networkPassphrase: TESTNET_PASSPHRASE,
+      isTestnet: true,
+    },
     '../config/database': { query: queryImpl },
     '../services/stellarService': stellarStub,
     '../services/stellarTransactionService': stellarTxStub,
@@ -346,6 +381,184 @@ test('POST /api/contributions returns 502 when Stellar submit fails and skips au
 
   assert.equal(response.status, 502);
   assert.equal(inserted, false);
+});
+
+test('POST /api/contributions/prepare returns unsigned XDR and prepare token for Freighter', async () => {
+  const sender = Keypair.random();
+  let preparedPayload = null;
+  const app = buildApp({
+    queryImpl: async (text) => {
+      if (text.includes('FROM campaigns')) {
+        return {
+          rows: [{ id: 'c-1', status: 'active', asset_type: 'XLM', wallet_public_key: 'GDEST' }],
+        };
+      }
+      return { rows: [] };
+    },
+    stellarImpl: {
+      buildUnsignedContributionPayment: async (payload) => {
+        preparedPayload = payload;
+        return buildUnsignedPaymentXdr({
+          senderPublicKey: payload.senderPublicKey,
+          destinationPublicKey: payload.destinationPublicKey,
+          amount: payload.amount,
+          asset: payload.asset,
+        });
+      },
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions/prepare')
+    .set('Authorization', 'Bearer token')
+    .send({
+      campaign_id: 'c-1',
+      amount: '5.0000000',
+      send_asset: 'XLM',
+      sender_public_key: sender.publicKey(),
+    });
+
+  assert.equal(response.status, 200);
+  assert.ok(response.body.prepare_token);
+  assert.ok(response.body.unsigned_xdr);
+  assert.equal(response.body.sender_public_key, sender.publicKey());
+  assert.equal(response.body.network_name, 'TESTNET');
+  assert.equal(preparedPayload.senderPublicKey, sender.publicKey());
+});
+
+test('POST /api/contributions/submit-signed accepts Freighter-signed XDR that matches prepared transaction', async () => {
+  const sender = Keypair.random();
+  const destination = Keypair.random();
+  let submittedXdr = null;
+  let insertedRow = null;
+  const unsignedXdr = buildUnsignedPaymentXdr({
+    senderPublicKey: sender.publicKey(),
+    destinationPublicKey: destination.publicKey(),
+    amount: '5.0000000',
+  });
+
+  const app = buildApp({
+    queryImpl: async (text) => {
+      if (text.includes('FROM campaigns')) {
+        return {
+          rows: [{
+            id: 'c-1',
+            status: 'active',
+            asset_type: 'XLM',
+            wallet_public_key: destination.publicKey(),
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+    stellarImpl: {
+      buildUnsignedContributionPayment: async () => unsignedXdr,
+      submitPreparedTransaction: async (xdr) => {
+        submittedXdr = xdr;
+        return 'tx-freighter';
+      },
+    },
+    stellarTxImpl: {
+      insertContributionSubmitted: async (_client, row) => {
+        insertedRow = row;
+        return 'stellar-freighter-row';
+      },
+    },
+  });
+
+  const prepare = await request(app)
+    .post('/api/contributions/prepare')
+    .set('Authorization', 'Bearer token')
+    .send({
+      campaign_id: 'c-1',
+      amount: '5.0000000',
+      send_asset: 'XLM',
+      sender_public_key: sender.publicKey(),
+    });
+
+  assert.equal(prepare.status, 200);
+
+  const tx = TransactionBuilder.fromXDR(prepare.body.unsigned_xdr, TESTNET_PASSPHRASE);
+  tx.sign(sender);
+  const signedXdr = tx.toXDR();
+
+  const response = await request(app)
+    .post('/api/contributions/submit-signed')
+    .set('Authorization', 'Bearer token')
+    .send({
+      prepare_token: prepare.body.prepare_token,
+      signed_xdr: signedXdr,
+    });
+
+  assert.equal(response.status, 202);
+  assert.equal(response.body.tx_hash, 'tx-freighter');
+  assert.equal(response.body.stellar_transaction_id, 'stellar-freighter-row');
+  assert.equal(submittedXdr, signedXdr);
+  assert.equal(insertedRow.signedXdr, signedXdr);
+  assert.equal(insertedRow.unsignedXdr, prepare.body.unsigned_xdr);
+});
+
+test('POST /api/contributions/submit-signed rejects a signed XDR that does not match prepared transaction', async () => {
+  const sender = Keypair.random();
+  const destination = Keypair.random();
+  const unsignedXdr = buildUnsignedPaymentXdr({
+    senderPublicKey: sender.publicKey(),
+    destinationPublicKey: destination.publicKey(),
+    amount: '5.0000000',
+  });
+  const mismatchedUnsignedXdr = buildUnsignedPaymentXdr({
+    senderPublicKey: sender.publicKey(),
+    destinationPublicKey: destination.publicKey(),
+    amount: '6.0000000',
+  });
+
+  const app = buildApp({
+    queryImpl: async (text) => {
+      if (text.includes('FROM campaigns')) {
+        return {
+          rows: [{
+            id: 'c-1',
+            status: 'active',
+            asset_type: 'XLM',
+            wallet_public_key: destination.publicKey(),
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+    stellarImpl: {
+      buildUnsignedContributionPayment: async () => unsignedXdr,
+      submitPreparedTransaction: async () => {
+        throw new Error('should not submit');
+      },
+    },
+  });
+
+  const prepare = await request(app)
+    .post('/api/contributions/prepare')
+    .set('Authorization', 'Bearer token')
+    .send({
+      campaign_id: 'c-1',
+      amount: '5.0000000',
+      send_asset: 'XLM',
+      sender_public_key: sender.publicKey(),
+    });
+
+  assert.equal(prepare.status, 200);
+
+  const mismatchedTx = TransactionBuilder.fromXDR(mismatchedUnsignedXdr, TESTNET_PASSPHRASE);
+  mismatchedTx.sign(sender);
+
+  const response = await request(app)
+    .post('/api/contributions/submit-signed')
+    .set('Authorization', 'Bearer token')
+    .send({
+      prepare_token: prepare.body.prepare_token,
+      signed_xdr: mismatchedTx.toXDR(),
+    });
+
+  assert.equal(response.status, 422);
+  assert.match(response.body.error, /does not match/i);
 });
 
 test('GET /api/contributions/finalization/:txHash returns finalized when indexed', async () => {
