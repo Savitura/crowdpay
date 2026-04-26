@@ -27,6 +27,9 @@ function buildApp({ queryImpl, stellarImpl, userId = 'creator-1', role = 'creato
       query: queryImpl,
     },
     '../services/stellarService': stellarStub,
+    '../services/walletSecrets': {
+      withDecryptedWalletSecret: async (_ciphertext, _context, fn) => fn('SCREATOR'),
+    },
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
         req.user = { userId, role };

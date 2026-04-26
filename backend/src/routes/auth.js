@@ -9,6 +9,7 @@ const logger = require('../config/logger');
 const { ensureCustodialAccountFundedAndTrusted } = require('../services/stellarService');
 const { sendEmail } = require('../services/emailService');
 const { requireAuth } = require('../middleware/auth');
+const { encryptWalletSecret } = require('../services/walletSecrets');
 
 const REFRESH_TOKEN_COOKIE_NAME = 'cp_refresh_token';
 const REFRESH_TOKEN_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
@@ -120,11 +121,14 @@ router.post('/register', authLimiter, async (req, res) => {
 
   const passwordHash = await bcrypt.hash(password, 10);
   const keypair = Keypair.random();
+  const publicKey = keypair.publicKey();
+  const secret = keypair.secret();
+  const encryptedSecret = await encryptWalletSecret(secret, { walletPublicKey: publicKey });
 
   const { rows } = await db.query(
     `INSERT INTO users (email, password_hash, name, wallet_public_key, wallet_secret_encrypted, role)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, name, wallet_public_key, role`,
-    [email, passwordHash, name, keypair.publicKey(), keypair.secret(), userRole]
+    [email, passwordHash, name, publicKey, encryptedSecret, userRole]
   );
 
   const user = rows[0];
@@ -133,8 +137,6 @@ router.post('/register', authLimiter, async (req, res) => {
 
   setRefreshTokenCookie(res, refreshToken, expiresAt);
 
-  const publicKey = keypair.publicKey();
-  const secret = keypair.secret();
   const requestId = req.id;
   setImmediate(() => {
     ensureCustodialAccountFundedAndTrusted({ publicKey, secret }).catch((err) => {

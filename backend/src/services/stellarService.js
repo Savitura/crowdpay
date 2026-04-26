@@ -213,7 +213,6 @@ async function createCampaignWallet(creatorPublicKey) {
 
   return {
     publicKey: campaignKeypair.publicKey(),
-    // In production: encrypt and store secret, never return it
     secret: campaignKeypair.secret(),
   };
 }

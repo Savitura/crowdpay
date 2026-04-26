@@ -8,7 +8,7 @@ CREATE TABLE users (
   password_hash           TEXT NOT NULL,
   name                    TEXT NOT NULL,
   wallet_public_key       TEXT UNIQUE NOT NULL,
-  wallet_secret_encrypted TEXT NOT NULL,  -- encrypt with KMS in production
+  wallet_secret_encrypted TEXT NOT NULL,
   role                    TEXT NOT NULL DEFAULT 'contributor'
                           CHECK (role IN ('contributor', 'creator', 'admin')),
   is_admin                BOOLEAN DEFAULT FALSE,
