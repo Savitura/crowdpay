@@ -4,6 +4,8 @@ import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import ContributeModal from '../components/ContributeModal';
 import WithdrawalsSection from '../components/WithdrawalsSection';
+import CampaignDetailSkeleton from '../components/skeletons/CampaignDetailSkeleton';
+import ContributionListSkeleton from '../components/skeletons/ContributionListSkeleton';
 
 function escapeHtml(text) {
   return text
@@ -32,7 +34,7 @@ export default function Campaign() {
   const { user, token } = useAuth();
   const [campaign, setCampaign] = useState(null);
   const [loadError, setLoadError] = useState('');
-  const [contributions, setContributions] = useState([]);
+  const [contributions, setContributions] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [contributed, setContributed] = useState(false);
   const [showCreatedBanner, setShowCreatedBanner] = useState(!!location.state?.created);
@@ -47,7 +49,8 @@ export default function Campaign() {
       .getCampaign(id)
       .then(setCampaign)
       .catch((err) => setLoadError(err.message || 'Could not load campaign.'));
-    api.getContributions(id).then(setContributions).catch(() => setContributions([]));
+    api.getContributions(id).then(setContributions).catch(() => setContributions([]))
+
     api.getCampaignUpdates(id, { limit: 20 }).then(setUpdates).catch(() => setUpdates([]));
   }, [id, contributed]);
 
@@ -71,11 +74,7 @@ export default function Campaign() {
   }
 
   if (!campaign) {
-    return (
-      <main className="container" style={{ paddingTop: '3rem' }}>
-        <p style={{ color: '#666' }}>Loading campaign…</p>
-      </main>
-    );
+    return <CampaignDetailSkeleton />;
   }
 
   const pct = Math.min(100, (campaign.raised_amount / campaign.target_amount) * 100).toFixed(1);
@@ -233,8 +232,12 @@ export default function Campaign() {
         </div>
       )}
 
-      <h2 style={styles.sectionTitle}>Contributions ({contributions.length})</h2>
-      {contributions.length === 0 ? (
+      <h2 style={styles.sectionTitle}>
+        Contributions {contributions !== null ? `(${contributions.length})` : ''}
+      </h2>
+      {contributions === null ? (
+        <ContributionListSkeleton />
+      ) : contributions.length === 0 ? (
         <p style={{ color: '#999' }}>No contributions yet.</p>
       ) : (
         <div style={styles.list}>
