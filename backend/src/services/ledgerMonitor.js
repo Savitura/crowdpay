@@ -154,17 +154,31 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
     );
     const creatorId = creatorRows[0].creator_id;
 
+    const { rows: submittedRows } = await client.query(
+      `SELECT metadata
+       FROM stellar_transactions
+       WHERE tx_hash = $1 AND kind = 'contribution'
+       LIMIT 1`,
+      [txHash]
+    );
+    const anchorMetadata = submittedRows[0]?.metadata?.anchor || null;
+
     const { rows: inserted } = await client.query(
       `INSERT INTO contributions
-         (campaign_id, sender_public_key, amount, asset, payment_type, source_amount,
-          source_asset, conversion_rate, path, tx_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
+         (campaign_id, sender_public_key, amount, asset, anchor_id, anchor_transaction_id,
+          anchor_asset, anchor_amount, payment_type, source_amount, source_asset,
+          conversion_rate, path, tx_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14)
        RETURNING id`,
       [
         campaignId,
         payment.from,
         destinationAmount,
         destinationAsset,
+        anchorMetadata?.anchor_id || null,
+        anchorMetadata?.anchor_transaction_id || null,
+        anchorMetadata?.anchor_asset || null,
+        anchorMetadata?.anchor_amount || null,
         paymentType,
         sourceAmount,
         sourceAsset,
@@ -188,6 +202,18 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
 
     await markContributionIndexed(client, txHash, inserted[0].id);
 
+    if (anchorMetadata?.anchor_deposit_id) {
+      await client.query(
+        `UPDATE anchor_deposits
+         SET contribution_id = $1,
+             status = 'completed',
+             updated_at = NOW(),
+             completed_at = COALESCE(completed_at, NOW())
+         WHERE id = $2`,
+        [inserted[0].id, anchorMetadata.anchor_deposit_id]
+      );
+    }
+
     await client.query('COMMIT');
     postCommitHooks = {
       creatorId,
@@ -202,6 +228,7 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
         amount: String(destinationAmount),
         asset: destinationAsset,
         payment_type: paymentType,
+        anchor_transaction_id: anchorMetadata?.anchor_transaction_id || null,
       },
     };
     console.log(

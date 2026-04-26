@@ -10,7 +10,7 @@ function progressPct(campaign) {
 }
 
 export default function Dashboard() {
-  const { token, user } = useAuth();
+  const { token, user, ready } = useAuth();
   const [stats, setStats] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
   const [milestonesByCampaign, setMilestonesByCampaign] = useState({});
@@ -89,6 +89,13 @@ export default function Dashboard() {
     }
   }
 
+  if (!ready) {
+    return (
+      <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
+        <p style={{ color: '#666' }}>Restoring your session...</p>
+      </main>
+    );
+  }
   if (!token) return <Navigate to="/login" replace />;
   if (user?.role !== 'creator' && user?.role !== 'admin') return <Navigate to="/" replace />;
 

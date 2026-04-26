@@ -5,7 +5,7 @@ import { api } from '../services/api';
 import { stellarExpertTxUrl } from '../config/stellar';
 
 export default function MyContributions() {
-  const { token } = useAuth();
+  const { token, ready } = useAuth();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -17,6 +17,14 @@ export default function MyContributions() {
       .catch((err) => setError(err.message || 'Could not load contributions'))
       .finally(() => setLoading(false));
   }, [token]);
+
+  if (!ready) {
+    return (
+      <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
+        <p style={{ color: '#666' }}>Restoring your session...</p>
+      </main>
+    );
+  }
 
   if (!token) return <Navigate to="/login" replace />;
 
