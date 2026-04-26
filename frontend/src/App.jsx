@@ -10,6 +10,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import Developer from './pages/Developer';
 import Dashboard from './pages/Dashboard';
 import MyContributions from './pages/MyContributions';
+import NotFound from './pages/NotFound';
 import { AuthProvider } from './context/AuthContext';
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="/developer" element={<Developer />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/my-contributions" element={<MyContributions />} />
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </AuthProvider>
   );

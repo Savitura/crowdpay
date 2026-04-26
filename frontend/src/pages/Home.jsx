@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../services/api';
 import CampaignCard from '../components/CampaignCard';
+import CampaignCardSkeleton from '../components/skeletons/CampaignCardSkeleton';
 import { useAuth } from '../context/AuthContext';
 import OnboardingCallout from '../components/OnboardingCallout';
 import {
@@ -108,7 +109,9 @@ export default function Home() {
       <h2 style={styles.sectionTitle}>Active campaigns</h2>
 
       {loading ? (
-        <p style={{ color: '#666' }}>Loading campaigns…</p>
+        <div style={styles.grid}>
+          {Array.from({ length: 6 }, (_, i) => <CampaignCardSkeleton key={i} />)}
+        </div>
       ) : listError ? (
         <p className="alert alert--error" role="alert">
           {listError}
