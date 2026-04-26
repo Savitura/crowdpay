@@ -27,7 +27,8 @@ router.get('/me/stats', requireAuth, async (req, res) => {
       COALESCE(SUM(raised_amount), 0)::numeric AS total_raised,
       COUNT(*) FILTER (WHERE status = 'active')::int AS active_campaigns,
       COUNT(*) FILTER (WHERE status = 'funded')::int AS funded_campaigns,
-      COUNT(*) FILTER (WHERE status IN ('closed', 'withdrawn', 'failed'))::int AS closed_campaigns
+      COUNT(*) FILTER (WHERE status = 'in_progress')::int AS in_progress_campaigns,
+      COUNT(*) FILTER (WHERE status IN ('completed', 'closed', 'withdrawn', 'failed'))::int AS closed_campaigns
      FROM campaigns
      WHERE creator_id = $1`,
     [req.user.userId]

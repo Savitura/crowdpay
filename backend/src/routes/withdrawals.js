@@ -61,7 +61,8 @@ router.post('/request', requireAuth, async (req, res) => {
   }
 
   const { rows: campaigns } = await db.query(
-    `SELECT id, creator_id, wallet_public_key, asset_type, status
+    `SELECT id, creator_id, wallet_public_key, asset_type, status,
+            (SELECT COUNT(*)::int FROM milestones m WHERE m.campaign_id = campaigns.id) AS milestone_count
      FROM campaigns WHERE id = $1`,
     [campaign_id]
   );
@@ -70,6 +71,11 @@ router.post('/request', requireAuth, async (req, res) => {
 
   if (campaign.creator_id !== req.user.userId && req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Only campaign creator can request withdrawal' });
+  }
+  if (campaign.milestone_count > 0) {
+    return res.status(409).json({
+      error: 'This campaign uses milestone releases. Funds are released through approved milestones instead of manual withdrawals.',
+    });
   }
   if (!ALLOWED_CAMPAIGN_STATUS_FOR_REQUEST.includes(campaign.status)) {
     return res.status(409).json({

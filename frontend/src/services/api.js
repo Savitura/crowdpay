@@ -139,6 +139,10 @@ export const api = {
     request('POST', `/campaigns/${campaignId}/updates`, body, token),
 
   getContributions: (campaignId) => request('GET', `/contributions/campaign/${campaignId}`),
+  getMilestones: (campaignId) => request('GET', `/milestones/campaign/${campaignId}`),
+  submitMilestoneEvidence: (id, body, token) => request('POST', `/milestones/${id}/submit`, body, token),
+  approveMilestone: (id, body, token) => request('POST', `/milestones/${id}/approve`, body || {}, token),
+  rejectMilestone: (id, body, token) => request('POST', `/milestones/${id}/reject`, body || {}, token),
   contribute: (body, token) => request('POST', '/contributions', body, token),
   prepareContribution: (body, token) => request('POST', '/contributions/prepare', body, token),
   submitSignedContribution: (body, token) => request('POST', '/contributions/submit-signed', body, token),
@@ -163,6 +167,7 @@ export const api = {
 
   getAdminStats: (token) => request('GET', '/admin/stats', null, token),
   getAdminCampaigns: (token) => request('GET', '/admin/campaigns', null, token),
+  getAdminMilestones: (token, options = {}) => request('GET', '/admin/milestones', null, token, { query: options }),
   getAdminUsers: (token) => request('GET', '/admin/users', null, token),
   updateCampaignStatus: (id, status, token) => request('PATCH', `/admin/campaigns/${id}/status`, { status }, token),
   listApiKeys: (token) => request('GET', '/api-keys', null, token),

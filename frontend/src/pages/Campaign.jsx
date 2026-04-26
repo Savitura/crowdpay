@@ -3,6 +3,7 @@ import { Link, useParams, useLocation } from 'react-router-dom';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import ContributeModal from '../components/ContributeModal';
+import MilestoneTracker from '../components/MilestoneTracker';
 import WithdrawalsSection from '../components/WithdrawalsSection';
 import CampaignDetailSkeleton from '../components/skeletons/CampaignDetailSkeleton';
 import ContributionListSkeleton from '../components/skeletons/ContributionListSkeleton';
@@ -39,6 +40,7 @@ export default function Campaign() {
   const [contributed, setContributed] = useState(false);
   const [showCreatedBanner, setShowCreatedBanner] = useState(!!location.state?.created);
   const [updates, setUpdates] = useState([]);
+  const [milestones, setMilestones] = useState([]);
   const [updateForm, setUpdateForm] = useState({ title: '', body: '' });
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updatesError, setUpdatesError] = useState('');
@@ -49,8 +51,8 @@ export default function Campaign() {
       .getCampaign(id)
       .then(setCampaign)
       .catch((err) => setLoadError(err.message || 'Could not load campaign.'));
-    api.getContributions(id).then(setContributions).catch(() => setContributions([]))
-
+    api.getContributions(id).then(setContributions).catch(() => setContributions([]));
+    api.getMilestones(id).then(setMilestones).catch(() => setMilestones([]));
     api.getCampaignUpdates(id, { limit: 20 }).then(setUpdates).catch(() => setUpdates([]));
   }, [id, contributed]);
 
@@ -179,13 +181,17 @@ export default function Campaign() {
       {token && (
         <WithdrawalsSection
           campaign={campaign}
+          milestones={milestones}
           user={user}
           token={token}
           onReleased={() => {
             api.getCampaign(id).then(setCampaign).catch(() => {});
+            api.getMilestones(id).then(setMilestones).catch(() => {});
           }}
         />
       )}
+
+      <MilestoneTracker milestones={milestones} assetType={campaign.asset_type} />
 
       <h2 style={styles.sectionTitle}>Updates ({updates.length})</h2>
       {canPostUpdate && (

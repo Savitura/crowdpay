@@ -232,6 +232,71 @@ List withdrawal requests for a campaign (`denial_reason` included when denied). 
 
 Immutable audit timeline for one withdrawal: `action`, `actor_user_id`, `note`, `metadata`, `created_at`. Same authorization as the campaign list endpoint.
 
+### `GET /api/milestones/campaign/:campaignId`
+
+List milestones for a campaign in display order.
+
+Success response (`200`):
+
+```json
+[
+  {
+    "id": "0f3f...",
+    "campaign_id": "4db6...",
+    "title": "Prototype delivery",
+    "description": "Ship the first production-ready prototype to pilot users.",
+    "release_percentage": "25.0000",
+    "sort_order": 0,
+    "status": "pending",
+    "evidence_url": null,
+    "destination_key": null,
+    "review_note": null,
+    "created_at": "2026-04-26T08:13:34.392Z",
+    "completed_at": null,
+    "approved_at": null,
+    "released_at": null
+  }
+]
+```
+
+### `POST /api/milestones/:id/submit`
+
+Creator-only. Submit milestone completion evidence and the payout destination for that release.
+
+Body:
+
+- `evidence_url` (required)
+- `destination_key` (required): Stellar public key that will receive the approved release
+
+Errors:
+
+- `403` caller is not the campaign creator
+- `409` campaign is not yet in a releaseable state, or milestone is already released
+- `400` destination key is invalid
+
+### `POST /api/milestones/:id/approve`
+
+Platform-only. Reviews the submitted milestone, signs the escrow withdrawal using the existing dual-signature flow, submits it to Stellar, records the withdrawal, and advances campaign status to `in_progress` or `completed`.
+
+Body:
+
+- `reason` (optional): review note stored with the milestone and audit trail
+
+Errors:
+
+- `403` caller cannot perform platform approval
+- `409` evidence or payout destination is missing, campaign status is not `funded`/`in_progress`, or release already exists
+- `422` dual signature requirements were not met
+- `502` Stellar rejected the release transaction
+
+### `POST /api/milestones/:id/reject`
+
+Platform-only. Rejects a submitted milestone and stores a required review note.
+
+Body:
+
+- `reason` (required)
+
 ## Auditability and traceability
 
 - Every indexed contribution stores:
@@ -244,6 +309,8 @@ Immutable audit timeline for one withdrawal: `action`, `actor_user_id`, `note`, 
 - This enables independent reconciliation against Horizon payment records by `tx_hash`.
 
 - Manual fund releases append rows to `withdrawal_approval_events` (`requested`, `creator_signed`, `platform_signed`, `creator_cancelled`, `platform_rejected`, `submit_failed`) with optional `note` and `metadata` JSON for audit and manual review.
+
+- Milestone-based releases reuse the same multisig withdrawal machinery, but the release is triggered from platform approval after the creator has submitted evidence and a payout destination.
 
 ## Ledger monitor health
 

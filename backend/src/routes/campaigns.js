@@ -11,6 +11,45 @@ const { watchCampaignWallet } = require('../services/ledgerMonitor');
 const { insertWithdrawalPendingSignatures } = require('../services/stellarTransactionService');
 const { sendEmail } = require('../services/emailService');
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
+const MILESTONE_PERCENT_SCALE = 10000;
+
+function normalizeMilestonesInput(input) {
+  if (input == null) return [];
+  if (!Array.isArray(input)) {
+    throw new Error('milestones must be an array');
+  }
+  if (input.length === 0) return [];
+  if (input.length > 10) {
+    throw new Error('Campaigns can define at most 10 milestones');
+  }
+
+  const normalized = input.map((milestone, index) => {
+    const title = String(milestone?.title || '').trim();
+    if (!title) {
+      throw new Error(`Milestone ${index + 1} title is required`);
+    }
+
+    const releasePercentage = Number(milestone?.release_percentage);
+    if (!Number.isFinite(releasePercentage) || releasePercentage <= 0) {
+      throw new Error(`Milestone ${index + 1} release_percentage must be greater than zero`);
+    }
+
+    return {
+      title,
+      description: String(milestone?.description || '').trim() || null,
+      release_percentage: releasePercentage.toFixed(4),
+      release_percentage_units: Math.round(releasePercentage * MILESTONE_PERCENT_SCALE),
+      sort_order: index,
+    };
+  });
+
+  const totalUnits = normalized.reduce((sum, milestone) => sum + milestone.release_percentage_units, 0);
+  if (totalUnits !== 100 * MILESTONE_PERCENT_SCALE) {
+    throw new Error('Milestone release percentages must sum to exactly 100%');
+  }
+
+  return normalized;
+}
 
 async function logWithdrawalEvent(client, { withdrawalRequestId, actorUserId, action, note, metadata }) {
   const runner = client || db;
@@ -170,7 +209,7 @@ router.post('/:id/trigger-refunds', requireAuth, requireRole('admin'), async (re
 
 // Create campaign (authenticated)
 router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) => {
-  const { title, description, target_amount, asset_type, deadline } = req.body;
+  const { title, description, target_amount, asset_type, deadline, milestones } = req.body;
   if (!title || !target_amount || !asset_type) {
     return res.status(400).json({ error: 'title, target_amount and asset_type are required' });
   }
@@ -178,6 +217,13 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) 
     return res.status(400).json({
       error: `asset_type must be one of: ${SUPPORTED_ASSETS.join(', ')}`,
     });
+  }
+
+  let normalizedMilestones;
+  try {
+    normalizedMilestones = normalizeMilestonesInput(milestones);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
   }
 
   // Get creator's public key to add as campaign wallet signer
@@ -190,18 +236,46 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) 
   // Create the on-chain campaign wallet
   const wallet = await createCampaignWallet(creatorPublicKey);
 
-  const { rows } = await db.query(
-    `INSERT INTO campaigns
-       (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING *`,
-    [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline]
-  );
+  const client = await db.connect();
+  let campaign;
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO campaigns
+         (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline]
+    );
+    campaign = rows[0];
+
+    for (const milestone of normalizedMilestones) {
+      await client.query(
+        `INSERT INTO milestones
+           (campaign_id, title, description, release_percentage, sort_order)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          campaign.id,
+          milestone.title,
+          milestone.description,
+          milestone.release_percentage,
+          milestone.sort_order,
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    return res.status(500).json({ error: 'Could not create campaign' });
+  } finally {
+    client.release();
+  }
 
   // Start monitoring the new wallet immediately
-  watchCampaignWallet(rows[0].id, wallet.publicKey);
+  watchCampaignWallet(campaign.id, wallet.publicKey);
 
-  res.status(201).json(rows[0]);
+  res.status(201).json(campaign);
 });
 
 router.get('/:id/updates', async (req, res) => {

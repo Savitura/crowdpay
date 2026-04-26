@@ -15,7 +15,7 @@ function statusLabel(row) {
   return row.status;
 }
 
-export default function WithdrawalsSection({ campaign, user, token, onReleased }) {
+export default function WithdrawalsSection({ campaign, milestones = [], user, token, onReleased }) {
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -28,10 +28,11 @@ export default function WithdrawalsSection({ campaign, user, token, onReleased }
 
   const isCreator = user?.id && campaign.creator_id === user.id;
   const isAdmin = user?.role === 'admin';
+  const hasMilestonePlan = milestones.length > 0;
   const canView = !forbidden && (isCreator || cap.can_approve_platform);
   const hasPending = rows.some((r) => r.status === 'pending');
   const canOpenRequest =
-    isCreator && ELIGIBLE.includes(campaign.status) && !hasPending;
+    isCreator && !hasMilestonePlan && ELIGIBLE.includes(campaign.status) && !hasPending;
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -136,6 +137,12 @@ export default function WithdrawalsSection({ campaign, user, token, onReleased }
         Funds leave the campaign wallet only after <strong>you</strong> (creator) and <strong>CrowdPay</strong>{' '}
         (platform) both approve the same transaction. Every step is logged for review.
       </p>
+
+      {hasMilestonePlan && (
+        <p className="alert alert--info" role="status">
+          This campaign uses milestone-based releases. Manual one-shot withdrawal requests are disabled; approvals happen through milestone review.
+        </p>
+      )}
 
       {!ELIGIBLE.includes(campaign.status) && (
         <p className="alert alert--info" role="status">
