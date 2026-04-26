@@ -6,7 +6,7 @@ CREATE TABLE users (
   password_hash           TEXT NOT NULL,
   name                    TEXT NOT NULL,
   wallet_public_key       TEXT UNIQUE NOT NULL,
-  wallet_secret_encrypted TEXT NOT NULL,  -- encrypt with KMS in production
+  wallet_secret_encrypted TEXT NOT NULL,
   created_at              TIMESTAMPTZ DEFAULT NOW()
 );
 

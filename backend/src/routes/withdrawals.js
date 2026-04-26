@@ -18,6 +18,7 @@ const {
 } = require('../services/stellarTransactionService');
 const { sendEmail } = require('../services/emailService');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
+const { withDecryptedWalletSecret } = require('../services/walletSecrets');
 
 const ALLOWED_CAMPAIGN_STATUS_FOR_REQUEST = ['active', 'funded'];
 
@@ -177,15 +178,30 @@ router.post('/:id/approve/creator', requireAuth, async (req, res) => {
   }
 
   const { rows: users } = await db.query(
-    'SELECT wallet_secret_encrypted FROM users WHERE id = $1',
+    'SELECT wallet_secret_encrypted, wallet_public_key FROM users WHERE id = $1',
     [req.user.userId]
   );
-  const creatorSecret = users[0].wallet_secret_encrypted;
-
-  const signedXdr = signTransactionXdr({
-    xdr: requestRow.unsigned_xdr,
-    signerSecret: creatorSecret,
-  });
+  let signedXdr;
+  try {
+    signedXdr = await withDecryptedWalletSecret(
+      users[0].wallet_secret_encrypted,
+      {
+        userId: req.user.userId,
+        walletPublicKey: users[0].wallet_public_key,
+      },
+      async (creatorSecret) =>
+        signTransactionXdr({
+          xdr: requestRow.unsigned_xdr,
+          signerSecret: creatorSecret,
+        })
+    );
+  } catch (err) {
+    logger.error('Creator withdrawal signing failed', {
+      withdrawal_id: req.params.id,
+      error: err.message,
+    });
+    return res.status(503).json({ error: 'Creator wallet signing is unavailable; retry shortly.' });
+  }
 
   const client = await db.connect();
   try {

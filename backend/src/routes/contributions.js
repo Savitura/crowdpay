@@ -13,6 +13,7 @@ const {
 } = require('../services/stellarService');
 const { insertContributionSubmitted } = require('../services/stellarTransactionService');
 const { sendEmail } = require('../services/emailService');
+const { withDecryptedWalletSecret } = require('../services/walletSecrets');
 
 const SLIPPAGE_BPS = 500; // 5.00%
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
@@ -160,89 +161,111 @@ router.post('/', requireAuth, async (req, res) => {
     'SELECT wallet_secret_encrypted, wallet_public_key FROM users WHERE id = $1',
     [req.user.userId]
   );
-  const senderSecret = users[0].wallet_secret_encrypted; // decrypt in production
   const contributorPublicKey = users[0].wallet_public_key;
-
-  try {
-    await ensureCustodialAccountFundedAndTrusted({
-      publicKey: contributorPublicKey,
-      secret: senderSecret,
-    });
-  } catch (err) {
-    logger.error('Custodial account setup failed', { campaign_id, error: err.message });
-    return res.status(503).json({
-      error: 'Wallet setup is still completing; please retry in a few seconds.',
-    });
-  }
 
   let txHash;
   let conversionQuote = null;
   let unsignedXdr;
   let signedXdr;
   let flowMetadata;
+  try {
+    const preparedTransaction = await withDecryptedWalletSecret(
+      users[0].wallet_secret_encrypted,
+      {
+        userId: req.user.userId,
+        walletPublicKey: contributorPublicKey,
+      },
+      async (senderSecret) => {
+        await ensureCustodialAccountFundedAndTrusted({
+          publicKey: contributorPublicKey,
+          secret: senderSecret,
+        });
 
-  if (send_asset === campaign.asset_type) {
-    const prepared = await prepareSignedContributionPayment({
-      senderSecret,
-      destinationPublicKey: campaign.wallet_public_key,
-      asset: send_asset,
-      amount,
-      memo: `cp-${campaign_id}`,
-    });
-    unsignedXdr = prepared.unsignedXdr;
-    signedXdr = prepared.signedXdr;
-    flowMetadata = {
-      flow: 'payment',
-      send_asset,
-      amount: String(amount),
-      contributor_public_key: contributorPublicKey,
-    };
-  } else {
-    const paths = await getPathPaymentQuote({
-      sendAsset: send_asset,
-      destAsset: campaign.asset_type,
-      destAmount: amount,
-    });
-    if (!paths.length) {
-      return res.status(422).json({
-        error: `No conversion path found for ${send_asset} -> ${campaign.asset_type}`,
-      });
+        if (send_asset === campaign.asset_type) {
+          const prepared = await prepareSignedContributionPayment({
+            senderSecret,
+            destinationPublicKey: campaign.wallet_public_key,
+            asset: send_asset,
+            amount,
+            memo: `cp-${campaign_id}`,
+          });
+
+          return {
+            unsignedXdr: prepared.unsignedXdr,
+            signedXdr: prepared.signedXdr,
+            conversionQuote: null,
+            flowMetadata: {
+              flow: 'payment',
+              send_asset,
+              amount: String(amount),
+              contributor_public_key: contributorPublicKey,
+            },
+          };
+        }
+
+        const paths = await getPathPaymentQuote({
+          sendAsset: send_asset,
+          destAsset: campaign.asset_type,
+          destAmount: amount,
+        });
+        if (!paths.length) {
+          const error = new Error(`No conversion path found for ${send_asset} -> ${campaign.asset_type}`);
+          error.statusCode = 422;
+          throw error;
+        }
+
+        const bestPath = paths[0];
+        const sendMax = (
+          parseFloat(bestPath.source_amount) *
+          (1 + SLIPPAGE_BPS / 10000)
+        ).toFixed(7);
+
+        const prepared = await prepareSignedContributionPathPayment({
+          senderSecret,
+          destinationPublicKey: campaign.wallet_public_key,
+          sendAsset: send_asset,
+          sendMax,
+          destAmount: amount,
+          destAssetCode: campaign.asset_type,
+          memo: `cp-${campaign_id}`,
+        });
+
+        return {
+          unsignedXdr: prepared.unsignedXdr,
+          signedXdr: prepared.signedXdr,
+          conversionQuote: {
+            send_asset,
+            campaign_asset: campaign.asset_type,
+            campaign_amount: String(amount),
+            quoted_source_amount: bestPath.source_amount,
+            max_send_amount: sendMax,
+            path: bestPath.path,
+          },
+          flowMetadata: {
+            flow: 'path_payment_strict_receive',
+            send_asset,
+            dest_asset: campaign.asset_type,
+            dest_amount: String(amount),
+            max_send_amount: sendMax,
+            contributor_public_key: contributorPublicKey,
+          },
+        };
+      }
+    );
+
+    unsignedXdr = preparedTransaction.unsignedXdr;
+    signedXdr = preparedTransaction.signedXdr;
+    conversionQuote = preparedTransaction.conversionQuote;
+    flowMetadata = preparedTransaction.flowMetadata;
+  } catch (err) {
+    if (err.statusCode === 422) {
+      return res.status(422).json({ error: err.message });
     }
 
-    const bestPath = paths[0];
-    const sendMax = (
-      parseFloat(bestPath.source_amount) *
-      (1 + SLIPPAGE_BPS / 10000)
-    ).toFixed(7);
-
-    const prepared = await prepareSignedContributionPathPayment({
-      senderSecret,
-      destinationPublicKey: campaign.wallet_public_key,
-      sendAsset: send_asset,
-      sendMax,
-      destAmount: amount,
-      destAssetCode: campaign.asset_type,
-      memo: `cp-${campaign_id}`,
+    logger.error('Custodial contribution signing failed', { campaign_id, error: err.message });
+    return res.status(503).json({
+      error: 'Wallet setup is still completing; please retry in a few seconds.',
     });
-    unsignedXdr = prepared.unsignedXdr;
-    signedXdr = prepared.signedXdr;
-
-    conversionQuote = {
-      send_asset,
-      campaign_asset: campaign.asset_type,
-      campaign_amount: String(amount),
-      quoted_source_amount: bestPath.source_amount,
-      max_send_amount: sendMax,
-      path: bestPath.path,
-    };
-    flowMetadata = {
-      flow: 'path_payment_strict_receive',
-      send_asset,
-      dest_asset: campaign.asset_type,
-      dest_amount: String(amount),
-      max_send_amount: sendMax,
-      contributor_public_key: contributorPublicKey,
-    };
   }
 
   try {

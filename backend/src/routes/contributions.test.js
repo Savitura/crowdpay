@@ -30,6 +30,9 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
     '../config/database': { query: queryImpl },
     '../services/stellarService': stellarStub,
     '../services/stellarTransactionService': stellarTxStub,
+    '../services/walletSecrets': {
+      withDecryptedWalletSecret: async (_ciphertext, _context, fn) => fn('SDECRYPTED'),
+    },
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
         req.user = { userId: 'user-1' };
