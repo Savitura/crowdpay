@@ -146,6 +146,12 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
     );
     if (existing.rows.length > 0) return;
 
+    const { rows: txRows } = await client.query(
+      `SELECT metadata FROM stellar_transactions WHERE tx_hash = $1 AND kind = 'contribution'`,
+      [txHash]
+    );
+    const platformFeeAmount = txRows[0]?.metadata?.platform_fee_amount ?? null;
+
     await client.query('BEGIN');
 
     const { rows: creatorRows } = await client.query(
@@ -157,8 +163,8 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
     const { rows: inserted } = await client.query(
       `INSERT INTO contributions
          (campaign_id, sender_public_key, amount, asset, payment_type, source_amount,
-          source_asset, conversion_rate, path, tx_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
+          source_asset, conversion_rate, path, tx_hash, platform_fee_amount)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11)
        RETURNING id`,
       [
         campaignId,
@@ -171,6 +177,7 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
         conversionRate,
         path ? JSON.stringify(path) : null,
         txHash,
+        platformFeeAmount,
       ]
     );
 

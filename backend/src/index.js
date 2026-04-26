@@ -31,6 +31,9 @@ app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/milestones', require('./routes/milestones'));
 
 app.get('/health', (_, res) => res.json({ status: 'ok' }));
+app.get('/api/config', (_, res) =>
+  res.json({ platform_fee_bps: parseInt(process.env.PLATFORM_FEE_BPS || '0', 10) })
+);
 
 app.get('/health/ledger', async (_req, res) => {
   try {

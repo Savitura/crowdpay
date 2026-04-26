@@ -5,10 +5,13 @@ const proxyquire = require('proxyquire').noCallThru();
 test('handlePayment updates stellar_transactions when a contribution row is created', async () => {
   const updates = [];
   const mockQuery = async (text, params) => {
-    if (text.includes('SELECT id FROM contributions')) return { rows: [] };
     if (text.includes('SELECT status FROM campaigns')) return { rows: [{ status: 'active' }] };
+    if (text.includes('SELECT id FROM contributions')) return { rows: [] };
     if (text.includes('SELECT creator_id FROM campaigns')) {
       return { rows: [{ creator_id: 'user-creator' }] };
+    }
+    if (text.includes('SELECT metadata FROM stellar_transactions')) {
+      return { rows: [{ metadata: { platform_fee_amount: 0.15 } }] };
     }
     if (text === 'BEGIN') return { rows: [] };
     if (text.includes('INSERT INTO contributions')) return { rows: [{ id: 'contrib-id' }] };

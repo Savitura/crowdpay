@@ -180,6 +180,7 @@ router.post('/', requireAuth, async (req, res) => {
   let unsignedXdr;
   let signedXdr;
   let flowMetadata;
+  let platformFeeAmount = 0;
 
   if (send_asset === campaign.asset_type) {
     const prepared = await prepareSignedContributionPayment({
@@ -191,11 +192,13 @@ router.post('/', requireAuth, async (req, res) => {
     });
     unsignedXdr = prepared.unsignedXdr;
     signedXdr = prepared.signedXdr;
+    platformFeeAmount = prepared.feeAmount || 0;
     flowMetadata = {
       flow: 'payment',
       send_asset,
       amount: String(amount),
       contributor_public_key: contributorPublicKey,
+      platform_fee_amount: platformFeeAmount,
     };
   } else {
     const paths = await getPathPaymentQuote({
@@ -226,6 +229,7 @@ router.post('/', requireAuth, async (req, res) => {
     });
     unsignedXdr = prepared.unsignedXdr;
     signedXdr = prepared.signedXdr;
+    platformFeeAmount = prepared.feeAmount || 0;
 
     conversionQuote = {
       send_asset,
@@ -242,6 +246,7 @@ router.post('/', requireAuth, async (req, res) => {
       dest_amount: String(amount),
       max_send_amount: sendMax,
       contributor_public_key: contributorPublicKey,
+      platform_fee_amount: platformFeeAmount,
     };
   }
 
@@ -269,6 +274,7 @@ router.post('/', requireAuth, async (req, res) => {
     tx_hash: txHash,
     stellar_transaction_id: stellarTransactionId,
     message: 'Transaction submitted',
+    platform_fee_amount: platformFeeAmount,
     conversion_quote: conversionQuote,
   });
 
