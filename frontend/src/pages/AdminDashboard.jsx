@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
 export default function AdminDashboard() {
-  const { user, token } = useAuth();
+  const { user, token, ready } = useAuth();
   const navigate = useNavigate();
   const [stats, setStats] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
@@ -14,9 +14,12 @@ export default function AdminDashboard() {
   const [busyMilestoneId, setBusyMilestoneId] = useState(null);
 
   useEffect(() => {
+    if (!ready) {
+      return;
+    }
     if (!user || (user.role !== 'admin' && !user.is_admin)) {
-        navigate('/');
-        return;
+      navigate('/');
+      return;
     }
 
     Promise.all([
@@ -35,9 +38,9 @@ export default function AdminDashboard() {
       navigate('/');
     });
 
-  }, [user, token, navigate]);
+  }, [ready, user, token, navigate]);
 
-  if (loading) return <div className="container" style={{padding:'2rem'}}>Loading admin panel...</div>;
+  if (!ready || loading) return <div className="container" style={{padding:'2rem'}}>Loading admin panel...</div>;
 
   async function refreshMilestones() {
     const rows = await api.getAdminMilestones(token);

@@ -9,18 +9,19 @@ const { sendAlert } = require('../services/alerting');
 const {
   buildUnsignedContributionPayment,
   buildUnsignedContributionPathPayment,
-  prepareSignedContributionPayment,
-  prepareSignedContributionPathPayment,
   submitPreparedTransaction,
   getPathPaymentQuote,
   getSupportedAssetCodes,
-  ensureCustodialAccountFundedAndTrusted,
 } = require('../services/stellarService');
 const { insertContributionSubmitted } = require('../services/stellarTransactionService');
 const { sendEmail } = require('../services/emailService');
-const { withDecryptedWalletSecret } = require('../services/walletSecrets');
+const {
+  SLIPPAGE_BPS,
+  buildContributionIntent,
+  buildContributionMemo,
+  submitCustodialContribution,
+} = require('../services/contributionService');
 
-const SLIPPAGE_BPS = 500; // 5.00%
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const PREPARED_CONTRIBUTION_EXPIRES_IN = '10m';
 
@@ -51,65 +52,6 @@ async function loadActiveCampaign(campaignId) {
     [campaignId, 'active']
   );
   return rows[0] || null;
-}
-
-async function buildContributionIntent({
-  campaign,
-  campaignId,
-  amount,
-  sendAsset,
-  contributorPublicKey,
-}) {
-  if (sendAsset === campaign.asset_type) {
-    return {
-      kind: 'payment',
-      conversionQuote: null,
-      flowMetadata: {
-        flow: 'payment',
-        send_asset: sendAsset,
-        amount: String(amount),
-        contributor_public_key: contributorPublicKey,
-      },
-    };
-  }
-
-  const paths = await getPathPaymentQuote({
-    sendAsset,
-    destAsset: campaign.asset_type,
-    destAmount: amount,
-  });
-  if (!paths.length) {
-    const error = new Error(`No conversion path found for ${sendAsset} -> ${campaign.asset_type}`);
-    error.statusCode = 422;
-    throw error;
-  }
-
-  const bestPath = paths[0];
-  const sendMax = (
-    parseFloat(bestPath.source_amount) *
-    (1 + SLIPPAGE_BPS / 10000)
-  ).toFixed(7);
-
-  return {
-    kind: 'path_payment_strict_receive',
-    sendMax,
-    conversionQuote: {
-      send_asset: sendAsset,
-      campaign_asset: campaign.asset_type,
-      campaign_amount: String(amount),
-      quoted_source_amount: bestPath.source_amount,
-      max_send_amount: sendMax,
-      path: bestPath.path,
-    },
-    flowMetadata: {
-      flow: 'path_payment_strict_receive',
-      send_asset: sendAsset,
-      dest_asset: campaign.asset_type,
-      dest_amount: String(amount),
-      max_send_amount: sendMax,
-      contributor_public_key: contributorPublicKey,
-    },
-  };
 }
 
 function createPreparedContributionToken(payload) {
@@ -165,6 +107,7 @@ function validateSubmittedContributionXdr({ signedXdr, unsignedXdr, senderPublic
 router.get('/campaign/:campaignId', async (req, res) => {
   const { rows } = await db.query(
     `SELECT c.id, c.sender_public_key, c.amount, c.asset, c.payment_type,
+            c.anchor_id, c.anchor_transaction_id, c.anchor_asset, c.anchor_amount,
             c.source_amount, c.source_asset, c.conversion_rate, c.path,
             c.tx_hash, c.created_at,
             wr.status AS refund_status, wr.tx_hash AS refund_tx_hash
@@ -298,7 +241,6 @@ router.post('/prepare', requireAuth, async (req, res) => {
   try {
     const intent = await buildContributionIntent({
       campaign,
-      campaignId: campaign_id,
       amount,
       sendAsset: send_asset,
       contributorPublicKey: sender_public_key,
@@ -311,7 +253,7 @@ router.post('/prepare', requireAuth, async (req, res) => {
             destinationPublicKey: campaign.wallet_public_key,
             asset: send_asset,
             amount,
-            memo: `cp-${campaign_id}`,
+            memo: buildContributionMemo(campaign_id),
           })
         : await buildUnsignedContributionPathPayment({
             senderPublicKey: sender_public_key,
@@ -320,7 +262,7 @@ router.post('/prepare', requireAuth, async (req, res) => {
             sendMax: intent.sendMax,
             destAmount: amount,
             destAssetCode: campaign.asset_type,
-            memo: `cp-${campaign_id}`,
+            memo: buildContributionMemo(campaign_id),
           });
 
     const prepareToken = createPreparedContributionToken({
@@ -431,61 +373,33 @@ router.post('/', requireAuth, async (req, res) => {
   );
   const contributorPublicKey = users[0].wallet_public_key;
 
-  let txHash;
-  let conversionQuote = null;
-  let unsignedXdr;
-  let signedXdr;
-  let flowMetadata;
   try {
-    const intent = await buildContributionIntent({
+    const result = await submitCustodialContribution({
       campaign,
       campaignId: campaign_id,
+      userId: req.user.userId,
+      walletPublicKey: contributorPublicKey,
+      walletSecretEncrypted: users[0].wallet_secret_encrypted,
       amount,
       sendAsset: send_asset,
-      contributorPublicKey,
     });
-
-    const preparedTransaction = await withDecryptedWalletSecret(
-      users[0].wallet_secret_encrypted,
-      {
-        userId: req.user.userId,
-        walletPublicKey: contributorPublicKey,
-      },
-      async (senderSecret) => {
-        await ensureCustodialAccountFundedAndTrusted({
-          publicKey: contributorPublicKey,
-          secret: senderSecret,
-        });
-
-        if (intent.kind === 'payment') {
-          return prepareSignedContributionPayment({
-            senderSecret,
-            destinationPublicKey: campaign.wallet_public_key,
-            asset: send_asset,
-            amount,
-            memo: `cp-${campaign_id}`,
-          });
-        }
-
-        return prepareSignedContributionPathPayment({
-          senderSecret,
-          destinationPublicKey: campaign.wallet_public_key,
-          sendAsset: send_asset,
-          sendMax: intent.sendMax,
-          destAmount: amount,
-          destAssetCode: campaign.asset_type,
-          memo: `cp-${campaign_id}`,
-        });
-      }
-    );
-
-    unsignedXdr = preparedTransaction.unsignedXdr;
-    signedXdr = preparedTransaction.signedXdr;
-    conversionQuote = intent.conversionQuote;
-    flowMetadata = intent.flowMetadata;
+    res.status(202).json({
+      tx_hash: result.txHash,
+      stellar_transaction_id: result.stellarTransactionId,
+      message: 'Transaction submitted',
+      conversion_quote: result.conversionQuote,
+    });
   } catch (err) {
     if (err.statusCode === 422) {
       return res.status(422).json({ error: err.message });
+    }
+    if (err.statusCode === 502) {
+      logger.error('Stellar transaction submission failed', { campaign_id, error: err.message });
+      sendAlert('Stellar transaction submission failed', { campaign_id, error: err.message });
+      return res.status(502).json({
+        error: 'Stellar network rejected the transaction',
+        detail: err.message || String(err),
+      });
     }
 
     logger.error('Custodial contribution signing failed', { campaign_id, error: err.message });
@@ -493,33 +407,6 @@ router.post('/', requireAuth, async (req, res) => {
       error: 'Wallet setup is still completing; please retry in a few seconds.',
     });
   }
-
-  try {
-    txHash = await submitPreparedTransaction(signedXdr);
-  } catch (err) {
-    logger.error('Stellar transaction submission failed', { campaign_id, error: err.message });
-    sendAlert('Stellar transaction submission failed', { campaign_id, error: err.message });
-    return res.status(502).json({
-      error: 'Stellar network rejected the transaction',
-      detail: err.message || String(err),
-    });
-  }
-
-  const stellarTransactionId = await insertContributionSubmitted(null, {
-    txHash,
-    campaignId: campaign_id,
-    userId: req.user.userId,
-    unsignedXdr,
-    signedXdr,
-    metadata: flowMetadata,
-  });
-
-  res.status(202).json({
-    tx_hash: txHash,
-    stellar_transaction_id: stellarTransactionId,
-    message: 'Transaction submitted',
-    conversion_quote: conversionQuote,
-  });
 
   setImmediate(() => {
     sendEmail({

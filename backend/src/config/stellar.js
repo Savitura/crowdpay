@@ -26,6 +26,10 @@ const configuredAssets = {
   USDC: { type: 'credit_alphanum4', issuer: process.env.USDC_ISSUER },
 };
 
+if (process.env.NGN_ISSUER) {
+  configuredAssets.NGN = { type: 'credit_alphanum4', issuer: process.env.NGN_ISSUER };
+}
+
 for (const [code, issuer] of Object.entries(parseAdditionalAssets())) {
   if (code === 'XLM' || code === 'USDC') continue;
   configuredAssets[code] = { type: 'credit_alphanum12', issuer };

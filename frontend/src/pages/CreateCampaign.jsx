@@ -30,7 +30,7 @@ function milestonePercentTotal(milestones) {
 }
 
 export default function CreateCampaign() {
-  const { token, user } = useAuth();
+  const { token, user, ready } = useAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
@@ -46,10 +46,10 @@ export default function CreateCampaign() {
   const [showCreatorTips, setShowCreatorTips] = useState(isCreatorOnboardingVisible);
 
   useEffect(() => {
-    if (!token) {
+    if (ready && !token) {
       navigate('/login', { replace: true, state: { from: '/campaigns/new' } });
     }
-  }, [token, navigate]);
+  }, [ready, token, navigate]);
 
   function setField(field) {
     return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
@@ -169,6 +169,14 @@ export default function CreateCampaign() {
       }
       setLoading(false);
     }
+  }
+
+  if (!ready) {
+    return (
+      <main className="container page-narrow" style={{ paddingTop: '3rem' }}>
+        <p className="alert alert--info">Restoring your session…</p>
+      </main>
+    );
   }
 
   if (!token) {

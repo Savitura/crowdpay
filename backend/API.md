@@ -140,6 +140,32 @@ Errors:
 - `422` signed XDR does not match the prepared transaction
 - `502` Stellar rejected the signed transaction
 
+### `GET /api/anchor/info`
+
+Returns the configured fiat on-ramp anchors and the CrowdPay asset codes currently enabled on Stellar.
+
+### `POST /api/anchor/deposits/start`
+
+Authenticated. Starts a SEP-24 hosted deposit session for the chosen anchor after backend SEP-10 authentication.
+
+Body:
+
+- `campaign_id` (required)
+- `amount` (required): amount the campaign should ultimately receive
+- `anchor_id` (required): anchor identifier from `/api/anchor/info`
+
+Success response includes:
+
+- anchor session `id`
+- `interactive_url`
+- `anchor_transaction_id`
+- `anchor_asset` / `anchor_amount`
+- `conversion_quote` when the eventual contribution needs a path payment
+
+### `GET /api/anchor/deposits/:id`
+
+Authenticated. Polls the anchor transaction, updates the local anchor session, and once the deposit completes automatically submits the normal Stellar contribution from the user’s custodial wallet.
+
 ### `GET /api/contributions/campaign/:campaignId`
 
 Fetch indexed contributions with conversion audit fields.
@@ -311,6 +337,8 @@ Body:
 - Manual fund releases append rows to `withdrawal_approval_events` (`requested`, `creator_signed`, `platform_signed`, `creator_cancelled`, `platform_rejected`, `submit_failed`) with optional `note` and `metadata` JSON for audit and manual review.
 
 - Milestone-based releases reuse the same multisig withdrawal machinery, but the release is triggered from platform approval after the creator has submitted evidence and a payout destination.
+
+- Anchor-assisted contributions persist `anchor_id` and `anchor_transaction_id` on the final `contributions` row for support and reconciliation.
 
 ## Ledger monitor health
 
