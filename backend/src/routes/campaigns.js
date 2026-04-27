@@ -7,6 +7,7 @@ const {
   getSupportedAssetCodes,
   buildWithdrawalTransaction,
 } = require('../services/stellarService');
+const { encryptSecret } = require('../services/walletService');
 const { watchCampaignWallet } = require('../services/ledgerMonitor');
 const { insertWithdrawalPendingSignatures } = require('../services/stellarTransactionService');
 const { sendEmail } = require('../services/emailService');
@@ -235,6 +236,7 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) 
 
   // Create the on-chain campaign wallet
   const wallet = await createCampaignWallet(creatorPublicKey);
+  const encryptedSecret = encryptSecret(wallet.secret);
 
   const client = await db.connect();
   let campaign;

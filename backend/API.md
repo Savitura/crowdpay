@@ -361,5 +361,3 @@ The backend also logs a **warning** every 5 minutes if any wallet is in that sta
 - withdrawal request creation with multisig validation
 - withdrawal creator/platform approval flow
 - withdrawal denial paths (missing creator approval, insufficient signatures)
-- withdrawal campaign status and duplicate-pending guards
-- withdrawal cancel/reject and Stellar submit failure logging
