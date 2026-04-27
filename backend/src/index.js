@@ -14,6 +14,7 @@ app.use('/api/wallets', require('./routes/wallets'));
 
 app.use('/api/contributions', require('./routes/contributions'));
 app.use('/api/withdrawals', require('./routes/withdrawals'));
+app.use('/api/stellar/transactions', require('./routes/stellarTransactions'));
 
 app.get('/health', (_, res) => res.json({ status: 'ok' }));
 
