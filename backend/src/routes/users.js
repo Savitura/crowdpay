@@ -45,7 +45,8 @@ router.get('/me/contributions', requireAuth, async (req, res) => {
 
   const senderPublicKey = userRows[0].wallet_public_key;
   const { rows } = await db.query(
-    `SELECT ctr.id, ctr.amount, ctr.asset, ctr.tx_hash, ctr.created_at,
+    `SELECT ctr.id, ctr.amount, ctr.asset, ctr.anchor_id, ctr.anchor_transaction_id,
+            ctr.tx_hash, ctr.created_at,
             c.id AS campaign_id, c.title AS campaign_title, c.status AS campaign_status,
             c.target_amount, c.raised_amount
      FROM contributions ctr

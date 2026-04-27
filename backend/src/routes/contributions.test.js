@@ -57,6 +57,113 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
     ...stellarTxImpl,
   };
 
+  const contributionServiceStub = {
+    SLIPPAGE_BPS: 500,
+    buildContributionMemo: () => 'cp-c-1',
+    buildContributionIntent: async ({ campaign, amount, sendAsset, contributorPublicKey }) => {
+      if (sendAsset === campaign.asset_type) {
+        return {
+          kind: 'payment',
+          conversionQuote: null,
+          flowMetadata: {
+            flow: 'payment',
+            send_asset: sendAsset,
+            amount: String(amount),
+            contributor_public_key: contributorPublicKey,
+          },
+        };
+      }
+
+      const paths = await stellarStub.getPathPaymentQuote({
+        sendAsset,
+        destAsset: campaign.asset_type,
+        destAmount: amount,
+      });
+      if (!paths.length) {
+        const error = new Error(`No conversion path found for ${sendAsset} -> ${campaign.asset_type}`);
+        error.statusCode = 422;
+        throw error;
+      }
+
+      const bestPath = paths[0];
+      const sendMax = (
+        parseFloat(bestPath.source_amount) *
+        1.05
+      ).toFixed(7);
+
+      return {
+        kind: 'path_payment_strict_receive',
+        sendMax,
+        conversionQuote: {
+          send_asset: sendAsset,
+          campaign_asset: campaign.asset_type,
+          campaign_amount: String(amount),
+          quoted_source_amount: bestPath.source_amount,
+          max_send_amount: sendMax,
+          path: bestPath.path,
+        },
+        flowMetadata: {
+          flow: 'path_payment_strict_receive',
+          send_asset: sendAsset,
+          dest_asset: campaign.asset_type,
+          dest_amount: String(amount),
+          max_send_amount: sendMax,
+          contributor_public_key: contributorPublicKey,
+        },
+      };
+    },
+    submitCustodialContribution: async ({
+      campaign,
+      campaignId,
+      userId,
+      walletPublicKey,
+      amount,
+      sendAsset,
+    }) => {
+      const intent = await contributionServiceStub.buildContributionIntent({
+        campaign,
+        amount,
+        sendAsset,
+        contributorPublicKey: walletPublicKey,
+      });
+
+      const prepared =
+        intent.kind === 'payment'
+          ? await stellarStub.prepareSignedContributionPayment({
+              senderSecret: 'SDECRYPTED',
+              destinationPublicKey: campaign.wallet_public_key,
+              asset: sendAsset,
+              amount,
+              memo: 'cp-c-1',
+            })
+          : await stellarStub.prepareSignedContributionPathPayment({
+              senderSecret: 'SDECRYPTED',
+              destinationPublicKey: campaign.wallet_public_key,
+              sendAsset,
+              sendMax: intent.sendMax,
+              destAmount: amount,
+              destAssetCode: campaign.asset_type,
+              memo: 'cp-c-1',
+            });
+
+      const txHash = await stellarStub.submitPreparedTransaction(prepared.signedXdr);
+      const stellarTransactionId = await stellarTxStub.insertContributionSubmitted(null, {
+        txHash,
+        campaignId,
+        userId,
+        unsignedXdr: prepared.unsignedXdr,
+        signedXdr: prepared.signedXdr,
+        metadata: intent.flowMetadata,
+      });
+
+      return {
+        txHash,
+        stellarTransactionId,
+        conversionQuote: intent.conversionQuote,
+      };
+    },
+  };
+
   const router = proxyquire('./contributions', {
     '../config/stellar': {
       networkPassphrase: TESTNET_PASSPHRASE,
@@ -68,6 +175,7 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
     '../services/walletSecrets': {
       withDecryptedWalletSecret: async (_ciphertext, _context, fn) => fn('SDECRYPTED'),
     },
+    '../services/contributionService': contributionServiceStub,
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
         req.user = { userId: 'user-1' };

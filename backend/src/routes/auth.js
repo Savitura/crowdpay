@@ -105,7 +105,10 @@ async function rotateRefreshToken(oldToken, userId) {
 
 router.post('/register', authLimiter, async (req, res) => {
   const { email, password, name, role } = req.body;
-  if (!email || !password || !name) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedName = String(name || '').trim();
+
+  if (!normalizedEmail || !password || !normalizedName) {
     return res.status(400).json({ error: 'email, password and name are required' });
   }
   const allowedRoles = new Set(['contributor', 'creator']);
@@ -114,7 +117,7 @@ router.post('/register', authLimiter, async (req, res) => {
     return res.status(400).json({ error: 'role must be contributor or creator' });
   }
 
-  const existing = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+  const existing = await db.query('SELECT id FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
   if (existing.rows.length > 0) {
     return res.status(409).json({ error: 'Email already registered' });
   }
@@ -128,7 +131,7 @@ router.post('/register', authLimiter, async (req, res) => {
   const { rows } = await db.query(
     `INSERT INTO users (email, password_hash, name, wallet_public_key, wallet_secret_encrypted, role)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, name, wallet_public_key, role`,
-    [email, passwordHash, name, publicKey, encryptedSecret, userRole]
+    [normalizedEmail, passwordHash, normalizedName, publicKey, encryptedSecret, userRole]
   );
 
   const user = rows[0];
@@ -147,9 +150,9 @@ router.post('/register', authLimiter, async (req, res) => {
     });
 
     sendEmail({
-      to: email,
+      to: normalizedEmail,
       subject: 'Welcome to CrowdPay!',
-      text: `Welcome ${name}! Your custodial wallet public key is ${publicKey}.`
+      text: `Welcome ${normalizedName}! Your custodial wallet public key is ${publicKey}.`
     });
   });
 
@@ -158,7 +161,8 @@ router.post('/register', authLimiter, async (req, res) => {
 
 router.post('/login', authLimiter, async (req, res) => {
   const { email, password } = req.body;
-  const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const { rows } = await db.query('SELECT * FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
 
   if (!rows.length || !(await bcrypt.compare(password, rows[0].password_hash))) {
     return res.status(401).json({ error: 'Invalid credentials' });

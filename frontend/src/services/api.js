@@ -133,6 +133,9 @@ export const api = {
   getCampaign: (id) => request('GET', `/campaigns/${id}`),
   getCampaignBalance: (id) => request('GET', `/campaigns/${id}/balance`),
   createCampaign: (body, token) => request('POST', '/campaigns', body, token),
+  getAnchorInfo: () => request('GET', '/anchor/info'),
+  startAnchorDeposit: (body, token) => request('POST', '/anchor/deposits/start', body, token),
+  getAnchorDepositStatus: (id, token) => request('GET', `/anchor/deposits/${id}`, null, token),
   getCampaignUpdates: (campaignId, options = {}) =>
     request('GET', `/campaigns/${campaignId}/updates`, null, null, { query: options }),
   postCampaignUpdate: (campaignId, body, token) =>
