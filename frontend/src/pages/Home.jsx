@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../services/api';
 import CampaignCard from '../components/CampaignCard';
+import CampaignCardSkeleton from '../components/skeletons/CampaignCardSkeleton';
 import { useAuth } from '../context/AuthContext';
 import OnboardingCallout from '../components/OnboardingCallout';
 import {
@@ -42,7 +43,7 @@ export default function Home() {
     <main className="container" style={{ paddingTop: '1.5rem', paddingBottom: '4rem' }}>
       {welcomeNewUser && (
         <div className="alert alert--success" style={{ marginBottom: '1rem' }} role="status">
-          <strong>Welcome to CrowdPay.</strong> Your account includes a custodial Stellar wallet. Explore active
+          <strong>Welcome to CrowdPay.</strong> Your account includes a custodial Stellar wallet. Follow the instructions sent to your email to get started. Explore active
           campaigns and fund one in seconds.
           <button
             type="button"
@@ -80,11 +81,13 @@ export default function Home() {
         </p>
         {user ? (
           <div className="hero-actions">
-            <Link to="/campaigns/new" style={{ width: '100%' }}>
-              <button type="button" className="btn-primary" style={{ fontSize: '1rem', padding: '0.75rem 1.5rem', width: '100%' }}>
-                Start a campaign
-              </button>
-            </Link>
+            {(user.role === 'creator' || user.role === 'admin') && (
+              <Link to="/campaigns/new" style={{ width: '100%' }}>
+                <button type="button" className="btn-primary" style={{ fontSize: '1rem', padding: '0.75rem 1.5rem', width: '100%' }}>
+                  Start a campaign
+                </button>
+              </Link>
+            )}
             <span style={styles.muted}>or browse below and tap a card to contribute.</span>
           </div>
         ) : (
@@ -106,14 +109,16 @@ export default function Home() {
       <h2 style={styles.sectionTitle}>Active campaigns</h2>
 
       {loading ? (
-        <p style={{ color: '#666' }}>Loading campaigns…</p>
+        <div style={styles.grid}>
+          {Array.from({ length: 6 }, (_, i) => <CampaignCardSkeleton key={i} />)}
+        </div>
       ) : listError ? (
         <p className="alert alert--error" role="alert">
           {listError}
         </p>
       ) : campaigns.length === 0 ? (
         <div className="alert alert--info">
-          {user ? (
+          {user && (user.role === 'creator' || user.role === 'admin') ? (
             <>
               No campaigns yet.{' '}
               <Link to="/campaigns/new" style={{ color: '#1e40af', fontWeight: 700 }}>

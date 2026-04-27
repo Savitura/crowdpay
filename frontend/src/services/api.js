@@ -1,5 +1,8 @@
 const BASE = '/api';
 
+let accessToken = null;
+let refreshPromise = null;
+
 function authHeaders(token) {
   return {
     'Content-Type': 'application/json',
@@ -8,7 +11,7 @@ function authHeaders(token) {
 }
 
 async function request(method, path, body, token, options = {}) {
-  const { query } = options;
+  const { query, _retry = false } = options;
   let url = `${BASE}${path}`;
   if (query && Object.keys(query).length) {
     const params = new URLSearchParams();
@@ -18,10 +21,13 @@ async function request(method, path, body, token, options = {}) {
     url += `?${params.toString()}`;
   }
 
+  const activeToken = token || accessToken;
+
   const res = await fetch(url, {
     method,
-    headers: authHeaders(token),
+    headers: authHeaders(activeToken),
     body: body ? JSON.stringify(body) : undefined,
+    credentials: 'include',
   });
 
   const text = await res.text();
@@ -31,6 +37,18 @@ async function request(method, path, body, token, options = {}) {
       data = JSON.parse(text);
     } catch {
       throw new Error('Unexpected server response. Please try again.');
+    }
+  }
+
+  if (res.status === 401 && !_retry && path !== '/auth/refresh' && path !== '/auth/login') {
+    const promise = refresh();
+    if (promise) {
+      try {
+        const result = await promise;
+        return request(method, path, body, result.token, { ...options, _retry: true });
+      } catch {
+        throw new Error('Session expired. Please log in again.');
+      }
     }
   }
 
@@ -44,21 +62,96 @@ async function request(method, path, body, token, options = {}) {
   return data;
 }
 
+async function refresh() {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  refreshPromise = (async () => {
+    const res = await fetch(`${BASE}/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      let error = 'Refresh failed';
+      try {
+        const data = JSON.parse(text);
+        error = data.error || error;
+      } catch {}
+      refreshPromise = null;
+      throw new Error(error);
+    }
+
+    const data = await res.json();
+    accessToken = data.token;
+    refreshPromise = null;
+    return data;
+  })();
+
+  return refreshPromise;
+}
+
+async function logout() {
+  const res = await fetch(`${BASE}/auth/logout`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    let error = 'Logout failed';
+    try {
+      const data = JSON.parse(text);
+      error = data.error || error;
+    } catch {}
+    throw new Error(error);
+  }
+
+  accessToken = null;
+  return { message: 'Logged out' };
+}
+
+function setToken(t) {
+  accessToken = t;
+}
+
 export const api = {
-  register: (body) => request('POST', '/users/register', body),
-  login: (body) => request('POST', '/users/login', body),
+  register: (body) => request('POST', '/auth/register', body),
+  login: (body) => request('POST', '/auth/login', body),
+  logout: () => logout(),
+  refresh,
+  setToken,
+  getToken: () => accessToken,
+
+  getMyCampaigns: (token) => request('GET', '/users/me/campaigns', null, token),
+  getMyStats: (token) => request('GET', '/users/me/stats', null, token),
+  getMyContributions: (token) => request('GET', '/users/me/contributions', null, token),
 
   getCampaigns: () => request('GET', '/campaigns'),
   getCampaign: (id) => request('GET', `/campaigns/${id}`),
   getCampaignBalance: (id) => request('GET', `/campaigns/${id}/balance`),
   createCampaign: (body, token) => request('POST', '/campaigns', body, token),
+  getCampaignUpdates: (campaignId, options = {}) =>
+    request('GET', `/campaigns/${campaignId}/updates`, null, null, { query: options }),
+  postCampaignUpdate: (campaignId, body, token) =>
+    request('POST', `/campaigns/${campaignId}/updates`, body, token),
 
   getContributions: (campaignId) => request('GET', `/contributions/campaign/${campaignId}`),
+  getMilestones: (campaignId) => request('GET', `/milestones/campaign/${campaignId}`),
+  submitMilestoneEvidence: (id, body, token) => request('POST', `/milestones/${id}/submit`, body, token),
+  approveMilestone: (id, body, token) => request('POST', `/milestones/${id}/approve`, body || {}, token),
+  rejectMilestone: (id, body, token) => request('POST', `/milestones/${id}/reject`, body || {}, token),
   contribute: (body, token) => request('POST', '/contributions', body, token),
+  prepareContribution: (body, token) => request('POST', '/contributions/prepare', body, token),
+  submitSignedContribution: (body, token) => request('POST', '/contributions/submit-signed', body, token),
   quoteContribution: ({ send_asset, dest_asset, dest_amount }, token) =>
     request('GET', '/contributions/quote', null, token, {
       query: { send_asset, dest_asset, dest_amount },
     }),
+  failExpiredCampaigns: (token) => request('POST', '/campaigns/cron/fail-expired', null, token),
+  triggerCampaignRefunds: (campaignId, token) => request('POST', `/campaigns/${campaignId}/trigger-refunds`, null, token),
 
   getWithdrawalCapabilities: (token) => request('GET', '/withdrawals/capabilities', null, token),
   listWithdrawals: (campaignId, token) =>
@@ -71,4 +164,19 @@ export const api = {
   cancelWithdrawal: (id, body, token) => request('POST', `/withdrawals/${id}/cancel`, body || {}, token),
   rejectWithdrawal: (id, body, token) => request('POST', `/withdrawals/${id}/reject`, body || {}, token),
   getWithdrawalEvents: (id, token) => request('GET', `/withdrawals/${id}/events`, null, token),
+
+  getAdminStats: (token) => request('GET', '/admin/stats', null, token),
+  getAdminCampaigns: (token) => request('GET', '/admin/campaigns', null, token),
+  getAdminMilestones: (token, options = {}) => request('GET', '/admin/milestones', null, token, { query: options }),
+  getAdminUsers: (token) => request('GET', '/admin/users', null, token),
+  updateCampaignStatus: (id, status, token) => request('PATCH', `/admin/campaigns/${id}/status`, { status }, token),
+  listApiKeys: (token) => request('GET', '/api-keys', null, token),
+  createApiKey: (body, token) => request('POST', '/api-keys', body, token),
+  deleteApiKey: (id, token) => request('DELETE', `/api-keys/${id}`, null, token),
+
+  listWebhooks: (token) => request('GET', '/webhooks', null, token),
+  createWebhook: (body, token) => request('POST', '/webhooks', body, token),
+  deleteWebhook: (id, token) => request('DELETE', `/webhooks/${id}`, null, token),
+  listWebhookDeliveries: (token, options = {}) =>
+    request('GET', '/webhooks/deliveries', null, token, { query: options }),
 };

@@ -21,8 +21,16 @@ const ASSETS = [
   },
 ];
 
+function emptyMilestone() {
+  return { title: '', description: '', release_percentage: '' };
+}
+
+function milestonePercentTotal(milestones) {
+  return milestones.reduce((sum, milestone) => sum + (Number(milestone.release_percentage) || 0), 0);
+}
+
 export default function CreateCampaign() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
@@ -31,6 +39,7 @@ export default function CreateCampaign() {
     target_amount: '',
     asset_type: 'USDC',
     deadline: '',
+    milestones: [],
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -55,6 +64,29 @@ export default function CreateCampaign() {
     setShowCreatorTips(false);
   }
 
+  function setMilestoneField(index, field, value) {
+    setForm((f) => ({
+      ...f,
+      milestones: f.milestones.map((milestone, milestoneIndex) =>
+        milestoneIndex === index ? { ...milestone, [field]: value } : milestone
+      ),
+    }));
+  }
+
+  function addMilestone() {
+    setForm((f) => {
+      if (f.milestones.length >= 10) return f;
+      return { ...f, milestones: [...f.milestones, emptyMilestone()] };
+    });
+  }
+
+  function removeMilestone(index) {
+    setForm((f) => ({
+      ...f,
+      milestones: f.milestones.filter((_, milestoneIndex) => milestoneIndex !== index),
+    }));
+  }
+
   function validateStep1() {
     if (!form.title.trim()) {
       setError('Please enter a campaign title.');
@@ -68,9 +100,45 @@ export default function CreateCampaign() {
     return true;
   }
 
+  function validateMilestones() {
+    if (form.milestones.length === 0) {
+      setError('');
+      return true;
+    }
+    if (form.milestones.length > 10) {
+      setError('Campaigns can define at most 10 milestones.');
+      return false;
+    }
+
+    for (let index = 0; index < form.milestones.length; index += 1) {
+      const milestone = form.milestones[index];
+      if (!milestone.title.trim()) {
+        setError(`Milestone ${index + 1} needs a title.`);
+        return false;
+      }
+      if (!milestone.description.trim()) {
+        setError(`Milestone ${index + 1} needs a description.`);
+        return false;
+      }
+      if (!milestone.release_percentage || Number(milestone.release_percentage) <= 0) {
+        setError(`Milestone ${index + 1} needs a release percentage greater than zero.`);
+        return false;
+      }
+    }
+
+    const total = milestonePercentTotal(form.milestones);
+    if (Math.abs(total - 100) > 0.0001) {
+      setError('Milestone percentages must sum to exactly 100%.');
+      return false;
+    }
+
+    setError('');
+    return true;
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!validateStep1()) return;
+    if (!validateStep1() || !validateMilestones()) return;
     setLoading(true);
     setError('');
     try {
@@ -81,6 +149,13 @@ export default function CreateCampaign() {
           target_amount: form.target_amount,
           asset_type: form.asset_type,
           deadline: form.deadline || undefined,
+          milestones: form.milestones.length
+            ? form.milestones.map((milestone) => ({
+                title: milestone.title.trim(),
+                description: milestone.description.trim(),
+                release_percentage: Number(milestone.release_percentage),
+              }))
+            : undefined,
         },
         token
       );
@@ -104,6 +179,16 @@ export default function CreateCampaign() {
     );
   }
 
+  if (user?.role !== 'creator' && user?.role !== 'admin') {
+    return (
+      <main className="container page-narrow" style={{ paddingTop: '3rem' }}>
+        <p className="alert alert--info">Only creator or admin accounts can start campaigns.</p>
+      </main>
+    );
+  }
+
+  const milestoneTotal = milestonePercentTotal(form.milestones);
+
   return (
     <main className="container page-mid" style={{ paddingTop: '1.75rem', paddingBottom: '3rem' }}>
       <nav aria-label="Progress" style={{ marginBottom: '1.25rem' }}>
@@ -123,7 +208,11 @@ export default function CreateCampaign() {
           </li>
           <li aria-hidden="true">→</li>
           <li>
-            <span style={{ color: step === 2 ? '#7c3aed' : '#999' }}>2. Details & launch</span>
+            <span style={{ color: step === 2 ? '#7c3aed' : '#999' }}>2. Details</span>
+          </li>
+          <li aria-hidden="true">→</li>
+          <li>
+            <span style={{ color: step === 3 ? '#7c3aed' : '#999' }}>3. Milestones & launch</span>
           </li>
         </ol>
       </nav>
@@ -132,16 +221,16 @@ export default function CreateCampaign() {
         Start a campaign
       </h1>
       <p style={{ color: '#555', marginBottom: '1.25rem', fontSize: '0.95rem', lineHeight: 1.55 }}>
-        We create a dedicated Stellar wallet for your campaign. You choose whether the goal is tracked in{' '}
-        <strong>USDC</strong> or <strong>XLM</strong> — contributors can still pay from either asset when paths exist.
+        We create a dedicated Stellar wallet for your campaign. You choose the settlement asset and, if you want
+        staged releases, define the milestone plan that unlocks funds over time.
       </p>
 
       {showCreatorTips && (
         <OnboardingCallout title="First time creating a campaign?" onDismiss={dismissTips}>
           <ul>
             <li>Pick the asset that matches how you think about your goal (USD-like vs XLM).</li>
-            <li>Withdrawals need both you and CrowdPay to sign — funds stay in escrow until then.</li>
-            <li>You can edit the story in the description; the title should be clear for backers.</li>
+            <li>Milestones are optional, but they make releases auditable and give backers more confidence.</li>
+            <li>Withdrawals need both you and CrowdPay to sign — milestone campaigns use that flow automatically.</li>
           </ul>
         </OnboardingCallout>
       )}
@@ -237,7 +326,7 @@ export default function CreateCampaign() {
                 value={form.description}
                 onChange={setField('description')}
                 rows={5}
-                placeholder="Tell backers what the funds will be used for and any milestones."
+                placeholder="Tell backers what the funds will be used for and what success looks like."
                 style={{ resize: 'vertical', minHeight: '120px' }}
               />
             </div>
@@ -249,13 +338,108 @@ export default function CreateCampaign() {
               <input id="cc-deadline" type="date" value={form.deadline} onChange={setField('deadline')} />
             </div>
 
-            <div
-              className="alert alert--info"
-              style={{ marginTop: '1.25rem' }}
-              role="status"
-            >
+            <div className="alert alert--info" style={{ marginTop: '1.25rem' }} role="status">
               <strong>Summary:</strong> Goal of {form.target_amount || '—'} {form.asset_type} — “{form.title || 'Untitled'}”.
               A multisig campaign wallet will be created when you launch.
+            </div>
+
+            {error && (
+              <p className="alert alert--error" style={{ marginTop: '1rem' }} role="alert">
+                {error}
+              </p>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginTop: '1.25rem' }}>
+              <button type="button" className="btn-primary" style={{ width: '100%' }} onClick={() => setStep(3)}>
+                Continue to milestones
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ width: '100%' }}
+                onClick={() => {
+                  setError('');
+                  setStep(1);
+                }}
+              >
+                Back
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 3 && (
+          <>
+            <div className="campaign-card" style={{ marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                <strong>Milestone plan</strong>
+                <span style={{ fontSize: '0.85rem', color: milestoneTotal === 100 || form.milestones.length === 0 ? '#166534' : '#92400e' }}>
+                  Total: {milestoneTotal.toLocaleString()}%
+                </span>
+              </div>
+              <p style={{ color: '#555', fontSize: '0.88rem', lineHeight: 1.5 }}>
+                Milestones are optional. If you add them, define between 1 and 10 release checkpoints and make sure the
+                percentages sum to exactly 100.
+              </p>
+            </div>
+
+            {form.milestones.length === 0 ? (
+              <div className="alert alert--info" style={{ marginBottom: '1rem' }}>
+                No milestones added yet. Legacy campaigns can still use the existing single-withdrawal flow.
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: '0.85rem' }}>
+                {form.milestones.map((milestone, index) => (
+                  <div key={index} className="campaign-card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <strong>Milestone {index + 1}</strong>
+                      <button type="button" className="btn-secondary" onClick={() => removeMilestone(index)} style={{ fontSize: '0.8rem' }}>
+                        Remove
+                      </button>
+                    </div>
+                    <div className="form-stack">
+                      <label className="label-strong">Title</label>
+                      <input
+                        value={milestone.title}
+                        onChange={(e) => setMilestoneField(index, 'title', e.target.value)}
+                        placeholder="e.g. Deliver prototype"
+                      />
+                    </div>
+                    <div className="form-stack" style={{ marginTop: '0.75rem' }}>
+                      <label className="label-strong">Description</label>
+                      <textarea
+                        value={milestone.description}
+                        onChange={(e) => setMilestoneField(index, 'description', e.target.value)}
+                        rows={3}
+                        placeholder="Explain what contributors should expect before this release unlocks."
+                      />
+                    </div>
+                    <div className="form-stack" style={{ marginTop: '0.75rem' }}>
+                      <label className="label-strong">Release percentage</label>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0.01"
+                        step="0.01"
+                        value={milestone.release_percentage}
+                        onChange={(e) => setMilestoneField(index, 'release_percentage', e.target.value)}
+                        placeholder="25"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {form.milestones.length < 10 && (
+              <button type="button" className="btn-secondary" style={{ width: '100%', marginTop: '1rem' }} onClick={addMilestone}>
+                + Add milestone
+              </button>
+            )}
+
+            <div className="alert alert--info" style={{ marginTop: '1.25rem' }} role="status">
+              <strong>Launch summary:</strong> {form.title || 'Untitled'} with a goal of {form.target_amount || '—'} {form.asset_type}
+              {form.milestones.length ? ` and ${form.milestones.length} milestone release${form.milestones.length > 1 ? 's' : ''}.` : ' and no milestone plan.'}
             </div>
 
             {error && (
@@ -275,7 +459,7 @@ export default function CreateCampaign() {
                 disabled={loading}
                 onClick={() => {
                   setError('');
-                  setStep(1);
+                  setStep(2);
                 }}
               >
                 Back

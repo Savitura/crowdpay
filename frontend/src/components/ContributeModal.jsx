@@ -1,4 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import {
+  getNetwork,
+  isConnected as isFreighterConnected,
+  requestAccess,
+  signTransaction,
+} from '@stellar/freighter-api';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { stellarExpertTxUrl } from '../config/stellar';
@@ -28,17 +34,30 @@ function friendlyContributeError(err) {
   return err.message || 'Payment could not be submitted. Try again.';
 }
 
+function friendlyFreighterError(err, fallback) {
+  if (!err) return fallback;
+  if (typeof err === 'string') return err;
+  if (typeof err.message === 'string') return err.message;
+  if (typeof err.error === 'string') return err.error;
+  if (err.error && typeof err.error.message === 'string') return err.error.message;
+  return fallback;
+}
+
 export default function ContributeModal({ campaign, onClose, onSuccess }) {
   const { token } = useAuth();
   const [amount, setAmount] = useState('');
   const [sendAsset, setSendAsset] = useState(campaign.asset_type);
+  const [paymentMethod, setPaymentMethod] = useState('custodial');
   const [loading, setLoading] = useState(false);
+  const [loadingLabel, setLoadingLabel] = useState('Submitting…');
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [error, setError] = useState('');
   const [quoteError, setQuoteError] = useState('');
   const [quote, setQuote] = useState(null);
   const [phase, setPhase] = useState('form');
   const [result, setResult] = useState(null);
+  const [freighterAvailable, setFreighterAvailable] = useState(false);
+  const [freighterChecked, setFreighterChecked] = useState(false);
 
   const isPathPayment = sendAsset !== campaign.asset_type;
   const destAmount = amount.trim();
@@ -89,6 +108,92 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const connection = await isFreighterConnected();
+        if (active) {
+          setFreighterAvailable(Boolean(connection?.isConnected));
+        }
+      } catch {
+        if (active) {
+          setFreighterAvailable(false);
+        }
+      } finally {
+        if (active) {
+          setFreighterChecked(true);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function submitWithCustodial() {
+    setLoadingLabel('Submitting with CrowdPay wallet…');
+    return api.contribute(
+      { campaign_id: campaign.id, amount: destAmount, send_asset: sendAsset },
+      token
+    );
+  }
+
+  async function submitWithFreighter() {
+    setLoadingLabel('Connecting to Freighter…');
+    const access = await requestAccess();
+    if (access?.error) {
+      throw new Error(friendlyFreighterError(access.error, 'Could not connect to Freighter.'));
+    }
+    const signerAddress = access?.address;
+    if (!signerAddress) {
+      throw new Error('Freighter did not return a Stellar account.');
+    }
+
+    setLoadingLabel('Preparing transaction…');
+    const prepared = await api.prepareContribution(
+      {
+        campaign_id: campaign.id,
+        amount: destAmount,
+        send_asset: sendAsset,
+        sender_public_key: signerAddress,
+      },
+      token
+    );
+
+    setLoadingLabel('Checking Freighter network…');
+    const network = await getNetwork();
+    if (network?.error) {
+      throw new Error(friendlyFreighterError(network.error, 'Could not read Freighter network.'));
+    }
+    if (network?.networkPassphrase !== prepared.network_passphrase) {
+      const current = network?.network || 'another network';
+      throw new Error(`Freighter is connected to ${current}. Switch it to ${prepared.network_name} and try again.`);
+    }
+
+    setLoadingLabel('Waiting for signature…');
+    const signed = await signTransaction(prepared.unsigned_xdr, {
+      networkPassphrase: prepared.network_passphrase,
+      address: signerAddress,
+    });
+    if (signed?.error) {
+      throw new Error(friendlyFreighterError(signed.error, 'Freighter could not sign this transaction.'));
+    }
+    if (!signed?.signedTxXdr) {
+      throw new Error('Freighter did not return a signed transaction.');
+    }
+
+    setLoadingLabel('Submitting signed transaction…');
+    return api.submitSignedContribution(
+      {
+        prepare_token: prepared.prepare_token,
+        signed_xdr: signed.signedTxXdr,
+      },
+      token
+    );
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (!destAmount || Number(destAmount) <= 0) {
@@ -96,19 +201,25 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
       return;
     }
     setLoading(true);
+    setLoadingLabel('Submitting…');
     setError('');
     try {
-      const data = await api.contribute(
-        { campaign_id: campaign.id, amount: destAmount, send_asset: sendAsset },
-        token
-      );
+      const data =
+        paymentMethod === 'freighter'
+          ? await submitWithFreighter()
+          : await submitWithCustodial();
       setResult(data);
       setPhase('success');
       onSuccess();
     } catch (err) {
-      setError(friendlyContributeError(err));
+      setError(
+        paymentMethod === 'freighter'
+          ? friendlyFreighterError(err, 'Freighter payment could not be submitted. Try again.')
+          : friendlyContributeError(err)
+      );
     } finally {
       setLoading(false);
+      setLoadingLabel('Submitting…');
     }
   }
 
@@ -136,6 +247,47 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
             </p>
 
             <form onSubmit={handleSubmit}>
+              <fieldset style={{ border: 'none', margin: '0 0 1rem', padding: 0 }}>
+                <legend className="label-strong" style={{ marginBottom: '0.45rem' }}>
+                  Payment method
+                </legend>
+                <div className="asset-picker" role="radiogroup" aria-label="Contribution payment method">
+                  <label
+                    className={`asset-picker__option${paymentMethod === 'custodial' ? ' asset-picker__option--selected' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="payment_method"
+                      value="custodial"
+                      checked={paymentMethod === 'custodial'}
+                      onChange={() => setPaymentMethod('custodial')}
+                    />
+                    <div className="asset-picker__code">CrowdPay wallet</div>
+                    <div className="asset-picker__hint">Uses your existing custodial balance</div>
+                  </label>
+                  {freighterAvailable && (
+                    <label
+                      className={`asset-picker__option${paymentMethod === 'freighter' ? ' asset-picker__option--selected' : ''}`}
+                    >
+                      <input
+                        type="radio"
+                        name="payment_method"
+                        value="freighter"
+                        checked={paymentMethod === 'freighter'}
+                        onChange={() => setPaymentMethod('freighter')}
+                      />
+                      <div className="asset-picker__code">Pay with Freighter</div>
+                      <div className="asset-picker__hint">You sign in-browser; CrowdPay never sees your key</div>
+                    </label>
+                  )}
+                </div>
+                {freighterChecked && !freighterAvailable && (
+                  <span id="contrib-wallet-help" style={styles.help}>
+                    Freighter extension not detected. Install it to contribute from your own Stellar wallet.
+                  </span>
+                )}
+              </fieldset>
+
               <fieldset style={{ border: 'none', margin: '0 0 1rem', padding: 0 }}>
                 <legend className="label-strong" style={{ marginBottom: '0.45rem' }}>
                   Pay with
@@ -187,6 +339,13 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
                 </div>
               )}
 
+              {paymentMethod === 'freighter' && (
+                <div className="alert alert--info" style={{ marginTop: '0.85rem' }} role="status">
+                  <strong>Non-custodial payment.</strong> CrowdPay will prepare the transaction, Freighter will ask you
+                  to sign it locally, and only the signed XDR comes back for submission.
+                </div>
+              )}
+
               {isPathPayment && destAmount && Number(destAmount) > 0 && (
                 <div style={{ marginTop: '0.85rem', minHeight: '3.5rem' }}>
                   {quoteLoading && <p style={{ fontSize: '0.85rem', color: '#666' }}>Fetching live quote…</p>}
@@ -227,7 +386,7 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
                   className="btn-primary"
                   disabled={loading || (isPathPayment && (quoteLoading || !!quoteError || !quote))}
                 >
-                  {loading ? 'Submitting…' : 'Confirm payment'}
+                  {loading ? loadingLabel : paymentMethod === 'freighter' ? 'Review in Freighter' : 'Confirm payment'}
                 </button>
               </div>
             </form>

@@ -1,69 +1,60 @@
 const router = require('express').Router();
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const { Keypair } = require('@stellar/stellar-sdk');
 const db = require('../config/database');
-const { ensureCustodialAccountFundedAndTrusted } = require('../services/stellarService');
+const { requireAuth } = require('../middleware/auth');
 
-// Register — creates user + custodial Stellar keypair
-router.post('/register', async (req, res) => {
-  const { email, password, name } = req.body;
-  if (!email || !password || !name) {
-    return res.status(400).json({ error: 'email, password and name are required' });
-  }
-
-  const existing = await db.query('SELECT id FROM users WHERE email = $1', [email]);
-  if (existing.rows.length > 0) {
-    return res.status(409).json({ error: 'Email already registered' });
-  }
-
-  const passwordHash = await bcrypt.hash(password, 10);
-  const keypair = Keypair.random();
-
+router.get('/me/campaigns', requireAuth, async (req, res) => {
   const { rows } = await db.query(
-    `INSERT INTO users (email, password_hash, name, wallet_public_key, wallet_secret_encrypted)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id, email, name, wallet_public_key`,
-    [email, passwordHash, name, keypair.publicKey(), keypair.secret()]
-    // TODO: encrypt secret with KMS before storing in production
+    `SELECT c.id, c.title, c.status, c.asset_type, c.target_amount, c.raised_amount,
+            c.deadline, c.created_at,
+            COALESCE(stats.contributor_count, 0) AS contributor_count
+     FROM campaigns c
+     LEFT JOIN LATERAL (
+       SELECT COUNT(DISTINCT sender_public_key)::int AS contributor_count
+       FROM contributions ctr
+       WHERE ctr.campaign_id = c.id
+     ) stats ON TRUE
+     WHERE c.creator_id = $1
+     ORDER BY c.created_at DESC`,
+    [req.user.userId]
   );
-
-  const token = jwt.sign({ userId: rows[0].id }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN,
-  });
-
-  const publicKey = keypair.publicKey();
-  const secret = keypair.secret();
-  setImmediate(() => {
-    ensureCustodialAccountFundedAndTrusted({ publicKey, secret }).catch((err) => {
-      console.error('[users] Background Stellar funding/trustlines failed:', err.message);
-    });
-  });
-
-  res.status(201).json({ token, user: rows[0] });
+  res.json(rows);
 });
 
-// Login
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+router.get('/me/stats', requireAuth, async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT
+      COUNT(*)::int AS total_campaigns,
+      COALESCE(SUM(raised_amount), 0)::numeric AS total_raised,
+      COUNT(*) FILTER (WHERE status = 'active')::int AS active_campaigns,
+      COUNT(*) FILTER (WHERE status = 'funded')::int AS funded_campaigns,
+      COUNT(*) FILTER (WHERE status = 'in_progress')::int AS in_progress_campaigns,
+      COUNT(*) FILTER (WHERE status IN ('completed', 'closed', 'withdrawn', 'failed'))::int AS closed_campaigns
+     FROM campaigns
+     WHERE creator_id = $1`,
+    [req.user.userId]
+  );
+  res.json(rows[0]);
+});
 
-  if (!rows.length || !(await bcrypt.compare(password, rows[0].password_hash))) {
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
+router.get('/me/contributions', requireAuth, async (req, res) => {
+  const { rows: userRows } = await db.query(
+    'SELECT wallet_public_key FROM users WHERE id = $1',
+    [req.user.userId]
+  );
+  if (!userRows.length) return res.status(404).json({ error: 'User not found' });
 
-  const token = jwt.sign({ userId: rows[0].id }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN,
-  });
-
-  res.json({
-    token,
-    user: {
-      id: rows[0].id,
-      email: rows[0].email,
-      name: rows[0].name,
-      wallet_public_key: rows[0].wallet_public_key,
-    },
-  });
+  const senderPublicKey = userRows[0].wallet_public_key;
+  const { rows } = await db.query(
+    `SELECT ctr.id, ctr.amount, ctr.asset, ctr.tx_hash, ctr.created_at,
+            c.id AS campaign_id, c.title AS campaign_title, c.status AS campaign_status,
+            c.target_amount, c.raised_amount
+     FROM contributions ctr
+     JOIN campaigns c ON c.id = ctr.campaign_id
+     WHERE ctr.sender_public_key = $1
+     ORDER BY ctr.created_at DESC`,
+    [senderPublicKey]
+  );
+  res.json(rows);
 });
 
 module.exports = router;

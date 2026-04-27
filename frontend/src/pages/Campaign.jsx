@@ -3,7 +3,31 @@ import { Link, useParams, useLocation } from 'react-router-dom';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import ContributeModal from '../components/ContributeModal';
+import MilestoneTracker from '../components/MilestoneTracker';
 import WithdrawalsSection from '../components/WithdrawalsSection';
+import CampaignDetailSkeleton from '../components/skeletons/CampaignDetailSkeleton';
+import ContributionListSkeleton from '../components/skeletons/ContributionListSkeleton';
+
+function escapeHtml(text) {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function markdownToHtml(markdown) {
+  const escaped = escapeHtml(markdown || '');
+  return escaped
+    .replace(/^### (.*)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.*)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.*)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/\[(.*?)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/\n/g, '<br />');
+}
 
 export default function Campaign() {
   const { id } = useParams();
@@ -11,10 +35,15 @@ export default function Campaign() {
   const { user, token } = useAuth();
   const [campaign, setCampaign] = useState(null);
   const [loadError, setLoadError] = useState('');
-  const [contributions, setContributions] = useState([]);
+  const [contributions, setContributions] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [contributed, setContributed] = useState(false);
   const [showCreatedBanner, setShowCreatedBanner] = useState(!!location.state?.created);
+  const [updates, setUpdates] = useState([]);
+  const [milestones, setMilestones] = useState([]);
+  const [updateForm, setUpdateForm] = useState({ title: '', body: '' });
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updatesError, setUpdatesError] = useState('');
 
   useEffect(() => {
     setLoadError('');
@@ -23,6 +52,8 @@ export default function Campaign() {
       .then(setCampaign)
       .catch((err) => setLoadError(err.message || 'Could not load campaign.'));
     api.getContributions(id).then(setContributions).catch(() => setContributions([]));
+    api.getMilestones(id).then(setMilestones).catch(() => setMilestones([]));
+    api.getCampaignUpdates(id, { limit: 20 }).then(setUpdates).catch(() => setUpdates([]));
   }, [id, contributed]);
 
   useEffect(() => {
@@ -45,14 +76,31 @@ export default function Campaign() {
   }
 
   if (!campaign) {
-    return (
-      <main className="container" style={{ paddingTop: '3rem' }}>
-        <p style={{ color: '#666' }}>Loading campaign…</p>
-      </main>
-    );
+    return <CampaignDetailSkeleton />;
   }
 
   const pct = Math.min(100, (campaign.raised_amount / campaign.target_amount) * 100).toFixed(1);
+  const canPostUpdate = user?.id && campaign.creator_id === user.id;
+
+  async function submitUpdate(e) {
+    e.preventDefault();
+    setUpdatesError('');
+    setUpdateBusy(true);
+    try {
+      await api.postCampaignUpdate(
+        campaign.id,
+        { title: updateForm.title.trim(), body: updateForm.body.trim() },
+        token
+      );
+      setUpdateForm({ title: '', body: '' });
+      const list = await api.getCampaignUpdates(id, { limit: 20 });
+      setUpdates(list);
+    } catch (err) {
+      setUpdatesError(err.message || 'Could not publish update');
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
 
   return (
     <main className="container" style={{ paddingTop: '2.5rem', paddingBottom: '4rem', maxWidth: '760px' }}>
@@ -77,6 +125,11 @@ export default function Campaign() {
           </button>
         </div>
       )}
+      {campaign.status === 'failed' && (
+        <div className="alert alert--error" style={{ marginBottom: '1.25rem' }} role="status">
+          <strong>This campaign did not reach its goal.</strong> Contributions are closed and refunds can be requested.
+        </div>
+      )}
       <div style={styles.header}>
         <span style={styles.asset}>{campaign.asset_type}</span>
         <h1 style={styles.title}>{campaign.title}</h1>
@@ -96,20 +149,26 @@ export default function Campaign() {
         </div>
         <div style={styles.bar}><div style={{ ...styles.fill, width: `${pct}%` }} /></div>
 
-        {user ? (
-          <button type="button" className="btn-primary" style={styles.cta} onClick={() => setShowModal(true)}>
-            Contribute
-          </button>
+        {campaign.status === 'active' ? (
+          user ? (
+            <button type="button" className="btn-primary" style={styles.cta} onClick={() => setShowModal(true)}>
+              Contribute
+            </button>
+          ) : (
+            <p style={{ color: '#555', fontSize: '0.9rem', lineHeight: 1.5 }}>
+              <Link to="/login" state={{ from: `/campaigns/${id}` }} style={{ color: '#7c3aed', fontWeight: 600 }}>
+                Log in
+              </Link>{' '}
+              or{' '}
+              <Link to="/register" style={{ color: '#7c3aed', fontWeight: 600 }}>
+                create an account
+              </Link>{' '}
+              to contribute. You can pay with your CrowdPay custodial wallet or with Freighter when it is installed.
+            </p>
+          )
         ) : (
           <p style={{ color: '#555', fontSize: '0.9rem', lineHeight: 1.5 }}>
-            <Link to="/login" state={{ from: `/campaigns/${id}` }} style={{ color: '#7c3aed', fontWeight: 600 }}>
-              Log in
-            </Link>{' '}
-            or{' '}
-            <Link to="/register" style={{ color: '#7c3aed', fontWeight: 600 }}>
-              create an account
-            </Link>{' '}
-            to contribute. You will get a custodial Stellar wallet automatically.
+            Contributions are closed while this campaign is <strong>{campaign.status}</strong>.
           </p>
         )}
       </div>
@@ -122,16 +181,69 @@ export default function Campaign() {
       {token && (
         <WithdrawalsSection
           campaign={campaign}
+          milestones={milestones}
           user={user}
           token={token}
           onReleased={() => {
             api.getCampaign(id).then(setCampaign).catch(() => {});
+            api.getMilestones(id).then(setMilestones).catch(() => {});
           }}
         />
       )}
 
-      <h2 style={styles.sectionTitle}>Contributions ({contributions.length})</h2>
-      {contributions.length === 0 ? (
+      <MilestoneTracker milestones={milestones} assetType={campaign.asset_type} />
+
+      <h2 style={styles.sectionTitle}>Updates ({updates.length})</h2>
+      {canPostUpdate && (
+        <form onSubmit={submitUpdate} className="campaign-card" style={{ marginBottom: '1rem' }}>
+          <strong style={{ marginBottom: '0.5rem', display: 'block' }}>Post update</strong>
+          <input
+            placeholder="Update title"
+            value={updateForm.title}
+            onChange={(e) => setUpdateForm((s) => ({ ...s, title: e.target.value }))}
+            required
+            style={{ marginBottom: '0.5rem' }}
+          />
+          <textarea
+            placeholder="Write markdown update..."
+            value={updateForm.body}
+            onChange={(e) => setUpdateForm((s) => ({ ...s, body: e.target.value }))}
+            rows={4}
+            required
+          />
+          {updatesError && <p className="alert alert--error" style={{ marginTop: '0.5rem' }}>{updatesError}</p>}
+          <button type="submit" className="btn-primary" disabled={updateBusy} style={{ marginTop: '0.5rem' }}>
+            {updateBusy ? 'Posting...' : 'Post update'}
+          </button>
+        </form>
+      )}
+      {updates.length === 0 ? (
+        <p style={{ color: '#999', marginBottom: '1rem' }}>No updates posted yet.</p>
+      ) : (
+        <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '1.25rem' }}>
+          {updates.map((update) => (
+            <article key={update.id} className="campaign-card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <strong>{update.title}</strong>
+                <span style={{ color: '#666', fontSize: '0.85rem' }}>
+                  {update.author_name} • {new Date(update.created_at).toLocaleString()}
+                </span>
+              </div>
+              <div
+                style={{ marginTop: '0.5rem', color: '#333', lineHeight: 1.5 }}
+                dangerouslySetInnerHTML={{ __html: markdownToHtml(update.body) }}
+              />
+            </article>
+          ))}
+        </div>
+      )}
+
+      <h2 style={styles.sectionTitle}>
+        Contributions {contributions !== null ? `(${contributions.length})` : ''}
+      </h2>
+      {contributions === null ? (
+        <ContributionListSkeleton />
+      ) : contributions.length === 0 ? (
         <p style={{ color: '#999' }}>No contributions yet.</p>
       ) : (
         <div style={styles.list}>
@@ -144,6 +256,15 @@ export default function Campaign() {
                 {c.payment_type === 'path_payment_strict_receive' && c.source_asset && c.source_amount != null && (
                   <div style={styles.convHint}>
                     via {Number(c.source_amount).toLocaleString()} {c.source_asset}
+                  </div>
+                )}
+                {c.refund_status && (
+                  <div style={styles.refundTag}>
+                    {c.refund_status === 'pending' && 'Refund pending'}
+                    {c.refund_status === 'submitted' && 'Refunded'}
+                    {c.refund_status === 'indexed' && 'Refunded'}
+                    {c.refund_status === 'failed' && 'Refund failed'}
+                    {c.refund_status === 'denied' && 'Refund denied'}
                   </div>
                 )}
               </div>
@@ -187,4 +308,5 @@ const styles = {
   sender: { fontSize: '0.85rem', color: '#555', fontFamily: 'monospace' },
   amount: { fontSize: '0.85rem', fontWeight: 600, flexShrink: 0 },
   convHint: { fontSize: '0.72rem', color: '#888', marginTop: '0.15rem' },
+  refundTag: { marginTop: '0.45rem', fontSize: '0.75rem', color: '#7c3aed', fontWeight: 700 },
 };

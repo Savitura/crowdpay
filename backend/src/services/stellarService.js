@@ -213,23 +213,21 @@ async function createCampaignWallet(creatorPublicKey) {
 
   return {
     publicKey: campaignKeypair.publicKey(),
-    // In production: encrypt and store secret, never return it
     secret: campaignKeypair.secret(),
   };
 }
 
 /**
- * Build and sign a custodial payment contribution; returns XDR for audit + submission.
+ * Build an unsigned payment contribution transaction.
  */
-async function prepareSignedContributionPayment({
-  senderSecret,
+async function buildUnsignedContributionPayment({
+  senderPublicKey,
   destinationPublicKey,
   asset,
   amount,
   memo,
 }) {
-  const senderKeypair = Keypair.fromSecret(senderSecret);
-  const senderAccount = await server.loadAccount(senderKeypair.publicKey());
+  const senderAccount = await server.loadAccount(senderPublicKey);
   const stellarAsset = toStellarAsset(asset);
 
   const tx = new TransactionBuilder(senderAccount, {
@@ -247,7 +245,28 @@ async function prepareSignedContributionPayment({
     .setTimeout(30)
     .build();
 
-  const unsignedXdr = tx.toXDR();
+  return tx.toXDR();
+}
+
+/**
+ * Build and sign a custodial payment contribution; returns XDR for audit + submission.
+ */
+async function prepareSignedContributionPayment({
+  senderSecret,
+  destinationPublicKey,
+  asset,
+  amount,
+  memo,
+}) {
+  const senderKeypair = Keypair.fromSecret(senderSecret);
+  const unsignedXdr = await buildUnsignedContributionPayment({
+    senderPublicKey: senderKeypair.publicKey(),
+    destinationPublicKey,
+    asset,
+    amount,
+    memo,
+  });
+  const tx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
   tx.sign(senderKeypair);
   const signedXdr = tx.toXDR();
   return { unsignedXdr, signedXdr };
@@ -263,10 +282,10 @@ async function submitPayment(params) {
 }
 
 /**
- * Build and sign a path payment contribution; `destAssetCode` is the asset the campaign receives.
+ * Build an unsigned path payment contribution; `destAssetCode` is the asset the campaign receives.
  */
-async function prepareSignedContributionPathPayment({
-  senderSecret,
+async function buildUnsignedContributionPathPayment({
+  senderPublicKey,
   destinationPublicKey,
   sendAsset,
   sendMax,
@@ -274,8 +293,7 @@ async function prepareSignedContributionPathPayment({
   destAssetCode,
   memo,
 }) {
-  const senderKeypair = Keypair.fromSecret(senderSecret);
-  const senderAccount = await server.loadAccount(senderKeypair.publicKey());
+  const senderAccount = await server.loadAccount(senderPublicKey);
   const sourceStellarAsset = toStellarAsset(sendAsset);
   const destStellarAsset = toStellarAsset(destAssetCode);
 
@@ -297,7 +315,32 @@ async function prepareSignedContributionPathPayment({
     .setTimeout(30)
     .build();
 
-  const unsignedXdr = tx.toXDR();
+  return tx.toXDR();
+}
+
+/**
+ * Build and sign a path payment contribution; `destAssetCode` is the asset the campaign receives.
+ */
+async function prepareSignedContributionPathPayment({
+  senderSecret,
+  destinationPublicKey,
+  sendAsset,
+  sendMax,
+  destAmount,
+  destAssetCode,
+  memo,
+}) {
+  const senderKeypair = Keypair.fromSecret(senderSecret);
+  const unsignedXdr = await buildUnsignedContributionPathPayment({
+    senderPublicKey: senderKeypair.publicKey(),
+    destinationPublicKey,
+    sendAsset,
+    sendMax,
+    destAmount,
+    destAssetCode,
+    memo,
+  });
+  const tx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
   tx.sign(senderKeypair);
   const signedXdr = tx.toXDR();
   return { unsignedXdr, signedXdr };
@@ -490,6 +533,8 @@ module.exports = {
   ensureCustodialAccountFundedAndTrusted,
   fundCustodialAccountFromPlatformIfNeeded,
   submitMissingTrustlinesForCustodialAccount,
+  buildUnsignedContributionPayment,
+  buildUnsignedContributionPathPayment,
   prepareSignedContributionPayment,
   prepareSignedContributionPathPayment,
   submitPayment,

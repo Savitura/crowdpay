@@ -1,7 +1,14 @@
 const router = require('express').Router();
+const jwt = require('jsonwebtoken');
+const { Keypair, TransactionBuilder } = require('@stellar/stellar-sdk');
 const db = require('../config/database');
+const { networkPassphrase, isTestnet } = require('../config/stellar');
 const { requireAuth } = require('../middleware/auth');
+const logger = require('../config/logger');
+const { sendAlert } = require('../services/alerting');
 const {
+  buildUnsignedContributionPayment,
+  buildUnsignedContributionPathPayment,
   prepareSignedContributionPayment,
   prepareSignedContributionPathPayment,
   submitPreparedTransaction,
@@ -10,16 +17,167 @@ const {
   ensureCustodialAccountFundedAndTrusted,
 } = require('../services/stellarService');
 const { insertContributionSubmitted } = require('../services/stellarTransactionService');
+const { sendEmail } = require('../services/emailService');
+const { withDecryptedWalletSecret } = require('../services/walletSecrets');
 
 const SLIPPAGE_BPS = 500; // 5.00%
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
+const PREPARED_CONTRIBUTION_EXPIRES_IN = '10m';
+
+function validateContributionRequest({ campaign_id, amount, send_asset }, res) {
+  if (!campaign_id || !amount || !send_asset) {
+    res.status(400).json({ error: 'campaign_id, amount and send_asset are required' });
+    return false;
+  }
+  if (!SUPPORTED_ASSETS.includes(send_asset)) {
+    res.status(400).json({ error: `Supported assets: ${SUPPORTED_ASSETS.join(', ')}` });
+    return false;
+  }
+  return true;
+}
+
+function validateFreighterPublicKey(publicKey) {
+  try {
+    Keypair.fromPublicKey(publicKey);
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+async function loadActiveCampaign(campaignId) {
+  const { rows } = await db.query(
+    'SELECT c.*, u.email as creator_email FROM campaigns c JOIN users u ON c.creator_id = u.id WHERE c.id = $1 AND c.status = $2',
+    [campaignId, 'active']
+  );
+  return rows[0] || null;
+}
+
+async function buildContributionIntent({
+  campaign,
+  campaignId,
+  amount,
+  sendAsset,
+  contributorPublicKey,
+}) {
+  if (sendAsset === campaign.asset_type) {
+    return {
+      kind: 'payment',
+      conversionQuote: null,
+      flowMetadata: {
+        flow: 'payment',
+        send_asset: sendAsset,
+        amount: String(amount),
+        contributor_public_key: contributorPublicKey,
+      },
+    };
+  }
+
+  const paths = await getPathPaymentQuote({
+    sendAsset,
+    destAsset: campaign.asset_type,
+    destAmount: amount,
+  });
+  if (!paths.length) {
+    const error = new Error(`No conversion path found for ${sendAsset} -> ${campaign.asset_type}`);
+    error.statusCode = 422;
+    throw error;
+  }
+
+  const bestPath = paths[0];
+  const sendMax = (
+    parseFloat(bestPath.source_amount) *
+    (1 + SLIPPAGE_BPS / 10000)
+  ).toFixed(7);
+
+  return {
+    kind: 'path_payment_strict_receive',
+    sendMax,
+    conversionQuote: {
+      send_asset: sendAsset,
+      campaign_asset: campaign.asset_type,
+      campaign_amount: String(amount),
+      quoted_source_amount: bestPath.source_amount,
+      max_send_amount: sendMax,
+      path: bestPath.path,
+    },
+    flowMetadata: {
+      flow: 'path_payment_strict_receive',
+      send_asset: sendAsset,
+      dest_asset: campaign.asset_type,
+      dest_amount: String(amount),
+      max_send_amount: sendMax,
+      contributor_public_key: contributorPublicKey,
+    },
+  };
+}
+
+function createPreparedContributionToken(payload) {
+  return jwt.sign(
+    {
+      kind: 'prepared_contribution',
+      ...payload,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: PREPARED_CONTRIBUTION_EXPIRES_IN }
+  );
+}
+
+function verifyPreparedContributionToken(token) {
+  const payload = jwt.verify(token, process.env.JWT_SECRET);
+  if (!payload || payload.kind !== 'prepared_contribution') {
+    throw new Error('Invalid contribution prepare token');
+  }
+  return payload;
+}
+
+function validateSubmittedContributionXdr({ signedXdr, unsignedXdr, senderPublicKey }) {
+  const signedTx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
+  const unsignedTx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
+
+  if (signedTx.source !== senderPublicKey) {
+    throw new Error('Signed transaction source account does not match the prepared contribution');
+  }
+
+  if (signedTx.hash().toString('hex') !== unsignedTx.hash().toString('hex')) {
+    throw new Error('Signed transaction does not match the prepared contribution');
+  }
+
+  if (!signedTx.signatures.length) {
+    throw new Error('Signed transaction is missing contributor signature');
+  }
+
+  const signer = Keypair.fromPublicKey(senderPublicKey);
+  const signatureValid = signedTx.signatures.some((decoratedSignature) => {
+    try {
+      return signer.verify(signedTx.hash(), decoratedSignature.signature());
+    } catch (_err) {
+      return false;
+    }
+  });
+
+  if (!signatureValid) {
+    throw new Error('Signed transaction does not include a valid Freighter signature for the contributor');
+  }
+}
 
 // Get contributions for a campaign
 router.get('/campaign/:campaignId', async (req, res) => {
   const { rows } = await db.query(
-    `SELECT id, sender_public_key, amount, asset, payment_type, source_amount,
-            source_asset, conversion_rate, path, tx_hash, created_at
-     FROM contributions WHERE campaign_id = $1 ORDER BY created_at DESC`,
+    `SELECT c.id, c.sender_public_key, c.amount, c.asset, c.payment_type,
+            c.source_amount, c.source_asset, c.conversion_rate, c.path,
+            c.tx_hash, c.created_at,
+            wr.status AS refund_status, wr.tx_hash AS refund_tx_hash
+     FROM contributions c
+     LEFT JOIN LATERAL (
+       SELECT status, tx_hash
+       FROM withdrawal_requests
+       WHERE contribution_id = c.id
+       ORDER BY created_at DESC
+       LIMIT 1
+     ) wr ON TRUE
+     WHERE c.campaign_id = $1
+     ORDER BY c.created_at DESC`,
     [req.params.campaignId]
   );
   res.json(rows);
@@ -51,9 +209,7 @@ router.get('/finalization/:txHash', requireAuth, async (req, res) => {
   const isInitiator = row.initiated_by_user_id === req.user.userId;
   const isCreator = row.creator_id === req.user.userId;
   const isContributor = userPk && row.sender_public_key && row.sender_public_key === userPk;
-  const isPlatform =
-    process.env.PLATFORM_APPROVER_USER_ID &&
-    req.user.userId === process.env.PLATFORM_APPROVER_USER_ID;
+  const isPlatform = req.user.role === 'admin';
 
   if (!isInitiator && !isCreator && !isContributor && !isPlatform) {
     return res.status(403).json({ error: 'Not authorized to view this transaction' });
@@ -124,119 +280,225 @@ router.get('/quote', requireAuth, async (req, res) => {
   });
 });
 
+router.post('/prepare', requireAuth, async (req, res) => {
+  const { campaign_id, amount, send_asset, sender_public_key } = req.body;
+  if (!validateContributionRequest({ campaign_id, amount, send_asset }, res)) {
+    return;
+  }
+  if (!sender_public_key) {
+    return res.status(400).json({ error: 'sender_public_key is required for Freighter contributions' });
+  }
+  if (!validateFreighterPublicKey(sender_public_key)) {
+    return res.status(400).json({ error: 'sender_public_key must be a valid Stellar public key' });
+  }
+
+  const campaign = await loadActiveCampaign(campaign_id);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+  try {
+    const intent = await buildContributionIntent({
+      campaign,
+      campaignId: campaign_id,
+      amount,
+      sendAsset: send_asset,
+      contributorPublicKey: sender_public_key,
+    });
+
+    const unsignedXdr =
+      intent.kind === 'payment'
+        ? await buildUnsignedContributionPayment({
+            senderPublicKey: sender_public_key,
+            destinationPublicKey: campaign.wallet_public_key,
+            asset: send_asset,
+            amount,
+            memo: `cp-${campaign_id}`,
+          })
+        : await buildUnsignedContributionPathPayment({
+            senderPublicKey: sender_public_key,
+            destinationPublicKey: campaign.wallet_public_key,
+            sendAsset: send_asset,
+            sendMax: intent.sendMax,
+            destAmount: amount,
+            destAssetCode: campaign.asset_type,
+            memo: `cp-${campaign_id}`,
+          });
+
+    const prepareToken = createPreparedContributionToken({
+      user_id: req.user.userId,
+      campaign_id,
+      sender_public_key,
+      unsigned_xdr: unsignedXdr,
+      flow_metadata: intent.flowMetadata,
+      conversion_quote: intent.conversionQuote,
+    });
+
+    res.json({
+      unsigned_xdr: unsignedXdr,
+      prepare_token: prepareToken,
+      conversion_quote: intent.conversionQuote,
+      sender_public_key,
+      network_passphrase: networkPassphrase,
+      network_name: isTestnet ? 'TESTNET' : 'PUBLIC',
+    });
+  } catch (err) {
+    if (err.statusCode === 422) {
+      return res.status(422).json({ error: err.message });
+    }
+
+    logger.error('Freighter contribution preparation failed', { campaign_id, error: err.message });
+    return res.status(503).json({
+      error: 'Could not prepare the Stellar transaction right now. Please try again.',
+    });
+  }
+});
+
+router.post('/submit-signed', requireAuth, async (req, res) => {
+  const { signed_xdr, prepare_token } = req.body;
+  if (!signed_xdr || !prepare_token) {
+    return res.status(400).json({ error: 'signed_xdr and prepare_token are required' });
+  }
+
+  let prepared;
+  try {
+    prepared = verifyPreparedContributionToken(prepare_token);
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Invalid prepare token' });
+  }
+
+  if (prepared.user_id !== req.user.userId) {
+    return res.status(403).json({ error: 'Prepared contribution token does not belong to this user' });
+  }
+
+  try {
+    validateSubmittedContributionXdr({
+      signedXdr: signed_xdr,
+      unsignedXdr: prepared.unsigned_xdr,
+      senderPublicKey: prepared.sender_public_key,
+    });
+  } catch (err) {
+    return res.status(422).json({ error: err.message });
+  }
+
+  let txHash;
+  try {
+    txHash = await submitPreparedTransaction(signed_xdr);
+  } catch (err) {
+    logger.error('Freighter contribution submission failed', {
+      campaign_id: prepared.campaign_id,
+      error: err.message,
+    });
+    sendAlert('Freighter contribution submission failed', {
+      campaign_id: prepared.campaign_id,
+      error: err.message,
+    });
+    return res.status(502).json({
+      error: 'Stellar network rejected the transaction',
+      detail: err.message || String(err),
+    });
+  }
+
+  const stellarTransactionId = await insertContributionSubmitted(null, {
+    txHash,
+    campaignId: prepared.campaign_id,
+    userId: req.user.userId,
+    unsignedXdr: prepared.unsigned_xdr,
+    signedXdr: signed_xdr,
+    metadata: prepared.flow_metadata,
+  });
+
+  res.status(202).json({
+    tx_hash: txHash,
+    stellar_transaction_id: stellarTransactionId,
+    message: 'Transaction submitted',
+    conversion_quote: prepared.conversion_quote,
+  });
+});
+
 // Contribute to a campaign (authenticated, custodial)
 router.post('/', requireAuth, async (req, res) => {
   const { campaign_id, amount, send_asset } = req.body;
-  if (!campaign_id || !amount || !send_asset) {
-    return res.status(400).json({ error: 'campaign_id, amount and send_asset are required' });
-  }
-  if (!SUPPORTED_ASSETS.includes(send_asset)) {
-    return res.status(400).json({ error: `Supported assets: ${SUPPORTED_ASSETS.join(', ')}` });
+  if (!validateContributionRequest({ campaign_id, amount, send_asset }, res)) {
+    return;
   }
 
-  // Load campaign
-  const { rows: campaigns } = await db.query(
-    'SELECT * FROM campaigns WHERE id = $1 AND status = $2',
-    [campaign_id, 'active']
-  );
-  if (!campaigns.length) return res.status(404).json({ error: 'Campaign not found' });
-
-  const campaign = campaigns[0];
+  const campaign = await loadActiveCampaign(campaign_id);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
   // Load contributor's custodial secret
   const { rows: users } = await db.query(
     'SELECT wallet_secret_encrypted, wallet_public_key FROM users WHERE id = $1',
     [req.user.userId]
   );
-  const senderSecret = users[0].wallet_secret_encrypted; // decrypt in production
   const contributorPublicKey = users[0].wallet_public_key;
-
-  try {
-    await ensureCustodialAccountFundedAndTrusted({
-      publicKey: contributorPublicKey,
-      secret: senderSecret,
-    });
-  } catch (err) {
-    console.error('[contributions] Custodial account setup failed:', err.message);
-    return res.status(503).json({
-      error: 'Wallet setup is still completing; please retry in a few seconds.',
-    });
-  }
 
   let txHash;
   let conversionQuote = null;
   let unsignedXdr;
   let signedXdr;
   let flowMetadata;
-
-  if (send_asset === campaign.asset_type) {
-    const prepared = await prepareSignedContributionPayment({
-      senderSecret,
-      destinationPublicKey: campaign.wallet_public_key,
-      asset: send_asset,
+  try {
+    const intent = await buildContributionIntent({
+      campaign,
+      campaignId: campaign_id,
       amount,
-      memo: `cp-${campaign_id}`,
-    });
-    unsignedXdr = prepared.unsignedXdr;
-    signedXdr = prepared.signedXdr;
-    flowMetadata = {
-      flow: 'payment',
-      send_asset,
-      amount: String(amount),
-      contributor_public_key: contributorPublicKey,
-    };
-  } else {
-    const paths = await getPathPaymentQuote({
       sendAsset: send_asset,
-      destAsset: campaign.asset_type,
-      destAmount: amount,
+      contributorPublicKey,
     });
-    if (!paths.length) {
-      return res.status(422).json({
-        error: `No conversion path found for ${send_asset} -> ${campaign.asset_type}`,
-      });
+
+    const preparedTransaction = await withDecryptedWalletSecret(
+      users[0].wallet_secret_encrypted,
+      {
+        userId: req.user.userId,
+        walletPublicKey: contributorPublicKey,
+      },
+      async (senderSecret) => {
+        await ensureCustodialAccountFundedAndTrusted({
+          publicKey: contributorPublicKey,
+          secret: senderSecret,
+        });
+
+        if (intent.kind === 'payment') {
+          return prepareSignedContributionPayment({
+            senderSecret,
+            destinationPublicKey: campaign.wallet_public_key,
+            asset: send_asset,
+            amount,
+            memo: `cp-${campaign_id}`,
+          });
+        }
+
+        return prepareSignedContributionPathPayment({
+          senderSecret,
+          destinationPublicKey: campaign.wallet_public_key,
+          sendAsset: send_asset,
+          sendMax: intent.sendMax,
+          destAmount: amount,
+          destAssetCode: campaign.asset_type,
+          memo: `cp-${campaign_id}`,
+        });
+      }
+    );
+
+    unsignedXdr = preparedTransaction.unsignedXdr;
+    signedXdr = preparedTransaction.signedXdr;
+    conversionQuote = intent.conversionQuote;
+    flowMetadata = intent.flowMetadata;
+  } catch (err) {
+    if (err.statusCode === 422) {
+      return res.status(422).json({ error: err.message });
     }
 
-    const bestPath = paths[0];
-    const sendMax = (
-      parseFloat(bestPath.source_amount) *
-      (1 + SLIPPAGE_BPS / 10000)
-    ).toFixed(7);
-
-    const prepared = await prepareSignedContributionPathPayment({
-      senderSecret,
-      destinationPublicKey: campaign.wallet_public_key,
-      sendAsset: send_asset,
-      sendMax,
-      destAmount: amount,
-      destAssetCode: campaign.asset_type,
-      memo: `cp-${campaign_id}`,
+    logger.error('Custodial contribution signing failed', { campaign_id, error: err.message });
+    return res.status(503).json({
+      error: 'Wallet setup is still completing; please retry in a few seconds.',
     });
-    unsignedXdr = prepared.unsignedXdr;
-    signedXdr = prepared.signedXdr;
-
-    conversionQuote = {
-      send_asset,
-      campaign_asset: campaign.asset_type,
-      campaign_amount: String(amount),
-      quoted_source_amount: bestPath.source_amount,
-      max_send_amount: sendMax,
-      path: bestPath.path,
-    };
-    flowMetadata = {
-      flow: 'path_payment_strict_receive',
-      send_asset,
-      dest_asset: campaign.asset_type,
-      dest_amount: String(amount),
-      max_send_amount: sendMax,
-      contributor_public_key: contributorPublicKey,
-    };
   }
 
   try {
     txHash = await submitPreparedTransaction(signedXdr);
   } catch (err) {
-    console.error('[contributions] Stellar submit failed:', err.message);
+    logger.error('Stellar transaction submission failed', { campaign_id, error: err.message });
+    sendAlert('Stellar transaction submission failed', { campaign_id, error: err.message });
     return res.status(502).json({
       error: 'Stellar network rejected the transaction',
       detail: err.message || String(err),
@@ -257,6 +519,22 @@ router.post('/', requireAuth, async (req, res) => {
     stellar_transaction_id: stellarTransactionId,
     message: 'Transaction submitted',
     conversion_quote: conversionQuote,
+  });
+
+  setImmediate(() => {
+    sendEmail({
+      to: campaign.creator_email,
+      subject: `New Contribution to ${campaign.title}`,
+      text: `You just received a contribution of ${amount} ${send_asset} from public key: ${contributorPublicKey}.`
+    });
+
+    if (Number(campaign.raised_amount) + Number(amount) >= Number(campaign.target_amount)) {
+      sendEmail({
+        to: campaign.creator_email,
+        subject: `Target Reached for ${campaign.title}!`,
+        text: `Congratulations! Your campaign "${campaign.title}" has reached its target of ${campaign.target_amount} ${campaign.asset_type}. You can now start the withdrawal process.`
+      });
+    }
   });
 });
 
