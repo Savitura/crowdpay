@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import VerificationBadge from './VerificationBadge';
 
 export default function CampaignCard({ campaign }) {
   const pct = Math.min(100, (campaign.raised_amount / campaign.target_amount) * 100).toFixed(1);
@@ -14,10 +15,11 @@ export default function CampaignCard({ campaign }) {
         ) : null}
         <div style={styles.header}>
           <span style={styles.asset}>{campaign.asset_type}</span>
-          {typeof campaign.updates_count === 'number' && (
-            <span style={styles.updates}>{campaign.updates_count} updates</span>
-          )}
+          <VerificationBadge status={campaign.creator_kyc_status} compact />
         </div>
+        {typeof campaign.updates_count === 'number' && (
+          <div style={styles.updates}>{campaign.updates_count} updates</div>
+        )}
         <h3 style={styles.title}>{campaign.title}</h3>
         <p style={styles.desc}>{campaign.description?.slice(0, 100)}{campaign.description?.length > 100 ? '…' : ''}</p>
         <div style={styles.bar}>
@@ -39,7 +41,7 @@ const styles = {
   card: { background: '#fff', border: '1px solid #e5e5e5', borderRadius: '10px', padding: '1.25rem', transition: 'box-shadow 0.15s' },
   header: { marginBottom: '0.6rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   asset: { background: '#ede9fe', color: '#7c3aed', fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: '99px' },
-  updates: { fontSize: '0.75rem', fontWeight: 700, color: '#0f766e' },
+  updates: { fontSize: '0.75rem', fontWeight: 700, color: '#0f766e', marginBottom: '0.45rem' },
   title: { fontSize: '1.05rem', fontWeight: 700, marginBottom: '0.4rem', color: '#111' },
   desc: { fontSize: '0.875rem', color: '#666', marginBottom: '1rem' },
   coverImageWrapper: { overflow: 'hidden', borderRadius: '12px 12px 0 0', marginBottom: '1rem', height: '160px' },

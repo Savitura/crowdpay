@@ -162,6 +162,11 @@ input:focus, textarea:focus, select:focus { border-color: #7c3aed; }
   border: 1px solid #a7f3d0;
   color: #065f46;
 }
+.alert--warning {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+}
 
 .modal-shell {
   width: 100%;

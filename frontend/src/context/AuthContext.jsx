@@ -34,6 +34,10 @@ export function AuthProvider({ children }) {
         const data = await api.refresh();
         if (!active) return;
         setToken(data.token);
+        if (data.user) {
+          setUser(data.user);
+          localStorage.setItem('cp_user', JSON.stringify(data.user));
+        }
       } catch {
         if (!active) return;
         setUser(null);
@@ -52,7 +56,7 @@ export function AuthProvider({ children }) {
     return () => {
       active = false;
     };
-  }, [user]);
+  }, []);
 
   const login = useCallback(async (userData, jwt) => {
     const normalized = { ...userData, role: userData.role || (userData.is_admin ? 'admin' : 'contributor') };
@@ -75,8 +79,13 @@ export function AuthProvider({ children }) {
     setReady(true);
   }, []);
 
+  const updateUser = useCallback((userData) => {
+    setUser(userData);
+    localStorage.setItem('cp_user', JSON.stringify(userData));
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, token, ready, login, logout }}>
+    <AuthContext.Provider value={{ user, token, ready, login, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );
