@@ -45,6 +45,7 @@ export default function Campaign() {
   const [updateForm, setUpdateForm] = useState({ title: '', body: '' });
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updatesError, setUpdatesError] = useState('');
+  const [isLive, setIsLive] = useState(false);
 
   useEffect(() => {
     setLoadError('');
@@ -59,6 +60,40 @@ export default function Campaign() {
 
   useEffect(() => {
     if (location.state?.created || location.state?.coverUploadError) {
+    if (!window.EventSource) return;
+
+    const es = new EventSource(`/api/campaigns/${id}/stream`);
+
+    es.onopen = () => setIsLive(true);
+
+    es.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+
+      if (msg.type === 'contribution') {
+        setCampaign((prev) =>
+          prev ? { ...prev, raised_amount: msg.raised_amount } : prev
+        );
+        setContributions((prev) => {
+          const exists = prev.some((c) => c.tx_hash === msg.contribution.tx_hash);
+          return exists ? prev : [msg.contribution, ...prev];
+        });
+      }
+    };
+
+    es.onerror = () => {
+      setIsLive(false);
+      es.close();
+    };
+
+    return () => {
+      es.close();
+      setIsLive(false);
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (location.state?.created) {
       window.history.replaceState({}, document.title);
     }
   }, [location.state]);
@@ -253,6 +288,12 @@ export default function Campaign() {
 
       <h2 style={styles.sectionTitle}>
         Contributions {contributions !== null ? `(${contributions.length})` : ''}
+        {isLive && (
+          <span style={styles.liveIndicator} title="Live updates active">
+            <span style={styles.liveDot} />
+            Live
+          </span>
+        )}
       </h2>
       {contributions === null ? (
         <ContributionListSkeleton />
@@ -323,4 +364,6 @@ const styles = {
   amount: { fontSize: '0.85rem', fontWeight: 600, flexShrink: 0 },
   convHint: { fontSize: '0.72rem', color: '#888', marginTop: '0.15rem' },
   refundTag: { marginTop: '0.45rem', fontSize: '0.75rem', color: '#7c3aed', fontWeight: 700 },
+  liveIndicator: { display: 'inline-flex', alignItems: 'center', gap: '4px', marginLeft: '0.5rem', fontSize: '0.72rem', fontWeight: 600, color: '#16a34a', verticalAlign: 'middle' },
+  liveDot: { display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: '#16a34a', animation: 'pulse 1.5s ease-in-out infinite' },
 };

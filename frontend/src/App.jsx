@@ -6,6 +6,8 @@ import CreateCampaign from './pages/CreateCampaign';
 import Campaign from './pages/Campaign';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import AdminDashboard from './pages/AdminDashboard';
 import Developer from './pages/Developer';
 import Dashboard from './pages/Dashboard';
@@ -23,6 +25,8 @@ export default function App() {
         <Route path="/campaigns/:id" element={<Campaign />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/admin" element={<AdminDashboard />} />
         <Route path="/developer" element={<Developer />} />
         <Route path="/dashboard" element={<Dashboard />} />
