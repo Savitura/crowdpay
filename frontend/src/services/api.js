@@ -218,6 +218,13 @@ export const api = {
   rejectWithdrawal: (id, body, token) => request('POST', `/withdrawals/${id}/reject`, body || {}, token),
   getWithdrawalEvents: (id, token) => request('GET', `/withdrawals/${id}/events`, null, token),
 
+  raiseDispute: (campaignId, body, token) =>
+    request('POST', `/campaigns/${campaignId}/disputes`, body, token),
+  getCampaignDisputes: (campaignId, token) =>
+    request('GET', `/campaigns/${campaignId}/disputes`, null, token),
+  updateDispute: (id, body, token) => request('PATCH', `/disputes/${id}`, body, token),
+  getDisputeEvents: (id, token) => request('GET', `/disputes/${id}/events`, null, token),
+
   getAdminStats: (token) => request('GET', '/admin/stats', null, token),
   getAdminCampaigns: (token) => request('GET', '/admin/campaigns', null, token),
   getAdminMilestones: (token, options = {}) => request('GET', '/admin/milestones', null, token, { query: options }),

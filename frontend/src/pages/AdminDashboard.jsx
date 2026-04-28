@@ -3,6 +3,100 @@ import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
+const DISPUTE_STATUSES = ['open', 'under_review', 'resolved_creator', 'resolved_contributor', 'closed'];
+
+function DisputeQueue({ token }) {
+  const [disputes, setDisputes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+
+  useEffect(() => {
+    // Load open/under_review disputes across all campaigns via admin endpoint
+    api.getAdminCampaigns(token)
+      .then(async (campaigns) => {
+        const all = await Promise.all(
+          campaigns.map((c) =>
+            api.getCampaignDisputes(c.id, token)
+              .then((ds) => ds.map((d) => ({ ...d, campaign_title: c.title })))
+              .catch(() => [])
+          )
+        );
+        setDisputes(all.flat().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)));
+      })
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  async function resolve(dispute, status) {
+    const note = window.prompt(`Resolution note (${status}):`, '');
+    if (note === null) return;
+    setBusyId(dispute.id);
+    try {
+      const updated = await api.updateDispute(dispute.id, { status, resolution_note: note || undefined }, token);
+      setDisputes((prev) => prev.map((d) => (d.id === updated.id ? { ...d, ...updated } : d)));
+    } catch (err) {
+      alert(err.message || 'Could not update dispute');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (loading) return <p style={{ color: '#666' }}>Loading disputes…</p>;
+  if (!disputes.length) return <p style={{ color: '#666', marginBottom: '2rem' }}>No disputes on record.</p>;
+
+  return (
+    <div style={{ display: 'grid', gap: '0.9rem', marginBottom: '2.5rem' }}>
+      {disputes.map((d) => (
+        <div key={d.id} style={{ border: '1px solid #e5e5e5', borderRadius: '12px', padding: '1rem', background: '#fff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <div>
+              <strong>{d.campaign_title}</strong>
+              <span style={{ marginLeft: '0.5rem', fontSize: '0.8rem', background: d.status === 'open' ? '#fee2e2' : '#ede9fe', color: d.status === 'open' ? '#dc2626' : '#7c3aed', padding: '2px 8px', borderRadius: '99px', fontWeight: 700 }}>
+                {d.status}
+              </span>
+            </div>
+            <span style={{ fontSize: '0.82rem', color: '#888' }}>{new Date(d.created_at).toLocaleString()}</span>
+          </div>
+          <div style={{ marginTop: '0.4rem', fontSize: '0.88rem', color: '#555' }}>
+            <strong>Reason:</strong> {d.reason} · <strong>By:</strong> {d.raised_by_name} ({d.raised_by_email})
+          </div>
+          <p style={{ marginTop: '0.5rem', color: '#333', lineHeight: 1.5, fontSize: '0.9rem' }}>{d.description}</p>
+          {d.evidence_url && (
+            <div style={{ fontSize: '0.85rem', marginTop: '0.35rem' }}>
+              Evidence: <a href={d.evidence_url} target="_blank" rel="noopener noreferrer" style={{ color: '#7c3aed', fontWeight: 600 }}>Open link</a>
+            </div>
+          )}
+          {d.resolution_note && (
+            <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#7c3aed' }}>Note: {d.resolution_note}</div>
+          )}
+          {['open', 'under_review'].includes(d.status) && (
+            <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginTop: '0.85rem' }}>
+              {d.status === 'open' && (
+                <button type="button" className="btn-secondary" disabled={busyId === d.id}
+                  onClick={() => resolve(d, 'under_review')}>
+                  Mark under review
+                </button>
+              )}
+              <button type="button" className="btn-primary" disabled={busyId === d.id}
+                onClick={() => resolve(d, 'resolved_contributor')}
+                style={{ background: '#dc2626', borderColor: '#dc2626' }}>
+                {busyId === d.id ? 'Processing…' : 'Resolve → Refund contributor'}
+              </button>
+              <button type="button" className="btn-secondary" disabled={busyId === d.id}
+                onClick={() => resolve(d, 'resolved_creator')}>
+                {busyId === d.id ? 'Processing…' : 'Resolve → Favour creator'}
+              </button>
+              <button type="button" className="btn-secondary" disabled={busyId === d.id}
+                onClick={() => resolve(d, 'closed')}>
+                Close
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   const { user, token, ready } = useAuth();
   const navigate = useNavigate();
@@ -194,6 +288,9 @@ export default function AdminDashboard() {
           ))}
         </div>
       )}
+
+      <h2 style={{fontSize:'1.4rem', fontWeight:700, marginBottom:'1rem'}}>Dispute Queue</h2>
+      <DisputeQueue token={token} />
 
       <h2 style={{fontSize:'1.4rem', fontWeight:700, marginBottom:'1rem'}}>Users Overview</h2>
       <div style={{overflowX:'auto'}}>
