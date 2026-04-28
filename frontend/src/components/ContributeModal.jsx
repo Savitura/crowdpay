@@ -61,7 +61,16 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
   const [result, setResult] = useState(null);
   const [freighterAvailable, setFreighterAvailable] = useState(false);
   const [freighterChecked, setFreighterChecked] = useState(false);
+  const [existingContributions, setExistingContributions] = useState([]);
   const anchorPopupRef = useRef(null);
+
+  useEffect(() => {
+    if (campaign?.id) {
+      api.getContributions(campaign.id)
+        .then(setExistingContributions)
+        .catch(() => setExistingContributions([]));
+    }
+  }, [campaign?.id]);
 
   const selectedAnchor = anchorInfo.anchors.find((anchor) => anchor.id === selectedAnchorId) || null;
   const effectiveSendAsset =
@@ -305,6 +314,22 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
       setError('Enter an amount greater than zero.');
       return;
     }
+
+    const amountNum = Number(destAmount);
+    if (campaign.min_contribution && amountNum < Number(campaign.min_contribution)) {
+      setError(`Contribution amount is below the minimum limit of ${campaign.min_contribution} ${campaign.asset_type}.`);
+      return;
+    }
+    if (campaign.max_contribution) {
+      const existingSum = existingContributions
+        .filter((c) => c.sender_public_key === user?.wallet_public_key)
+        .reduce((sum, c) => sum + Number(c.amount), 0);
+
+      if (existingSum + amountNum > Number(campaign.max_contribution)) {
+        setError(`Contribution violates the maximum limit of ${campaign.max_contribution} ${campaign.asset_type} per backer.`);
+        return;
+      }
+    }
     setLoading(true);
     setLoadingLabel('Submitting…');
     setError('');
@@ -496,6 +521,21 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
                 />
                 <span id="contrib-amount-help" style={styles.help}>
                   This is the credited amount toward the campaign goal, in {campaign.asset_type}.
+                  {(() => {
+                    if (!campaign.max_contribution) return null;
+                    const existingSum = existingContributions
+                      .filter((c) => c.sender_public_key === user?.wallet_public_key)
+                      .reduce((sum, c) => sum + Number(c.amount), 0);
+                    if (existingSum > 0) {
+                      const remaining = Math.max(0, Number(campaign.max_contribution) - existingSum);
+                      return (
+                        <span style={{ display: 'block', marginTop: '0.25rem', color: '#7c3aed', fontWeight: 600 }}>
+                          You can contribute up to {remaining.toLocaleString()} {campaign.asset_type} more.
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
                 </span>
               </div>
 

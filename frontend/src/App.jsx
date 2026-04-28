@@ -9,6 +9,7 @@ import Register from './pages/Register';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import AdminDashboard from './pages/AdminDashboard';
+import AcceptInvite from './pages/AcceptInvite';
 import Developer from './pages/Developer';
 import Dashboard from './pages/Dashboard';
 import MyContributions from './pages/MyContributions';
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/campaigns/new" element={<CreateCampaign />} />
         <Route path="/campaigns/:id" element={<Campaign />} />
+        <Route path="/campaigns/:id/invite/:token" element={<AcceptInvite />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />

@@ -236,6 +236,21 @@ router.post('/prepare', requireAuth, contributionValidation, validateRequest, as
   const campaign = await loadActiveCampaign(campaign_id);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
+  if (campaign.min_contribution && parseFloat(amount) < parseFloat(campaign.min_contribution)) {
+    return res.status(400).json({ error: `Contribution amount is below the minimum limit of ${campaign.min_contribution} ${campaign.asset_type}` });
+  }
+
+  if (campaign.max_contribution) {
+    const { rows: sumRows } = await db.query(
+      'SELECT COALESCE(SUM(amount), 0) as total FROM contributions WHERE campaign_id = $1 AND sender_public_key = $2',
+      [campaign_id, sender_public_key]
+    );
+    const totalExisting = parseFloat(sumRows[0].total);
+    if (totalExisting + parseFloat(amount) > parseFloat(campaign.max_contribution)) {
+      return res.status(400).json({ error: `Contribution violates the maximum limit of ${campaign.max_contribution} ${campaign.asset_type} per backer` });
+    }
+  }
+
   try {
     const intent = await buildContributionIntent({
       campaign,
@@ -367,6 +382,21 @@ router.post('/', requireAuth, contributionValidation, validateRequest, async (re
     [req.user.userId]
   );
   const contributorPublicKey = users[0].wallet_public_key;
+
+  if (campaign.min_contribution && parseFloat(amount) < parseFloat(campaign.min_contribution)) {
+    return res.status(400).json({ error: `Contribution amount is below the minimum limit of ${campaign.min_contribution} ${campaign.asset_type}` });
+  }
+
+  if (campaign.max_contribution) {
+    const { rows: sumRows } = await db.query(
+      'SELECT COALESCE(SUM(amount), 0) as total FROM contributions WHERE campaign_id = $1 AND sender_public_key = $2',
+      [campaign_id, contributorPublicKey]
+    );
+    const totalExisting = parseFloat(sumRows[0].total);
+    if (totalExisting + parseFloat(amount) > parseFloat(campaign.max_contribution)) {
+      return res.status(400).json({ error: `Contribution violates the maximum limit of ${campaign.max_contribution} ${campaign.asset_type} per backer` });
+    }
+  }
 
   try {
     const result = await submitCustodialContribution({
