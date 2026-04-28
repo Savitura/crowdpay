@@ -4,6 +4,7 @@ import Navbar from './components/Navbar';
 import Home from './pages/Home';
 import CreateCampaign from './pages/CreateCampaign';
 import Campaign from './pages/Campaign';
+import CampaignEmbed from './pages/CampaignEmbed';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import ForgotPassword from './pages/ForgotPassword';
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/campaigns/new" element={<CreateCampaign />} />
         <Route path="/campaigns/:id" element={<Campaign />} />
+        <Route path="/embed/campaigns/:id" element={<CampaignEmbed />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />

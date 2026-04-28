@@ -3,6 +3,14 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      input: {
+        main: './index.html',
+        embed: './embed.html',
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {
@@ -16,6 +24,11 @@ export default defineConfig({
             }
           });
         },
+      },
+      // Proxy embed routes to the embed.html during development
+      '/embed': {
+        target: 'http://localhost:5173',
+        rewrite: (path) => '/embed.html',
       },
     },
   },

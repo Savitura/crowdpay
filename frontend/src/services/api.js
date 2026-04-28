@@ -176,6 +176,7 @@ export const api = {
 
   getCampaigns: (options = {}) => request('GET', '/campaigns', null, null, { query: options }),
   getCampaign: (id) => request('GET', `/campaigns/${id}`),
+  getCampaignEmbed: (id) => request('GET', `/campaigns/${id}/embed`),
   getCampaignBalance: (id) => request('GET', `/campaigns/${id}/balance`),
   createCampaign: (body, token) => request('POST', '/campaigns', body, token),
   uploadCampaignCoverImage: (campaignId, file, token) => {
