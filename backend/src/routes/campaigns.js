@@ -306,7 +306,7 @@ router.post(
   createCampaignValidation,
   validateRequest,
   async (req, res) => {
-    const { title, description, target_amount, asset_type, deadline, milestones } = req.body;
+    const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution } = req.body;
     let normalizedMilestones;
     try {
       normalizedMilestones = normalizeMilestonesInput(milestones);
@@ -328,10 +328,10 @@ router.post(
       await client.query('BEGIN');
       const { rows } = await client.query(
         `INSERT INTO campaigns
-           (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+           (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, min_contribution, max_contribution)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *`,
-        [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline]
+        [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline, min_contribution || null, max_contribution || null]
       );
       campaign = rows[0];
 
