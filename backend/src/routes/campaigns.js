@@ -7,7 +7,7 @@ const {
   getSupportedAssetCodes,
   buildWithdrawalTransaction,
 } = require('../services/stellarService');
-const { watchCampaignWallet } = require('../services/ledgerMonitor');
+const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../services/ledgerMonitor');
 const { insertWithdrawalPendingSignatures } = require('../services/stellarTransactionService');
 const { sendEmail } = require('../services/emailService');
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
@@ -77,6 +77,36 @@ router.get('/:id', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM campaigns WHERE id = $1', [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
   res.json(rows[0]);
+});
+
+// SSE stream for real-time campaign funding updates
+router.get('/:id/stream', async (req, res) => {
+  const campaignId = parseInt(req.params.id, 10);
+  const { rows } = await db.query('SELECT id FROM campaigns WHERE id = $1', [campaignId]);
+  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  res.write('data: {"type":"connected"}\n\n');
+
+  addSSEClient(campaignId, res);
+
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': heartbeat\n\n');
+    } catch {
+      clearInterval(heartbeat);
+    }
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    removeSSEClient(campaignId, res);
+  });
 });
 
 // Get live on-chain balance for a campaign
