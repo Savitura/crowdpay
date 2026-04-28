@@ -141,6 +141,8 @@ cp .env.example .env
 # Edit .env — add your Stellar platform keypair and DB credentials
 ```
 
+Creator identity verification is enforced by default before campaign launch. For local testnet development, set `KYC_REQUIRED_FOR_CAMPAIGNS=false` in the backend environment; optionally mirror it with `VITE_KYC_REQUIRED_FOR_CAMPAIGNS=false` so the frontend knows before the profile request returns. For Persona-hosted verification, configure `KYC_PROVIDER=persona`, `PERSONA_API_KEY`, `PERSONA_TEMPLATE_ID`, and `APP_BASE_URL`.
+
 ### 3. Set up the database
 
 ```bash
