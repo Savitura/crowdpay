@@ -197,6 +197,14 @@ export default function Campaign() {
         </div>
         <div style={styles.bar}><div style={{ ...styles.fill, width: `${pct}%` }} /></div>
 
+        {(campaign.min_contribution || campaign.max_contribution) && (
+          <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: '1rem', background: '#f9fafb', padding: '0.6rem', borderRadius: '6px', textAlign: 'center', border: '1px solid #eee' }}>
+            {campaign.min_contribution && `Min: ${Number(campaign.min_contribution).toLocaleString()} ${campaign.asset_type}`}
+            {campaign.min_contribution && campaign.max_contribution && ' · '}
+            {campaign.max_contribution && `Max: ${Number(campaign.max_contribution).toLocaleString()} ${campaign.asset_type} per backer`}
+          </div>
+        )}
+
         {campaign.status === 'active' ? (
           user ? (
             <button type="button" className="btn-primary" style={styles.cta} onClick={() => setShowModal(true)}>
