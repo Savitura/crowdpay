@@ -257,6 +257,18 @@ CREATE TABLE campaign_updates (
 
 CREATE INDEX campaign_updates_campaign_idx ON campaign_updates (campaign_id, created_at DESC);
 
+CREATE TABLE password_reset_tokens (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash  TEXT NOT NULL UNIQUE,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  used_at     TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX password_reset_tokens_user_idx ON password_reset_tokens (user_id);
+CREATE INDEX password_reset_tokens_expires_idx ON password_reset_tokens (expires_at);
+
 -- Horizon paging cursor per campaign wallet (survives restarts; enables replay + stream resume)
 CREATE TABLE ledger_stream_cursors (
   campaign_id         UUID PRIMARY KEY REFERENCES campaigns(id) ON DELETE CASCADE,
