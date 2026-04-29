@@ -31,6 +31,10 @@ function milestonePercentTotal(milestones) {
   return milestones.reduce((sum, milestone) => sum + (Number(milestone.release_percentage) || 0), 0);
 }
 
+function emptyRewardTier() {
+  return { title: '', description: '', min_amount: '', limit: '', estimated_delivery: '' };
+}
+
 export default function CreateCampaign() {
   const { token, user, ready, updateUser } = useAuth();
   const navigate = useNavigate();
@@ -38,6 +42,7 @@ export default function CreateCampaign() {
   const [form, setForm] = useState({
     deadline: '',
     milestones: [],
+    reward_tiers: [],
     min_contribution: '',
     max_contribution: '',
     show_backer_amounts: true,
@@ -118,6 +123,29 @@ export default function CreateCampaign() {
     setForm((f) => ({
       ...f,
       milestones: f.milestones.filter((_, milestoneIndex) => milestoneIndex !== index),
+    }));
+  }
+
+  function setRewardTierField(index, field, value) {
+    setForm((f) => ({
+      ...f,
+      reward_tiers: f.reward_tiers.map((tier, tierIndex) =>
+        tierIndex === index ? { ...tier, [field]: value } : tier
+      ),
+    }));
+  }
+
+  function addRewardTier() {
+    setForm((f) => {
+      if (f.reward_tiers.length >= 10) return f;
+      return { ...f, reward_tiers: [...f.reward_tiers, emptyRewardTier()] };
+    });
+  }
+
+  function removeRewardTier(index) {
+    setForm((f) => ({
+      ...f,
+      reward_tiers: f.reward_tiers.filter((_, tierIndex) => tierIndex !== index),
     }));
   }
 
@@ -208,6 +236,15 @@ export default function CreateCampaign() {
                 title: milestone.title.trim(),
                 description: milestone.description.trim(),
                 release_percentage: Number(milestone.release_percentage),
+              }))
+            : undefined,
+          reward_tiers: form.reward_tiers.length
+            ? form.reward_tiers.map((tier) => ({
+                title: tier.title.trim(),
+                description: tier.description.trim() || undefined,
+                min_amount: Number(tier.min_amount),
+                limit: tier.limit ? Number(tier.limit) : null,
+                estimated_delivery: tier.estimated_delivery || undefined,
               }))
             : undefined,
         },
@@ -301,7 +338,11 @@ export default function CreateCampaign() {
           </li>
           <li aria-hidden="true">→</li>
           <li>
-            <span style={{ color: step === 3 ? '#7c3aed' : '#999' }}>3. Milestones & launch</span>
+            <span style={{ color: step === 3 ? '#7c3aed' : '#999' }}>3. Rewards</span>
+          </li>
+          <li aria-hidden="true">→</li>
+          <li>
+            <span style={{ color: step === 4 ? '#7c3aed' : '#999' }}>4. Milestones & launch</span>
           </li>
         </ol>
       </nav>
@@ -507,7 +548,7 @@ export default function CreateCampaign() {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginTop: '1.25rem' }}>
               <button type="button" className="btn-primary" style={{ width: '100%' }} onClick={() => setStep(3)}>
-                Continue to milestones
+                Continue to rewards
               </button>
               <button
                 type="button"
@@ -525,6 +566,105 @@ export default function CreateCampaign() {
         )}
 
         {step === 3 && (
+          <>
+            <div className="campaign-card" style={{ marginBottom: '1rem' }}>
+              <strong>Reward tiers (Optional)</strong>
+              <p style={{ color: '#555', fontSize: '0.88rem', lineHeight: 1.5, marginTop: '0.5rem' }}>
+                Define perks for backers based on their contribution amount.
+              </p>
+            </div>
+
+            <div style={{ display: 'grid', gap: '0.85rem' }}>
+              {form.reward_tiers.map((tier, index) => (
+                <div key={index} className="campaign-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <strong>Tier {index + 1}</strong>
+                    <button type="button" className="btn-secondary" onClick={() => removeRewardTier(index)} style={{ fontSize: '0.8rem' }}>
+                      Remove
+                    </button>
+                  </div>
+                  <div className="form-stack">
+                    <label className="label-strong">Title</label>
+                    <input
+                      value={tier.title}
+                      onChange={(e) => setRewardTierField(index, 'title', e.target.value)}
+                      placeholder="e.g. Early Bird Special"
+                      required
+                    />
+                  </div>
+                  <div className="form-stack" style={{ marginTop: '0.75rem' }}>
+                    <label className="label-strong">Description</label>
+                    <textarea
+                      value={tier.description}
+                      onChange={(e) => setRewardTierField(index, 'description', e.target.value)}
+                      rows={2}
+                      placeholder="What does the backer get?"
+                    />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.75rem' }}>
+                    <div className="form-stack">
+                      <label className="label-strong">Min Amount ({form.asset_type})</label>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0.0000001"
+                        step="any"
+                        value={tier.min_amount}
+                        onChange={(e) => setRewardTierField(index, 'min_amount', e.target.value)}
+                        placeholder="0.00"
+                        required
+                      />
+                    </div>
+                    <div className="form-stack">
+                      <label className="label-strong">Limit (Optional)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={tier.limit}
+                        onChange={(e) => setRewardTierField(index, 'limit', e.target.value)}
+                        placeholder="Unlimited"
+                      />
+                    </div>
+                  </div>
+                  <div className="form-stack" style={{ marginTop: '0.75rem' }}>
+                    <label className="label-strong">Est. Delivery (Optional)</label>
+                    <input
+                      type="date"
+                      value={tier.estimated_delivery}
+                      onChange={(e) => setRewardTierField(index, 'estimated_delivery', e.target.value)}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {form.reward_tiers.length < 10 && (
+              <button type="button" className="btn-secondary" style={{ width: '100%', marginTop: '1rem' }} onClick={addRewardTier}>
+                + Add reward tier
+              </button>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginTop: '1.25rem' }}>
+              <button type="button" className="btn-primary" style={{ width: '100%' }} onClick={() => setStep(4)}>
+                Continue to milestones
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ width: '100%' }}
+                onClick={() => {
+                  setError('');
+                  setStep(2);
+                }}
+              >
+                Back
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 4 && (
           <>
             <div className="campaign-card" style={{ marginBottom: '1rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
@@ -617,7 +757,7 @@ export default function CreateCampaign() {
                 disabled={loading}
                 onClick={() => {
                   setError('');
-                  setStep(2);
+                  setStep(3);
                 }}
               >
                 Back

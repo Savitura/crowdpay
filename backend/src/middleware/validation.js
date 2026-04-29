@@ -117,6 +117,34 @@ const createCampaignValidation = [
     .optional()
     .isBoolean()
     .withMessage('show_backer_amounts must be a boolean'),
+  body('reward_tiers')
+    .optional({ nullable: true })
+    .custom((value) => {
+      if (value == null) return true;
+      if (!Array.isArray(value)) throw new Error('reward_tiers must be an array');
+      if (value.length > 10) throw new Error('Campaigns can define at most 10 reward tiers');
+      for (const [index, tier] of value.entries()) {
+        if (!tier || typeof tier !== 'object') {
+          throw new Error(`Tier ${index + 1} must be an object`);
+        }
+        if (!String(tier.title || '').trim()) {
+          throw new Error(`Tier ${index + 1} title is required`);
+        }
+        const minAmount = Number(tier.min_amount);
+        if (!Number.isFinite(minAmount) || minAmount <= 0) {
+          throw new Error(`Tier ${index + 1} min_amount must be greater than zero`);
+        }
+        if (tier.limit !== undefined && tier.limit !== null) {
+          const limit = Number(tier.limit);
+          if (!Number.isInteger(limit) || limit < 1) {
+            throw new Error(`Tier ${index + 1} limit must be a positive integer`);
+          }
+        }
+      }
+      return true;
+    }),
+  body('reward_tiers.*.title').optional().customSanitizer(stripHtml),
+  body('reward_tiers.*.description').optional().customSanitizer(stripHtml),
 ];
 
 const createCampaignUpdateValidation = [

@@ -58,6 +58,7 @@ export default function Campaign() {
   const [inviteSuccess, setInviteSuccess] = useState(false);
   const [showEmbedSection, setShowEmbedSection] = useState(false);
   const [embedCopied, setEmbedCopied] = useState(false);
+  const [tiers, setTiers] = useState([]);
 
   useEffect(() => {
     setLoadError('');
@@ -76,6 +77,7 @@ export default function Campaign() {
     api.getCampaignBackers(id).then(setContributions).catch(() => setContributions([]));
     api.getMilestones(id).then(setMilestones).catch(() => setMilestones([]));
     api.getCampaignUpdates(id, { limit: 20 }).then(setUpdates).catch(() => setUpdates([]));
+    api.getCampaignTiers(id).then(setTiers).catch(() => setTiers([]));
   }, [id, token, contributed]);
 
   useEffect(() => {
@@ -305,6 +307,43 @@ export default function Campaign() {
             {campaign.min_contribution && `Min: ${Number(campaign.min_contribution).toLocaleString()} ${campaign.asset_type}`}
             {campaign.min_contribution && campaign.max_contribution && ' · '}
             {campaign.max_contribution && `Max: ${Number(campaign.max_contribution).toLocaleString()} ${campaign.asset_type} per backer`}
+          </div>
+        )}
+
+        {tiers.length > 0 && (
+          <div style={{ marginTop: '1.25rem', marginBottom: '1.25rem' }}>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 700, color: '#333', marginBottom: '0.75rem' }}>Reward Tiers</h3>
+            <div style={{ display: 'grid', gap: '0.75rem' }}>
+              {tiers.map((tier) => (
+                <div key={tier.id} style={{ border: '1px solid #eee', borderRadius: '8px', padding: '1rem', background: '#fcfcfc' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                    <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{tier.title}</div>
+                    <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#7c3aed' }}>
+                      {Number(tier.min_amount).toLocaleString()} {tier.asset_type}
+                    </div>
+                  </div>
+                  {tier.description && (
+                    <p style={{ fontSize: '0.85rem', color: '#555', marginTop: '0.25rem', lineHeight: 1.4 }}>
+                      {tier.description}
+                    </p>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.75rem', fontSize: '0.75rem', color: '#888', fontWeight: 600 }}>
+                    <span>
+                      {tier.limit ? (
+                        <span style={{ color: tier.claimed_count >= tier.limit ? '#dc2626' : '#666' }}>
+                          {tier.limit - tier.claimed_count} of {tier.limit} remaining
+                        </span>
+                      ) : (
+                        'Unlimited'
+                      )}
+                    </span>
+                    {tier.estimated_delivery && (
+                      <span>Est. delivery: {new Date(tier.estimated_delivery).toLocaleDateString()}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
