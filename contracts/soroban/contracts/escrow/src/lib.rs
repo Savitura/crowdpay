@@ -102,4 +102,12 @@ impl EscrowContract {
 
         env.storage().persistent().set(&balance_key, &0i128);
     }
+
+    pub fn get_total_raised(env: Env) -> i128 {
+        env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0)
+    }
+
+    pub fn get_asset(env: Env) -> Address {
+        env.storage().instance().get(&DataKey::Asset).unwrap()
+    }
 }

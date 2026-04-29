@@ -9,8 +9,8 @@ const {
   buildWithdrawalTransaction,
 } = require('../services/stellarService');
 const { encryptSecret } = require('../services/walletService');
-const { watchCampaignWallet } = require('../services/ledgerMonitor');
 const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../services/ledgerMonitor');
+const { invokeContract, encodeMilestone, nativeToScVal } = require('../services/sorobanService');
 const { insertWithdrawalPendingSignatures } = require('../services/stellarTransactionService');
 const { sendEmail } = require('../services/emailService');
 const { uploadCampaignCoverImage } = require('../services/storage');
@@ -456,7 +456,7 @@ router.post('/:id/trigger-refunds', requireAuth, requireRole('admin'), async (re
 
 // Create campaign (authenticated)
 router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) => {
-  const { title, description, target_amount, asset_type, deadline, milestones } = req.body;
+  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution } = req.body;
   if (!title || !target_amount || !asset_type) {
     return res.status(400).json({ error: 'title, target_amount and asset_type are required' });
   }
@@ -473,83 +473,103 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) 
     return res.status(400).json({ error: err.message });
   }
 
-  // Get creator's public key to add as campaign wallet signer
+  // Get creator's info
   const { rows: userRows } = await db.query(
-    'SELECT wallet_public_key FROM users WHERE id = $1',
+    'SELECT email, wallet_public_key, kyc_status FROM users WHERE id = $1',
     [req.user.userId]
   );
-  const creatorPublicKey = userRows[0].wallet_public_key;
-
-  // Create the on-chain campaign wallet
-  const wallet = await createCampaignWallet(creatorPublicKey);
-  const encryptedSecret = encryptSecret(wallet.secret);
-
-    const { rows: userRows } = await db.query(
-      'SELECT wallet_public_key, kyc_status FROM users WHERE id = $1',
-      'SELECT email, wallet_public_key FROM users WHERE id = $1',
-      [req.user.userId]
-    );
-    if (!userRows.length) return res.status(404).json({ error: 'User not found' });
-    if (isKycRequiredForCampaigns() && userRows[0].kyc_status !== 'verified') {
-      return res.status(403).json({
-        error: 'Verify your identity before creating a campaign.',
-        code: 'KYC_REQUIRED',
-        kyc_status: userRows[0].kyc_status,
-      });
-    }
-    const creatorPublicKey = userRows[0].wallet_public_key;
-    const creatorEmail = userRows[0].email;
-
-    const wallet = await createCampaignWallet(creatorPublicKey);
-
-    const client = await db.connect();
-    let campaign;
-    try {
-      await client.query('BEGIN');
-      const { rows } = await client.query(
-        `INSERT INTO campaigns
-           (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, min_contribution, max_contribution)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING *`,
-        [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline, min_contribution || null, max_contribution || null]
-      );
-      campaign = rows[0];
-
-      await client.query(
-        `INSERT INTO campaign_members
-           (campaign_id, user_id, email, role, accepted_at)
-         VALUES ($1, $2, $3, $4, NOW())`,
-        [campaign.id, req.user.userId, creatorEmail, 'owner']
-      );
-
-      for (const milestone of normalizedMilestones) {
-        await client.query(
-          `INSERT INTO milestones
-             (campaign_id, title, description, release_percentage, sort_order)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [
-            campaign.id,
-            milestone.title,
-            milestone.description,
-            milestone.release_percentage,
-            milestone.sort_order,
-          ]
-        );
-      }
-
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK');
-      return res.status(500).json({ error: 'Could not create campaign' });
-    } finally {
-      client.release();
-    }
-
-    watchCampaignWallet(campaign.id, wallet.publicKey);
-
-    res.status(201).json(campaign);
+  if (!userRows.length) return res.status(404).json({ error: 'User not found' });
+  
+  if (isKycRequiredForCampaigns() && userRows[0].kyc_status !== 'verified') {
+    return res.status(403).json({
+      error: 'Verify your identity before creating a campaign.',
+      code: 'KYC_REQUIRED',
+      kyc_status: userRows[0].kyc_status,
+    });
   }
-);
+
+  const creatorPublicKey = userRows[0].wallet_public_key;
+  const creatorEmail = userRows[0].email;
+
+  // 1. Create the on-chain campaign wallet
+  const wallet = await createCampaignWallet(creatorPublicKey);
+
+  // 2. Deploy/Instantiate Soroban Contracts (Mocking IDs for now, but preparing initialization)
+  const escrowContractId = "C" + crypto.randomBytes(24).toString('hex').toUpperCase();
+  const milestonesContractId = "C" + crypto.randomBytes(24).toString('hex').toUpperCase();
+
+  const client = await db.connect();
+  let campaign;
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO campaigns
+         (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, 
+          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING *`,
+      [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline, 
+       min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId]
+    );
+    campaign = rows[0];
+
+    await client.query(
+      `INSERT INTO campaign_members
+         (campaign_id, user_id, email, role, accepted_at)
+       VALUES ($1, $2, $3, $4, NOW())`,
+      [campaign.id, req.user.userId, creatorEmail, 'owner']
+    );
+
+    for (const milestone of normalizedMilestones) {
+      await client.query(
+        `INSERT INTO milestones
+           (campaign_id, title, description, release_percentage, sort_order)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          campaign.id,
+          milestone.title,
+          milestone.description,
+          milestone.release_percentage,
+          milestone.sort_order,
+        ]
+      );
+    }
+
+    // Soroban Initialization:
+    // In a real scenario, we would call the contracts here.
+    // milestones.initialize(creator, platform, escrow, milestones_vec)
+    /*
+    try {
+      const milestoneScVals = normalizedMilestones.map(m => encodeMilestone(m));
+      await invokeContract({
+        contractId: milestonesContractId,
+        method: 'initialize',
+        args: [
+          nativeToScVal(Address.fromString(creatorPublicKey)),
+          nativeToScVal(Address.fromString(process.env.PLATFORM_PUBLIC_KEY)),
+          nativeToScVal(Address.fromString(escrowContractId)),
+          nativeToScVal(milestoneScVals)
+        ],
+        signerSecret: process.env.PLATFORM_SECRET_KEY
+      });
+    } catch (err) {
+      logger.error('Soroban contract initialization failed', { error: err.message });
+    }
+    */
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    logger.error('Campaign creation failed', { error: err.message });
+    return res.status(500).json({ error: 'Could not create campaign' });
+  } finally {
+    client.release();
+  }
+
+  watchCampaignWallet(campaign.id, wallet.publicKey);
+
+  res.status(201).json(campaign);
+});
 
 router.post(
   '/:id/cover-image',
