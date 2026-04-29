@@ -98,6 +98,19 @@ router.post('/request', requireAuth, withdrawalValidation, validateRequest, asyn
     });
   }
 
+  // Block withdrawals while a dispute is open or under review
+  const { rows: activeDisputes } = await db.query(
+    `SELECT id FROM disputes
+     WHERE campaign_id = $1 AND status IN ('open', 'under_review') LIMIT 1`,
+    [campaign_id]
+  );
+  if (activeDisputes.length) {
+    return res.status(403).json({
+      error: 'Withdrawals are blocked while an active dispute is open for this campaign.',
+      dispute_id: activeDisputes[0].id,
+    });
+  }
+
   const { rows: pending } = await db.query(
     `SELECT id FROM withdrawal_requests
      WHERE campaign_id = $1 AND status = 'pending' LIMIT 1`,

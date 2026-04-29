@@ -21,6 +21,8 @@ export default function Dashboard() {
   const [error, setError] = useState('');
   const [milestoneBusyId, setMilestoneBusyId] = useState(null);
 
+  const [disputesByCampaign, setDisputesByCampaign] = useState({});
+
   useEffect(() => {
     if (!token) return;
     Promise.all([api.getMe(token), api.getMyStats(token), api.getMyCampaigns(token)])
@@ -50,6 +52,14 @@ export default function Dashboard() {
             )
           )
         );
+        // Load open disputes for each campaign
+        const disputeEntries = await Promise.all(
+          c.map(async (campaign) => {
+            const disputes = await api.getCampaignDisputes(campaign.id, token).catch(() => []);
+            return [campaign.id, disputes.filter((d) => d.status === 'open' || d.status === 'under_review')];
+          })
+        );
+        setDisputesByCampaign(Object.fromEntries(disputeEntries));
       })
       .catch((err) => setError(err.message || 'Could not load dashboard'))
       .finally(() => setLoading(false));
@@ -167,6 +177,12 @@ export default function Dashboard() {
                         {milestones.length ? 'View milestone releases' : 'Manage withdrawals'}
                       </Link>
                     </div>
+                    {(disputesByCampaign[campaign.id] || []).length > 0 && (
+                      <div className="alert alert--error" style={{ marginTop: '0.75rem', fontSize: '0.88rem' }} role="alert">
+                        ⚠ <strong>{disputesByCampaign[campaign.id].length} open dispute{disputesByCampaign[campaign.id].length > 1 ? 's' : ''}</strong> raised against this campaign.
+                        Withdrawals are frozen until the platform resolves the dispute.
+                      </div>
+                    )}
                     {milestones.length > 0 && (
                       <div style={{ marginTop: '1rem' }}>
                         <MilestoneTracker milestones={milestones} assetType={campaign.asset_type} />

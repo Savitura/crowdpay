@@ -3,6 +3,7 @@ import { Link, useParams, useLocation } from 'react-router-dom';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import ContributeModal from '../components/ContributeModal';
+import DisputeModal from '../components/DisputeModal';
 import MilestoneTracker from '../components/MilestoneTracker';
 import WithdrawalsSection from '../components/WithdrawalsSection';
 import CampaignDetailSkeleton from '../components/skeletons/CampaignDetailSkeleton';
@@ -38,6 +39,8 @@ export default function Campaign() {
   const [loadError, setLoadError] = useState('');
   const [contributions, setContributions] = useState(null);
   const [showModal, setShowModal] = useState(false);
+  const [showDisputeModal, setShowDisputeModal] = useState(false);
+  const [disputeSubmitted, setDisputeSubmitted] = useState(false);
   const [contributed, setContributed] = useState(false);
   const [showCreatedBanner, setShowCreatedBanner] = useState(!!location.state?.created);
   const [coverUploadError, setCoverUploadError] = useState(location.state?.coverUploadError || '');
@@ -370,6 +373,21 @@ export default function Campaign() {
         <code style={styles.walletKey}>{campaign.wallet_public_key}</code>
       </div>
 
+      {/* Report a problem — visible to contributors who have backed this campaign */}
+      {user && contributions?.some((c) => c.sender_public_key) && campaign.creator_id !== user.id && (
+        <div style={{ marginBottom: '1.25rem' }}>
+          {disputeSubmitted ? (
+            <p className="alert alert--success" role="status">
+              Your dispute has been submitted. The platform team will review it shortly.
+            </p>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowDisputeModal(true)}
+              style={{ background: 'none', border: 'none', color: '#dc2626', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+            >
+              ⚠ Report a problem with this campaign
+            </button>
       {canPostUpdate && (
         <div style={styles.card}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -646,6 +664,13 @@ export default function Campaign() {
           campaign={campaign}
           onClose={() => setShowModal(false)}
           onSuccess={() => setContributed((v) => !v)}
+        />
+      )}
+      {showDisputeModal && (
+        <DisputeModal
+          campaign={campaign}
+          onClose={() => setShowDisputeModal(false)}
+          onSubmitted={() => setDisputeSubmitted(true)}
         />
       )}
     </main>
