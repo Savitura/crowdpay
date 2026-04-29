@@ -19,6 +19,7 @@ async function buildContributionIntent({
   amount,
   sendAsset,
   contributorPublicKey,
+  displayName,
 }) {
   if (sendAsset === campaign.asset_type) {
     return {
@@ -29,6 +30,7 @@ async function buildContributionIntent({
         send_asset: sendAsset,
         amount: String(amount),
         contributor_public_key: contributorPublicKey,
+        display_name: displayName || null,
       },
     };
   }
@@ -68,6 +70,7 @@ async function buildContributionIntent({
       dest_amount: String(amount),
       max_send_amount: sendMax,
       contributor_public_key: contributorPublicKey,
+      display_name: displayName || null,
     },
   };
 }
@@ -82,6 +85,7 @@ async function submitCustodialContribution({
   sendAsset,
   intentOverride,
   anchorMetadata,
+  displayName,
 }) {
   const intent =
     intentOverride ||
@@ -90,6 +94,7 @@ async function submitCustodialContribution({
       amount,
       sendAsset,
       contributorPublicKey: walletPublicKey,
+      displayName,
     }));
 
   const preparedTransaction = await withDecryptedWalletSecret(

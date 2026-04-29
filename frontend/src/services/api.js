@@ -177,7 +177,9 @@ export const api = {
   startKyc: (token) => request('POST', '/users/me/kyc/start', null, token),
 
   getCampaigns: (options = {}) => request('GET', '/campaigns', null, null, { query: options }),
-  getCampaign: (id) => request('GET', `/campaigns/${id}`),
+  getCampaign: (id, token) => request('GET', `/campaigns/${id}`, null, token),
+  getCampaignEmbed: (id) => request('GET', `/campaigns/${id}/embed`),
+  getCampaignBackers: (id) => request('GET', `/campaigns/${id}/backers`),
   getCampaignBalance: (id) => request('GET', `/campaigns/${id}/balance`),
   createCampaign: (body, token) => request('POST', '/campaigns', body, token),
   uploadCampaignCoverImage: (campaignId, file, token) => {
@@ -185,6 +187,11 @@ export const api = {
     formData.append('cover_image', file);
     return uploadFormData(`/campaigns/${encodeURIComponent(campaignId)}/cover-image`, formData, token);
   },
+  getCampaignMembers: (campaignId, token) => request('GET', `/campaigns/${campaignId}/members`, null, token),
+  inviteCampaignMember: (campaignId, body, token) => request('POST', `/campaigns/${campaignId}/members`, body, token),
+  updateCampaignMemberRole: (campaignId, userId, body, token) => request('PATCH', `/campaigns/${campaignId}/members/${userId}`, body, token),
+  removeCampaignMember: (campaignId, userId, token) => request('DELETE', `/campaigns/${campaignId}/members/${userId}`, null, token),
+  acceptCampaignInvitation: (campaignId, body, token) => request('POST', `/campaigns/${campaignId}/members/accept`, body, token),
   getAnchorInfo: () => request('GET', '/anchor/info'),
   startAnchorDeposit: (body, token) => request('POST', '/anchor/deposits/start', body, token),
   getAnchorDepositStatus: (id, token) => request('GET', `/anchor/deposits/${id}`, null, token),

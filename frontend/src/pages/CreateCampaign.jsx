@@ -36,12 +36,11 @@ export default function CreateCampaign() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
-    title: '',
-    description: '',
-    target_amount: '',
-    asset_type: 'USDC',
     deadline: '',
     milestones: [],
+    min_contribution: '',
+    max_contribution: '',
+    show_backer_amounts: true,
   });
   const [coverImageFile, setCoverImageFile] = useState(null);
   const [coverImagePreview, setCoverImagePreview] = useState('');
@@ -131,6 +130,24 @@ export default function CreateCampaign() {
       setError('Enter a fundraising goal greater than zero.');
       return false;
     }
+    if (form.min_contribution && Number(form.min_contribution) <= 0) {
+      setError('Minimum contribution must be greater than zero.');
+      return false;
+    }
+    if (form.max_contribution) {
+      if (Number(form.max_contribution) <= 0) {
+        setError('Maximum contribution must be greater than zero.');
+        return false;
+      }
+      if (form.min_contribution && Number(form.max_contribution) <= Number(form.min_contribution)) {
+        setError('Maximum contribution must be greater than minimum contribution.');
+        return false;
+      }
+      if (form.target_amount && Number(form.max_contribution) > Number(form.target_amount)) {
+        setError('Maximum contribution cannot exceed the target amount.');
+        return false;
+      }
+    }
     setError('');
     return true;
   }
@@ -184,6 +201,8 @@ export default function CreateCampaign() {
           target_amount: form.target_amount,
           asset_type: form.asset_type,
           deadline: form.deadline || undefined,
+          min_contribution: form.min_contribution ? Number(form.min_contribution) : undefined,
+          max_contribution: form.max_contribution ? Number(form.max_contribution) : undefined,
           milestones: form.milestones.length
             ? form.milestones.map((milestone) => ({
                 title: milestone.title.trim(),
@@ -339,6 +358,38 @@ export default function CreateCampaign() {
               />
             </div>
 
+            <div style={{ marginTop: '1.25rem', border: '1px dashed #ccc', padding: '1rem', borderRadius: '8px' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' }}>Contribution limits (Optional)</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div className="form-stack">
+                  <label className="label-strong" htmlFor="cc-min-contrib">Min contribution</label>
+                  <input
+                    id="cc-min-contrib"
+                    type="number"
+                    inputMode="decimal"
+                    min="0.0000001"
+                    step="any"
+                    value={form.min_contribution}
+                    onChange={setField('min_contribution')}
+                    placeholder="e.g. 5"
+                  />
+                </div>
+                <div className="form-stack">
+                  <label className="label-strong" htmlFor="cc-max-contrib">Max contribution</label>
+                  <input
+                    id="cc-max-contrib"
+                    type="number"
+                    inputMode="decimal"
+                    min="0.0000001"
+                    step="any"
+                    value={form.max_contribution}
+                    onChange={setField('max_contribution')}
+                    placeholder="e.g. 500"
+                  />
+                </div>
+              </div>
+            </div>
+
             <fieldset style={{ border: 'none', margin: '1.25rem 0 0', padding: 0 }}>
               <legend className="label-strong" style={{ marginBottom: '0.5rem' }}>
                 Settlement asset
@@ -425,8 +476,26 @@ export default function CreateCampaign() {
               <input id="cc-deadline" type="date" value={form.deadline} onChange={setField('deadline')} />
             </div>
 
+            <div className="form-stack" style={{ marginTop: '1.25rem', flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                id="cc-show-backers"
+                type="checkbox"
+                style={{ width: 'auto', margin: 0 }}
+                checked={form.show_backer_amounts}
+                onChange={(e) => setForm((f) => ({ ...f, show_backer_amounts: e.target.checked }))}
+              />
+              <label htmlFor="cc-show-backers" style={{ fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}>
+                Show contribution amounts on backer wall
+              </label>
+            </div>
+            <p style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.35rem' }}>
+              If unchecked, backers will be listed but their individual amounts will be hidden from the public.
+            </p>
+
             <div className="alert alert--info" style={{ marginTop: '1.25rem' }} role="status">
-              <strong>Summary:</strong> Goal of {form.target_amount || '—'} {form.asset_type} — “{form.title || 'Untitled'}”.
+              <strong>Summary:</strong> Goal of {form.target_amount || '—'} {form.asset_type}
+              {form.min_contribution && ` (Min: ${form.min_contribution} ${form.asset_type})`}
+              {form.max_contribution && ` (Max: ${form.max_contribution} ${form.asset_type})`} — “{form.title || 'Untitled'}”.
               A multisig campaign wallet will be created when you launch.
             </div>
 
@@ -526,6 +595,8 @@ export default function CreateCampaign() {
 
             <div className="alert alert--info" style={{ marginTop: '1.25rem' }} role="status">
               <strong>Launch summary:</strong> {form.title || 'Untitled'} with a goal of {form.target_amount || '—'} {form.asset_type}
+              {form.min_contribution && ` (Min: ${form.min_contribution} ${form.asset_type})`}
+              {form.max_contribution && ` (Max: ${form.max_contribution} ${form.asset_type})`}
               {form.milestones.length ? ` and ${form.milestones.length} milestone release${form.milestones.length > 1 ? 's' : ''}.` : ' and no milestone plan.'}
             </div>
 

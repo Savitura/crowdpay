@@ -27,7 +27,7 @@ export default function CampaignCard({ campaign }) {
         </div>
         <div style={styles.meta}>
           <span><strong>{Number(campaign.raised_amount).toLocaleString()}</strong> {campaign.asset_type} raised</span>
-          <span>{pct}%</span>
+          <span>{pct}% by <strong>{campaign.contributor_count || 0}</strong> backers</span>
         </div>
         <div style={styles.target}>
           Goal: {Number(campaign.target_amount).toLocaleString()} {campaign.asset_type}

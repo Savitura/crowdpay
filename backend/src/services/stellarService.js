@@ -461,6 +461,61 @@ async function getCampaignBalance(publicKey) {
 
 /**
  * Fund a new account on testnet using Friendbot.
+
+/**
+ * Recover campaign wallet from encrypted secret.
+ */
+function recoverWalletFromSecret(secret) {
+  const keypair = Keypair.fromSecret(secret);
+  return {
+    publicKey: keypair.publicKey(),
+    secret: keypair.secret(),
+  };
+}
+
+/**
+ * Get transaction history for a campaign wallet.
+ */
+async function getWalletTransactionHistory(publicKey, limit = 50) {
+  const txs = await server.transactions()
+    .forAccount(publicKey)
+    .order('desc')
+    .limit(limit)
+    .call();
+  
+  return txs.records.map(tx => ({
+    hash: tx.hash,
+    created_at: tx.created_at,
+    source_account: tx.source_account,
+    fee_charged: tx.fee_charged,
+    operation_count: tx.operation_count,
+    memo: tx.memo,
+  }));
+}
+
+/**
+ * Get payment operations for a campaign wallet (audit trail).
+ */
+async function getWalletPayments(publicKey, limit = 100) {
+  const payments = await server.payments()
+    .forAccount(publicKey)
+    .order('desc')
+    .limit(limit)
+    .call();
+  
+  return payments.records.map(p => ({
+    id: p.id,
+    type: p.type,
+    created_at: p.created_at,
+    transaction_hash: p.transaction_hash,
+    from: p.from,
+    to: p.to,
+    amount: p.amount,
+    asset_type: p.asset_type === 'native' ? 'XLM' : p.asset_code,
+  }));
+}
+
+
  */
 async function friendbotFund(publicKey) {
   if (!isTestnet) throw new Error('Friendbot only available on testnet');
@@ -491,6 +546,10 @@ module.exports = {
   signTransactionXdr,
   signatureCountFromXdr,
   submitSignedWithdrawal,
+  recoverWalletFromSecret,
+  getWalletTransactionHistory,
+  getWalletPayments,
+
   getCampaignBalance,
   friendbotFund,
   PLATFORM_PUBLIC_KEY: PLATFORM_KEYPAIR.publicKey(),
