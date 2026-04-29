@@ -16,6 +16,8 @@ const {
 } = require('../services/stellarTransactionService');
 const { withDecryptedWalletSecret } = require('../services/walletSecrets');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
+const { invokeContract, nativeToScVal } = require('../services/sorobanService');
+const crypto = require('crypto');
 
 function canPerformPlatformSignature(userId) {
   if (!process.env.PLATFORM_APPROVER_USER_ID) return true;
@@ -71,10 +73,10 @@ async function setCampaignStatusFromMilestoneProgress(client, campaignId) {
 
 router.get('/campaign/:campaignId', async (req, res) => {
   const { rows } = await db.query(
-    `SELECT m.id, m.campaign_id, m.title, m.description, m.release_percentage,
-            m.sort_order, m.status, m.evidence_url, m.destination_key, m.review_note,
-            m.created_at, m.completed_at, m.approved_at, m.released_at
+    `SELECT m.*, 
+            (c.milestones_contract_id IS NOT NULL) AS on_chain
      FROM milestones m
+     JOIN campaigns c ON c.id = m.campaign_id
      WHERE m.campaign_id = $1
      ORDER BY m.sort_order ASC, m.created_at ASC`,
     [req.params.campaignId]
@@ -190,6 +192,40 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
      RETURNING *`,
     [String(evidenceUrl).trim(), destinationKey, req.params.id]
   );
+
+  // Soroban integration: Submit milestone on-chain
+  const { rows: campaignRows } = await db.query(
+    'SELECT milestones_contract_id FROM campaigns WHERE id = $1',
+    [milestone.campaign_id]
+  );
+  const contractId = campaignRows[0]?.milestones_contract_id;
+  
+  if (contractId) {
+    try {
+      const evidenceHash = crypto.createHash('sha256').update(evidenceUrl).digest();
+      const { rows: userRows } = await db.query(
+        'SELECT wallet_public_key, wallet_secret_encrypted FROM users WHERE id = $1',
+        [req.user.userId]
+      );
+      const user = userRows[0];
+      
+      await withDecryptedWalletSecret(
+        user.wallet_secret_encrypted,
+        { userId: req.user.userId, walletPublicKey: user.wallet_public_key },
+        async (secret) => {
+          await invokeContract({
+            contractId,
+            method: 'submit_milestone',
+            args: [nativeToScVal(milestone.sort_order), nativeToScVal(evidenceHash)],
+            signerSecret: secret,
+          });
+        }
+      );
+    } catch (err) {
+      logger.error('Soroban submit_milestone failed', { error: err.message, milestone_id: milestone.id });
+    }
+  }
+
   res.json(updated[0]);
 });
 
@@ -213,6 +249,27 @@ router.post('/:id/reject', requireAuth, async (req, res) => {
     [reason, req.params.id]
   );
   if (!rows.length) return res.status(404).json({ error: 'Milestone not found or already released' });
+
+  // Soroban integration: Reject milestone on-chain
+  const { rows: campaignRows } = await db.query(
+    'SELECT milestones_contract_id FROM campaigns WHERE id = $1',
+    [rows[0].campaign_id]
+  );
+  const contractId = campaignRows[0]?.milestones_contract_id;
+  if (contractId) {
+    try {
+      const reasonHash = crypto.createHash('sha256').update(reason).digest();
+      await invokeContract({
+        contractId,
+        method: 'reject_milestone',
+        args: [nativeToScVal(rows[0].sort_order), nativeToScVal(reasonHash)],
+        signerSecret: process.env.PLATFORM_SECRET_KEY,
+      });
+    } catch (err) {
+      logger.error('Soroban reject_milestone failed', { error: err.message, milestone_id: req.params.id });
+    }
+  }
+
   res.json(rows[0]);
 });
 
@@ -379,6 +436,28 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
        RETURNING *`,
       [reviewNote, milestone.id]
     );
+
+    // Soroban integration: Approve milestone on-chain
+    const { rows: campaignRows } = await client.query(
+      'SELECT milestones_contract_id FROM campaigns WHERE id = $1',
+      [milestone.campaign_id]
+    );
+    const contractId = campaignRows[0]?.milestones_contract_id;
+    if (contractId) {
+      try {
+        await invokeContract({
+          contractId,
+          method: 'approve_milestone',
+          args: [nativeToScVal(milestone.sort_order)],
+          signerSecret: process.env.PLATFORM_SECRET_KEY,
+        });
+      } catch (err) {
+        logger.error('Soroban approve_milestone failed', { error: err.message, milestone_id: milestone.id });
+        // Note: Funds might have been released by the backend call already, 
+        // or the contract might fail if it's already approved.
+      }
+    }
+
     const campaignStatus = await setCampaignStatusFromMilestoneProgress(client, milestone.campaign_id);
 
     await client.query('COMMIT');

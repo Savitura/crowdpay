@@ -26,18 +26,37 @@ export default function MilestoneTracker({ milestones, assetType }) {
                   </div>
                   <strong>{milestone.title}</strong>
                 </div>
-                <div
-                  style={{
-                    alignSelf: 'flex-start',
-                    background: tone.bg,
-                    color: tone.fg,
-                    borderRadius: '999px',
-                    fontSize: '0.78rem',
-                    fontWeight: 700,
-                    padding: '0.25rem 0.6rem',
-                  }}
-                >
-                  {tone.label}
+                <div style={{ display: 'flex', gap: '0.5rem', alignSelf: 'flex-start' }}>
+                  {milestone.on_chain && (
+                    <div
+                      title="This milestone is managed by a Soroban smart contract"
+                      style={{
+                        background: '#fef3c7',
+                        color: '#92400e',
+                        borderRadius: '999px',
+                        fontSize: '0.72rem',
+                        fontWeight: 700,
+                        padding: '0.25rem 0.6rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.25rem'
+                      }}
+                    >
+                      <span aria-hidden="true">⛓️</span> On-chain
+                    </div>
+                  )}
+                  <div
+                    style={{
+                      background: tone.bg,
+                      color: tone.fg,
+                      borderRadius: '999px',
+                      fontSize: '0.78rem',
+                      fontWeight: 700,
+                      padding: '0.25rem 0.6rem',
+                    }}
+                  >
+                    {tone.label}
+                  </div>
                 </div>
               </div>
               <div style={{ marginTop: '0.45rem', color: '#444', lineHeight: 1.55, fontSize: '0.92rem' }}>
