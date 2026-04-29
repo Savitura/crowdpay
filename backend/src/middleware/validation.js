@@ -113,6 +113,10 @@ const createCampaignValidation = [
     }),
   body('milestones.*.title').optional().customSanitizer(stripHtml),
   body('milestones.*.description').optional().customSanitizer(stripHtml),
+  body('show_backer_amounts')
+    .optional()
+    .isBoolean()
+    .withMessage('show_backer_amounts must be a boolean'),
 ];
 
 const createCampaignUpdateValidation = [
@@ -142,6 +146,11 @@ const contributionValidation = [
     .withMessage('send_asset is required')
     .isIn(SUPPORTED_ASSETS)
     .withMessage(`send_asset must be one of: ${SUPPORTED_ASSETS.join(', ')}`),
+  body('display_name')
+    .optional({ nullable: true })
+    .customSanitizer(stripHtml)
+    .isLength({ max: 50 })
+    .withMessage('Display name must be at most 50 characters'),
 ];
 
 const withdrawalValidation = [

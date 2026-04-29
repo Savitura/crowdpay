@@ -27,6 +27,7 @@ CREATE TABLE campaigns (
   status              TEXT NOT NULL DEFAULT 'active'
                         CHECK (status IN ('active', 'funded', 'in_progress', 'completed', 'closed', 'withdrawn', 'failed')),
   deadline            DATE,
+  show_backer_amounts BOOLEAN DEFAULT TRUE,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -47,6 +48,7 @@ CREATE TABLE contributions (
   conversion_rate     NUMERIC(30, 15),
   path                JSONB,
   tx_hash             TEXT UNIQUE NOT NULL,  -- deduplicate by Stellar transaction hash
+  display_name        TEXT,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 

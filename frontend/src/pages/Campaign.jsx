@@ -52,6 +52,8 @@ export default function Campaign() {
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState('');
   const [inviteSuccess, setInviteSuccess] = useState(false);
+  const [showEmbedSection, setShowEmbedSection] = useState(false);
+  const [embedCopied, setEmbedCopied] = useState(false);
 
   useEffect(() => {
     setLoadError('');
@@ -67,7 +69,7 @@ export default function Campaign() {
         }
       })
       .catch((err) => setLoadError(err.message || 'Could not load campaign.'));
-    api.getContributions(id).then(setContributions).catch(() => setContributions([]));
+    api.getCampaignBackers(id).then(setContributions).catch(() => setContributions([]));
     api.getMilestones(id).then(setMilestones).catch(() => setMilestones([]));
     api.getCampaignUpdates(id, { limit: 20 }).then(setUpdates).catch(() => setUpdates([]));
   }, [id, token, contributed]);
@@ -152,6 +154,34 @@ export default function Campaign() {
       alert(err.message || 'Failed to remove member');
     }
   }
+  useEffect(() => {
+    if (!campaign) return;
+    document.title = `${campaign.title} | CrowdPay`;
+
+    // Basic meta tag updates (SPA approach)
+    const updateMeta = (name, content, property = false) => {
+      let el = document.querySelector(property ? `meta[property="${name}"]` : `meta[name="${name}"]`);
+      if (!el) {
+        el = document.createElement('meta');
+        if (property) el.setAttribute('property', name);
+        else el.setAttribute('name', name);
+        document.head.appendChild(el);
+      }
+      el.setAttribute('content', content);
+    };
+
+    updateMeta('description', campaign.description || '');
+    updateMeta('og:title', campaign.title, true);
+    updateMeta('og:description', campaign.description || '', true);
+    updateMeta('og:url', window.location.href, true);
+    if (campaign.cover_image_url) {
+      updateMeta('og:image', campaign.cover_image_url, true);
+      updateMeta('twitter:image', campaign.cover_image_url);
+    }
+    updateMeta('twitter:card', 'summary_large_image');
+    updateMeta('twitter:title', campaign.title);
+    updateMeta('twitter:description', campaign.description || '');
+  }, [campaign]);
 
   if (loadError && !campaign) {
     return (
@@ -247,7 +277,7 @@ export default function Campaign() {
           </div>
           <div style={{ textAlign: 'right' }}>
             <div style={styles.big}>{pct}%</div>
-            <div style={styles.small}>funded</div>
+            <div style={styles.small}>funded by <strong>{campaign.contributor_count || 0}</strong> backers</div>
           </div>
         </div>
         <div style={styles.bar}><div style={{ ...styles.fill, width: `${pct}%` }} /></div>
@@ -284,10 +314,125 @@ export default function Campaign() {
         )}
       </div>
 
+      <div style={{ display: 'flex', gap: '0.65rem', marginBottom: '1.75rem', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className="btn-secondary"
+          style={{ flex: 1, fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+          onClick={() => {
+            const text = encodeURIComponent(`I just backed ${campaign.title} on CrowdPay — ${pct}% funded with ${campaign.contributor_count || 0} backers. Join me: ${window.location.href}`);
+            window.open(`https://twitter.com/intent/tweet?text=${text}`, '_blank');
+          }}
+        >
+          Share on X
+        </button>
+        <button
+          type="button"
+          className="btn-secondary"
+          style={{ flex: 1, fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+          onClick={() => {
+            const text = encodeURIComponent(`I just backed ${campaign.title} on CrowdPay — ${pct}% funded with ${campaign.contributor_count || 0} backers. Join me: ${window.location.href}`);
+            window.open(`https://wa.me/?text=${text}`, '_blank');
+          }}
+        >
+          WhatsApp
+        </button>
+        <button
+          type="button"
+          className="btn-secondary"
+          style={{ flex: 1, fontSize: '0.85rem' }}
+          onClick={() => {
+            navigator.clipboard.writeText(window.location.href);
+            alert('Link copied to clipboard!');
+          }}
+        >
+          Copy link
+        </button>
+      </div>
+
       <div style={styles.walletInfo}>
         <span style={styles.walletLabel}>Campaign wallet</span>
         <code style={styles.walletKey}>{campaign.wallet_public_key}</code>
       </div>
+
+      {canPostUpdate && (
+        <div style={styles.card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Embed this campaign</h3>
+            <button
+              type="button"
+              onClick={() => setShowEmbedSection(!showEmbedSection)}
+              style={{
+                background: 'transparent',
+                color: '#7c3aed',
+                border: '1px solid #7c3aed',
+                padding: '0.4rem 0.8rem',
+                fontSize: '0.85rem',
+                minHeight: 'auto',
+              }}
+            >
+              {showEmbedSection ? 'Hide' : 'Show'}
+            </button>
+          </div>
+
+          {showEmbedSection && (
+            <>
+              <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '1rem', lineHeight: 1.5 }}>
+                Add this embed code to your website or blog to display a live funding widget for this campaign.
+              </p>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#555', display: 'block', marginBottom: '0.5rem' }}>
+                  Embed code
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <pre style={styles.embedCode}>
+                    {`<iframe src="${window.location.origin}/embed/campaigns/${campaign.id}" \n        width="480" height="280" frameborder="0">\n</iframe>`}
+                  </pre>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const code = `<iframe src="${window.location.origin}/embed/campaigns/${campaign.id}" width="480" height="280" frameborder="0"></iframe>`;
+                      navigator.clipboard.writeText(code).then(() => {
+                        setEmbedCopied(true);
+                        setTimeout(() => setEmbedCopied(false), 2000);
+                      });
+                    }}
+                    style={{
+                      position: 'absolute',
+                      top: '0.5rem',
+                      right: '0.5rem',
+                      background: embedCopied ? '#10b981' : '#7c3aed',
+                      color: '#fff',
+                      padding: '0.4rem 0.8rem',
+                      fontSize: '0.8rem',
+                      minHeight: 'auto',
+                    }}
+                  >
+                    {embedCopied ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#555', display: 'block', marginBottom: '0.5rem' }}>
+                  Preview
+                </label>
+                <div style={styles.embedPreview}>
+                  <iframe
+                    src={`/embed/campaigns/${campaign.id}`}
+                    width="100%"
+                    height="280"
+                    frameBorder="0"
+                    title="Campaign embed preview"
+                    style={{ border: '1px solid #e5e5e5', borderRadius: '6px' }}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {token && (
         <WithdrawalsSection
@@ -430,7 +575,7 @@ export default function Campaign() {
       )}
 
       <h2 style={styles.sectionTitle}>
-        Contributions {contributions !== null ? `(${contributions.length})` : ''}
+        Backer Wall {contributions !== null ? `(${contributions.length})` : ''}
         {isLive && (
           <span style={styles.liveIndicator} title="Live updates active">
             <span style={styles.liveDot} />
@@ -441,33 +586,41 @@ export default function Campaign() {
       {contributions === null ? (
         <ContributionListSkeleton />
       ) : contributions.length === 0 ? (
-        <p style={{ color: '#999' }}>No contributions yet.</p>
+        <div style={styles.emptyBackers}>
+          <p>Be the first to back this!</p>
+          <p style={{ fontSize: '0.9rem', color: '#888', marginTop: '0.25rem' }}>Every contribution counts towards making this goal a reality.</p>
+        </div>
       ) : (
         <div style={styles.list}>
           {contributions.map((c) => (
             <div key={c.id} style={styles.row}>
-              <div style={{ minWidth: 0 }}>
-                <div style={styles.sender}>
-                  {c.sender_public_key.slice(0, 8)}…{c.sender_public_key.slice(-4)}
+              <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={styles.avatar}>
+                  {(c.display_name || 'A')[0].toUpperCase()}
                 </div>
-                {c.payment_type === 'path_payment_strict_receive' && c.source_asset && c.source_amount != null && (
+                <div style={{ minWidth: 0 }}>
+                  <div style={styles.sender}>
+                    {c.display_name || 'Anonymous'}
+                  </div>
                   <div style={styles.convHint}>
-                    via {Number(c.source_amount).toLocaleString()} {c.source_asset}
+                    {c.sender_public_key.slice(0, 4)}…{c.sender_public_key.slice(-4)} • {new Date(c.created_at).toLocaleDateString()}
                   </div>
-                )}
-                {c.refund_status && (
-                  <div style={styles.refundTag}>
-                    {c.refund_status === 'pending' && 'Refund pending'}
-                    {c.refund_status === 'submitted' && 'Refunded'}
-                    {c.refund_status === 'indexed' && 'Refunded'}
-                    {c.refund_status === 'failed' && 'Refund failed'}
-                    {c.refund_status === 'denied' && 'Refund denied'}
-                  </div>
-                )}
+                  {c.refund_status && (
+                    <div style={styles.refundTag}>
+                      {c.refund_status === 'pending' && 'Refund pending'}
+                      {c.refund_status === 'submitted' && 'Refunded'}
+                      {c.refund_status === 'indexed' && 'Refunded'}
+                      {c.refund_status === 'failed' && 'Refund failed'}
+                      {c.refund_status === 'denied' && 'Refund denied'}
+                    </div>
+                  )}
+                </div>
               </div>
-              <span style={styles.amount}>
-                +{Number(c.amount).toLocaleString()} {c.asset}
-              </span>
+              {c.amount != null && (
+                <span style={styles.amount}>
+                  {Number(c.amount).toLocaleString()} {c.asset}
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -509,4 +662,25 @@ const styles = {
   refundTag: { marginTop: '0.45rem', fontSize: '0.75rem', color: '#7c3aed', fontWeight: 700 },
   liveIndicator: { display: 'inline-flex', alignItems: 'center', gap: '4px', marginLeft: '0.5rem', fontSize: '0.72rem', fontWeight: 600, color: '#16a34a', verticalAlign: 'middle' },
   liveDot: { display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: '#16a34a', animation: 'pulse 1.5s ease-in-out infinite' },
+  embedCode: {
+    background: '#f8f8f8',
+    border: '1px solid #e5e5e5',
+    borderRadius: '6px',
+    padding: '0.75rem',
+    fontSize: '0.75rem',
+    fontFamily: 'monospace',
+    color: '#333',
+    overflow: 'auto',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-all',
+    paddingRight: '5rem',
+  },
+  embedPreview: {
+    background: '#fafafa',
+    border: '1px solid #e5e5e5',
+    borderRadius: '6px',
+    padding: '0.75rem',
+  },
+  emptyBackers: { padding: '2.5rem 1rem', textAlign: 'center', background: '#fcfaff', border: '2px dashed #ede9fe', borderRadius: '12px', color: '#7c3aed', fontWeight: 700 },
+  avatar: { width: '36px', height: '36px', borderRadius: '50%', background: '#ede9fe', color: '#7c3aed', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', fontWeight: 800, flexShrink: 0 },
 };

@@ -36,14 +36,11 @@ export default function CreateCampaign() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
-    title: '',
-    description: '',
-    target_amount: '',
-    asset_type: 'USDC',
     deadline: '',
     milestones: [],
     min_contribution: '',
     max_contribution: '',
+    show_backer_amounts: true,
   });
   const [coverImageFile, setCoverImageFile] = useState(null);
   const [coverImagePreview, setCoverImagePreview] = useState('');
@@ -458,6 +455,22 @@ export default function CreateCampaign() {
               </label>
               <input id="cc-deadline" type="date" value={form.deadline} onChange={setField('deadline')} />
             </div>
+
+            <div className="form-stack" style={{ marginTop: '1.25rem', flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                id="cc-show-backers"
+                type="checkbox"
+                style={{ width: 'auto', margin: 0 }}
+                checked={form.show_backer_amounts}
+                onChange={(e) => setForm((f) => ({ ...f, show_backer_amounts: e.target.checked }))}
+              />
+              <label htmlFor="cc-show-backers" style={{ fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}>
+                Show contribution amounts on backer wall
+              </label>
+            </div>
+            <p style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.35rem' }}>
+              If unchecked, backers will be listed but their individual amounts will be hidden from the public.
+            </p>
 
             <div className="alert alert--info" style={{ marginTop: '1.25rem' }} role="status">
               <strong>Summary:</strong> Goal of {form.target_amount || '—'} {form.asset_type}
