@@ -213,7 +213,7 @@ router.get('/quote', requireAuth, async (req, res) => {
 });
 
 router.post('/prepare', requireAuth, contributionValidation, validateRequest, async (req, res) => {
-  const { campaign_id, amount, send_asset, sender_public_key } = req.body;
+  const { campaign_id, amount, send_asset, sender_public_key, display_name } = req.body;
   if (!sender_public_key) {
     return res.status(422).json({
       error: {
@@ -242,6 +242,7 @@ router.post('/prepare', requireAuth, contributionValidation, validateRequest, as
       amount,
       sendAsset: send_asset,
       contributorPublicKey: sender_public_key,
+      displayName: display_name,
     });
 
     const unsignedXdr =
@@ -356,7 +357,7 @@ router.post('/submit-signed', requireAuth, async (req, res) => {
 
 // Contribute to a campaign (authenticated, custodial)
 router.post('/', requireAuth, contributionValidation, validateRequest, async (req, res) => {
-  const { campaign_id, amount, send_asset } = req.body;
+  const { campaign_id, amount, send_asset, display_name } = req.body;
 
   const campaign = await loadActiveCampaign(campaign_id);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
@@ -377,6 +378,7 @@ router.post('/', requireAuth, contributionValidation, validateRequest, async (re
       walletSecretEncrypted: users[0].wallet_secret_encrypted,
       amount,
       sendAsset: send_asset,
+      displayName: display_name,
     });
     res.status(202).json({
       tx_hash: result.txHash,

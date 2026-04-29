@@ -8,6 +8,8 @@ const {
   getSupportedAssetCodes,
   buildWithdrawalTransaction,
 } = require('../services/stellarService');
+const { encryptSecret } = require('../services/walletService');
+const { watchCampaignWallet } = require('../services/ledgerMonitor');
 const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../services/ledgerMonitor');
 const { insertWithdrawalPendingSignatures } = require('../services/stellarTransactionService');
 const { sendEmail } = require('../services/emailService');
@@ -119,10 +121,10 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
   const orderBy = sortExpressions[sort] || sortExpressions.newest;
 
   const query = `
-    SELECT id, title, description, target_amount, raised_amount, asset_type,
-           wallet_public_key, status, creator_id, deadline, cover_image_url, created_at,
-           (SELECT COUNT(*)::int FROM campaign_updates cu WHERE cu.campaign_id = campaigns.id) AS updates_count
-    FROM campaigns
+    SELECT c.*, 
+           (SELECT COUNT(*)::int FROM campaign_updates u WHERE u.campaign_id = c.id) AS updates_count,
+           (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions con WHERE con.campaign_id = c.id) AS contributor_count
+    FROM campaigns c
     ${whereClause}
     ORDER BY ${orderBy}
     LIMIT $${params.length + 1}
@@ -135,7 +137,13 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
 
 // Get single Campaign
 router.get('/:id', async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM campaigns WHERE id = $1', [req.params.id]);
+  const query = `
+    SELECT *,
+           (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions WHERE campaign_id = $1) AS contributor_count
+    FROM campaigns
+    WHERE id = $1
+  `;
+  const { rows } = await db.query(query, [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
   res.json(rows[0]);
 });
@@ -173,6 +181,26 @@ router.get('/:id/embed', async (req, res) => {
     progress_percentage: Math.round(pct * 10) / 10,
     contribution_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/campaigns/${campaign.id}`,
   });
+// Get backers for a campaign
+router.get('/:id/backers', async (req, res) => {
+  const campaignId = req.params.id;
+  const { rows: campaignRows } = await db.query('SELECT show_backer_amounts FROM campaigns WHERE id = $1', [campaignId]);
+  if (!campaignRows.length) return res.status(404).json({ error: 'Campaign not found' });
+  const { show_backer_amounts } = campaignRows[0];
+
+  const query = `
+    SELECT 
+      display_name,
+      sender_public_key,
+      ${show_backer_amounts ? 'amount,' : ''}
+      asset,
+      created_at
+    FROM contributions
+    WHERE campaign_id = $1
+    ORDER BY created_at DESC
+  `;
+  const { rows } = await db.query(query, [campaignId]);
+  res.json(rows);
 });
 
 // SSE stream for real-time campaign funding updates
@@ -334,20 +362,34 @@ router.post('/:id/trigger-refunds', requireAuth, requireRole('admin'), async (re
 });
 
 // Create campaign (authenticated)
-router.post(
-  '/',
-  requireAuth,
-  requireRole('creator', 'admin'),
-  createCampaignValidation,
-  validateRequest,
-  async (req, res) => {
-    const { title, description, target_amount, asset_type, deadline, milestones } = req.body;
-    let normalizedMilestones;
-    try {
-      normalizedMilestones = normalizeMilestonesInput(milestones);
-    } catch (err) {
-      return res.status(422).json({ error: err.message });
-    }
+router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) => {
+  const { title, description, target_amount, asset_type, deadline, milestones } = req.body;
+  if (!title || !target_amount || !asset_type) {
+    return res.status(400).json({ error: 'title, target_amount and asset_type are required' });
+  }
+  if (!SUPPORTED_ASSETS.includes(asset_type)) {
+    return res.status(400).json({
+      error: `asset_type must be one of: ${SUPPORTED_ASSETS.join(', ')}`,
+    });
+  }
+
+  let normalizedMilestones;
+  try {
+    normalizedMilestones = normalizeMilestonesInput(milestones);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  // Get creator's public key to add as campaign wallet signer
+  const { rows: userRows } = await db.query(
+    'SELECT wallet_public_key FROM users WHERE id = $1',
+    [req.user.userId]
+  );
+  const creatorPublicKey = userRows[0].wallet_public_key;
+
+  // Create the on-chain campaign wallet
+  const wallet = await createCampaignWallet(creatorPublicKey);
+  const encryptedSecret = encryptSecret(wallet.secret);
 
     const { rows: userRows } = await db.query(
       'SELECT wallet_public_key FROM users WHERE id = $1',
@@ -363,10 +405,10 @@ router.post(
       await client.query('BEGIN');
       const { rows } = await client.query(
         `INSERT INTO campaigns
-           (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+           (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, show_backer_amounts)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *`,
-        [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline]
+        [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline, show_backer_amounts]
       );
       campaign = rows[0];
 
