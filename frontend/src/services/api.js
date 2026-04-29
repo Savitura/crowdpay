@@ -163,6 +163,7 @@ function setToken(t) {
 }
 
 export const api = {
+  getPlatformConfig: () => request('GET', '/config'),
   register: (body) => request('POST', '/auth/register', body),
   login: (body) => request('POST', '/auth/login', body),
   logout: () => logout(),

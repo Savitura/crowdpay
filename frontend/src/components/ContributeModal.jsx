@@ -59,6 +59,11 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
   const [quote, setQuote] = useState(null);
   const [phase, setPhase] = useState('form');
   const [result, setResult] = useState(null);
+  const [feeBps, setFeeBps] = useState(0);
+
+  useEffect(() => {
+    api.getPlatformConfig().then((cfg) => setFeeBps(cfg.platform_fee_bps || 0)).catch(() => {});
+  }, []);
   const [freighterAvailable, setFreighterAvailable] = useState(false);
   const [freighterChecked, setFreighterChecked] = useState(false);
   const [existingContributions, setExistingContributions] = useState([]);
@@ -655,15 +660,68 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
                 </div>
               )}
 
-              {qualifyingTier && (
-                <div style={{ marginTop: '0.85rem' }}>
-                  <div style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: '8px', padding: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <div style={{ fontSize: '1.25rem' }}>🎁</div>
-                    <div>
-                      <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#7c3aed', textTransform: 'uppercase', letterSpacing: '0.025em' }}>Unlocked Reward</div>
-                      <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#1e1b4b' }}>{qualifyingTier.title}</div>
-                    </div>
-                  </div>
+{qualifyingTier && (
+  <div style={{ marginTop: "0.85rem" }}>
+    <div
+      style={{
+        background: "#f5f3ff",
+        border: "1px solid #ddd6fe",
+        borderRadius: "8px",
+        padding: "0.75rem",
+        display: "flex",
+        alignItems: "center",
+        gap: "0.75rem",
+      }}
+    >
+      <div style={{ fontSize: "1.25rem" }}>🎁</div>
+      <div>
+        <div
+          style={{
+            fontSize: "0.75rem",
+            fontWeight: 700,
+            color: "#7c3aed",
+            textTransform: "uppercase",
+            letterSpacing: "0.025em",
+          }}
+        >
+          Unlocked Reward
+        </div>
+        <div
+          style={{
+            fontWeight: 700,
+            fontSize: "0.95rem",
+            color: "#1e1b4b",
+          }}
+        >
+          {qualifyingTier.title}
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
+{feeBps > 0 && destAmount && Number(destAmount) > 0 && (
+  <div
+    className="alert alert--info"
+    style={{ marginTop: "0.85rem", fontSize: "0.875rem" }}
+    role="status"
+  >
+    {(() => {
+      const feeAmt = (Number(destAmount) * feeBps / 10000).toFixed(7);
+      const netAmt = (Number(destAmount) - Number(feeAmt)).toFixed(7);
+
+      return (
+        <>
+          <strong>Platform fee:</strong> {feeBps / 100}% = {feeAmt}{" "}
+          {campaign.asset_type} — campaign receives{" "}
+          <strong>
+            {netAmt} {campaign.asset_type}
+          </strong>
+        </>
+      );
+    })()}
+  </div>
+)}
                 </div>
               )}
 
