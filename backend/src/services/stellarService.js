@@ -347,7 +347,12 @@ async function buildUnsignedContributionPathPayment({
 }
 
 /**
+/**
  * Build and sign a path payment contribution; `destAssetCode` is the asset the campaign receives.
+ *
+ * When ROUTER_CONTRACT_ID is set the call is routed through the on-chain
+ * contribution router which enforces slippage and splits the fee atomically.
+ * Falls back to the classic two-operation path payment when the env var is absent.
  */
 async function prepareSignedContributionPathPayment({
   senderSecret,
@@ -357,7 +362,51 @@ async function prepareSignedContributionPathPayment({
   destAmount,
   destAssetCode,
   memo,
+  path = [],
+  maxSlippageBps,
 }) {
+  // ── On-chain router path (trustless) ────────────────────────────────────────
+  if (process.env.ROUTER_CONTRACT_ID) {
+    const { routeContribution } = require('./sorobanService');
+    const { configuredAssets, USDC } = require('../config/stellar');
+    const { Asset } = require('@stellar/stellar-sdk');
+
+    function assetToSacAddress(code) {
+      if (code === 'XLM') return process.env.XLM_SAC_ADDRESS;
+      if (code === 'USDC') return process.env.USDC_SAC_ADDRESS;
+      return configuredAssets[code]?.sacAddress;
+    }
+
+    const sendAssetAddress = assetToSacAddress(sendAsset);
+    const destAssetAddress = assetToSacAddress(destAssetCode || 'USDC');
+    if (!sendAssetAddress || !destAssetAddress) {
+      throw new Error(`SAC address not configured for ${sendAsset} or ${destAssetCode}`);
+    }
+
+    const feeBps = parseInt(process.env.PLATFORM_FEE_BPS || '0', 10);
+    const slippage = maxSlippageBps ?? parseInt(process.env.SLIPPAGE_BPS || '500', 10);
+
+    // dest_amount in stroops (7 decimal places → multiply by 1e7)
+    const destAmountStroops = String(Math.round(parseFloat(destAmount) * 1e7));
+    const sendMaxStroops    = String(Math.round(parseFloat(sendMax)    * 1e7));
+
+    const txHash = await routeContribution({
+      senderSecret,
+      sendAssetAddress,
+      sendMax:          sendMaxStroops,
+      destAssetAddress,
+      destAmount:       destAmountStroops,
+      path,
+      campaignWallet:   destinationPublicKey,
+      platformWallet:   PLATFORM_KEYPAIR.publicKey(),
+      feeBps,
+      maxSlippageBps:   slippage,
+    });
+
+    return { txHash, routedOnChain: true };
+  }
+
+  // ── Classic fallback (client-side slippage) ──────────────────────────────────
   const senderKeypair = Keypair.fromSecret(senderSecret);
   const unsignedXdr = await buildUnsignedContributionPathPayment({
     senderPublicKey: senderKeypair.publicKey(),
@@ -371,6 +420,7 @@ async function prepareSignedContributionPathPayment({
   const tx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
   tx.sign(senderKeypair);
   const signedXdr = tx.toXDR();
+  const { feeAmount } = calcFee(destAmount);
   return { unsignedXdr, signedXdr, feeAmount };
 }
 

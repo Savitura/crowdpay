@@ -46,6 +46,67 @@ async function invokeContract({ contractId, method, args, signerSecret }) {
 }
 
 /**
+ * Invoke the on-chain contribution router contract.
+ *
+ * Enforces slippage ceiling and atomically splits dest_amount between
+ * campaign_wallet and platform_wallet.
+ *
+ * @param {object} params
+ * @param {string} params.senderSecret       - Contributor's Stellar secret key
+ * @param {string} params.sendAssetAddress   - SAC address of the send asset
+ * @param {string} params.sendMax            - Max source amount (stroops as string)
+ * @param {string} params.destAssetAddress   - SAC address of the destination asset
+ * @param {string} params.destAmount         - Exact dest amount (stroops as string)
+ * @param {string[]} params.path             - Intermediate asset addresses (may be empty)
+ * @param {string} params.campaignWallet     - Campaign treasury address
+ * @param {string} params.platformWallet     - Platform fee recipient address
+ * @param {number} params.feeBps             - Platform fee in basis points (e.g. 100 = 1%)
+ * @param {number} params.maxSlippageBps     - Max slippage in basis points (e.g. 500 = 5%)
+ * @returns {Promise<string>} Transaction hash
+ */
+async function routeContribution({
+  senderSecret,
+  sendAssetAddress,
+  sendMax,
+  destAssetAddress,
+  destAmount,
+  path = [],
+  campaignWallet,
+  platformWallet,
+  feeBps,
+  maxSlippageBps,
+}) {
+  const contractId = process.env.ROUTER_CONTRACT_ID;
+  if (!contractId) throw new Error('ROUTER_CONTRACT_ID not configured');
+
+  const { Vec } = require('@stellar/stellar-sdk');
+
+  const pathVec = path.length > 0
+    ? nativeToScVal(path.map((a) => new Address(a)))
+    : nativeToScVal([], { type: 'vec' });
+
+  const result = await invokeContract({
+    contractId,
+    method: 'route_contribution',
+    args: [
+      new Address(Keypair.fromSecret(senderSecret).publicKey()).toScVal(),
+      new Address(sendAssetAddress).toScVal(),
+      nativeToScVal(BigInt(sendMax),   { type: 'i128' }),
+      new Address(destAssetAddress).toScVal(),
+      nativeToScVal(BigInt(destAmount), { type: 'i128' }),
+      pathVec,
+      new Address(campaignWallet).toScVal(),
+      new Address(platformWallet).toScVal(),
+      nativeToScVal(feeBps,         { type: 'u32' }),
+      nativeToScVal(maxSlippageBps, { type: 'u32' }),
+    ],
+    signerSecret: senderSecret,
+  });
+
+  return result;
+}
+
+/**
  * Encodes a milestone object for the Soroban contract.
  */
 function encodeMilestone(m) {
@@ -73,4 +134,5 @@ module.exports = {
   invokeContract,
   encodeMilestone,
   nativeToScVal,
+  routeContribution,
 };
