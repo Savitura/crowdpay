@@ -10,6 +10,24 @@
 
 ## Endpoints
 
+### `GET /api/users/me`
+
+Authenticated. Returns the current profile, including `kyc_status` (`unverified`, `pending`, `verified`, `rejected`) and `kyc_completed_at`.
+
+### `POST /api/users/me/kyc/start`
+
+Authenticated. Creates a hosted KYC session with the configured provider and marks the user `pending`.
+
+Response includes `redirect_url` or `session_token`, plus the updated user. Persona is used when `KYC_PROVIDER=persona`, `PERSONA_API_KEY`, and `PERSONA_TEMPLATE_ID` are configured; otherwise local development returns a dev redirect URL.
+
+### `POST /api/webhooks/kyc`
+
+KYC provider callback. Updates the matched user to `verified` or `rejected` from provider status. The campaign creation gate is controlled by `KYC_REQUIRED_FOR_CAMPAIGNS` and defaults to enabled; set it to `false` for testnet/dev.
+
+### `POST /api/campaigns`
+
+Authenticated creator/admin endpoint. When `KYC_REQUIRED_FOR_CAMPAIGNS` is not `false`, the user must have `kyc_status=verified`; otherwise the API returns `403` with `code=KYC_REQUIRED`.
+
 ### `GET /api/contributions/quote`
 
 Get a DEX quote before submitting a conversion contribution.
@@ -42,7 +60,7 @@ Errors:
 
 ### `POST /api/contributions`
 
-Submit a contribution (direct payment or path payment).
+Submit a contribution through the existing custodial wallet flow (direct payment or path payment).
 
 Body:
 
@@ -74,6 +92,97 @@ Errors:
 - `400` missing fields / unsupported assets
 - `404` campaign not found or not active
 - `422` no conversion path found for requested asset pair
+
+### `POST /api/contributions/prepare`
+
+Prepare an unsigned Stellar transaction for a Freighter contribution without submitting it.
+
+Body:
+
+- `campaign_id` (required)
+- `amount` (required): amount the campaign must receive in campaign asset
+- `send_asset` (required): `XLM` or `USDC`
+- `sender_public_key` (required): contributor wallet public key from Freighter
+
+Success response (`200`):
+
+```json
+{
+  "unsigned_xdr": "AAAAAgAAA...",
+  "prepare_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "conversion_quote": null,
+  "sender_public_key": "G...",
+  "network_passphrase": "Test SDF Network ; September 2015",
+  "network_name": "TESTNET"
+}
+```
+
+`prepare_token` is short-lived and must be returned with the signed XDR to `/api/contributions/submit-signed`.
+
+Errors:
+
+- `400` missing fields / invalid Stellar public key / unsupported asset
+- `404` campaign not found or not active
+- `422` no conversion path found for requested asset pair
+
+### `POST /api/contributions/submit-signed`
+
+Submit a Freighter-signed contribution transaction after backend validation.
+
+Body:
+
+- `prepare_token` (required): opaque token returned by `/prepare`
+- `signed_xdr` (required): transaction signed in Freighter
+
+Success response (`202`):
+
+```json
+{
+  "tx_hash": "c8d6...",
+  "stellar_transaction_id": "0f3f...",
+  "message": "Transaction submitted",
+  "conversion_quote": null
+}
+```
+
+Validation performed before submission:
+
+- signed transaction source account must match `sender_public_key`
+- signed transaction body hash must match the prepared unsigned XDR exactly
+- signed transaction must contain a valid signature for the contributor public key
+
+Errors:
+
+- `400` missing fields / invalid prepare token
+- `403` prepare token belongs to a different authenticated user
+- `422` signed XDR does not match the prepared transaction
+- `502` Stellar rejected the signed transaction
+
+### `GET /api/anchor/info`
+
+Returns the configured fiat on-ramp anchors and the CrowdPay asset codes currently enabled on Stellar.
+
+### `POST /api/anchor/deposits/start`
+
+Authenticated. Starts a SEP-24 hosted deposit session for the chosen anchor after backend SEP-10 authentication.
+
+Body:
+
+- `campaign_id` (required)
+- `amount` (required): amount the campaign should ultimately receive
+- `anchor_id` (required): anchor identifier from `/api/anchor/info`
+
+Success response includes:
+
+- anchor session `id`
+- `interactive_url`
+- `anchor_transaction_id`
+- `anchor_asset` / `anchor_amount`
+- `conversion_quote` when the eventual contribution needs a path payment
+
+### `GET /api/anchor/deposits/:id`
+
+Authenticated. Polls the anchor transaction, updates the local anchor session, and once the deposit completes automatically submits the normal Stellar contribution from the user’s custodial wallet.
 
 ### `GET /api/contributions/campaign/:campaignId`
 
@@ -167,6 +276,71 @@ List withdrawal requests for a campaign (`denial_reason` included when denied). 
 
 Immutable audit timeline for one withdrawal: `action`, `actor_user_id`, `note`, `metadata`, `created_at`. Same authorization as the campaign list endpoint.
 
+### `GET /api/milestones/campaign/:campaignId`
+
+List milestones for a campaign in display order.
+
+Success response (`200`):
+
+```json
+[
+  {
+    "id": "0f3f...",
+    "campaign_id": "4db6...",
+    "title": "Prototype delivery",
+    "description": "Ship the first production-ready prototype to pilot users.",
+    "release_percentage": "25.0000",
+    "sort_order": 0,
+    "status": "pending",
+    "evidence_url": null,
+    "destination_key": null,
+    "review_note": null,
+    "created_at": "2026-04-26T08:13:34.392Z",
+    "completed_at": null,
+    "approved_at": null,
+    "released_at": null
+  }
+]
+```
+
+### `POST /api/milestones/:id/submit`
+
+Creator-only. Submit milestone completion evidence and the payout destination for that release.
+
+Body:
+
+- `evidence_url` (required)
+- `destination_key` (required): Stellar public key that will receive the approved release
+
+Errors:
+
+- `403` caller is not the campaign creator
+- `409` campaign is not yet in a releaseable state, or milestone is already released
+- `400` destination key is invalid
+
+### `POST /api/milestones/:id/approve`
+
+Platform-only. Reviews the submitted milestone, signs the escrow withdrawal using the existing dual-signature flow, submits it to Stellar, records the withdrawal, and advances campaign status to `in_progress` or `completed`.
+
+Body:
+
+- `reason` (optional): review note stored with the milestone and audit trail
+
+Errors:
+
+- `403` caller cannot perform platform approval
+- `409` evidence or payout destination is missing, campaign status is not `funded`/`in_progress`, or release already exists
+- `422` dual signature requirements were not met
+- `502` Stellar rejected the release transaction
+
+### `POST /api/milestones/:id/reject`
+
+Platform-only. Rejects a submitted milestone and stores a required review note.
+
+Body:
+
+- `reason` (required)
+
 ## Auditability and traceability
 
 - Every indexed contribution stores:
@@ -179,6 +353,10 @@ Immutable audit timeline for one withdrawal: `action`, `actor_user_id`, `note`, 
 - This enables independent reconciliation against Horizon payment records by `tx_hash`.
 
 - Manual fund releases append rows to `withdrawal_approval_events` (`requested`, `creator_signed`, `platform_signed`, `creator_cancelled`, `platform_rejected`, `submit_failed`) with optional `note` and `metadata` JSON for audit and manual review.
+
+- Milestone-based releases reuse the same multisig withdrawal machinery, but the release is triggered from platform approval after the creator has submitted evidence and a payout destination.
+
+- Anchor-assisted contributions persist `anchor_id` and `anchor_transaction_id` on the final `contributions` row for support and reconciliation.
 
 ## Ledger monitor health
 
@@ -201,5 +379,3 @@ The backend also logs a **warning** every 5 minutes if any wallet is in that sta
 - withdrawal request creation with multisig validation
 - withdrawal creator/platform approval flow
 - withdrawal denial paths (missing creator approval, insufficient signatures)
-- withdrawal campaign status and duplicate-pending guards
-- withdrawal cancel/reject and Stellar submit failure logging

@@ -4,7 +4,7 @@ const express = require('express');
 const request = require('supertest');
 const proxyquire = require('proxyquire').noCallThru();
 
-function buildApp({ queryImpl, buildWithdrawalTransactionImpl, insertWithdrawalPendingSignaturesImpl }) {
+function buildApp({ queryImpl, buildWithdrawalTransactionImpl, insertWithdrawalPendingSignaturesImpl, authUser }) {
   const router = proxyquire('./campaigns', {
     '../config/database': {
       query: queryImpl,
@@ -24,7 +24,7 @@ function buildApp({ queryImpl, buildWithdrawalTransactionImpl, insertWithdrawalP
     },
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
-        req.user = { userId: 'platform-1', role: 'admin' };
+        req.user = authUser || { userId: 'platform-1', role: 'admin' };
         next();
       },
       requireRole: () => (req, _res, next) => {
@@ -60,6 +60,76 @@ test('POST /api/campaigns/cron/fail-expired returns failed campaigns', async () 
   assert.equal(response.status, 200);
   assert.equal(response.body.failedCampaigns.length, 1);
   assert.equal(response.body.failedCampaigns[0].id, 'c-1');
+});
+
+test('POST /api/campaigns blocks unverified creators when KYC gate is enabled', async (t) => {
+  const previous = process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
+  t.after(() => {
+    if (previous === undefined) delete process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
+    else process.env.KYC_REQUIRED_FOR_CAMPAIGNS = previous;
+  });
+  process.env.KYC_REQUIRED_FOR_CAMPAIGNS = 'true';
+
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text) => {
+      if (text.includes('SELECT wallet_public_key, kyc_status FROM users')) {
+        return { rows: [{ wallet_public_key: 'GCREATOR', kyc_status: 'pending' }] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .post('/api/campaigns')
+    .set('Authorization', 'Bearer token')
+    .send({ title: 'Verified only', target_amount: '100', asset_type: 'USDC' });
+
+  assert.equal(response.status, 403);
+  assert.equal(response.body.code, 'KYC_REQUIRED');
+});
+
+test('POST /api/campaigns allows creation when KYC gate is disabled', async (t) => {
+  const previous = process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
+  t.after(() => {
+    if (previous === undefined) delete process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
+    else process.env.KYC_REQUIRED_FOR_CAMPAIGNS = previous;
+  });
+  process.env.KYC_REQUIRED_FOR_CAMPAIGNS = 'false';
+
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text) => {
+      if (text.includes('SELECT wallet_public_key, kyc_status FROM users')) {
+        return { rows: [{ wallet_public_key: 'GCREATOR', kyc_status: 'unverified' }] };
+      }
+      if (text.includes('INSERT INTO campaigns')) {
+        return {
+          rows: [
+            {
+              id: 'campaign-1',
+              title: 'Dev campaign',
+              asset_type: 'USDC',
+              creator_id: 'creator-1',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .post('/api/campaigns')
+    .set('Authorization', 'Bearer token')
+    .send({ title: 'Dev campaign', target_amount: '100', asset_type: 'USDC' });
+
+  assert.equal(response.status, 201);
+  assert.equal(response.body.id, 'campaign-1');
 });
 
 test('POST /api/campaigns/:id/trigger-refunds creates refund requests for contributions', async () => {

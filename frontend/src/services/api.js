@@ -53,9 +53,54 @@ async function request(method, path, body, token, options = {}) {
   }
 
   if (!res.ok) {
-    const msg = data.error || `Request failed (${res.status})`;
-    const err = new Error(msg);
+    const errorBody = data.error;
+    const message =
+      typeof errorBody === 'string'
+        ? errorBody
+        : errorBody?.message || `Request failed (${res.status})`;
+    const err = new Error(message);
     err.status = res.status;
+    if (errorBody && typeof errorBody === 'object') {
+      err.code = errorBody.code;
+      err.fields = errorBody.fields;
+    }
+    throw err;
+  }
+
+  return data;
+}
+
+async function uploadFormData(path, formData, token) {
+  const url = `${BASE}${path}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: formData,
+    credentials: 'include',
+  });
+
+  const text = await res.text();
+  let data = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error('Unexpected server response. Please try again.');
+    }
+  }
+
+  if (!res.ok) {
+    const errorBody = data.error;
+    const message =
+      typeof errorBody === 'string'
+        ? errorBody
+        : errorBody?.message || `Request failed (${res.status})`;
+    const err = new Error(message);
+    err.status = res.status;
+    if (errorBody && typeof errorBody === 'object') {
+      err.code = errorBody.code;
+      err.fields = errorBody.fields;
+    }
     throw err;
   }
 
@@ -129,18 +174,41 @@ export const api = {
   getMyCampaigns: (token) => request('GET', '/users/me/campaigns', null, token),
   getMyStats: (token) => request('GET', '/users/me/stats', null, token),
   getMyContributions: (token) => request('GET', '/users/me/contributions', null, token),
+  getMe: (token) => request('GET', '/users/me', null, token),
+  startKyc: (token) => request('POST', '/users/me/kyc/start', null, token),
 
-  getCampaigns: () => request('GET', '/campaigns'),
-  getCampaign: (id) => request('GET', `/campaigns/${id}`),
+  getCampaigns: (options = {}) => request('GET', '/campaigns', null, null, { query: options }),
+  getCampaign: (id, token) => request('GET', `/campaigns/${id}`, null, token),
+  getCampaignEmbed: (id) => request('GET', `/campaigns/${id}/embed`),
+  getCampaignBackers: (id) => request('GET', `/campaigns/${id}/backers`),
   getCampaignBalance: (id) => request('GET', `/campaigns/${id}/balance`),
   createCampaign: (body, token) => request('POST', '/campaigns', body, token),
+  uploadCampaignCoverImage: (campaignId, file, token) => {
+    const formData = new FormData();
+    formData.append('cover_image', file);
+    return uploadFormData(`/campaigns/${encodeURIComponent(campaignId)}/cover-image`, formData, token);
+  },
+  getCampaignMembers: (campaignId, token) => request('GET', `/campaigns/${campaignId}/members`, null, token),
+  inviteCampaignMember: (campaignId, body, token) => request('POST', `/campaigns/${campaignId}/members`, body, token),
+  updateCampaignMemberRole: (campaignId, userId, body, token) => request('PATCH', `/campaigns/${campaignId}/members/${userId}`, body, token),
+  removeCampaignMember: (campaignId, userId, token) => request('DELETE', `/campaigns/${campaignId}/members/${userId}`, null, token),
+  acceptCampaignInvitation: (campaignId, body, token) => request('POST', `/campaigns/${campaignId}/members/accept`, body, token),
+  getAnchorInfo: () => request('GET', '/anchor/info'),
+  startAnchorDeposit: (body, token) => request('POST', '/anchor/deposits/start', body, token),
+  getAnchorDepositStatus: (id, token) => request('GET', `/anchor/deposits/${id}`, null, token),
   getCampaignUpdates: (campaignId, options = {}) =>
     request('GET', `/campaigns/${campaignId}/updates`, null, null, { query: options }),
   postCampaignUpdate: (campaignId, body, token) =>
     request('POST', `/campaigns/${campaignId}/updates`, body, token),
 
   getContributions: (campaignId) => request('GET', `/contributions/campaign/${campaignId}`),
+  getMilestones: (campaignId) => request('GET', `/milestones/campaign/${campaignId}`),
+  submitMilestoneEvidence: (id, body, token) => request('POST', `/milestones/${id}/submit`, body, token),
+  approveMilestone: (id, body, token) => request('POST', `/milestones/${id}/approve`, body || {}, token),
+  rejectMilestone: (id, body, token) => request('POST', `/milestones/${id}/reject`, body || {}, token),
   contribute: (body, token) => request('POST', '/contributions', body, token),
+  prepareContribution: (body, token) => request('POST', '/contributions/prepare', body, token),
+  submitSignedContribution: (body, token) => request('POST', '/contributions/submit-signed', body, token),
   quoteContribution: ({ send_asset, dest_asset, dest_amount }, token) =>
     request('GET', '/contributions/quote', null, token, {
       query: { send_asset, dest_asset, dest_amount },
@@ -160,8 +228,16 @@ export const api = {
   rejectWithdrawal: (id, body, token) => request('POST', `/withdrawals/${id}/reject`, body || {}, token),
   getWithdrawalEvents: (id, token) => request('GET', `/withdrawals/${id}/events`, null, token),
 
+  raiseDispute: (campaignId, body, token) =>
+    request('POST', `/campaigns/${campaignId}/disputes`, body, token),
+  getCampaignDisputes: (campaignId, token) =>
+    request('GET', `/campaigns/${campaignId}/disputes`, null, token),
+  updateDispute: (id, body, token) => request('PATCH', `/disputes/${id}`, body, token),
+  getDisputeEvents: (id, token) => request('GET', `/disputes/${id}/events`, null, token),
+
   getAdminStats: (token) => request('GET', '/admin/stats', null, token),
   getAdminCampaigns: (token) => request('GET', '/admin/campaigns', null, token),
+  getAdminMilestones: (token, options = {}) => request('GET', '/admin/milestones', null, token, { query: options }),
   getAdminUsers: (token) => request('GET', '/admin/users', null, token),
   updateCampaignStatus: (id, status, token) => request('PATCH', `/admin/campaigns/${id}/status`, { status }, token),
   listApiKeys: (token) => request('GET', '/api-keys', null, token),

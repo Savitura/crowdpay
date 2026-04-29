@@ -4,8 +4,9 @@ CrowdPay hides trustline and reserve mechanics from contributors. The backend en
 
 ## When trustlines and funding run
 
-1. **User registration (`POST /api/users/register`)**  
+1. **User registration (`POST /api/auth/register`)**  
    After the user row is stored, the API schedules **asynchronous** provisioning (same process, `setImmediate`):  
+   - The generated custodial Stellar seed is envelope-encrypted before it is written to `users.wallet_secret_encrypted`.  
    - If the Stellar account does not exist yet, the **platform** submits `createAccount` with enough XLM for reserves plus all trustlines.  
    - The custodial **user master key** signs a `changeTrust` transaction for each missing configured credit asset.  
    Registration **always** returns `201` with a token even if Horizon is temporarily unavailable; failures are logged as `[users] Background Stellar funding/trustlines failed`.
@@ -25,7 +26,7 @@ CrowdPay hides trustline and reserve mechanics from contributors. The backend en
 | `fundCustodialAccountFromPlatformIfNeeded` | same | `createAccount` from `PLATFORM_SECRET_KEY` when the pubkey is not on the ledger. |
 | `submitMissingTrustlinesForCustodialAccount` | same | Idempotent `changeTrust` batch for missing lines only. |
 | `listCreditAssetCodes` | same | All supported codes except `XLM`. |
-| Background hook | `src/routes/users.js` | `setImmediate` after successful register. |
+| Background hook | `src/routes/auth.js` | `setImmediate` after successful register. |
 
 ## Configuration
 

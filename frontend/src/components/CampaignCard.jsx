@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import VerificationBadge from './VerificationBadge';
 
 export default function CampaignCard({ campaign }) {
   const pct = Math.min(100, (campaign.raised_amount / campaign.target_amount) * 100).toFixed(1);
@@ -7,12 +8,18 @@ export default function CampaignCard({ campaign }) {
   return (
     <Link to={`/campaigns/${campaign.id}`} style={{ display: 'block' }} className="campaign-card-link">
       <div className="campaign-card" style={styles.card}>
+        {campaign.cover_image_url ? (
+          <div style={styles.coverImageWrapper}>
+            <img alt={campaign.title} src={campaign.cover_image_url} style={styles.coverImage} />
+          </div>
+        ) : null}
         <div style={styles.header}>
           <span style={styles.asset}>{campaign.asset_type}</span>
-          {typeof campaign.updates_count === 'number' && (
-            <span style={styles.updates}>{campaign.updates_count} updates</span>
-          )}
+          <VerificationBadge status={campaign.creator_kyc_status} compact />
         </div>
+        {typeof campaign.updates_count === 'number' && (
+          <div style={styles.updates}>{campaign.updates_count} updates</div>
+        )}
         <h3 style={styles.title}>{campaign.title}</h3>
         <p style={styles.desc}>{campaign.description?.slice(0, 100)}{campaign.description?.length > 100 ? '…' : ''}</p>
         <div style={styles.bar}>
@@ -20,7 +27,7 @@ export default function CampaignCard({ campaign }) {
         </div>
         <div style={styles.meta}>
           <span><strong>{Number(campaign.raised_amount).toLocaleString()}</strong> {campaign.asset_type} raised</span>
-          <span>{pct}%</span>
+          <span>{pct}% by <strong>{campaign.contributor_count || 0}</strong> backers</span>
         </div>
         <div style={styles.target}>
           Goal: {Number(campaign.target_amount).toLocaleString()} {campaign.asset_type}
@@ -34,9 +41,11 @@ const styles = {
   card: { background: '#fff', border: '1px solid #e5e5e5', borderRadius: '10px', padding: '1.25rem', transition: 'box-shadow 0.15s' },
   header: { marginBottom: '0.6rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   asset: { background: '#ede9fe', color: '#7c3aed', fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: '99px' },
-  updates: { fontSize: '0.75rem', fontWeight: 700, color: '#0f766e' },
+  updates: { fontSize: '0.75rem', fontWeight: 700, color: '#0f766e', marginBottom: '0.45rem' },
   title: { fontSize: '1.05rem', fontWeight: 700, marginBottom: '0.4rem', color: '#111' },
   desc: { fontSize: '0.875rem', color: '#666', marginBottom: '1rem' },
+  coverImageWrapper: { overflow: 'hidden', borderRadius: '12px 12px 0 0', marginBottom: '1rem', height: '160px' },
+  coverImage: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
   bar: { background: '#f0f0f0', borderRadius: '99px', height: '6px', marginBottom: '0.5rem', overflow: 'hidden' },
   fill: { background: '#7c3aed', height: '100%', borderRadius: '99px', transition: 'width 0.3s' },
   meta: { display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#444' },

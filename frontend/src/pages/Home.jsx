@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
 import CampaignCard from '../components/CampaignCard';
+import CampaignCardSkeleton from '../components/skeletons/CampaignCardSkeleton';
 import { useAuth } from '../context/AuthContext';
 import OnboardingCallout from '../components/OnboardingCallout';
 import {
@@ -10,13 +11,34 @@ import {
   consumeJustRegistered,
 } from '../lib/onboarding';
 
+const STATUS_OPTIONS = ['', 'active', 'funded', 'closed', 'failed'];
+const ASSET_OPTIONS = ['', 'USDC', 'XLM'];
+const SORT_OPTIONS = [
+  { value: 'newest', label: 'Newest' },
+  { value: 'ending_soon', label: 'Ending soon' },
+  { value: 'most_funded', label: 'Most funded' },
+  { value: 'most_backed', label: 'Most backed' },
+];
+
 export default function Home() {
   const [campaigns, setCampaigns] = useState([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState('');
   const { user } = useAuth();
   const [showContributorTips, setShowContributorTips] = useState(isContributorOnboardingVisible);
   const [welcomeNewUser, setWelcomeNewUser] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const search = searchParams.get('search') || '';
+  const status = searchParams.get('status') || '';
+  const asset = searchParams.get('asset') || '';
+  const sort = searchParams.get('sort') || 'newest';
+  const limit = Number(searchParams.get('limit') || 20);
+  const offset = Number(searchParams.get('offset') || 0);
+
+  const page = Math.floor(offset / limit) + 1;
+  const lastItem = Math.min(total, offset + campaigns.length);
 
   useEffect(() => {
     if (consumeJustRegistered()) {
@@ -26,12 +48,39 @@ export default function Home() {
 
   useEffect(() => {
     setListError('');
+    setLoading(true);
     api
-      .getCampaigns()
-      .then(setCampaigns)
+      .getCampaigns({ search, status, asset, sort, limit, offset })
+      .then((data) => {
+        setCampaigns(data.campaigns || []);
+        setTotal(data.total || 0);
+      })
       .catch((err) => setListError(err.message || 'Could not load campaigns.'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [search, status, asset, sort, limit, offset]);
+
+  const setFilters = (next) => {
+    const params = new URLSearchParams(searchParams);
+    Object.entries(next).forEach(([key, value]) => {
+      if (value === '' || value == null) {
+        params.delete(key);
+      } else {
+        params.set(key, String(value));
+      }
+    });
+    params.delete('offset');
+    setSearchParams(params, { replace: true });
+  };
+
+  const setPageOffset = (nextOffset) => {
+    const params = new URLSearchParams(searchParams);
+    if (nextOffset <= 0) {
+      params.delete('offset');
+    } else {
+      params.set('offset', String(nextOffset));
+    }
+    setSearchParams(params, { replace: true });
+  };
 
   function dismissContributorTips() {
     dismissContributorOnboarding();
@@ -105,10 +154,66 @@ export default function Home() {
         )}
       </div>
 
+      <div style={styles.filterBar}>
+        <label style={styles.filterItem}>
+          Search
+          <input
+            value={search}
+            onChange={(e) => setFilters({ search: e.target.value })}
+            placeholder="Search campaigns"
+            style={styles.filterInput}
+          />
+        </label>
+        <label style={styles.filterItem}>
+          Status
+          <select
+            value={status}
+            onChange={(e) => setFilters({ status: e.target.value })}
+            style={styles.filterInput}
+          >
+            {STATUS_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option === '' ? 'Any status' : option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label style={styles.filterItem}>
+          Asset
+          <select
+            value={asset}
+            onChange={(e) => setFilters({ asset: e.target.value })}
+            style={styles.filterInput}
+          >
+            {ASSET_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option === '' ? 'Any asset' : option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label style={styles.filterItem}>
+          Sort by
+          <select
+            value={sort}
+            onChange={(e) => setFilters({ sort: e.target.value })}
+            style={styles.filterInput}
+          >
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
       <h2 style={styles.sectionTitle}>Active campaigns</h2>
 
       {loading ? (
-        <p style={{ color: '#666' }}>Loading campaigns…</p>
+        <div style={styles.grid}>
+          {Array.from({ length: 6 }, (_, i) => <CampaignCardSkeleton key={i} />)}
+        </div>
       ) : listError ? (
         <p className="alert alert--error" role="alert">
           {listError}
@@ -128,11 +233,36 @@ export default function Home() {
           )}
         </div>
       ) : (
-        <div style={styles.grid}>
-          {campaigns.map((c) => (
-            <CampaignCard key={c.id} campaign={c} />
-          ))}
-        </div>
+        <>
+          <div style={styles.grid}>
+            {campaigns.map((c) => (
+              <CampaignCard key={c.id} campaign={c} />
+            ))}
+          </div>
+          <div style={styles.pagination}>
+            <span style={styles.paginationInfo}>
+              Showing {campaigns.length ? offset + 1 : 0}–{lastItem} of {total} campaigns
+            </span>
+            <div style={styles.paginationButtons}>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={offset === 0}
+                onClick={() => setPageOffset(Math.max(0, offset - limit))}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={offset + limit >= total}
+                onClick={() => setPageOffset(offset + limit)}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </main>
   );
@@ -151,5 +281,16 @@ const styles = {
   },
   muted: { fontSize: '0.85rem', color: '#777', maxWidth: '320px', lineHeight: 1.4, textAlign: 'center' },
   sectionTitle: { fontSize: '1.2rem', fontWeight: 700, marginBottom: '1.1rem', color: '#111' },
+  filterBar: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: '1rem',
+    marginBottom: '1.25rem',
+  },
+  filterItem: { display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.9rem', color: '#333' },
+  filterInput: { width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #d4d4d8', fontSize: '0.95rem' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', gap: '1.25rem' },
+  pagination: { marginTop: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' },
+  paginationInfo: { color: '#555', fontSize: '0.95rem' },
+  paginationButtons: { display: 'flex', gap: '0.75rem' },
 };

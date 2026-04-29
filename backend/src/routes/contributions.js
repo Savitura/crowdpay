@@ -1,26 +1,102 @@
 const router = require('express').Router();
+const jwt = require('jsonwebtoken');
+const { Keypair, TransactionBuilder } = require('@stellar/stellar-sdk');
 const db = require('../config/database');
+const { networkPassphrase, isTestnet } = require('../config/stellar');
 const { requireAuth } = require('../middleware/auth');
 const logger = require('../config/logger');
 const { sendAlert } = require('../services/alerting');
+const { contributionValidation, validateRequest } = require('../middleware/validation');
 const {
-  prepareSignedContributionPayment,
-  prepareSignedContributionPathPayment,
+  buildUnsignedContributionPayment,
+  buildUnsignedContributionPathPayment,
   submitPreparedTransaction,
   getPathPaymentQuote,
   getSupportedAssetCodes,
-  ensureCustodialAccountFundedAndTrusted,
 } = require('../services/stellarService');
 const { insertContributionSubmitted } = require('../services/stellarTransactionService');
 const { sendEmail } = require('../services/emailService');
+const {
+  SLIPPAGE_BPS,
+  buildContributionIntent,
+  buildContributionMemo,
+  submitCustodialContribution,
+} = require('../services/contributionService');
 
-const SLIPPAGE_BPS = 500; // 5.00%
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
+const PREPARED_CONTRIBUTION_EXPIRES_IN = '10m';
+
+function validateFreighterPublicKey(publicKey) {
+  try {
+    Keypair.fromPublicKey(publicKey);
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+async function loadActiveCampaign(campaignId) {
+  const { rows } = await db.query(
+    'SELECT c.*, u.email as creator_email FROM campaigns c JOIN users u ON c.creator_id = u.id WHERE c.id = $1 AND c.status = $2',
+    [campaignId, 'active']
+  );
+  return rows[0] || null;
+}
+
+function createPreparedContributionToken(payload) {
+  return jwt.sign(
+    {
+      kind: 'prepared_contribution',
+      ...payload,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: PREPARED_CONTRIBUTION_EXPIRES_IN }
+  );
+}
+
+function verifyPreparedContributionToken(token) {
+  const payload = jwt.verify(token, process.env.JWT_SECRET);
+  if (!payload || payload.kind !== 'prepared_contribution') {
+    throw new Error('Invalid contribution prepare token');
+  }
+  return payload;
+}
+
+function validateSubmittedContributionXdr({ signedXdr, unsignedXdr, senderPublicKey }) {
+  const signedTx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
+  const unsignedTx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
+
+  if (signedTx.source !== senderPublicKey) {
+    throw new Error('Signed transaction source account does not match the prepared contribution');
+  }
+
+  if (signedTx.hash().toString('hex') !== unsignedTx.hash().toString('hex')) {
+    throw new Error('Signed transaction does not match the prepared contribution');
+  }
+
+  if (!signedTx.signatures.length) {
+    throw new Error('Signed transaction is missing contributor signature');
+  }
+
+  const signer = Keypair.fromPublicKey(senderPublicKey);
+  const signatureValid = signedTx.signatures.some((decoratedSignature) => {
+    try {
+      return signer.verify(signedTx.hash(), decoratedSignature.signature());
+    } catch (_err) {
+      return false;
+    }
+  });
+
+  if (!signatureValid) {
+    throw new Error('Signed transaction does not include a valid Freighter signature for the contributor');
+  }
+}
 
 // Get contributions for a campaign
 router.get('/campaign/:campaignId', async (req, res) => {
   const { rows } = await db.query(
     `SELECT c.id, c.sender_public_key, c.amount, c.asset, c.payment_type,
+            c.anchor_id, c.anchor_transaction_id, c.anchor_asset, c.anchor_amount,
             c.source_amount, c.source_asset, c.conversion_rate, c.path,
             c.tx_hash, c.created_at,
             wr.status AS refund_status, wr.tx_hash AS refund_tx_hash
@@ -136,43 +212,106 @@ router.get('/quote', requireAuth, async (req, res) => {
   });
 });
 
-// Contribute to a campaign (authenticated, custodial)
-router.post('/', requireAuth, async (req, res) => {
-  const { campaign_id, amount, send_asset } = req.body;
-  if (!campaign_id || !amount || !send_asset) {
-    return res.status(400).json({ error: 'campaign_id, amount and send_asset are required' });
+router.post('/prepare', requireAuth, contributionValidation, validateRequest, async (req, res) => {
+  const { campaign_id, amount, send_asset, sender_public_key, display_name } = req.body;
+  if (!sender_public_key) {
+    return res.status(422).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'sender_public_key is required for Freighter contributions',
+        fields: { sender_public_key: 'sender_public_key is required for Freighter contributions' },
+      },
+    });
   }
-  if (!SUPPORTED_ASSETS.includes(send_asset)) {
-    return res.status(400).json({ error: `Supported assets: ${SUPPORTED_ASSETS.join(', ')}` });
+  if (!validateFreighterPublicKey(sender_public_key)) {
+    return res.status(422).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'sender_public_key must be a valid Stellar public key',
+        fields: { sender_public_key: 'Invalid Stellar public key' },
+      },
+    });
   }
 
-  // Load campaign
-  const { rows: campaigns } = await db.query(
-    'SELECT c.*, u.email as creator_email FROM campaigns c JOIN users u ON c.creator_id = u.id WHERE c.id = $1 AND c.status = $2',
-    [campaign_id, 'active']
-  );
-  if (!campaigns.length) return res.status(404).json({ error: 'Campaign not found' });
+  const campaign = await loadActiveCampaign(campaign_id);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-  const campaign = campaigns[0];
+  if (campaign.min_contribution && parseFloat(amount) < parseFloat(campaign.min_contribution)) {
+    return res.status(400).json({ error: `Contribution amount is below the minimum limit of ${campaign.min_contribution} ${campaign.asset_type}` });
+  }
 
-  // Load contributor's custodial secret
-  const { rows: users } = await db.query(
-    'SELECT wallet_secret_encrypted, wallet_public_key FROM users WHERE id = $1',
-    [req.user.userId]
-  );
-  const senderSecret = users[0].wallet_secret_encrypted; // decrypt in production
-  const contributorPublicKey = users[0].wallet_public_key;
+  if (campaign.max_contribution) {
+    const { rows: sumRows } = await db.query(
+      'SELECT COALESCE(SUM(amount), 0) as total FROM contributions WHERE campaign_id = $1 AND sender_public_key = $2',
+      [campaign_id, sender_public_key]
+    );
+    const totalExisting = parseFloat(sumRows[0].total);
+    if (totalExisting + parseFloat(amount) > parseFloat(campaign.max_contribution)) {
+      return res.status(400).json({ error: `Contribution violates the maximum limit of ${campaign.max_contribution} ${campaign.asset_type} per backer` });
+    }
+  }
 
   try {
-    await ensureCustodialAccountFundedAndTrusted({
-      publicKey: contributorPublicKey,
-      secret: senderSecret,
+    const intent = await buildContributionIntent({
+      campaign,
+      amount,
+      sendAsset: send_asset,
+      contributorPublicKey: sender_public_key,
+      displayName: display_name,
+    });
+
+    const unsignedXdr =
+      intent.kind === 'payment'
+        ? await buildUnsignedContributionPayment({
+            senderPublicKey: sender_public_key,
+            destinationPublicKey: campaign.wallet_public_key,
+            asset: send_asset,
+            amount,
+            memo: buildContributionMemo(campaign_id),
+          })
+        : await buildUnsignedContributionPathPayment({
+            senderPublicKey: sender_public_key,
+            destinationPublicKey: campaign.wallet_public_key,
+            sendAsset: send_asset,
+            sendMax: intent.sendMax,
+            destAmount: amount,
+            destAssetCode: campaign.asset_type,
+            memo: buildContributionMemo(campaign_id),
+          });
+
+    const prepareToken = createPreparedContributionToken({
+      user_id: req.user.userId,
+      campaign_id,
+      sender_public_key,
+      unsigned_xdr: unsignedXdr,
+      flow_metadata: intent.flowMetadata,
+      conversion_quote: intent.conversionQuote,
+    });
+
+    res.json({
+      unsigned_xdr: unsignedXdr,
+      prepare_token: prepareToken,
+      conversion_quote: intent.conversionQuote,
+      sender_public_key,
+      network_passphrase: networkPassphrase,
+      network_name: isTestnet ? 'TESTNET' : 'PUBLIC',
     });
   } catch (err) {
-    logger.error('Custodial account setup failed', { campaign_id, error: err.message });
+    if (err.statusCode === 422) {
+      return res.status(422).json({ error: err.message });
+    }
+
+    logger.error('Freighter contribution preparation failed', { campaign_id, error: err.message });
     return res.status(503).json({
-      error: 'Wallet setup is still completing; please retry in a few seconds.',
+      error: 'Could not prepare the Stellar transaction right now. Please try again.',
     });
+  }
+});
+
+router.post('/submit-signed', requireAuth, async (req, res) => {
+  const { signed_xdr, prepare_token } = req.body;
+  if (!signed_xdr || !prepare_token) {
+    return res.status(400).json({ error: 'signed_xdr and prepare_token are required' });
   }
 
   let txHash;
@@ -212,20 +351,15 @@ router.post('/', requireAuth, async (req, res) => {
       });
     }
 
-    const bestPath = paths[0];
-    const sendMax = (
-      parseFloat(bestPath.source_amount) *
-      (1 + SLIPPAGE_BPS / 10000)
-    ).toFixed(7);
+  if (prepared.user_id !== req.user.userId) {
+    return res.status(403).json({ error: 'Prepared contribution token does not belong to this user' });
+  }
 
-    const prepared = await prepareSignedContributionPathPayment({
-      senderSecret,
-      destinationPublicKey: campaign.wallet_public_key,
-      sendAsset: send_asset,
-      sendMax,
-      destAmount: amount,
-      destAssetCode: campaign.asset_type,
-      memo: `cp-${campaign_id}`,
+  try {
+    validateSubmittedContributionXdr({
+      signedXdr: signed_xdr,
+      unsignedXdr: prepared.unsigned_xdr,
+      senderPublicKey: prepared.sender_public_key,
     });
     unsignedXdr = prepared.unsignedXdr;
     signedXdr = prepared.signedXdr;
@@ -248,13 +382,22 @@ router.post('/', requireAuth, async (req, res) => {
       contributor_public_key: contributorPublicKey,
       platform_fee_amount: platformFeeAmount,
     };
+  } catch (err) {
+    return res.status(422).json({ error: err.message });
   }
 
+  let txHash;
   try {
-    txHash = await submitPreparedTransaction(signedXdr);
+    txHash = await submitPreparedTransaction(signed_xdr);
   } catch (err) {
-    logger.error('Stellar transaction submission failed', { campaign_id, error: err.message });
-    sendAlert('Stellar transaction submission failed', { campaign_id, error: err.message });
+    logger.error('Freighter contribution submission failed', {
+      campaign_id: prepared.campaign_id,
+      error: err.message,
+    });
+    sendAlert('Freighter contribution submission failed', {
+      campaign_id: prepared.campaign_id,
+      error: err.message,
+    });
     return res.status(502).json({
       error: 'Stellar network rejected the transaction',
       detail: err.message || String(err),
@@ -263,11 +406,11 @@ router.post('/', requireAuth, async (req, res) => {
 
   const stellarTransactionId = await insertContributionSubmitted(null, {
     txHash,
-    campaignId: campaign_id,
+    campaignId: prepared.campaign_id,
     userId: req.user.userId,
-    unsignedXdr,
-    signedXdr,
-    metadata: flowMetadata,
+    unsignedXdr: prepared.unsigned_xdr,
+    signedXdr: signed_xdr,
+    metadata: prepared.flow_metadata,
   });
 
   res.status(202).json({
@@ -277,6 +420,72 @@ router.post('/', requireAuth, async (req, res) => {
     platform_fee_amount: platformFeeAmount,
     conversion_quote: conversionQuote,
   });
+});
+
+// Contribute to a campaign (authenticated, custodial)
+router.post('/', requireAuth, contributionValidation, validateRequest, async (req, res) => {
+  const { campaign_id, amount, send_asset, display_name } = req.body;
+
+  const campaign = await loadActiveCampaign(campaign_id);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+  // Load contributor's custodial secret
+  const { rows: users } = await db.query(
+    'SELECT wallet_secret_encrypted, wallet_public_key FROM users WHERE id = $1',
+    [req.user.userId]
+  );
+  const contributorPublicKey = users[0].wallet_public_key;
+
+  if (campaign.min_contribution && parseFloat(amount) < parseFloat(campaign.min_contribution)) {
+    return res.status(400).json({ error: `Contribution amount is below the minimum limit of ${campaign.min_contribution} ${campaign.asset_type}` });
+  }
+
+  if (campaign.max_contribution) {
+    const { rows: sumRows } = await db.query(
+      'SELECT COALESCE(SUM(amount), 0) as total FROM contributions WHERE campaign_id = $1 AND sender_public_key = $2',
+      [campaign_id, contributorPublicKey]
+    );
+    const totalExisting = parseFloat(sumRows[0].total);
+    if (totalExisting + parseFloat(amount) > parseFloat(campaign.max_contribution)) {
+      return res.status(400).json({ error: `Contribution violates the maximum limit of ${campaign.max_contribution} ${campaign.asset_type} per backer` });
+    }
+  }
+
+  try {
+    const result = await submitCustodialContribution({
+      campaign,
+      campaignId: campaign_id,
+      userId: req.user.userId,
+      walletPublicKey: contributorPublicKey,
+      walletSecretEncrypted: users[0].wallet_secret_encrypted,
+      amount,
+      sendAsset: send_asset,
+      displayName: display_name,
+    });
+    res.status(202).json({
+      tx_hash: result.txHash,
+      stellar_transaction_id: result.stellarTransactionId,
+      message: 'Transaction submitted',
+      conversion_quote: result.conversionQuote,
+    });
+  } catch (err) {
+    if (err.statusCode === 422) {
+      return res.status(422).json({ error: err.message });
+    }
+    if (err.statusCode === 502) {
+      logger.error('Stellar transaction submission failed', { campaign_id, error: err.message });
+      sendAlert('Stellar transaction submission failed', { campaign_id, error: err.message });
+      return res.status(502).json({
+        error: 'Stellar network rejected the transaction',
+        detail: err.message || String(err),
+      });
+    }
+
+    logger.error('Custodial contribution signing failed', { campaign_id, error: err.message });
+    return res.status(503).json({
+      error: 'Wallet setup is still completing; please retry in a few seconds.',
+    });
+  }
 
   setImmediate(() => {
     sendEmail({

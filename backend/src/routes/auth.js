@@ -9,6 +9,13 @@ const logger = require('../config/logger');
 const { ensureCustodialAccountFundedAndTrusted } = require('../services/stellarService');
 const { sendEmail } = require('../services/emailService');
 const { requireAuth } = require('../middleware/auth');
+const { encryptWalletSecret } = require('../services/walletSecrets');
+const { isKycRequiredForCampaigns } = require('../services/kycProvider');
+const {
+  registerValidation,
+  loginValidation,
+  validateRequest,
+} = require('../middleware/validation');
 
 const REFRESH_TOKEN_COOKIE_NAME = 'cp_refresh_token';
 const REFRESH_TOKEN_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
@@ -79,7 +86,8 @@ function parseRefreshExpiresIn(value) {
 async function validateRefreshToken(token) {
   const tokenHash = hashToken(token);
   const { rows } = await db.query(
-    `SELECT rt.id, rt.user_id, u.id AS id, u.email, u.name, u.role, u.wallet_public_key
+    `SELECT rt.id, rt.user_id, u.id AS id, u.email, u.name, u.role, u.wallet_public_key,
+            u.kyc_status, u.kyc_completed_at
      FROM refresh_tokens rt
      JOIN users u ON u.id = rt.user_id
      WHERE rt.token_hash = $1 AND rt.revoked_at IS NULL AND rt.expires_at > NOW()`,
@@ -102,39 +110,43 @@ async function rotateRefreshToken(oldToken, userId) {
   return createRefreshToken(userId);
 }
 
-router.post('/register', authLimiter, async (req, res) => {
+router.post('/register', authLimiter, registerValidation, validateRequest, async (req, res) => {
   const { email, password, name, role } = req.body;
-  if (!email || !password || !name) {
-    return res.status(400).json({ error: 'email, password and name are required' });
-  }
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedName = String(name || '').trim();
   const allowedRoles = new Set(['contributor', 'creator']);
   const userRole = role || 'contributor';
   if (!allowedRoles.has(userRole)) {
     return res.status(400).json({ error: 'role must be contributor or creator' });
   }
 
-  const existing = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+  const existing = await db.query('SELECT id FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
   if (existing.rows.length > 0) {
     return res.status(409).json({ error: 'Email already registered' });
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
   const keypair = Keypair.random();
+  const publicKey = keypair.publicKey();
+  const secret = keypair.secret();
+  const encryptedSecret = await encryptWalletSecret(secret, { walletPublicKey: publicKey });
 
   const { rows } = await db.query(
     `INSERT INTO users (email, password_hash, name, wallet_public_key, wallet_secret_encrypted, role)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, name, wallet_public_key, role`,
-    [email, passwordHash, name, keypair.publicKey(), keypair.secret(), userRole]
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, email, name, wallet_public_key, role, kyc_status, kyc_completed_at`,
+    [normalizedEmail, passwordHash, normalizedName, publicKey, encryptedSecret, userRole]
   );
 
-  const user = rows[0];
+  const user = {
+    ...rows[0],
+    kyc_required_for_campaigns: isKycRequiredForCampaigns(),
+  };
   const { accessToken } = generateTokens(user);
   const { token: refreshToken, expiresAt } = await createRefreshToken(user.id);
 
   setRefreshTokenCookie(res, refreshToken, expiresAt);
 
-  const publicKey = keypair.publicKey();
-  const secret = keypair.secret();
   const requestId = req.id;
   setImmediate(() => {
     ensureCustodialAccountFundedAndTrusted({ publicKey, secret }).catch((err) => {
@@ -145,18 +157,19 @@ router.post('/register', authLimiter, async (req, res) => {
     });
 
     sendEmail({
-      to: email,
+      to: normalizedEmail,
       subject: 'Welcome to CrowdPay!',
-      text: `Welcome ${name}! Your custodial wallet public key is ${publicKey}.`
+      text: `Welcome ${normalizedName}! Your custodial wallet public key is ${publicKey}.`
     });
   });
 
   res.status(201).json({ token: accessToken, user });
 });
 
-router.post('/login', authLimiter, async (req, res) => {
+router.post('/login', authLimiter, loginValidation, validateRequest, async (req, res) => {
   const { email, password } = req.body;
-  const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const { rows } = await db.query('SELECT * FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
 
   if (!rows.length || !(await bcrypt.compare(password, rows[0].password_hash))) {
     return res.status(401).json({ error: 'Invalid credentials' });
@@ -176,6 +189,9 @@ router.post('/login', authLimiter, async (req, res) => {
       name: user.name,
       wallet_public_key: user.wallet_public_key,
       role: user.role,
+      kyc_status: user.kyc_status,
+      kyc_completed_at: user.kyc_completed_at,
+      kyc_required_for_campaigns: isKycRequiredForCampaigns(),
     },
   });
 });
@@ -196,7 +212,19 @@ router.post('/refresh', async (req, res) => {
 
   setRefreshTokenCookie(res, newRefreshToken, expiresAt);
 
-  res.json({ token: accessToken });
+  res.json({
+    token: accessToken,
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      wallet_public_key: user.wallet_public_key,
+      role: user.role,
+      kyc_status: user.kyc_status,
+      kyc_completed_at: user.kyc_completed_at,
+      kyc_required_for_campaigns: isKycRequiredForCampaigns(),
+    },
+  });
 });
 
 router.post('/logout', requireAuth, async (req, res) => {

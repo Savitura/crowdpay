@@ -162,6 +162,11 @@ input:focus, textarea:focus, select:focus { border-color: #7c3aed; }
   border: 1px solid #a7f3d0;
   color: #065f46;
 }
+.alert--warning {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+}
 
 .modal-shell {
   width: 100%;
@@ -225,4 +230,29 @@ input:focus, textarea:focus, select:focus { border-color: #7c3aed; }
   .hero-actions--row-sm > * {
     flex: 0 0 auto;
   }
+}
+
+@keyframes skeleton-shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #ececec 25%, #f5f5f5 50%, #ececec 75%);
+  background-size: 800px 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+.skeleton--card {
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 10px;
+  padding: 1.25rem;
+  min-height: 148px;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
 }
