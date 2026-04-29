@@ -3,6 +3,8 @@ import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import MilestoneTracker from '../components/MilestoneTracker';
+import KycPrompt from '../components/KycPrompt';
+import VerificationBadge from '../components/VerificationBadge';
 
 function progressPct(campaign) {
   if (!Number(campaign.target_amount)) return 0;
@@ -10,7 +12,7 @@ function progressPct(campaign) {
 }
 
 export default function Dashboard() {
-  const { token, user, ready } = useAuth();
+  const { token, user, ready, updateUser } = useAuth();
   const [stats, setStats] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
   const [milestonesByCampaign, setMilestonesByCampaign] = useState({});
@@ -23,8 +25,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!token) return;
-    Promise.all([api.getMyStats(token), api.getMyCampaigns(token)])
-      .then(async ([s, c]) => {
+    Promise.all([api.getMe(token), api.getMyStats(token), api.getMyCampaigns(token)])
+      .then(async ([me, s, c]) => {
+        updateUser(me);
         setStats(s);
         setCampaigns(c);
         const milestoneEntries = await Promise.all(
@@ -60,7 +63,7 @@ export default function Dashboard() {
       })
       .catch((err) => setError(err.message || 'Could not load dashboard'))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, updateUser]);
 
   function setMilestoneField(milestoneId, field, value) {
     setMilestoneForms((current) => ({
@@ -108,6 +111,9 @@ export default function Dashboard() {
   }
   if (!token) return <Navigate to="/login" replace />;
   if (user?.role !== 'creator' && user?.role !== 'admin') return <Navigate to="/" replace />;
+  const kycRequired = user?.kyc_required_for_campaigns ?? (
+    String(import.meta.env.VITE_KYC_REQUIRED_FOR_CAMPAIGNS ?? 'true').toLowerCase() !== 'false'
+  );
 
   return (
     <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
@@ -117,6 +123,23 @@ export default function Dashboard() {
         <p style={{ color: '#666' }}>Loading dashboard...</p>
       ) : (
         <>
+          <div className="campaign-card" style={{ marginBottom: '1rem', minHeight: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <div>
+                <strong>Identity verification</strong>
+                <div style={{ color: '#666', fontSize: '0.88rem', marginTop: '0.2rem' }}>
+                  Status: {user?.kyc_status || 'unverified'}
+                  {user?.kyc_completed_at ? ` • Completed ${new Date(user.kyc_completed_at).toLocaleDateString()}` : ''}
+                </div>
+              </div>
+              <VerificationBadge status={user?.kyc_status} />
+            </div>
+            {kycRequired && user?.kyc_status !== 'verified' && (
+              <div style={{ marginTop: '0.85rem' }}>
+                <KycPrompt token={token} onUserUpdate={updateUser} />
+              </div>
+            )}
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
             <div className="campaign-card"><strong>{stats?.total_campaigns || 0}</strong><div>Total campaigns</div></div>
             <div className="campaign-card"><strong>{Number(stats?.total_raised || 0).toLocaleString()}</strong><div>Total raised</div></div>

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>External Site - Campaign Embed Test</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f5f5f5;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    h1 {
+      color: #111;
+      margin-bottom: 1rem;
+    }
+    
+    p {
+      color: #555;
+      margin-bottom: 1.5rem;
+    }
+    
+    .embed-section {
+      margin: 2rem 0;
+      padding: 1.5rem;
+      background: #fafafa;
+      border: 2px dashed #ddd;
+      border-radius: 8px;
+    }
+    
+    .embed-label {
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 1rem;
+      display: block;
+    }
+    
+    .embed-wrapper {
+      display: flex;
+      justify-content: center;
+      gap: 2rem;
+      flex-wrap: wrap;
+    }
+    
+    iframe {
+      border: 1px solid #e5e5e5;
+      border-radius: 8px;
+    }
+    
+    .info-box {
+      background: #f0f9ff;
+      border-left: 4px solid #0ea5e9;
+      padding: 1rem;
+      margin: 1.5rem 0;
+      border-radius: 4px;
+    }
+    
+    .info-box strong {
+      color: #0369a1;
+    }
+    
+    code {
+      background: #f4f4f5;
+      padding: 0.2rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.9em;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🌐 External Website - Campaign Embed Demo</h1>
+    <p>
+      This page simulates an external website (blog, creator site, etc.) embedding CrowdPay campaign widgets.
+      The embeds below are live and will update in real-time when contributions are made.
+    </p>
+    
+    <div class="info-box">
+      <strong>How it works:</strong> The iframe loads from <code>http://localhost:5173/embed/campaigns/:id</code> 
+      and communicates with the parent page via <code>postMessage</code> for auto-resizing. 
+      No authentication required - anyone can view the embed!
+    </div>
+    
+    <div class="embed-section">
+      <span class="embed-label">📊 Campaign Widget (480px width):</span>
+      <div class="embed-wrapper">
+        <!-- Replace CAMPAIGN_ID with an actual campaign ID from your database -->
+        <iframe 
+          src="http://localhost:5173/embed/campaigns/1" 
+          width="480" 
+          height="280" 
+          frameborder="0"
+          title="Campaign embed">
+        </iframe>
+      </div>
+    </div>
+    
+    <div class="embed-section">
+      <span class="embed-label">📱 Responsive Widget (320px width - mobile):</span>
+      <div class="embed-wrapper">
+        <iframe 
+          src="http://localhost:5173/embed/campaigns/1" 
+          width="320" 
+          height="280" 
+          frameborder="0"
+          title="Campaign embed mobile">
+        </iframe>
+      </div>
+    </div>
+    
+    <div class="embed-section">
+      <span class="embed-label">💻 Wide Widget (600px width - desktop):</span>
+      <div class="embed-wrapper">
+        <iframe 
+          src="http://localhost:5173/embed/campaigns/1" 
+          width="600" 
+          height="280" 
+          frameborder="0"
+          title="Campaign embed desktop">
+        </iframe>
+      </div>
+    </div>
+    
+    <h2 style="margin-top: 2rem; margin-bottom: 1rem;">📝 Embed Code Example</h2>
+    <pre style="background: #f4f4f5; padding: 1rem; border-radius: 6px; overflow: auto; font-size: 0.85rem;">
+&lt;iframe src="https://crowdpay.io/embed/campaigns/[CAMPAIGN_ID]" 
+        width="480" height="280" frameborder="0"&gt;
+&lt;/iframe&gt;</pre>
+    
+    <div class="info-box" style="margin-top: 2rem;">
+      <strong>Features:</strong>
+      <ul style="margin-top: 0.5rem; margin-left: 1.5rem;">
+        <li>✅ Live progress bar updates via SSE (within 10 seconds)</li>
+        <li>✅ "Back this campaign" button opens CrowdPay in new tab</li>
+        <li>✅ Responsive design (300px - 600px width)</li>
+        <li>✅ No authentication required</li>
+        <li>✅ Auto-resizes via postMessage</li>
+        <li>✅ Permissive CORS headers for cross-origin embedding</li>
+      </ul>
+    </div>
+    
+    <script>
+      // Listen for postMessage events from embed iframes
+      window.addEventListener('message', (event) => {
+        // In production, you should validate event.origin
+        const { data } = event;
+        
+        if (data.type === 'resize') {
+          // Auto-resize iframe (optional - iframes have fixed height for simplicity)
+          console.log('Embed wants to resize to:', data.height);
+        }
+        
+        if (data.type === 'cta_click') {
+          // Track when users click "Back this campaign"
+          console.log('User clicked CTA for campaign:', data.campaignId);
+        }
+      });
+    </script>
+  </div>
+</body>
+</html>

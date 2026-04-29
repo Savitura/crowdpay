@@ -37,15 +37,34 @@ async function logWithdrawalEvent(client, { withdrawalRequestId, actorUserId, ac
   );
 }
 
+async function checkOwnerAccess(req, campaignId) {
+  if (req.user.role === 'admin') return true;
+
+  const { rows: campaignRows } = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [campaignId]);
+  if (campaignRows.length && campaignRows[0].creator_id === req.user.userId) {
+    return true;
+  }
+
+  const { rows: memberRows } = await db.query(
+    "SELECT role, accepted_at FROM campaign_members WHERE campaign_id = $1 AND user_id = $2 AND role = 'owner'",
+    [campaignId, req.user.userId]
+  );
+  if (memberRows.length && memberRows[0].accepted_at) {
+    return true;
+  }
+
+  return false;
+}
+
 async function assertWithdrawalAccess(req, campaignId) {
   const { rows } = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [campaignId]);
   if (!rows.length) return { error: 'Campaign not found', status: 404 };
-  const isCreator = rows[0].creator_id === req.user.userId;
-  const isAdmin = req.user.role === 'admin';
-  if (!isCreator && !isAdmin) {
+  
+  const isOwner = await checkOwnerAccess(req, campaignId);
+  if (!isOwner) {
     return { error: 'Not authorized to view or manage withdrawals for this campaign', status: 403 };
   }
-  return { creatorId: rows[0].creator_id, isCreator, isAdmin };
+  return { creatorId: rows[0].creator_id, isCreator: true, isAdmin: req.user.role === 'admin' };
 }
 
 router.get('/capabilities', requireAuth, (req, res) => {
@@ -64,8 +83,9 @@ router.post('/request', requireAuth, withdrawalValidation, validateRequest, asyn
   if (!campaigns.length) return res.status(404).json({ error: 'Campaign not found' });
   const campaign = campaigns[0];
 
-  if (campaign.creator_id !== req.user.userId && req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Only campaign creator can request withdrawal' });
+  const isOwner = await checkOwnerAccess(req, campaign_id);
+  if (!isOwner) {
+    return res.status(403).json({ error: 'Only campaign owners can request withdrawals' });
   }
   if (campaign.milestone_count > 0) {
     return res.status(409).json({
@@ -176,8 +196,9 @@ router.post('/:id/approve/creator', requireAuth, async (req, res) => {
   if (!requests.length) return res.status(404).json({ error: 'Withdrawal request not found' });
   const requestRow = requests[0];
 
-  if (requestRow.creator_id !== req.user.userId && req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Only campaign creator can approve creator signature' });
+  const isOwner = await checkOwnerAccess(req, requestRow.campaign_id);
+  if (!isOwner) {
+    return res.status(403).json({ error: 'Only campaign owners can approve withdrawals' });
   }
   if (!requestRow.is_refund && !ALLOWED_CAMPAIGN_STATUS_FOR_REQUEST.includes(requestRow.campaign_status)) {
     return res.status(409).json({
@@ -406,8 +427,9 @@ router.post('/:id/cancel', requireAuth, async (req, res) => {
   if (!requests.length) return res.status(404).json({ error: 'Withdrawal request not found' });
   const requestRow = requests[0];
 
-  if (requestRow.creator_id !== req.user.userId && req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Only the campaign creator can cancel this request' });
+  const isOwner = await checkOwnerAccess(req, requestRow.campaign_id);
+  if (!isOwner) {
+    return res.status(403).json({ error: 'Only campaign owners can cancel this request' });
   }
   if (requestRow.status !== 'pending') {
     return res.status(409).json({ error: 'Only pending requests can be cancelled' });

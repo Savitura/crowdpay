@@ -10,6 +10,7 @@ const { ensureCustodialAccountFundedAndTrusted } = require('../services/stellarS
 const { sendEmail } = require('../services/emailService');
 const { requireAuth } = require('../middleware/auth');
 const { encryptWalletSecret } = require('../services/walletSecrets');
+const { isKycRequiredForCampaigns } = require('../services/kycProvider');
 const {
   registerValidation,
   loginValidation,
@@ -85,7 +86,8 @@ function parseRefreshExpiresIn(value) {
 async function validateRefreshToken(token) {
   const tokenHash = hashToken(token);
   const { rows } = await db.query(
-    `SELECT rt.id, rt.user_id, u.id AS id, u.email, u.name, u.role, u.wallet_public_key
+    `SELECT rt.id, rt.user_id, u.id AS id, u.email, u.name, u.role, u.wallet_public_key,
+            u.kyc_status, u.kyc_completed_at
      FROM refresh_tokens rt
      JOIN users u ON u.id = rt.user_id
      WHERE rt.token_hash = $1 AND rt.revoked_at IS NULL AND rt.expires_at > NOW()`,
@@ -131,11 +133,15 @@ router.post('/register', authLimiter, registerValidation, validateRequest, async
 
   const { rows } = await db.query(
     `INSERT INTO users (email, password_hash, name, wallet_public_key, wallet_secret_encrypted, role)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, name, wallet_public_key, role`,
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, email, name, wallet_public_key, role, kyc_status, kyc_completed_at`,
     [normalizedEmail, passwordHash, normalizedName, publicKey, encryptedSecret, userRole]
   );
 
-  const user = rows[0];
+  const user = {
+    ...rows[0],
+    kyc_required_for_campaigns: isKycRequiredForCampaigns(),
+  };
   const { accessToken } = generateTokens(user);
   const { token: refreshToken, expiresAt } = await createRefreshToken(user.id);
 
@@ -183,6 +189,9 @@ router.post('/login', authLimiter, loginValidation, validateRequest, async (req,
       name: user.name,
       wallet_public_key: user.wallet_public_key,
       role: user.role,
+      kyc_status: user.kyc_status,
+      kyc_completed_at: user.kyc_completed_at,
+      kyc_required_for_campaigns: isKycRequiredForCampaigns(),
     },
   });
 });
@@ -203,7 +212,19 @@ router.post('/refresh', async (req, res) => {
 
   setRefreshTokenCookie(res, newRefreshToken, expiresAt);
 
-  res.json({ token: accessToken });
+  res.json({
+    token: accessToken,
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      wallet_public_key: user.wallet_public_key,
+      role: user.role,
+      kyc_status: user.kyc_status,
+      kyc_completed_at: user.kyc_completed_at,
+      kyc_required_for_campaigns: isKycRequiredForCampaigns(),
+    },
+  });
 });
 
 router.post('/logout', requireAuth, async (req, res) => {

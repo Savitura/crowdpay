@@ -10,6 +10,24 @@
 
 ## Endpoints
 
+### `GET /api/users/me`
+
+Authenticated. Returns the current profile, including `kyc_status` (`unverified`, `pending`, `verified`, `rejected`) and `kyc_completed_at`.
+
+### `POST /api/users/me/kyc/start`
+
+Authenticated. Creates a hosted KYC session with the configured provider and marks the user `pending`.
+
+Response includes `redirect_url` or `session_token`, plus the updated user. Persona is used when `KYC_PROVIDER=persona`, `PERSONA_API_KEY`, and `PERSONA_TEMPLATE_ID` are configured; otherwise local development returns a dev redirect URL.
+
+### `POST /api/webhooks/kyc`
+
+KYC provider callback. Updates the matched user to `verified` or `rejected` from provider status. The campaign creation gate is controlled by `KYC_REQUIRED_FOR_CAMPAIGNS` and defaults to enabled; set it to `false` for testnet/dev.
+
+### `POST /api/campaigns`
+
+Authenticated creator/admin endpoint. When `KYC_REQUIRED_FOR_CAMPAIGNS` is not `false`, the user must have `kyc_status=verified`; otherwise the API returns `403` with `code=KYC_REQUIRED`.
+
 ### `GET /api/contributions/quote`
 
 Get a DEX quote before submitting a conversion contribution.
@@ -361,5 +379,3 @@ The backend also logs a **warning** every 5 minutes if any wallet is in that sta
 - withdrawal request creation with multisig validation
 - withdrawal creator/platform approval flow
 - withdrawal denial paths (missing creator approval, insufficient signatures)
-- withdrawal campaign status and duplicate-pending guards
-- withdrawal cancel/reject and Stellar submit failure logging

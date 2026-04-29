@@ -74,6 +74,23 @@ const createCampaignValidation = [
       }
       return true;
     }),
+  body('min_contribution')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ gt: 0 })
+    .withMessage('Minimum contribution must be greater than zero'),
+  body('max_contribution')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ gt: 0 })
+    .withMessage('Maximum contribution must be greater than zero')
+    .custom((value, { req }) => {
+      if (value && req.body.min_contribution && parseFloat(value) <= parseFloat(req.body.min_contribution)) {
+        throw new Error('Maximum contribution must be greater than minimum contribution');
+      }
+      if (value && req.body.target_amount && parseFloat(value) > parseFloat(req.body.target_amount)) {
+        throw new Error('Maximum contribution cannot exceed the target amount');
+      }
+      return true;
+    }),
   body('milestones')
     .optional({ nullable: true })
     .custom((value) => {
@@ -96,6 +113,10 @@ const createCampaignValidation = [
     }),
   body('milestones.*.title').optional().customSanitizer(stripHtml),
   body('milestones.*.description').optional().customSanitizer(stripHtml),
+  body('show_backer_amounts')
+    .optional()
+    .isBoolean()
+    .withMessage('show_backer_amounts must be a boolean'),
 ];
 
 const createCampaignUpdateValidation = [
@@ -125,6 +146,11 @@ const contributionValidation = [
     .withMessage('send_asset is required')
     .isIn(SUPPORTED_ASSETS)
     .withMessage(`send_asset must be one of: ${SUPPORTED_ASSETS.join(', ')}`),
+  body('display_name')
+    .optional({ nullable: true })
+    .customSanitizer(stripHtml)
+    .isLength({ max: 50 })
+    .withMessage('Display name must be at most 50 characters'),
 ];
 
 const withdrawalValidation = [

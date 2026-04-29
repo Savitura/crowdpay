@@ -61,7 +61,17 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
   const [result, setResult] = useState(null);
   const [freighterAvailable, setFreighterAvailable] = useState(false);
   const [freighterChecked, setFreighterChecked] = useState(false);
+  const [existingContributions, setExistingContributions] = useState([]);
+  const [displayName, setDisplayName] = useState('');
   const anchorPopupRef = useRef(null);
+
+  useEffect(() => {
+    if (campaign?.id) {
+      api.getContributions(campaign.id)
+        .then(setExistingContributions)
+        .catch(() => setExistingContributions([]));
+    }
+  }, [campaign?.id]);
 
   const selectedAnchor = anchorInfo.anchors.find((anchor) => anchor.id === selectedAnchorId) || null;
   const effectiveSendAsset =
@@ -212,7 +222,7 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
   async function submitWithCustodial() {
     setLoadingLabel('Submitting with CrowdPay wallet…');
     return api.contribute(
-      { campaign_id: campaign.id, amount: destAmount, send_asset: sendAsset },
+      { campaign_id: campaign.id, amount: destAmount, send_asset: sendAsset, display_name: displayName.trim() || undefined },
       token
     );
   }
@@ -229,12 +239,10 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
     }
 
     setLoadingLabel('Preparing transaction…');
-    const prepared = await api.prepareContribution(
-      {
-        campaign_id: campaign.id,
         amount: destAmount,
         send_asset: sendAsset,
         sender_public_key: signerAddress,
+        display_name: displayName.trim() || undefined,
       },
       token
     );
@@ -304,6 +312,22 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
     if (!destAmount || Number(destAmount) <= 0) {
       setError('Enter an amount greater than zero.');
       return;
+    }
+
+    const amountNum = Number(destAmount);
+    if (campaign.min_contribution && amountNum < Number(campaign.min_contribution)) {
+      setError(`Contribution amount is below the minimum limit of ${campaign.min_contribution} ${campaign.asset_type}.`);
+      return;
+    }
+    if (campaign.max_contribution) {
+      const existingSum = existingContributions
+        .filter((c) => c.sender_public_key === user?.wallet_public_key)
+        .reduce((sum, c) => sum + Number(c.amount), 0);
+
+      if (existingSum + amountNum > Number(campaign.max_contribution)) {
+        setError(`Contribution violates the maximum limit of ${campaign.max_contribution} ${campaign.asset_type} per backer.`);
+        return;
+      }
     }
     setLoading(true);
     setLoadingLabel('Submitting…');
@@ -496,6 +520,37 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
                 />
                 <span id="contrib-amount-help" style={styles.help}>
                   This is the credited amount toward the campaign goal, in {campaign.asset_type}.
+                  {(() => {
+                    if (!campaign.max_contribution) return null;
+                    const existingSum = existingContributions
+                      .filter((c) => c.sender_public_key === user?.wallet_public_key)
+                      .reduce((sum, c) => sum + Number(c.amount), 0);
+                    if (existingSum > 0) {
+                      const remaining = Math.max(0, Number(campaign.max_contribution) - existingSum);
+                      return (
+                        <span style={{ display: 'block', marginTop: '0.25rem', color: '#7c3aed', fontWeight: 600 }}>
+                          You can contribute up to {remaining.toLocaleString()} {campaign.asset_type} more.
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
+                </span>
+              </div>
+
+              <div className="form-stack" style={{ marginBottom: '1rem' }}>
+                <label className="label-strong" htmlFor="contrib-display-name">
+                  Display name <span style={{ fontWeight: 500, color: '#888' }}>(optional)</span>
+                </label>
+                <input
+                  id="contrib-display-name"
+                  placeholder="e.g. Satoshi"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  maxLength={50}
+                />
+                <span style={styles.help}>
+                  Visible on the campaign’s backer wall. Leave blank to contribute anonymously.
                 </span>
               </div>
 
@@ -638,7 +693,36 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
                 <strong>Anchor reference:</strong> {result.anchor_transaction_id}
               </div>
             )}
-            <button type="button" className="btn-primary" style={{ width: '100%' }} onClick={handleClose}>
+
+            <div style={{ marginTop: '1.5rem', borderTop: '1px solid #eee', paddingTop: '1.25rem' }}>
+              <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.75rem' }}>Tell your friends!</h3>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ flex: 1, fontSize: '0.85rem' }}
+                  onClick={() => {
+                    const text = encodeURIComponent(`I just backed ${campaign.title} on CrowdPay! Join me: ${window.location.origin}/campaigns/${campaign.id}`);
+                    window.open(`https://twitter.com/intent/tweet?text=${text}`, '_blank');
+                  }}
+                >
+                  Share on X
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ flex: 1, fontSize: '0.85rem' }}
+                  onClick={() => {
+                    const text = encodeURIComponent(`I just backed ${campaign.title} on CrowdPay! Join me: ${window.location.origin}/campaigns/${campaign.id}`);
+                    window.open(`https://wa.me/?text=${text}`, '_blank');
+                  }}
+                >
+                  WhatsApp
+                </button>
+              </div>
+            </div>
+
+            <button type="button" className="btn-primary" style={{ width: '100%', marginTop: '1.25rem' }} onClick={handleClose}>
               Done
             </button>
           </div>
