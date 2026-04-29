@@ -9,7 +9,6 @@ const {
   Keypair,
 } = require('@stellar/stellar-sdk');
 const { server, networkPassphrase } = require('../config/stellar');
-const logger = require('../config/logger');
 
 async function simulateAndPrepare(tx) {
   const simulation = await server.simulateTransaction(tx);
@@ -78,8 +77,6 @@ async function routeContribution({
 }) {
   const contractId = process.env.ROUTER_CONTRACT_ID;
   if (!contractId) throw new Error('ROUTER_CONTRACT_ID not configured');
-
-  const { Vec } = require('@stellar/stellar-sdk');
 
   const pathVec = path.length > 0
     ? nativeToScVal(path.map((a) => new Address(a)))
