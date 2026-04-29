@@ -121,6 +121,46 @@ function normalizeMilestonesInput(input) {
   return normalized;
 }
 
+function normalizeRewardTiersInput(input, assetType) {
+  if (input == null) return [];
+  if (!Array.isArray(input)) {
+    throw new Error('reward_tiers must be an array');
+  }
+  if (input.length === 0) return [];
+  if (input.length > 10) {
+    throw new Error('Campaigns can define at most 10 reward tiers');
+  }
+
+  return input.map((tier, index) => {
+    const title = String(tier?.title || '').trim();
+    if (!title) {
+      throw new Error(`Tier ${index + 1} title is required`);
+    }
+
+    const minAmount = Number(tier?.min_amount);
+    if (!Number.isFinite(minAmount) || minAmount <= 0) {
+      throw new Error(`Tier ${index + 1} min_amount must be greater than zero`);
+    }
+
+    let limit = null;
+    if (tier.limit !== undefined && tier.limit !== null) {
+      limit = parseInt(tier.limit, 10);
+      if (isNaN(limit) || limit < 1) {
+        throw new Error(`Tier ${index + 1} limit must be a positive integer`);
+      }
+    }
+
+    return {
+      title,
+      description: String(tier?.description || '').trim() || null,
+      min_amount: minAmount.toFixed(7),
+      asset_type: assetType,
+      limit,
+      estimated_delivery: tier.estimated_delivery || null,
+    };
+  });
+}
+
 async function logWithdrawalEvent(client, { withdrawalRequestId, actorUserId, action, note, metadata }) {
   const runner = client || db;
   await runner.query(
@@ -326,6 +366,56 @@ router.get('/:id/stream', async (req, res) => {
   });
 });
 
+// GET /campaigns/:id/tiers — list tiers with availability
+router.get('/:id/tiers', async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT id, campaign_id, title, description, min_amount, asset_type, "limit", claimed_count, estimated_delivery, created_at
+     FROM reward_tiers
+     WHERE campaign_id = $1
+     ORDER BY min_amount ASC`,
+    [req.params.id]
+  );
+  res.json(rows);
+});
+
+// POST /campaigns/:id/tiers — creator adds a tier post-creation
+router.post('/:id/tiers', requireAuth, requireCampaignMember('owner'), async (req, res) => {
+  const { rows: campaignRows } = await db.query('SELECT asset_type FROM campaigns WHERE id = $1', [req.params.id]);
+  if (!campaignRows.length) return res.status(404).json({ error: 'Campaign not found' });
+
+  let normalized;
+  try {
+    // Normalize a single tier (passed as body) or an array
+    const input = Array.isArray(req.body) ? req.body : [req.body];
+    normalized = normalizeRewardTiersInput(input, campaignRows[0].asset_type);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const created = [];
+    for (const tier of normalized) {
+      const { rows } = await client.query(
+        `INSERT INTO reward_tiers
+           (campaign_id, title, description, min_amount, asset_type, "limit", estimated_delivery)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [req.params.id, tier.title, tier.description, tier.min_amount, tier.asset_type, tier.limit, tier.estimated_delivery]
+      );
+      created.push(rows[0]);
+    }
+    await client.query('COMMIT');
+    res.status(201).json(Array.isArray(req.body) ? created : created[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'Could not add reward tier' });
+  } finally {
+    client.release();
+  }
+});
+
 // Get live on-chain balance for a campaign
 router.get('/:id/balance', async (req, res) => {
   const { rows } = await db.query(
@@ -456,7 +546,7 @@ router.post('/:id/trigger-refunds', requireAuth, requireRole('admin'), async (re
 
 // Create campaign (authenticated)
 router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) => {
-  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution } = req.body;
+  const { title, description, target_amount, asset_type, deadline, milestones, reward_tiers, min_contribution, max_contribution } = req.body;
   if (!title || !target_amount || !asset_type) {
     return res.status(400).json({ error: 'title, target_amount and asset_type are required' });
   }
@@ -469,6 +559,13 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) 
   let normalizedMilestones;
   try {
     normalizedMilestones = normalizeMilestonesInput(milestones);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  let normalizedRewards;
+  try {
+    normalizedRewards = normalizeRewardTiersInput(reward_tiers, asset_type);
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
@@ -531,6 +628,23 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) 
           milestone.description,
           milestone.release_percentage,
           milestone.sort_order,
+        ]
+      );
+    }
+
+    for (const tier of normalizedRewards) {
+      await client.query(
+        `INSERT INTO reward_tiers
+           (campaign_id, title, description, min_amount, asset_type, "limit", estimated_delivery)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          campaign.id,
+          tier.title,
+          tier.description,
+          tier.min_amount,
+          tier.asset_type,
+          tier.limit,
+          tier.estimated_delivery,
         ]
       );
     }

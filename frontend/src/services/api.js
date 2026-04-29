@@ -181,6 +181,7 @@ export const api = {
   getCampaign: (id, token) => request('GET', `/campaigns/${id}`, null, token),
   getCampaignEmbed: (id) => request('GET', `/campaigns/${id}/embed`),
   getCampaignBackers: (id) => request('GET', `/campaigns/${id}/backers`),
+  getCampaignTiers: (id) => request('GET', `/campaigns/${id}/tiers`),
   getCampaignBalance: (id) => request('GET', `/campaigns/${id}/balance`),
   createCampaign: (body, token) => request('POST', '/campaigns', body, token),
   uploadCampaignCoverImage: (campaignId, file, token) => {
@@ -202,6 +203,7 @@ export const api = {
     request('POST', `/campaigns/${campaignId}/updates`, body, token),
 
   getContributions: (campaignId) => request('GET', `/contributions/campaign/${campaignId}`),
+  getContributionFinalization: (txHash, token) => request('GET', `/contributions/finalization/${txHash}`, null, token),
   getMilestones: (campaignId) => request('GET', `/milestones/campaign/${campaignId}`),
   submitMilestoneEvidence: (id, body, token) => request('POST', `/milestones/${id}/submit`, body, token),
   approveMilestone: (id, body, token) => request('POST', `/milestones/${id}/approve`, body || {}, token),

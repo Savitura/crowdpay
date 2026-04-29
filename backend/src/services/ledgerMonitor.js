@@ -242,6 +242,35 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
 
     await markContributionIndexed(client, txHash, inserted[0].id);
 
+    // Reward Tier Assignment Logic
+    const { rows: tiers } = await client.query(
+      `SELECT id, title, "limit", claimed_count
+       FROM reward_tiers
+       WHERE campaign_id = $1 AND min_amount <= $2 AND asset_type = $3
+       ORDER BY min_amount DESC`,
+      [campaignId, destinationAmount, destinationAsset]
+    );
+
+    let assignedTier = null;
+    for (const tier of tiers) {
+      if (tier.limit === null || tier.claimed_count < tier.limit) {
+        assignedTier = tier;
+        break;
+      }
+    }
+
+    if (assignedTier) {
+      await client.query(
+        `UPDATE reward_tiers SET claimed_count = claimed_count + 1 WHERE id = $1`,
+        [assignedTier.id]
+      );
+      await client.query(
+        `INSERT INTO contribution_rewards (contribution_id, reward_tier_id) VALUES ($1, $2)`,
+        [inserted[0].id, assignedTier.id]
+      );
+      console.log(`[monitor] Reward tier "${assignedTier.title}" assigned to contribution ${inserted[0].id}`);
+    }
+
     if (anchorMetadata?.anchor_deposit_id) {
       await client.query(
         `UPDATE anchor_deposits
