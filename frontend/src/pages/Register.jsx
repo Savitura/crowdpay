@@ -21,7 +21,7 @@ export default function Register() {
       const { token, user } = await api.register(form);
       login(user, token);
       markJustRegistered();
-      navigate('/');
+      navigate(user.role === 'creator' ? '/dashboard' : '/');
     } catch (err) {
       setError(err.message);
     } finally {

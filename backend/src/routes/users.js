@@ -1,6 +1,63 @@
 const router = require('express').Router();
 const db = require('../config/database');
 const { requireAuth } = require('../middleware/auth');
+const { createKycSession, isKycRequiredForCampaigns } = require('../services/kycProvider');
+
+router.get('/me', requireAuth, async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT id, email, name, wallet_public_key, role, kyc_status, kyc_completed_at, created_at
+     FROM users
+     WHERE id = $1`,
+    [req.user.userId]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'User not found' });
+  res.json({ ...rows[0], kyc_required_for_campaigns: isKycRequiredForCampaigns() });
+});
+
+router.post('/me/kyc/start', requireAuth, async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT id, email, name, role, kyc_status
+     FROM users
+     WHERE id = $1`,
+    [req.user.userId]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'User not found' });
+
+  const user = rows[0];
+  if (user.kyc_status === 'verified') {
+    return res.json({
+      status: 'verified',
+      message: 'Identity verification is already complete.',
+    });
+  }
+
+  try {
+    const session = await createKycSession({ user });
+    const { rows: updatedRows } = await db.query(
+      `UPDATE users
+       SET kyc_status = 'pending',
+           kyc_provider_reference = COALESCE($2, kyc_provider_reference),
+           kyc_completed_at = NULL
+       WHERE id = $1
+       RETURNING id, email, name, wallet_public_key, role, kyc_status, kyc_completed_at`,
+      [user.id, session.providerReference || null]
+    );
+
+    res.status(201).json({
+      status: updatedRows[0].kyc_status,
+      provider: session.provider,
+      provider_reference: session.providerReference,
+      redirect_url: session.redirectUrl,
+      session_token: session.sessionToken,
+      user: {
+        ...updatedRows[0],
+        kyc_required_for_campaigns: isKycRequiredForCampaigns(),
+      },
+    });
+  } catch (err) {
+    res.status(502).json({ error: err.message || 'Could not start identity verification' });
+  }
+});
 
 router.get('/me/campaigns', requireAuth, async (req, res) => {
   const { rows } = await db.query(

@@ -2,6 +2,13 @@
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'kyc_status') THEN
+    CREATE TYPE kyc_status AS ENUM ('unverified', 'pending', 'verified', 'rejected');
+  END IF;
+END $$;
+
 CREATE TABLE users (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email                   TEXT UNIQUE NOT NULL,
@@ -11,6 +18,9 @@ CREATE TABLE users (
   wallet_secret_encrypted TEXT NOT NULL,
   role                    TEXT NOT NULL DEFAULT 'contributor'
                           CHECK (role IN ('contributor', 'creator', 'admin')),
+  kyc_status              kyc_status NOT NULL DEFAULT 'unverified',
+  kyc_provider_reference  TEXT,
+  kyc_completed_at        TIMESTAMPTZ,
   is_admin                BOOLEAN DEFAULT FALSE,
   created_at              TIMESTAMPTZ DEFAULT NOW()
 );
@@ -94,6 +104,9 @@ CREATE UNIQUE INDEX contributions_anchor_transaction_idx
   WHERE anchor_transaction_id IS NOT NULL;
 CREATE INDEX ON campaigns (status);
 CREATE INDEX ON campaigns (creator_id);
+CREATE UNIQUE INDEX users_kyc_provider_reference_idx
+  ON users (kyc_provider_reference)
+  WHERE kyc_provider_reference IS NOT NULL;
 CREATE INDEX ON withdrawal_approval_events (withdrawal_request_id);
 CREATE INDEX ON withdrawal_approval_events (created_at DESC);
 

@@ -7,6 +7,7 @@ import MilestoneTracker from '../components/MilestoneTracker';
 import WithdrawalsSection from '../components/WithdrawalsSection';
 import CampaignDetailSkeleton from '../components/skeletons/CampaignDetailSkeleton';
 import ContributionListSkeleton from '../components/skeletons/ContributionListSkeleton';
+import VerificationBadge from '../components/VerificationBadge';
 
 function escapeHtml(text) {
   return text
@@ -90,8 +91,9 @@ export default function Campaign() {
           prev ? { ...prev, raised_amount: msg.raised_amount } : prev
         );
         setContributions((prev) => {
-          const exists = prev.some((c) => c.tx_hash === msg.contribution.tx_hash);
-          return exists ? prev : [msg.contribution, ...prev];
+          const current = prev || [];
+          const exists = current.some((c) => c.tx_hash === msg.contribution.tx_hash);
+          return exists ? current : [msg.contribution, ...current];
         });
       }
     };
@@ -256,6 +258,11 @@ export default function Campaign() {
           <strong>This campaign did not reach its goal.</strong> Contributions are closed and refunds can be requested.
         </div>
       )}
+      {campaign.creator_kyc_status !== 'verified' && (
+        <div className="alert alert--warning" style={{ marginBottom: '1.25rem' }} role="status">
+          <strong>Legacy campaign:</strong> this campaign was created before creator identity verification was required.
+        </div>
+      )}
       {campaign.cover_image_url && (
         <img
           src={campaign.cover_image_url}
@@ -264,8 +271,16 @@ export default function Campaign() {
         />
       )}
       <div style={styles.header}>
-        <span style={styles.asset}>{campaign.asset_type}</span>
+        <div style={styles.badgeRow}>
+          <span style={styles.asset}>{campaign.asset_type}</span>
+          <VerificationBadge status={campaign.creator_kyc_status} />
+        </div>
         <h1 style={styles.title}>{campaign.title}</h1>
+        {campaign.creator_name && (
+          <p style={styles.creator}>
+            by {campaign.creator_name}
+          </p>
+        )}
         <p style={styles.desc}>{campaign.description}</p>
       </div>
 
@@ -639,8 +654,10 @@ export default function Campaign() {
 
 const styles = {
   header: { marginBottom: '1.5rem' },
+  badgeRow: { display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' },
   asset: { background: '#ede9fe', color: '#7c3aed', fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: '99px' },
   title: { fontSize: '1.8rem', fontWeight: 800, margin: '0.5rem 0', color: '#111' },
+  creator: { color: '#666', fontSize: '0.9rem', marginBottom: '0.5rem' },
   desc: { color: '#555', fontSize: '1rem', lineHeight: 1.6 },
   card: { background: '#fff', border: '1px solid #e5e5e5', borderRadius: '10px', padding: '1.5rem', marginBottom: '1rem' },
   amounts: { display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' },

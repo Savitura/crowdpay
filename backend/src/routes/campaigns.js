@@ -14,6 +14,7 @@ const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../servi
 const { insertWithdrawalPendingSignatures } = require('../services/stellarTransactionService');
 const { sendEmail } = require('../services/emailService');
 const { uploadCampaignCoverImage } = require('../services/storage');
+const { isKycRequiredForCampaigns } = require('../services/kycProvider');
 const {
   createCampaignValidation,
   createCampaignUpdateValidation,
@@ -159,14 +160,21 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
   const total = countResult.rows[0]?.total || 0;
 
   const sortExpressions = {
-    newest: 'created_at DESC',
-    ending_soon: 'deadline ASC NULLS LAST',
-    most_funded: 'raised_amount DESC',
+    newest: 'campaigns.created_at DESC',
+    ending_soon: 'campaigns.deadline ASC NULLS LAST',
+    most_funded: 'campaigns.raised_amount DESC',
     most_backed: '(SELECT COUNT(*) FROM contributions c WHERE c.campaign_id = campaigns.id) DESC',
   };
   const orderBy = sortExpressions[sort] || sortExpressions.newest;
 
   const query = `
+    SELECT campaigns.id, title, description, target_amount, raised_amount, asset_type,
+           wallet_public_key, status, creator_id, deadline, cover_image_url, campaigns.created_at,
+           u.name AS creator_name,
+           u.kyc_status AS creator_kyc_status,
+           (SELECT COUNT(*)::int FROM campaign_updates cu WHERE cu.campaign_id = campaigns.id) AS updates_count
+    FROM campaigns
+    JOIN users u ON u.id = campaigns.creator_id
     SELECT c.*, 
            (SELECT COUNT(*)::int FROM campaign_updates u WHERE u.campaign_id = c.id) AS updates_count,
            (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions con WHERE con.campaign_id = c.id) AS contributor_count
@@ -183,6 +191,13 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
 
 // Get single Campaign
 router.get('/:id', async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT c.*, u.name AS creator_name, u.kyc_status AS creator_kyc_status
+     FROM campaigns c
+     JOIN users u ON u.id = c.creator_id
+     WHERE c.id = $1`,
+    [req.params.id]
+  );
   const query = `
     SELECT *,
            (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions WHERE campaign_id = $1) AS contributor_count
@@ -470,9 +485,18 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) 
   const encryptedSecret = encryptSecret(wallet.secret);
 
     const { rows: userRows } = await db.query(
+      'SELECT wallet_public_key, kyc_status FROM users WHERE id = $1',
       'SELECT email, wallet_public_key FROM users WHERE id = $1',
       [req.user.userId]
     );
+    if (!userRows.length) return res.status(404).json({ error: 'User not found' });
+    if (isKycRequiredForCampaigns() && userRows[0].kyc_status !== 'verified') {
+      return res.status(403).json({
+        error: 'Verify your identity before creating a campaign.',
+        code: 'KYC_REQUIRED',
+        kyc_status: userRows[0].kyc_status,
+      });
+    }
     const creatorPublicKey = userRows[0].wallet_public_key;
     const creatorEmail = userRows[0].email;
 

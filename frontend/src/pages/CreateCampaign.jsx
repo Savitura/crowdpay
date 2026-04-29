@@ -5,6 +5,7 @@ import 'easymde/dist/easymde.min.css';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import OnboardingCallout from '../components/OnboardingCallout';
+import KycPrompt from '../components/KycPrompt';
 import {
   isCreatorOnboardingVisible,
   dismissCreatorOnboarding,
@@ -22,7 +23,6 @@ const ASSETS = [
     hint: 'Native Stellar asset. Simple for contributors who already hold XLM.',
   },
 ];
-
 function emptyMilestone() {
   return { title: '', description: '', release_percentage: '' };
 }
@@ -32,7 +32,7 @@ function milestonePercentTotal(milestones) {
 }
 
 export default function CreateCampaign() {
-  const { token, user, ready } = useAuth();
+  const { token, user, ready, updateUser } = useAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
@@ -53,6 +53,11 @@ export default function CreateCampaign() {
       navigate('/login', { replace: true, state: { from: '/campaigns/new' } });
     }
   }, [ready, token, navigate]);
+
+  useEffect(() => {
+    if (!token) return;
+    api.getMe(token).then(updateUser).catch(() => {});
+  }, [token, updateUser]);
 
   function setField(field) {
     return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
@@ -252,6 +257,21 @@ export default function CreateCampaign() {
     return (
       <main className="container page-narrow" style={{ paddingTop: '3rem' }}>
         <p className="alert alert--info">Only creator or admin accounts can start campaigns.</p>
+      </main>
+    );
+  }
+
+  const kycRequired = user?.kyc_required_for_campaigns ?? (
+    String(import.meta.env.VITE_KYC_REQUIRED_FOR_CAMPAIGNS ?? 'true').toLowerCase() !== 'false'
+  );
+
+  if (kycRequired && user?.kyc_status !== 'verified') {
+    return (
+      <main className="container page-narrow" style={{ paddingTop: '3rem', paddingBottom: '3rem' }}>
+        <KycPrompt token={token} onUserUpdate={updateUser} title="Verify your identity first" />
+        <p style={{ marginTop: '1rem', fontSize: '0.9rem', color: '#666' }}>
+          Current verification status: <strong>{user?.kyc_status || 'unverified'}</strong>.
+        </p>
       </main>
     );
   }
