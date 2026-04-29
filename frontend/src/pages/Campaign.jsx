@@ -46,6 +46,8 @@ export default function Campaign() {
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updatesError, setUpdatesError] = useState('');
   const [isLive, setIsLive] = useState(false);
+  const [showEmbedSection, setShowEmbedSection] = useState(false);
+  const [embedCopied, setEmbedCopied] = useState(false);
 
   useEffect(() => {
     setLoadError('');
@@ -59,7 +61,6 @@ export default function Campaign() {
   }, [id, contributed]);
 
   useEffect(() => {
-    if (location.state?.created || location.state?.coverUploadError) {
     if (!window.EventSource) return;
 
     const es = new EventSource(`/api/campaigns/${id}/stream`);
@@ -291,6 +292,85 @@ export default function Campaign() {
         <code style={styles.walletKey}>{campaign.wallet_public_key}</code>
       </div>
 
+      {canPostUpdate && (
+        <div style={styles.card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Embed this campaign</h3>
+            <button
+              type="button"
+              onClick={() => setShowEmbedSection(!showEmbedSection)}
+              style={{
+                background: 'transparent',
+                color: '#7c3aed',
+                border: '1px solid #7c3aed',
+                padding: '0.4rem 0.8rem',
+                fontSize: '0.85rem',
+                minHeight: 'auto',
+              }}
+            >
+              {showEmbedSection ? 'Hide' : 'Show'}
+            </button>
+          </div>
+
+          {showEmbedSection && (
+            <>
+              <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '1rem', lineHeight: 1.5 }}>
+                Add this embed code to your website or blog to display a live funding widget for this campaign.
+              </p>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#555', display: 'block', marginBottom: '0.5rem' }}>
+                  Embed code
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <pre style={styles.embedCode}>
+                    {`<iframe src="${window.location.origin}/embed/campaigns/${campaign.id}" \n        width="480" height="280" frameborder="0">\n</iframe>`}
+                  </pre>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const code = `<iframe src="${window.location.origin}/embed/campaigns/${campaign.id}" width="480" height="280" frameborder="0"></iframe>`;
+                      navigator.clipboard.writeText(code).then(() => {
+                        setEmbedCopied(true);
+                        setTimeout(() => setEmbedCopied(false), 2000);
+                      });
+                    }}
+                    style={{
+                      position: 'absolute',
+                      top: '0.5rem',
+                      right: '0.5rem',
+                      background: embedCopied ? '#10b981' : '#7c3aed',
+                      color: '#fff',
+                      padding: '0.4rem 0.8rem',
+                      fontSize: '0.8rem',
+                      minHeight: 'auto',
+                    }}
+                  >
+                    {embedCopied ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#555', display: 'block', marginBottom: '0.5rem' }}>
+                  Preview
+                </label>
+                <div style={styles.embedPreview}>
+                  <iframe
+                    src={`/embed/campaigns/${campaign.id}`}
+                    width="100%"
+                    height="280"
+                    frameBorder="0"
+                    title="Campaign embed preview"
+                    style={{ border: '1px solid #e5e5e5', borderRadius: '6px' }}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {token && (
         <WithdrawalsSection
           campaign={campaign}
@@ -439,6 +519,25 @@ const styles = {
   refundTag: { marginTop: '0.45rem', fontSize: '0.75rem', color: '#7c3aed', fontWeight: 700 },
   liveIndicator: { display: 'inline-flex', alignItems: 'center', gap: '4px', marginLeft: '0.5rem', fontSize: '0.72rem', fontWeight: 600, color: '#16a34a', verticalAlign: 'middle' },
   liveDot: { display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: '#16a34a', animation: 'pulse 1.5s ease-in-out infinite' },
+  embedCode: {
+    background: '#f8f8f8',
+    border: '1px solid #e5e5e5',
+    borderRadius: '6px',
+    padding: '0.75rem',
+    fontSize: '0.75rem',
+    fontFamily: 'monospace',
+    color: '#333',
+    overflow: 'auto',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-all',
+    paddingRight: '5rem',
+  },
+  embedPreview: {
+    background: '#fafafa',
+    border: '1px solid #e5e5e5',
+    borderRadius: '6px',
+    padding: '0.75rem',
+  },
   emptyBackers: { padding: '2.5rem 1rem', textAlign: 'center', background: '#fcfaff', border: '2px dashed #ede9fe', borderRadius: '12px', color: '#7c3aed', fontWeight: 700 },
   avatar: { width: '36px', height: '36px', borderRadius: '50%', background: '#ede9fe', color: '#7c3aed', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', fontWeight: 800, flexShrink: 0 },
 };

@@ -135,7 +135,7 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
   res.json({ total, limit, offset, campaigns: rows.rows });
 });
 
-// Get single campaign
+// Get single Campaign
 router.get('/:id', async (req, res) => {
   const query = `
     SELECT *,
@@ -148,6 +148,39 @@ router.get('/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
+// Embeddable campaign widget data (public, with permissive CORS)
+router.get('/:id/embed', async (req, res) => {
+  // Allow this endpoint to be accessed from any origin for embedding
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+
+  const campaignId = parseInt(req.params.id, 10);
+  const { rows } = await db.query(
+    `SELECT id, title, description, target_amount, raised_amount, asset_type, status,
+            (SELECT COUNT(*)::int FROM contributions c WHERE c.campaign_id = campaigns.id) AS backer_count
+     FROM campaigns WHERE id = $1`,
+    [campaignId]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+
+  const campaign = rows[0];
+  const pct = campaign.target_amount
+    ? Math.min(100, (Number(campaign.raised_amount) / Number(campaign.target_amount)) * 100)
+    : 0;
+
+  res.json({
+    id: campaign.id,
+    title: campaign.title,
+    description: campaign.description?.slice(0, 200) + (campaign.description?.length > 200 ? '...' : ''),
+    raised_amount: Number(campaign.raised_amount),
+    target_amount: Number(campaign.target_amount),
+    asset_type: campaign.asset_type,
+    status: campaign.status,
+    backer_count: campaign.backer_count,
+    progress_percentage: Math.round(pct * 10) / 10,
+    contribution_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/campaigns/${campaign.id}`,
+  });
 // Get backers for a campaign
 router.get('/:id/backers', async (req, res) => {
   const campaignId = req.params.id;
