@@ -7,6 +7,11 @@ export default function CampaignCard({ campaign }) {
   return (
     <Link to={`/campaigns/${campaign.id}`} style={{ display: 'block' }} className="campaign-card-link">
       <div className="campaign-card" style={styles.card}>
+        {campaign.cover_image_url ? (
+          <div style={styles.coverImageWrapper}>
+            <img alt={campaign.title} src={campaign.cover_image_url} style={styles.coverImage} />
+          </div>
+        ) : null}
         <div style={styles.header}>
           <span style={styles.asset}>{campaign.asset_type}</span>
           {typeof campaign.updates_count === 'number' && (
@@ -20,7 +25,7 @@ export default function CampaignCard({ campaign }) {
         </div>
         <div style={styles.meta}>
           <span><strong>{Number(campaign.raised_amount).toLocaleString()}</strong> {campaign.asset_type} raised</span>
-          <span>{pct}%</span>
+          <span>{pct}% by <strong>{campaign.contributor_count || 0}</strong> backers</span>
         </div>
         <div style={styles.target}>
           Goal: {Number(campaign.target_amount).toLocaleString()} {campaign.asset_type}
@@ -37,6 +42,8 @@ const styles = {
   updates: { fontSize: '0.75rem', fontWeight: 700, color: '#0f766e' },
   title: { fontSize: '1.05rem', fontWeight: 700, marginBottom: '0.4rem', color: '#111' },
   desc: { fontSize: '0.875rem', color: '#666', marginBottom: '1rem' },
+  coverImageWrapper: { overflow: 'hidden', borderRadius: '12px 12px 0 0', marginBottom: '1rem', height: '160px' },
+  coverImage: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
   bar: { background: '#f0f0f0', borderRadius: '99px', height: '6px', marginBottom: '0.5rem', overflow: 'hidden' },
   fill: { background: '#7c3aed', height: '100%', borderRadius: '99px', transition: 'width 0.3s' },
   meta: { display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#444' },

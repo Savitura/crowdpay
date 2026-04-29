@@ -246,3 +246,8 @@ input:focus, textarea:focus, select:focus { border-color: #7c3aed; }
   padding: 1.25rem;
   min-height: 148px;
 }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}

@@ -6,6 +6,7 @@ const { networkPassphrase, isTestnet } = require('../config/stellar');
 const { requireAuth } = require('../middleware/auth');
 const logger = require('../config/logger');
 const { sendAlert } = require('../services/alerting');
+const { contributionValidation, validateRequest } = require('../middleware/validation');
 const {
   buildUnsignedContributionPayment,
   buildUnsignedContributionPathPayment,
@@ -24,18 +25,6 @@ const {
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const PREPARED_CONTRIBUTION_EXPIRES_IN = '10m';
-
-function validateContributionRequest({ campaign_id, amount, send_asset }, res) {
-  if (!campaign_id || !amount || !send_asset) {
-    res.status(400).json({ error: 'campaign_id, amount and send_asset are required' });
-    return false;
-  }
-  if (!SUPPORTED_ASSETS.includes(send_asset)) {
-    res.status(400).json({ error: `Supported assets: ${SUPPORTED_ASSETS.join(', ')}` });
-    return false;
-  }
-  return true;
-}
 
 function validateFreighterPublicKey(publicKey) {
   try {
@@ -223,16 +212,25 @@ router.get('/quote', requireAuth, async (req, res) => {
   });
 });
 
-router.post('/prepare', requireAuth, async (req, res) => {
-  const { campaign_id, amount, send_asset, sender_public_key } = req.body;
-  if (!validateContributionRequest({ campaign_id, amount, send_asset }, res)) {
-    return;
-  }
+router.post('/prepare', requireAuth, contributionValidation, validateRequest, async (req, res) => {
+  const { campaign_id, amount, send_asset, sender_public_key, display_name } = req.body;
   if (!sender_public_key) {
-    return res.status(400).json({ error: 'sender_public_key is required for Freighter contributions' });
+    return res.status(422).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'sender_public_key is required for Freighter contributions',
+        fields: { sender_public_key: 'sender_public_key is required for Freighter contributions' },
+      },
+    });
   }
   if (!validateFreighterPublicKey(sender_public_key)) {
-    return res.status(400).json({ error: 'sender_public_key must be a valid Stellar public key' });
+    return res.status(422).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'sender_public_key must be a valid Stellar public key',
+        fields: { sender_public_key: 'Invalid Stellar public key' },
+      },
+    });
   }
 
   const campaign = await loadActiveCampaign(campaign_id);
@@ -244,6 +242,7 @@ router.post('/prepare', requireAuth, async (req, res) => {
       amount,
       sendAsset: send_asset,
       contributorPublicKey: sender_public_key,
+      displayName: display_name,
     });
 
     const unsignedXdr =
@@ -357,11 +356,8 @@ router.post('/submit-signed', requireAuth, async (req, res) => {
 });
 
 // Contribute to a campaign (authenticated, custodial)
-router.post('/', requireAuth, async (req, res) => {
-  const { campaign_id, amount, send_asset } = req.body;
-  if (!validateContributionRequest({ campaign_id, amount, send_asset }, res)) {
-    return;
-  }
+router.post('/', requireAuth, contributionValidation, validateRequest, async (req, res) => {
+  const { campaign_id, amount, send_asset, display_name } = req.body;
 
   const campaign = await loadActiveCampaign(campaign_id);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
@@ -382,6 +378,7 @@ router.post('/', requireAuth, async (req, res) => {
       walletSecretEncrypted: users[0].wallet_secret_encrypted,
       amount,
       sendAsset: send_asset,
+      displayName: display_name,
     });
     res.status(202).json({
       tx_hash: result.txHash,

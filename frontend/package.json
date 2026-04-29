@@ -9,9 +9,11 @@
   },
   "dependencies": {
     "@stellar/freighter-api": "^4.1.0",
+    "easymde": "^3.2.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.23.1"
+    "react-router-dom": "^6.23.1",
+    "react-simplemde-editor": "^7.0.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.0",

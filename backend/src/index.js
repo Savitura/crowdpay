@@ -7,6 +7,7 @@ const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const logger = require('./config/logger');
 const { requestIdMiddleware } = require('./middleware/requestId');
+const { normalizeErrorResponse, errorHandler } = require('./middleware/errorHandler');
 const { startLedgerMonitor, getLedgerStreamHealth } = require('./services/ledgerMonitor');
 const { sendAlert } = require('./services/alerting');
 const { assertNoLegacyPlaintextUserWalletSecrets } = require('./services/walletSecrets');
@@ -20,6 +21,7 @@ app.use(cors({
 app.use(express.json({ limit: '50kb' }));
 app.use(cookieParser());
 app.use(requestIdMiddleware);
+app.use(normalizeErrorResponse);
 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
@@ -43,6 +45,8 @@ app.get('/health/ledger', async (_req, res) => {
     res.status(500).json({ error: err.message || 'ledger health failed' });
   }
 });
+
+app.use(errorHandler);
 
 const { startWebhookRetryPoller } = require('./services/webhookDispatcher');
 

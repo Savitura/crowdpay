@@ -10,6 +10,11 @@ const { ensureCustodialAccountFundedAndTrusted } = require('../services/stellarS
 const { sendEmail } = require('../services/emailService');
 const { requireAuth } = require('../middleware/auth');
 const { encryptWalletSecret } = require('../services/walletSecrets');
+const {
+  registerValidation,
+  loginValidation,
+  validateRequest,
+} = require('../middleware/validation');
 
 const REFRESH_TOKEN_COOKIE_NAME = 'cp_refresh_token';
 const REFRESH_TOKEN_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
@@ -103,14 +108,10 @@ async function rotateRefreshToken(oldToken, userId) {
   return createRefreshToken(userId);
 }
 
-router.post('/register', authLimiter, async (req, res) => {
+router.post('/register', authLimiter, registerValidation, validateRequest, async (req, res) => {
   const { email, password, name, role } = req.body;
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const normalizedName = String(name || '').trim();
-
-  if (!normalizedEmail || !password || !normalizedName) {
-    return res.status(400).json({ error: 'email, password and name are required' });
-  }
   const allowedRoles = new Set(['contributor', 'creator']);
   const userRole = role || 'contributor';
   if (!allowedRoles.has(userRole)) {
@@ -159,7 +160,7 @@ router.post('/register', authLimiter, async (req, res) => {
   res.status(201).json({ token: accessToken, user });
 });
 
-router.post('/login', authLimiter, async (req, res) => {
+router.post('/login', authLimiter, loginValidation, validateRequest, async (req, res) => {
   const { email, password } = req.body;
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const { rows } = await db.query('SELECT * FROM users WHERE LOWER(email) = $1', [normalizedEmail]);

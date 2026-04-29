@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import SimpleMDE from 'react-simplemde-editor';
+import 'easymde/dist/easymde.min.css';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import OnboardingCallout from '../components/OnboardingCallout';
@@ -34,13 +36,12 @@ export default function CreateCampaign() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
-    title: '',
-    description: '',
-    target_amount: '',
-    asset_type: 'USDC',
     deadline: '',
     milestones: [],
+    show_backer_amounts: true,
   });
+  const [coverImageFile, setCoverImageFile] = useState(null);
+  const [coverImagePreview, setCoverImagePreview] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showCreatorTips, setShowCreatorTips] = useState(isCreatorOnboardingVisible);
@@ -55,8 +56,34 @@ export default function CreateCampaign() {
     return (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
   }
 
+  function setDescription(value) {
+    setForm((f) => ({ ...f, description: value }));
+  }
+
   function selectAsset(value) {
     setForm((f) => ({ ...f, asset_type: value }));
+  }
+
+  function handleCoverImageChange(e) {
+    const file = e.target.files?.[0] || null;
+    if (!file) {
+      setCoverImageFile(null);
+      setCoverImagePreview('');
+      return;
+    }
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setError('Cover image must be JPG, PNG, or WEBP.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Cover image must be smaller than 5MB.');
+      return;
+    }
+    setCoverImageFile(file);
+    setError('');
+    const reader = new FileReader();
+    reader.onload = () => setCoverImagePreview(reader.result || '');
+    reader.readAsDataURL(file);
   }
 
   function dismissTips() {
@@ -149,17 +176,30 @@ export default function CreateCampaign() {
           target_amount: form.target_amount,
           asset_type: form.asset_type,
           deadline: form.deadline || undefined,
-          milestones: form.milestones.length
-            ? form.milestones.map((milestone) => ({
-                title: milestone.title.trim(),
-                description: milestone.description.trim(),
-                release_percentage: Number(milestone.release_percentage),
-              }))
-            : undefined,
-        },
+            milestones: form.milestones.length
+              ? form.milestones.map((milestone) => ({
+                  title: milestone.title.trim(),
+                  description: milestone.description.trim(),
+                  release_percentage: Number(milestone.release_percentage),
+                }))
+              : undefined,
+            show_backer_amounts: form.show_backer_amounts,
+          },
         token
       );
-      navigate(`/campaigns/${campaign.id}`, { state: { created: true } });
+
+      let coverUploadError = '';
+      if (coverImageFile) {
+        try {
+          await api.uploadCampaignCoverImage(campaign.id, coverImageFile, token);
+        } catch (uploadError) {
+          coverUploadError = uploadError.message || 'Campaign created, but cover image upload failed.';
+        }
+      }
+
+      navigate(`/campaigns/${campaign.id}`, {
+        state: { created: true, coverUploadError: coverUploadError || undefined },
+      });
     } catch (err) {
       if (err.status === 401) {
         setError('Your session expired. Please log in again.');
@@ -329,14 +369,31 @@ export default function CreateCampaign() {
               <label className="label-strong" htmlFor="cc-desc">
                 Description <span style={{ fontWeight: 500, color: '#888' }}>(optional)</span>
               </label>
-              <textarea
+              <SimpleMDE
                 id="cc-desc"
                 value={form.description}
-                onChange={setField('description')}
-                rows={5}
-                placeholder="Tell backers what the funds will be used for and what success looks like."
-                style={{ resize: 'vertical', minHeight: '120px' }}
+                onChange={setDescription}
+                options={{ spellChecker: false, placeholder: 'Tell backers what the funds will be used for and what success looks like.' }}
               />
+            </div>
+
+            <div className="form-stack" style={{ marginTop: '1rem' }}>
+              <label className="label-strong" htmlFor="cc-cover">
+                Cover image <span style={{ fontWeight: 500, color: '#888' }}>(optional)</span>
+              </label>
+              <input
+                id="cc-cover"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleCoverImageChange}
+              />
+              {coverImagePreview && (
+                <img
+                  src={coverImagePreview}
+                  alt="Cover preview"
+                  style={{ marginTop: '0.75rem', width: '100%', borderRadius: '12px', maxHeight: '220px', objectFit: 'cover' }}
+                />
+              )}
             </div>
 
             <div className="form-stack" style={{ marginTop: '1rem' }}>
@@ -345,6 +402,22 @@ export default function CreateCampaign() {
               </label>
               <input id="cc-deadline" type="date" value={form.deadline} onChange={setField('deadline')} />
             </div>
+
+            <div className="form-stack" style={{ marginTop: '1.25rem', flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                id="cc-show-backers"
+                type="checkbox"
+                style={{ width: 'auto', margin: 0 }}
+                checked={form.show_backer_amounts}
+                onChange={(e) => setForm((f) => ({ ...f, show_backer_amounts: e.target.checked }))}
+              />
+              <label htmlFor="cc-show-backers" style={{ fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}>
+                Show contribution amounts on backer wall
+              </label>
+            </div>
+            <p style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.35rem' }}>
+              If unchecked, backers will be listed but their individual amounts will be hidden from the public.
+            </p>
 
             <div className="alert alert--info" style={{ marginTop: '1.25rem' }} role="status">
               <strong>Summary:</strong> Goal of {form.target_amount || '—'} {form.asset_type} — “{form.title || 'Untitled'}”.

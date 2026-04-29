@@ -3,6 +3,7 @@ const db = require('../config/database');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const logger = require('../config/logger');
 const { sendAlert } = require('../services/alerting');
+const { withdrawalValidation, validateRequest } = require('../middleware/validation');
 const {
   buildWithdrawalTransaction,
   getAccountMultisigConfig,
@@ -51,14 +52,8 @@ router.get('/capabilities', requireAuth, (req, res) => {
   res.json({ can_approve_platform: req.user.role === 'admin' });
 });
 
-router.post('/request', requireAuth, async (req, res) => {
+router.post('/request', requireAuth, withdrawalValidation, validateRequest, async (req, res) => {
   const { campaign_id, destination_key, amount } = req.body;
-  if (!campaign_id || !destination_key || !amount) {
-    return res.status(400).json({ error: 'campaign_id, destination_key and amount are required' });
-  }
-  if (!Number(amount) || Number(amount) <= 0) {
-    return res.status(400).json({ error: 'amount must be a positive number' });
-  }
 
   const { rows: campaigns } = await db.query(
     `SELECT id, creator_id, wallet_public_key, asset_type, status,

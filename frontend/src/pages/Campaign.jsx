@@ -39,11 +39,13 @@ export default function Campaign() {
   const [showModal, setShowModal] = useState(false);
   const [contributed, setContributed] = useState(false);
   const [showCreatedBanner, setShowCreatedBanner] = useState(!!location.state?.created);
+  const [coverUploadError, setCoverUploadError] = useState(location.state?.coverUploadError || '');
   const [updates, setUpdates] = useState([]);
   const [milestones, setMilestones] = useState([]);
   const [updateForm, setUpdateForm] = useState({ title: '', body: '' });
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updatesError, setUpdatesError] = useState('');
+  const [isLive, setIsLive] = useState(false);
 
   useEffect(() => {
     setLoadError('');
@@ -51,16 +53,79 @@ export default function Campaign() {
       .getCampaign(id)
       .then(setCampaign)
       .catch((err) => setLoadError(err.message || 'Could not load campaign.'));
-    api.getContributions(id).then(setContributions).catch(() => setContributions([]));
+    api.getCampaignBackers(id).then(setContributions).catch(() => setContributions([]));
     api.getMilestones(id).then(setMilestones).catch(() => setMilestones([]));
     api.getCampaignUpdates(id, { limit: 20 }).then(setUpdates).catch(() => setUpdates([]));
   }, [id, contributed]);
+
+  useEffect(() => {
+    if (location.state?.created || location.state?.coverUploadError) {
+    if (!window.EventSource) return;
+
+    const es = new EventSource(`/api/campaigns/${id}/stream`);
+
+    es.onopen = () => setIsLive(true);
+
+    es.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+
+      if (msg.type === 'contribution') {
+        setCampaign((prev) =>
+          prev ? { ...prev, raised_amount: msg.raised_amount } : prev
+        );
+        setContributions((prev) => {
+          const exists = prev.some((c) => c.tx_hash === msg.contribution.tx_hash);
+          return exists ? prev : [msg.contribution, ...prev];
+        });
+      }
+    };
+
+    es.onerror = () => {
+      setIsLive(false);
+      es.close();
+    };
+
+    return () => {
+      es.close();
+      setIsLive(false);
+    };
+  }, [id]);
 
   useEffect(() => {
     if (location.state?.created) {
       window.history.replaceState({}, document.title);
     }
   }, [location.state]);
+
+  useEffect(() => {
+    if (!campaign) return;
+    document.title = `${campaign.title} | CrowdPay`;
+
+    // Basic meta tag updates (SPA approach)
+    const updateMeta = (name, content, property = false) => {
+      let el = document.querySelector(property ? `meta[property="${name}"]` : `meta[name="${name}"]`);
+      if (!el) {
+        el = document.createElement('meta');
+        if (property) el.setAttribute('property', name);
+        else el.setAttribute('name', name);
+        document.head.appendChild(el);
+      }
+      el.setAttribute('content', content);
+    };
+
+    updateMeta('description', campaign.description || '');
+    updateMeta('og:title', campaign.title, true);
+    updateMeta('og:description', campaign.description || '', true);
+    updateMeta('og:url', window.location.href, true);
+    if (campaign.cover_image_url) {
+      updateMeta('og:image', campaign.cover_image_url, true);
+      updateMeta('twitter:image', campaign.cover_image_url);
+    }
+    updateMeta('twitter:card', 'summary_large_image');
+    updateMeta('twitter:title', campaign.title);
+    updateMeta('twitter:description', campaign.description || '');
+  }, [campaign]);
 
   if (loadError && !campaign) {
     return (
@@ -125,10 +190,22 @@ export default function Campaign() {
           </button>
         </div>
       )}
+      {coverUploadError && (
+        <div className="alert alert--warning" style={{ marginBottom: '1.25rem' }} role="status">
+          <strong>Cover image upload failed:</strong> {coverUploadError}
+        </div>
+      )}
       {campaign.status === 'failed' && (
         <div className="alert alert--error" style={{ marginBottom: '1.25rem' }} role="status">
           <strong>This campaign did not reach its goal.</strong> Contributions are closed and refunds can be requested.
         </div>
+      )}
+      {campaign.cover_image_url && (
+        <img
+          src={campaign.cover_image_url}
+          alt={campaign.title}
+          style={styles.detailCoverImage}
+        />
       )}
       <div style={styles.header}>
         <span style={styles.asset}>{campaign.asset_type}</span>
@@ -144,7 +221,7 @@ export default function Campaign() {
           </div>
           <div style={{ textAlign: 'right' }}>
             <div style={styles.big}>{pct}%</div>
-            <div style={styles.small}>funded</div>
+            <div style={styles.small}>funded by <strong>{campaign.contributor_count || 0}</strong> backers</div>
           </div>
         </div>
         <div style={styles.bar}><div style={{ ...styles.fill, width: `${pct}%` }} /></div>
@@ -171,6 +248,42 @@ export default function Campaign() {
             Contributions are closed while this campaign is <strong>{campaign.status}</strong>.
           </p>
         )}
+      </div>
+
+      <div style={{ display: 'flex', gap: '0.65rem', marginBottom: '1.75rem', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className="btn-secondary"
+          style={{ flex: 1, fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+          onClick={() => {
+            const text = encodeURIComponent(`I just backed ${campaign.title} on CrowdPay — ${pct}% funded with ${campaign.contributor_count || 0} backers. Join me: ${window.location.href}`);
+            window.open(`https://twitter.com/intent/tweet?text=${text}`, '_blank');
+          }}
+        >
+          Share on X
+        </button>
+        <button
+          type="button"
+          className="btn-secondary"
+          style={{ flex: 1, fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+          onClick={() => {
+            const text = encodeURIComponent(`I just backed ${campaign.title} on CrowdPay — ${pct}% funded with ${campaign.contributor_count || 0} backers. Join me: ${window.location.href}`);
+            window.open(`https://wa.me/?text=${text}`, '_blank');
+          }}
+        >
+          WhatsApp
+        </button>
+        <button
+          type="button"
+          className="btn-secondary"
+          style={{ flex: 1, fontSize: '0.85rem' }}
+          onClick={() => {
+            navigator.clipboard.writeText(window.location.href);
+            alert('Link copied to clipboard!');
+          }}
+        >
+          Copy link
+        </button>
       </div>
 
       <div style={styles.walletInfo}>
@@ -239,38 +352,52 @@ export default function Campaign() {
       )}
 
       <h2 style={styles.sectionTitle}>
-        Contributions {contributions !== null ? `(${contributions.length})` : ''}
+        Backer Wall {contributions !== null ? `(${contributions.length})` : ''}
+        {isLive && (
+          <span style={styles.liveIndicator} title="Live updates active">
+            <span style={styles.liveDot} />
+            Live
+          </span>
+        )}
       </h2>
       {contributions === null ? (
         <ContributionListSkeleton />
       ) : contributions.length === 0 ? (
-        <p style={{ color: '#999' }}>No contributions yet.</p>
+        <div style={styles.emptyBackers}>
+          <p>Be the first to back this!</p>
+          <p style={{ fontSize: '0.9rem', color: '#888', marginTop: '0.25rem' }}>Every contribution counts towards making this goal a reality.</p>
+        </div>
       ) : (
         <div style={styles.list}>
           {contributions.map((c) => (
             <div key={c.id} style={styles.row}>
-              <div style={{ minWidth: 0 }}>
-                <div style={styles.sender}>
-                  {c.sender_public_key.slice(0, 8)}…{c.sender_public_key.slice(-4)}
+              <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={styles.avatar}>
+                  {(c.display_name || 'A')[0].toUpperCase()}
                 </div>
-                {c.payment_type === 'path_payment_strict_receive' && c.source_asset && c.source_amount != null && (
+                <div style={{ minWidth: 0 }}>
+                  <div style={styles.sender}>
+                    {c.display_name || 'Anonymous'}
+                  </div>
                   <div style={styles.convHint}>
-                    via {Number(c.source_amount).toLocaleString()} {c.source_asset}
+                    {c.sender_public_key.slice(0, 4)}…{c.sender_public_key.slice(-4)} • {new Date(c.created_at).toLocaleDateString()}
                   </div>
-                )}
-                {c.refund_status && (
-                  <div style={styles.refundTag}>
-                    {c.refund_status === 'pending' && 'Refund pending'}
-                    {c.refund_status === 'submitted' && 'Refunded'}
-                    {c.refund_status === 'indexed' && 'Refunded'}
-                    {c.refund_status === 'failed' && 'Refund failed'}
-                    {c.refund_status === 'denied' && 'Refund denied'}
-                  </div>
-                )}
+                  {c.refund_status && (
+                    <div style={styles.refundTag}>
+                      {c.refund_status === 'pending' && 'Refund pending'}
+                      {c.refund_status === 'submitted' && 'Refunded'}
+                      {c.refund_status === 'indexed' && 'Refunded'}
+                      {c.refund_status === 'failed' && 'Refund failed'}
+                      {c.refund_status === 'denied' && 'Refund denied'}
+                    </div>
+                  )}
+                </div>
               </div>
-              <span style={styles.amount}>
-                +{Number(c.amount).toLocaleString()} {c.asset}
-              </span>
+              {c.amount != null && (
+                <span style={styles.amount}>
+                  {Number(c.amount).toLocaleString()} {c.asset}
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -302,6 +429,7 @@ const styles = {
   walletInfo: { background: '#f8f8f8', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1.75rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' },
   walletLabel: { fontSize: '0.75rem', fontWeight: 600, color: '#888', textTransform: 'uppercase' },
   walletKey: { fontSize: '0.8rem', color: '#555', wordBreak: 'break-all' },
+  detailCoverImage: { width: '100%', borderRadius: '14px', marginBottom: '1.5rem', objectFit: 'cover', maxHeight: '360px' },
   sectionTitle: { fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.75rem' },
   list: { display: 'flex', flexDirection: 'column', gap: '0.5rem' },
   row: { display: 'flex', justifyContent: 'space-between', background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '0.6rem 0.85rem' },
@@ -309,4 +437,8 @@ const styles = {
   amount: { fontSize: '0.85rem', fontWeight: 600, flexShrink: 0 },
   convHint: { fontSize: '0.72rem', color: '#888', marginTop: '0.15rem' },
   refundTag: { marginTop: '0.45rem', fontSize: '0.75rem', color: '#7c3aed', fontWeight: 700 },
+  liveIndicator: { display: 'inline-flex', alignItems: 'center', gap: '4px', marginLeft: '0.5rem', fontSize: '0.72rem', fontWeight: 600, color: '#16a34a', verticalAlign: 'middle' },
+  liveDot: { display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: '#16a34a', animation: 'pulse 1.5s ease-in-out infinite' },
+  emptyBackers: { padding: '2.5rem 1rem', textAlign: 'center', background: '#fcfaff', border: '2px dashed #ede9fe', borderRadius: '12px', color: '#7c3aed', fontWeight: 700 },
+  avatar: { width: '36px', height: '36px', borderRadius: '50%', background: '#ede9fe', color: '#7c3aed', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', fontWeight: 800, flexShrink: 0 },
 };

@@ -17,6 +17,37 @@ const streamRegistry = new Map();
 /** Consecutive stream failures per wallet (survives registry clears between errors). */
 const reconnectAttempts = new Map();
 
+// Map of campaignId -> Set<res> for SSE clients
+const sseClients = new Map();
+
+function addSSEClient(campaignId, res) {
+  if (!sseClients.has(campaignId)) {
+    sseClients.set(campaignId, new Set());
+  }
+  sseClients.get(campaignId).add(res);
+}
+
+function removeSSEClient(campaignId, res) {
+  const clients = sseClients.get(campaignId);
+  if (clients) {
+    clients.delete(res);
+    if (clients.size === 0) sseClients.delete(campaignId);
+  }
+}
+
+function broadcastCampaignUpdate(campaignId, data) {
+  const clients = sseClients.get(campaignId);
+  if (!clients || clients.size === 0) return;
+  const payload = `data: ${JSON.stringify(data)}\n\n`;
+  for (const res of clients) {
+    try {
+      res.write(payload);
+    } catch {
+      // client likely disconnected; cleanup handled by close event
+    }
+  }
+}
+
 const MAX_RECONNECT_DELAY_MS = 60_000;
 
 function extractPagingToken(record) {
@@ -162,13 +193,14 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
       [txHash]
     );
     const anchorMetadata = submittedRows[0]?.metadata?.anchor || null;
+    const displayName = submittedRows[0]?.metadata?.display_name || null;
 
     const { rows: inserted } = await client.query(
       `INSERT INTO contributions
          (campaign_id, sender_public_key, amount, asset, anchor_id, anchor_transaction_id,
           anchor_asset, anchor_amount, payment_type, source_amount, source_asset,
-          conversion_rate, path, tx_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14)
+          conversion_rate, path, tx_hash, display_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15)
        RETURNING id`,
       [
         campaignId,
@@ -185,6 +217,7 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
         conversionRate,
         path ? JSON.stringify(path) : null,
         txHash,
+        displayName,
       ]
     );
 
@@ -214,6 +247,11 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
       );
     }
 
+    const { rows: updatedCampaign } = await client.query(
+      'SELECT raised_amount FROM campaigns WHERE id = $1',
+      [campaignId]
+    );
+
     await client.query('COMMIT');
     postCommitHooks = {
       creatorId,
@@ -234,6 +272,25 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
     console.log(
       `[monitor] Contribution indexed: ${destinationAmount} ${destinationAsset} -> campaign ${campaignId}`
     );
+
+    broadcastCampaignUpdate(campaignId, {
+      type: 'contribution',
+      contribution: {
+        id: inserted[0].id,
+        campaign_id: campaignId,
+        sender_public_key: payment.from,
+        amount: destinationAmount,
+        asset: destinationAsset,
+        payment_type: paymentType,
+        source_amount: sourceAmount,
+        source_asset: sourceAsset,
+        conversion_rate: conversionRate,
+        path,
+        tx_hash: txHash,
+        display_name: displayName,
+      },
+      raised_amount: updatedCampaign[0]?.raised_amount,
+    });
   } catch (err) {
     try {
       await client.query('ROLLBACK');
@@ -437,4 +494,6 @@ module.exports = {
   watchCampaignWallet,
   handlePayment,
   getLedgerStreamHealth,
+  addSSEClient,
+  removeSSEClient,
 };

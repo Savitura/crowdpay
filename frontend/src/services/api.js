@@ -53,9 +53,54 @@ async function request(method, path, body, token, options = {}) {
   }
 
   if (!res.ok) {
-    const msg = data.error || `Request failed (${res.status})`;
-    const err = new Error(msg);
+    const errorBody = data.error;
+    const message =
+      typeof errorBody === 'string'
+        ? errorBody
+        : errorBody?.message || `Request failed (${res.status})`;
+    const err = new Error(message);
     err.status = res.status;
+    if (errorBody && typeof errorBody === 'object') {
+      err.code = errorBody.code;
+      err.fields = errorBody.fields;
+    }
+    throw err;
+  }
+
+  return data;
+}
+
+async function uploadFormData(path, formData, token) {
+  const url = `${BASE}${path}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: formData,
+    credentials: 'include',
+  });
+
+  const text = await res.text();
+  let data = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error('Unexpected server response. Please try again.');
+    }
+  }
+
+  if (!res.ok) {
+    const errorBody = data.error;
+    const message =
+      typeof errorBody === 'string'
+        ? errorBody
+        : errorBody?.message || `Request failed (${res.status})`;
+    const err = new Error(message);
+    err.status = res.status;
+    if (errorBody && typeof errorBody === 'object') {
+      err.code = errorBody.code;
+      err.fields = errorBody.fields;
+    }
     throw err;
   }
 
@@ -129,10 +174,16 @@ export const api = {
   getMyStats: (token) => request('GET', '/users/me/stats', null, token),
   getMyContributions: (token) => request('GET', '/users/me/contributions', null, token),
 
-  getCampaigns: () => request('GET', '/campaigns'),
+  getCampaigns: (options = {}) => request('GET', '/campaigns', null, null, { query: options }),
   getCampaign: (id) => request('GET', `/campaigns/${id}`),
+  getCampaignBackers: (id) => request('GET', `/campaigns/${id}/backers`),
   getCampaignBalance: (id) => request('GET', `/campaigns/${id}/balance`),
   createCampaign: (body, token) => request('POST', '/campaigns', body, token),
+  uploadCampaignCoverImage: (campaignId, file, token) => {
+    const formData = new FormData();
+    formData.append('cover_image', file);
+    return uploadFormData(`/campaigns/${encodeURIComponent(campaignId)}/cover-image`, formData, token);
+  },
   getAnchorInfo: () => request('GET', '/anchor/info'),
   startAnchorDeposit: (body, token) => request('POST', '/anchor/deposits/start', body, token),
   getAnchorDepositStatus: (id, token) => request('GET', `/anchor/deposits/${id}`, null, token),
