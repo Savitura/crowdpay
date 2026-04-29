@@ -59,6 +59,11 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
   const [quote, setQuote] = useState(null);
   const [phase, setPhase] = useState('form');
   const [result, setResult] = useState(null);
+  const [feeBps, setFeeBps] = useState(0);
+
+  useEffect(() => {
+    api.getPlatformConfig().then((cfg) => setFeeBps(cfg.platform_fee_bps || 0)).catch(() => {});
+  }, []);
   const [freighterAvailable, setFreighterAvailable] = useState(false);
   const [freighterChecked, setFreighterChecked] = useState(false);
   const [existingContributions, setExistingContributions] = useState([]);
@@ -597,6 +602,21 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
                       {quoteError}
                     </p>
                   )}
+                </div>
+              )}
+
+              {feeBps > 0 && destAmount && Number(destAmount) > 0 && (
+                <div className="alert alert--info" style={{ marginTop: '0.85rem', fontSize: '0.875rem' }} role="status">
+                  {(() => {
+                    const feeAmt = (Number(destAmount) * feeBps / 10000).toFixed(7);
+                    const netAmt = (Number(destAmount) - Number(feeAmt)).toFixed(7);
+                    return (
+                      <>
+                        <strong>Platform fee:</strong> {feeBps / 100}% = {feeAmt} {campaign.asset_type}
+                        {' '}— campaign receives <strong>{netAmt} {campaign.asset_type}</strong>
+                      </>
+                    );
+                  })()}
                 </div>
               )}
 

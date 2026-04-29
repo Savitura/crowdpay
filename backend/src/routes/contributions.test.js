@@ -40,10 +40,12 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
     prepareSignedContributionPayment: async () => ({
       unsignedXdr: 'unsigned-xdr',
       signedXdr: 'signed-xdr',
+      feeAmount: 0,
     }),
     prepareSignedContributionPathPayment: async () => ({
       unsignedXdr: 'unsigned-xdr',
       signedXdr: 'signed-xdr',
+      feeAmount: 0,
     }),
     submitPreparedTransaction: async () => 'tx-from-submit',
     getPathPaymentQuote: async () => [],
@@ -255,7 +257,7 @@ test('POST /api/contributions uses direct payment for same asset', async () => {
     stellarImpl: {
       prepareSignedContributionPayment: async (payload) => {
         prepared.push(payload);
-        return { unsignedXdr: 'u', signedXdr: 's' };
+        return { unsignedXdr: 'u', signedXdr: 's', feeAmount: 0 };
       },
       prepareSignedContributionPathPayment: async () => {
         throw new Error('should not be called');
@@ -300,7 +302,7 @@ test('POST /api/contributions uses direct payment for same USDC asset', async ()
     stellarImpl: {
       prepareSignedContributionPayment: async (payload) => {
         submitted.push(payload);
-        return { unsignedXdr: 'u', signedXdr: 's' };
+        return { unsignedXdr: 'u', signedXdr: 's', feeAmount: 0 };
       },
       prepareSignedContributionPathPayment: async () => {
         throw new Error('should not be called');
@@ -343,7 +345,7 @@ test('POST /api/contributions uses path payment for conversion', async () => {
       },
       prepareSignedContributionPathPayment: async (payload) => {
         pathPayload = payload;
-        return { unsignedXdr: 'u', signedXdr: 's' };
+        return { unsignedXdr: 'u', signedXdr: 's', feeAmount: 0 };
       },
       submitPreparedTransaction: async () => 'tx-path',
       getPathPaymentQuote: async () => [
@@ -393,7 +395,7 @@ test('POST /api/contributions supports reverse conversion USDC -> XLM', async ()
       },
       prepareSignedContributionPathPayment: async (payload) => {
         pathPayload = payload;
-        return { unsignedXdr: 'u', signedXdr: 's' };
+        return { unsignedXdr: 'u', signedXdr: 's', feeAmount: 0 };
       },
       submitPreparedTransaction: async () => 'tx-path-reverse',
       getPathPaymentQuote: async () => [
@@ -709,4 +711,47 @@ test('GET /api/contributions/finalization/:txHash returns finalized when indexed
   assert.equal(response.status, 200);
   assert.equal(response.body.finalization_status, 'finalized');
   assert.equal(response.body.contribution.id, 'contrib-1');
+});
+
+test('POST /api/contributions includes platform_fee_amount in response and metadata', async () => {
+  let capturedMetadata = null;
+  const app = buildApp({
+    queryImpl: async (text) => {
+      if (text.includes('FROM campaigns')) {
+        return {
+          rows: [{ id: 'c-1', status: 'active', asset_type: 'USDC', wallet_public_key: 'GDEST' }],
+        };
+      }
+      if (text.includes('FROM users')) {
+        return {
+          rows: [{ wallet_secret_encrypted: 'SSECRET', wallet_public_key: 'GSENDER' }],
+        };
+      }
+      return { rows: [] };
+    },
+    stellarImpl: {
+      prepareSignedContributionPayment: async () => ({
+        unsignedXdr: 'u',
+        signedXdr: 's',
+        feeAmount: 0.15,
+      }),
+      submitPreparedTransaction: async () => 'tx-fee-test',
+      getPathPaymentQuote: async () => [],
+    },
+    stellarTxImpl: {
+      insertContributionSubmitted: async (_client, row) => {
+        capturedMetadata = row.metadata;
+        return 'stellar-row-id';
+      },
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions')
+    .set('Authorization', 'Bearer token')
+    .send({ campaign_id: 'c-1', amount: '10.0000000', send_asset: 'USDC' });
+
+  assert.equal(response.status, 202);
+  assert.equal(response.body.platform_fee_amount, 0.15);
+  assert.equal(capturedMetadata.platform_fee_amount, 0.15);
 });

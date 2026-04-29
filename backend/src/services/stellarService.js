@@ -27,6 +27,13 @@ const {
 
 const PLATFORM_KEYPAIR = Keypair.fromSecret(process.env.PLATFORM_SECRET_KEY);
 
+function calcFee(amount) {
+  const bps = parseInt(process.env.PLATFORM_FEE_BPS || '0', 10);
+  const fee = parseFloat((parseFloat(amount) * bps / 10000).toFixed(7));
+  const net = parseFloat((parseFloat(amount) - fee).toFixed(7));
+  return { feeAmount: fee, campaignAmount: net, bps };
+}
+
 function toStellarAsset(assetCode) {
   if (assetCode === 'XLM') return Asset.native();
   if (assetCode === 'USDC') return USDC;
@@ -229,21 +236,26 @@ async function buildUnsignedContributionPayment({
 }) {
   const senderAccount = await server.loadAccount(senderPublicKey);
   const stellarAsset = toStellarAsset(asset);
+  const { feeAmount, campaignAmount } = calcFee(amount);
 
-  const tx = new TransactionBuilder(senderAccount, {
-    fee: BASE_FEE,
-    networkPassphrase,
-  })
+  const builder = new TransactionBuilder(senderAccount, { fee: BASE_FEE, networkPassphrase })
     .addOperation(
       Operation.payment({
         destination: destinationPublicKey,
         asset: stellarAsset,
-        amount: String(amount),
+        amount: String(campaignAmount),
       })
-    )
-    .addMemo(Memo.text(memo || 'crowdpay'))
-    .setTimeout(30)
-    .build();
+    );
+
+  if (feeAmount > 0) {
+    builder.addOperation(
+      Operation.payment({
+        destination: PLATFORM_KEYPAIR.publicKey(),
+        asset: stellarAsset,
+        amount: String(feeAmount),
+      })
+    );
+  }
 
   return tx.toXDR();
 }
@@ -269,7 +281,7 @@ async function prepareSignedContributionPayment({
   const tx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
   tx.sign(senderKeypair);
   const signedXdr = tx.toXDR();
-  return { unsignedXdr, signedXdr };
+  return { unsignedXdr, signedXdr, feeAmount };
 }
 
 /**
@@ -296,24 +308,40 @@ async function buildUnsignedContributionPathPayment({
   const senderAccount = await server.loadAccount(senderPublicKey);
   const sourceStellarAsset = toStellarAsset(sendAsset);
   const destStellarAsset = toStellarAsset(destAssetCode);
+  const { feeAmount, campaignAmount, bps } = calcFee(destAmount);
 
-  const tx = new TransactionBuilder(senderAccount, {
-    fee: BASE_FEE,
-    networkPassphrase,
-  })
+  const sendMaxFloat = parseFloat(sendMax);
+  const campaignSendMax = feeAmount > 0
+    ? ((sendMaxFloat * (1 - bps / 10000)).toFixed(7))
+    : sendMax;
+  const feeSendMax = feeAmount > 0
+    ? ((sendMaxFloat * (bps / 10000)).toFixed(7))
+    : '0';
+
+  const builder = new TransactionBuilder(senderAccount, { fee: BASE_FEE, networkPassphrase })
     .addOperation(
       Operation.pathPaymentStrictReceive({
         sendAsset: sourceStellarAsset,
-        sendMax: String(sendMax),
+        sendMax: String(campaignSendMax),
         destination: destinationPublicKey,
         destAsset: destStellarAsset,
-        destAmount: String(destAmount),
-        path: [], // empty path lets Stellar use direct market routing
+        destAmount: String(campaignAmount),
+        path: [],
       })
-    )
-    .addMemo(Memo.text(memo || 'crowdpay'))
-    .setTimeout(30)
-    .build();
+    );
+
+  if (feeAmount > 0) {
+    builder.addOperation(
+      Operation.pathPaymentStrictReceive({
+        sendAsset: sourceStellarAsset,
+        sendMax: String(feeSendMax),
+        destination: PLATFORM_KEYPAIR.publicKey(),
+        destAsset: destStellarAsset,
+        destAmount: String(feeAmount),
+        path: [],
+      })
+    );
+  }
 
   return tx.toXDR();
 }
@@ -343,7 +371,7 @@ async function prepareSignedContributionPathPayment({
   const tx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
   tx.sign(senderKeypair);
   const signedXdr = tx.toXDR();
-  return { unsignedXdr, signedXdr };
+  return { unsignedXdr, signedXdr, feeAmount };
 }
 
 /**

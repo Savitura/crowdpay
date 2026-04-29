@@ -314,12 +314,42 @@ router.post('/submit-signed', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'signed_xdr and prepare_token are required' });
   }
 
-  let prepared;
-  try {
-    prepared = verifyPreparedContributionToken(prepare_token);
-  } catch (err) {
-    return res.status(400).json({ error: err.message || 'Invalid prepare token' });
-  }
+  let txHash;
+  let conversionQuote = null;
+  let unsignedXdr;
+  let signedXdr;
+  let flowMetadata;
+  let platformFeeAmount = 0;
+
+  if (send_asset === campaign.asset_type) {
+    const prepared = await prepareSignedContributionPayment({
+      senderSecret,
+      destinationPublicKey: campaign.wallet_public_key,
+      asset: send_asset,
+      amount,
+      memo: `cp-${campaign_id}`,
+    });
+    unsignedXdr = prepared.unsignedXdr;
+    signedXdr = prepared.signedXdr;
+    platformFeeAmount = prepared.feeAmount || 0;
+    flowMetadata = {
+      flow: 'payment',
+      send_asset,
+      amount: String(amount),
+      contributor_public_key: contributorPublicKey,
+      platform_fee_amount: platformFeeAmount,
+    };
+  } else {
+    const paths = await getPathPaymentQuote({
+      sendAsset: send_asset,
+      destAsset: campaign.asset_type,
+      destAmount: amount,
+    });
+    if (!paths.length) {
+      return res.status(422).json({
+        error: `No conversion path found for ${send_asset} -> ${campaign.asset_type}`,
+      });
+    }
 
   if (prepared.user_id !== req.user.userId) {
     return res.status(403).json({ error: 'Prepared contribution token does not belong to this user' });
@@ -331,6 +361,27 @@ router.post('/submit-signed', requireAuth, async (req, res) => {
       unsignedXdr: prepared.unsigned_xdr,
       senderPublicKey: prepared.sender_public_key,
     });
+    unsignedXdr = prepared.unsignedXdr;
+    signedXdr = prepared.signedXdr;
+    platformFeeAmount = prepared.feeAmount || 0;
+
+    conversionQuote = {
+      send_asset,
+      campaign_asset: campaign.asset_type,
+      campaign_amount: String(amount),
+      quoted_source_amount: bestPath.source_amount,
+      max_send_amount: sendMax,
+      path: bestPath.path,
+    };
+    flowMetadata = {
+      flow: 'path_payment_strict_receive',
+      send_asset,
+      dest_asset: campaign.asset_type,
+      dest_amount: String(amount),
+      max_send_amount: sendMax,
+      contributor_public_key: contributorPublicKey,
+      platform_fee_amount: platformFeeAmount,
+    };
   } catch (err) {
     return res.status(422).json({ error: err.message });
   }
@@ -366,7 +417,8 @@ router.post('/submit-signed', requireAuth, async (req, res) => {
     tx_hash: txHash,
     stellar_transaction_id: stellarTransactionId,
     message: 'Transaction submitted',
-    conversion_quote: prepared.conversion_quote,
+    platform_fee_amount: platformFeeAmount,
+    conversion_quote: conversionQuote,
   });
 });
 
