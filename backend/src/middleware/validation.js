@@ -74,6 +74,23 @@ const createCampaignValidation = [
       }
       return true;
     }),
+  body('min_contribution')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ gt: 0 })
+    .withMessage('Minimum contribution must be greater than zero'),
+  body('max_contribution')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ gt: 0 })
+    .withMessage('Maximum contribution must be greater than zero')
+    .custom((value, { req }) => {
+      if (value && req.body.min_contribution && parseFloat(value) <= parseFloat(req.body.min_contribution)) {
+        throw new Error('Maximum contribution must be greater than minimum contribution');
+      }
+      if (value && req.body.target_amount && parseFloat(value) > parseFloat(req.body.target_amount)) {
+        throw new Error('Maximum contribution cannot exceed the target amount');
+      }
+      return true;
+    }),
   body('milestones')
     .optional({ nullable: true })
     .custom((value) => {

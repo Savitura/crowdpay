@@ -46,19 +46,33 @@ export default function Campaign() {
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updatesError, setUpdatesError] = useState('');
   const [isLive, setIsLive] = useState(false);
+  const [members, setMembers] = useState([]);
+  const [isOwner, setIsOwner] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ email: '', role: 'viewer' });
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteError, setInviteError] = useState('');
+  const [inviteSuccess, setInviteSuccess] = useState(false);
   const [showEmbedSection, setShowEmbedSection] = useState(false);
   const [embedCopied, setEmbedCopied] = useState(false);
 
   useEffect(() => {
     setLoadError('');
     api
-      .getCampaign(id)
-      .then(setCampaign)
+      .getCampaign(id, token)
+      .then((data) => {
+        setCampaign(data);
+        if (data.user_role === 'owner') {
+          setIsOwner(true);
+          api.getCampaignMembers(id, token).then(setMembers).catch(() => {});
+        } else {
+          setIsOwner(false);
+        }
+      })
       .catch((err) => setLoadError(err.message || 'Could not load campaign.'));
     api.getCampaignBackers(id).then(setContributions).catch(() => setContributions([]));
     api.getMilestones(id).then(setMilestones).catch(() => setMilestones([]));
     api.getCampaignUpdates(id, { limit: 20 }).then(setUpdates).catch(() => setUpdates([]));
-  }, [id, contributed]);
+  }, [id, token, contributed]);
 
   useEffect(() => {
     if (!window.EventSource) return;
@@ -99,6 +113,47 @@ export default function Campaign() {
     }
   }, [location.state]);
 
+  async function handleInviteSubmit(e) {
+    e.preventDefault();
+    if (!inviteForm.email) {
+      setInviteError('Email is required');
+      return;
+    }
+    setInviteBusy(true);
+    setInviteError('');
+    setInviteSuccess(false);
+    try {
+      const newMember = await api.inviteCampaignMember(id, inviteForm, token);
+      setMembers((prev) => [...prev, newMember]);
+      setInviteForm({ email: '', role: 'viewer' });
+      setInviteSuccess(true);
+    } catch (err) {
+      setInviteError(err.message || 'Failed to invite member');
+    } finally {
+      setInviteBusy(false);
+    }
+  }
+
+  async function handleRoleChange(userId, newRole) {
+    try {
+      const updated = await api.updateCampaignMemberRole(id, userId, { role: newRole }, token);
+      setMembers((prev) =>
+        prev.map((m) => (m.user_id === userId ? { ...m, role: updated.role } : m))
+      );
+    } catch (err) {
+      alert(err.message || 'Failed to update role');
+    }
+  }
+
+  async function handleRemoveMember(userId) {
+    if (!confirm('Are you sure you want to remove this member?')) return;
+    try {
+      await api.removeCampaignMember(id, userId, token);
+      setMembers((prev) => prev.filter((m) => m.user_id !== userId));
+    } catch (err) {
+      alert(err.message || 'Failed to remove member');
+    }
+  }
   useEffect(() => {
     if (!campaign) return;
     document.title = `${campaign.title} | CrowdPay`;
@@ -226,6 +281,14 @@ export default function Campaign() {
           </div>
         </div>
         <div style={styles.bar}><div style={{ ...styles.fill, width: `${pct}%` }} /></div>
+
+        {(campaign.min_contribution || campaign.max_contribution) && (
+          <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: '1rem', background: '#f9fafb', padding: '0.6rem', borderRadius: '6px', textAlign: 'center', border: '1px solid #eee' }}>
+            {campaign.min_contribution && `Min: ${Number(campaign.min_contribution).toLocaleString()} ${campaign.asset_type}`}
+            {campaign.min_contribution && campaign.max_contribution && ' · '}
+            {campaign.max_contribution && `Max: ${Number(campaign.max_contribution).toLocaleString()} ${campaign.asset_type} per backer`}
+          </div>
+        )}
 
         {campaign.status === 'active' ? (
           user ? (
@@ -385,6 +448,86 @@ export default function Campaign() {
       )}
 
       <MilestoneTracker milestones={milestones} assetType={campaign.asset_type} />
+
+      {isOwner && (
+        <div style={{ marginBottom: '2rem' }}>
+          <h2 style={styles.sectionTitle}>Team Management</h2>
+          <div className="campaign-card" style={{ marginBottom: '1.5rem' }}>
+            <strong style={{ marginBottom: '0.75rem', display: 'block' }}>Invite Team Member</strong>
+            <form onSubmit={handleInviteSubmit} style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <div style={{ flex: '1 1 250px' }}>
+                <label style={{ fontSize: '0.85rem', color: '#666', display: 'block', marginBottom: '0.25rem' }}>Email</label>
+                <input
+                  type="email"
+                  placeholder="member@example.com"
+                  value={inviteForm.email}
+                  onChange={(e) => setInviteForm((s) => ({ ...s, email: e.target.value }))}
+                  required
+                  style={{ width: '100%' }}
+                />
+              </div>
+              <div style={{ width: '120px' }}>
+                <label style={{ fontSize: '0.85rem', color: '#666', display: 'block', marginBottom: '0.25rem' }}>Role</label>
+                <select
+                  value={inviteForm.role}
+                  onChange={(e) => setInviteForm((s) => ({ ...s, role: e.target.value }))}
+                  style={{ width: '100%', padding: '0.5rem' }}
+                >
+                  <option value="viewer">Viewer</option>
+                  <option value="manager">Manager</option>
+                  <option value="owner">Owner</option>
+                </select>
+              </div>
+              <button type="submit" className="btn-primary" disabled={inviteBusy} style={{ height: '38px' }}>
+                {inviteBusy ? 'Sending…' : 'Invite'}
+              </button>
+            </form>
+            {inviteError && <p className="alert alert--error" style={{ marginTop: '0.75rem' }}>{inviteError}</p>}
+            {inviteSuccess && <p className="alert alert--success" style={{ marginTop: '0.75rem' }}>Invitation sent!</p>}
+          </div>
+
+          <div className="campaign-card">
+            <strong style={{ marginBottom: '0.75rem', display: 'block' }}>Current Team</strong>
+            {members.length === 0 ? (
+              <p style={{ color: '#999' }}>No team members yet.</p>
+            ) : (
+              <div style={{ display: 'grid', gap: '0.75rem' }}>
+                {members.map((member) => (
+                  <div key={member.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', borderBottom: '1px solid #eee', paddingBottom: '0.5rem' }}>
+                    <div>
+                      <span style={{ fontWeight: 600 }}>{member.email}</span>
+                      {member.user_name && <span style={{ color: '#666', fontSize: '0.85rem', marginLeft: '0.5rem' }}>({member.user_name})</span>}
+                      <div style={{ fontSize: '0.75rem', color: member.accepted_at ? '#10b981' : '#f59e0b', fontWeight: 600 }}>
+                        {member.accepted_at ? 'Accepted' : 'Pending'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <select
+                        value={member.role}
+                        onChange={(e) => handleRoleChange(member.user_id, e.target.value)}
+                        disabled={!member.user_id || String(member.user_id) === String(user?.id)}
+                        style={{ padding: '0.25rem', fontSize: '0.85rem' }}
+                      >
+                        <option value="viewer">Viewer</option>
+                        <option value="manager">Manager</option>
+                        <option value="owner">Owner</option>
+                      </select>
+                      <button
+                        className="btn-secondary"
+                        onClick={() => handleRemoveMember(member.user_id)}
+                        disabled={String(member.user_id) === String(user?.id)}
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.85rem', color: '#ef4444', borderColor: '#ef4444' }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <h2 style={styles.sectionTitle}>Updates ({updates.length})</h2>
       {canPostUpdate && (
