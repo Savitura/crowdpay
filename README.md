@@ -46,6 +46,21 @@ User clicks "Contribute"
   → User signs (custodial: backend signs; non-custodial: user's wallet)
   → Transaction submitted to Stellar testnet / mainnet
   → Horizon streams ledger events
+
+
+### Wallet Architecture & Security
+
+Each campaign wallet is secured with:
+
+- **AES-256-GCM encryption** for private key storage
+- **Multisig control** requiring both creator and platform signatures
+- **Disabled master keys** after initial setup
+- **Full audit trail** of all transactions and payments
+- **Recovery procedures** for encrypted wallet secrets
+
+See [WALLET_ARCHITECTURE.md](WALLET_ARCHITECTURE.md) for complete technical details.
+
+
   → Backend confirms + indexes in PostgreSQL
   → Campaign progress updates in real time
 ```
@@ -183,6 +198,18 @@ Before a campaign wallet can receive USDC, it must establish a trustline to the 
 
 ### Path payments
 Contributions use `pathPaymentStrictReceive` so the campaign always receives the exact asset it expects, regardless of what the contributor sends.
+
+
+---
+
+## Documentation
+
+- **[WALLET_ARCHITECTURE.md](WALLET_ARCHITECTURE.md)** - Complete technical architecture for campaign wallets, including key management, lifecycle phases, security considerations, and API reference
+- **[OPERATOR_GUIDE.md](OPERATOR_GUIDE.md)** - Step-by-step guide for platform operators covering setup, daily operations, maintenance, troubleshooting, and emergency procedures
+- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Summary of the wallet architecture implementation with quick start guides
+- **[backend/API.md](backend/API.md)** - REST API documentation with endpoint details and examples
+
+
 
 ### Horizon streaming
 The backend opens a streaming connection to Horizon to watch each campaign wallet for incoming payments. When a payment lands, it is indexed in PostgreSQL and the campaign total updates.

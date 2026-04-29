@@ -8,6 +8,8 @@ const {
   getSupportedAssetCodes,
   buildWithdrawalTransaction,
 } = require('../services/stellarService');
+const { encryptSecret } = require('../services/walletService');
+const { watchCampaignWallet } = require('../services/ledgerMonitor');
 const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../services/ledgerMonitor');
 const { insertWithdrawalPendingSignatures } = require('../services/stellarTransactionService');
 const { sendEmail } = require('../services/emailService');
@@ -327,20 +329,34 @@ router.post('/:id/trigger-refunds', requireAuth, requireRole('admin'), async (re
 });
 
 // Create campaign (authenticated)
-router.post(
-  '/',
-  requireAuth,
-  requireRole('creator', 'admin'),
-  createCampaignValidation,
-  validateRequest,
-  async (req, res) => {
-    const { title, description, target_amount, asset_type, deadline, milestones, show_backer_amounts = true } = req.body;
-    let normalizedMilestones;
-    try {
-      normalizedMilestones = normalizeMilestonesInput(milestones);
-    } catch (err) {
-      return res.status(422).json({ error: err.message });
-    }
+router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) => {
+  const { title, description, target_amount, asset_type, deadline, milestones } = req.body;
+  if (!title || !target_amount || !asset_type) {
+    return res.status(400).json({ error: 'title, target_amount and asset_type are required' });
+  }
+  if (!SUPPORTED_ASSETS.includes(asset_type)) {
+    return res.status(400).json({
+      error: `asset_type must be one of: ${SUPPORTED_ASSETS.join(', ')}`,
+    });
+  }
+
+  let normalizedMilestones;
+  try {
+    normalizedMilestones = normalizeMilestonesInput(milestones);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  // Get creator's public key to add as campaign wallet signer
+  const { rows: userRows } = await db.query(
+    'SELECT wallet_public_key FROM users WHERE id = $1',
+    [req.user.userId]
+  );
+  const creatorPublicKey = userRows[0].wallet_public_key;
+
+  // Create the on-chain campaign wallet
+  const wallet = await createCampaignWallet(creatorPublicKey);
+  const encryptedSecret = encryptSecret(wallet.secret);
 
     const { rows: userRows } = await db.query(
       'SELECT wallet_public_key FROM users WHERE id = $1',
