@@ -593,8 +593,6 @@ async function getWalletPayments(publicKey, limit = 100) {
   }));
 }
 
-
- */
 async function friendbotFund(publicKey) {
   if (!isTestnet) throw new Error('Friendbot only available on testnet');
   const response = await fetch(
