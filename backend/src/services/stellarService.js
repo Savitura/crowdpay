@@ -25,7 +25,7 @@ const {
   configuredAssets,
 } = require('../config/stellar');
 
-const PLATFORM_KEYPAIR = Keypair.fromSecret(process.env.PLATFORM_SECRET_KEY);
+const PLATFORM_KEYPAIR = process.env.PLATFORM_SECRET_KEY ? Keypair.fromSecret(process.env.PLATFORM_SECRET_KEY) : null;
 
 function calcFee(amount) {
   const bps = parseInt(process.env.PLATFORM_FEE_BPS || '0', 10);
