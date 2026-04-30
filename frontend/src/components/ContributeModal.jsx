@@ -244,6 +244,9 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
     }
 
     setLoadingLabel('Preparing transaction…');
+    const prepared = await api.prepareContribution(
+      {
+        campaign_id: campaign.id,
         amount: destAmount,
         send_asset: sendAsset,
         sender_public_key: signerAddress,

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "test": "JWT_SECRET=testsecret node --test src/**/*.test.js",
+    "test": "JWT_SECRET=testsecret node --test --test-force-exit src/**/*.test.js",
     "rotate-wallet-secrets": "node src/scripts/rotateWalletSecrets.js"
   },
   "dependencies": {

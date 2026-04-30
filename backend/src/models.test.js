@@ -29,6 +29,7 @@ describe('Database Models & Constraints', async () => {
       await client.query('ROLLBACK');
       client.release();
     }
+    await pool.end();
   });
 
   it('should allow creating a valid user', async () => {

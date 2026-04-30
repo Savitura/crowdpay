@@ -31,6 +31,12 @@ function buildApp({ queryImpl, buildWithdrawalTransactionImpl, insertWithdrawalP
         next();
       },
     },
+    '../middleware/validation': {
+      createCampaignValidation: [],
+      getCampaignsValidation: [],
+      createCampaignUpdateValidation: [],
+      validateRequest: (_req, _res, next) => next(),
+    },
   });
 
   const app = express();
@@ -73,7 +79,7 @@ test('POST /api/campaigns blocks unverified creators when KYC gate is enabled', 
   const app = buildApp({
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text) => {
-      if (text.includes('SELECT wallet_public_key, kyc_status FROM users')) {
+      if (text.includes('SELECT email, wallet_public_key, kyc_status FROM users')) {
         return { rows: [{ wallet_public_key: 'GCREATOR', kyc_status: 'pending' }] };
       }
       return { rows: [] };
@@ -102,7 +108,7 @@ test('POST /api/campaigns allows creation when KYC gate is disabled', async (t) 
   const app = buildApp({
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text) => {
-      if (text.includes('SELECT wallet_public_key, kyc_status FROM users')) {
+      if (text.includes('SELECT email, wallet_public_key, kyc_status FROM users')) {
         return { rows: [{ wallet_public_key: 'GCREATOR', kyc_status: 'unverified' }] };
       }
       if (text.includes('INSERT INTO campaigns')) {

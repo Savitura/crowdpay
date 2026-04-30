@@ -388,6 +388,9 @@ export default function Campaign() {
             >
               ⚠ Report a problem with this campaign
             </button>
+          )}
+        </div>
+      )}
       {canPostUpdate && (
         <div style={styles.card}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
