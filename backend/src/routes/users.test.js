@@ -82,7 +82,7 @@ test('POST /api/auth/register encrypts wallet secret before insert and schedules
 
   const res = await request(app)
     .post('/api/auth/register')
-    .send({ email: 'a@b.c', password: 'longpassword1', name: 'N' });
+    .send({ email: 'a@b.c', password: 'Longpassword1', name: 'N' });
 
   assert.equal(res.status, 201);
   assert.equal(res.body.token, 'jwt-token');

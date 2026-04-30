@@ -244,7 +244,7 @@ test('POST /api/contributions uses direct payment for same asset', async () => {
     queryImpl: async (text) => {
       if (text.includes('FROM campaigns')) {
         return {
-          rows: [{ id: 'c-1', status: 'active', asset_type: 'XLM', wallet_public_key: 'GDEST' }],
+          rows: [{ id: '00000000-0000-0000-0000-000000000001', status: 'active', asset_type: 'XLM', wallet_public_key: 'GDEST' }],
         };
       }
       if (text.includes('FROM users')) {
@@ -273,7 +273,7 @@ test('POST /api/contributions uses direct payment for same asset', async () => {
   const response = await request(app)
     .post('/api/contributions')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'c-1', amount: '5.0000000', send_asset: 'XLM' });
+    .send({ campaign_id: '00000000-0000-0000-0000-000000000001', amount: '5.0000000', send_asset: 'XLM' });
 
   assert.equal(response.status, 202);
   assert.equal(response.body.tx_hash, 'tx-direct');
@@ -289,7 +289,7 @@ test('POST /api/contributions uses direct payment for same USDC asset', async ()
     queryImpl: async (text) => {
       if (text.includes('FROM campaigns')) {
         return {
-          rows: [{ id: 'c-2', status: 'active', asset_type: 'USDC', wallet_public_key: 'GDEST2' }],
+          rows: [{ id: '00000000-0000-0000-0000-000000000002', status: 'active', asset_type: 'USDC', wallet_public_key: 'GDEST2' }],
         };
       }
       if (text.includes('FROM users')) {
@@ -316,7 +316,7 @@ test('POST /api/contributions uses direct payment for same USDC asset', async ()
   const response = await request(app)
     .post('/api/contributions')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'c-2', amount: '7.0000000', send_asset: 'USDC' });
+    .send({ campaign_id: '00000000-0000-0000-0000-000000000002', amount: '7.0000000', send_asset: 'USDC' });
 
   assert.equal(response.status, 202);
   assert.equal(response.body.tx_hash, 'tx-direct-usdc');
@@ -329,7 +329,7 @@ test('POST /api/contributions uses path payment for conversion', async () => {
     queryImpl: async (text) => {
       if (text.includes('FROM campaigns')) {
         return {
-          rows: [{ id: 'c-1', status: 'active', asset_type: 'USDC', wallet_public_key: 'GDEST' }],
+          rows: [{ id: '00000000-0000-0000-0000-000000000001', status: 'active', asset_type: 'USDC', wallet_public_key: 'GDEST' }],
         };
       }
       if (text.includes('FROM users')) {
@@ -363,7 +363,7 @@ test('POST /api/contributions uses path payment for conversion', async () => {
   const response = await request(app)
     .post('/api/contributions')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'c-1', amount: '4.5000000', send_asset: 'XLM' });
+    .send({ campaign_id: '00000000-0000-0000-0000-000000000001', amount: '4.5000000', send_asset: 'XLM' });
 
   assert.equal(response.status, 202);
   assert.equal(response.body.tx_hash, 'tx-path');
@@ -379,7 +379,7 @@ test('POST /api/contributions supports reverse conversion USDC -> XLM', async ()
     queryImpl: async (text) => {
       if (text.includes('FROM campaigns')) {
         return {
-          rows: [{ id: 'c-3', status: 'active', asset_type: 'XLM', wallet_public_key: 'GDEST3' }],
+          rows: [{ id: '00000000-0000-0000-0000-000000000003', status: 'active', asset_type: 'XLM', wallet_public_key: 'GDEST3' }],
         };
       }
       if (text.includes('FROM users')) {
@@ -414,7 +414,7 @@ test('POST /api/contributions supports reverse conversion USDC -> XLM', async ()
   const response = await request(app)
     .post('/api/contributions')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'c-3', amount: '10.0000000', send_asset: 'USDC' });
+    .send({ campaign_id: '00000000-0000-0000-0000-000000000003', amount: '10.0000000', send_asset: 'USDC' });
 
   assert.equal(response.status, 202);
   assert.equal(response.body.tx_hash, 'tx-path-reverse');
@@ -429,7 +429,7 @@ test('POST /api/contributions returns 503 when custodial trustline setup fails',
     queryImpl: async (text) => {
       if (text.includes('FROM campaigns')) {
         return {
-          rows: [{ id: 'c-1', status: 'active', asset_type: 'XLM', wallet_public_key: 'GDEST' }],
+          rows: [{ id: '00000000-0000-0000-0000-000000000001', status: 'active', asset_type: 'XLM', wallet_public_key: 'GDEST' }],
         };
       }
       if (text.includes('FROM users')) {
@@ -449,7 +449,7 @@ test('POST /api/contributions returns 503 when custodial trustline setup fails',
   const response = await request(app)
     .post('/api/contributions')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'c-1', amount: '5.0000000', send_asset: 'XLM' });
+    .send({ campaign_id: '00000000-0000-0000-0000-000000000001', amount: '5.0000000', send_asset: 'XLM' });
 
   assert.equal(response.status, 503);
   assert.match(response.body.error, /retry/i);
@@ -461,7 +461,7 @@ test('POST /api/contributions returns 502 when Stellar submit fails and skips au
     queryImpl: async (text) => {
       if (text.includes('FROM campaigns')) {
         return {
-          rows: [{ id: 'c-1', status: 'active', asset_type: 'XLM', wallet_public_key: 'GDEST' }],
+          rows: [{ id: '00000000-0000-0000-0000-000000000001', status: 'active', asset_type: 'XLM', wallet_public_key: 'GDEST' }],
         };
       }
       if (text.includes('FROM users')) {
@@ -487,7 +487,7 @@ test('POST /api/contributions returns 502 when Stellar submit fails and skips au
   const response = await request(app)
     .post('/api/contributions')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'c-1', amount: '5.0000000', send_asset: 'XLM' });
+    .send({ campaign_id: '00000000-0000-0000-0000-000000000001', amount: '5.0000000', send_asset: 'XLM' });
 
   assert.equal(response.status, 502);
   assert.equal(inserted, false);
@@ -500,7 +500,7 @@ test('POST /api/contributions/prepare returns unsigned XDR and prepare token for
     queryImpl: async (text) => {
       if (text.includes('FROM campaigns')) {
         return {
-          rows: [{ id: 'c-1', status: 'active', asset_type: 'XLM', wallet_public_key: 'GDEST' }],
+          rows: [{ id: '00000000-0000-0000-0000-000000000001', status: 'active', asset_type: 'XLM', wallet_public_key: 'GDEST' }],
         };
       }
       return { rows: [] };
@@ -522,7 +522,7 @@ test('POST /api/contributions/prepare returns unsigned XDR and prepare token for
     .post('/api/contributions/prepare')
     .set('Authorization', 'Bearer token')
     .send({
-      campaign_id: 'c-1',
+      campaign_id: '00000000-0000-0000-0000-000000000001',
       amount: '5.0000000',
       send_asset: 'XLM',
       sender_public_key: sender.publicKey(),
@@ -552,7 +552,7 @@ test('POST /api/contributions/submit-signed accepts Freighter-signed XDR that ma
       if (text.includes('FROM campaigns')) {
         return {
           rows: [{
-            id: 'c-1',
+            id: '00000000-0000-0000-0000-000000000001',
             status: 'active',
             asset_type: 'XLM',
             wallet_public_key: destination.publicKey(),
@@ -580,7 +580,7 @@ test('POST /api/contributions/submit-signed accepts Freighter-signed XDR that ma
     .post('/api/contributions/prepare')
     .set('Authorization', 'Bearer token')
     .send({
-      campaign_id: 'c-1',
+      campaign_id: '00000000-0000-0000-0000-000000000001',
       amount: '5.0000000',
       send_asset: 'XLM',
       sender_public_key: sender.publicKey(),
@@ -627,7 +627,7 @@ test('POST /api/contributions/submit-signed rejects a signed XDR that does not m
       if (text.includes('FROM campaigns')) {
         return {
           rows: [{
-            id: 'c-1',
+            id: '00000000-0000-0000-0000-000000000001',
             status: 'active',
             asset_type: 'XLM',
             wallet_public_key: destination.publicKey(),
@@ -648,7 +648,7 @@ test('POST /api/contributions/submit-signed rejects a signed XDR that does not m
     .post('/api/contributions/prepare')
     .set('Authorization', 'Bearer token')
     .send({
-      campaign_id: 'c-1',
+      campaign_id: '00000000-0000-0000-0000-000000000001',
       amount: '5.0000000',
       send_asset: 'XLM',
       sender_public_key: sender.publicKey(),
@@ -681,7 +681,7 @@ test('GET /api/contributions/finalization/:txHash returns finalized when indexed
               id: 'st-1',
               status: 'indexed',
               tx_hash: 'txh',
-              campaign_id: 'c-1',
+              campaign_id: '00000000-0000-0000-0000-000000000001',
               contribution_id: 'contrib-1',
               initiated_by_user_id: 'user-1',
               metadata: {},
@@ -719,7 +719,7 @@ test('POST /api/contributions includes platform_fee_amount in response and metad
     queryImpl: async (text) => {
       if (text.includes('FROM campaigns')) {
         return {
-          rows: [{ id: 'c-1', status: 'active', asset_type: 'USDC', wallet_public_key: 'GDEST' }],
+          rows: [{ id: '00000000-0000-0000-0000-000000000001', status: 'active', asset_type: 'USDC', wallet_public_key: 'GDEST' }],
         };
       }
       if (text.includes('FROM users')) {
@@ -749,7 +749,7 @@ test('POST /api/contributions includes platform_fee_amount in response and metad
   const response = await request(app)
     .post('/api/contributions')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'c-1', amount: '10.0000000', send_asset: 'USDC' });
+    .send({ campaign_id: '00000000-0000-0000-0000-000000000001', amount: '10.0000000', send_asset: 'USDC' });
 
   assert.equal(response.status, 202);
   assert.equal(response.body.platform_fee_amount, 0.15);

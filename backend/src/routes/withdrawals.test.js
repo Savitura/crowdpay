@@ -53,7 +53,7 @@ function buildApp({ queryImpl, stellarImpl, userId = 'creator-1', role = 'creato
 
 function campaignRow(overrides = {}) {
   return {
-    id: 'camp-1',
+    id: '00000000-0000-0000-0000-000000000001',
     creator_id: 'creator-1',
     wallet_public_key: 'GCAMPAIGN',
     asset_type: 'USDC',
@@ -105,7 +105,7 @@ test('POST /api/withdrawals/request creates pending request and logs event', asy
   const response = await request(app)
     .post('/api/withdrawals/request')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'camp-1', destination_key: 'GDEST', amount: '10.0000000' });
+    .send({ campaign_id: '00000000-0000-0000-0000-000000000001', destination_key: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN', amount: '10.0000000' });
 
   cleanup();
   assert.equal(response.status, 201);
@@ -128,7 +128,7 @@ test('POST /api/withdrawals/request blocks when campaign not active or funded', 
   const response = await request(app)
     .post('/api/withdrawals/request')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'camp-1', destination_key: 'GDEST', amount: '10.0000000' });
+    .send({ campaign_id: '00000000-0000-0000-0000-000000000001', destination_key: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN', amount: '10.0000000' });
 
   cleanup();
   assert.equal(response.status, 409);
@@ -150,7 +150,7 @@ test('POST /api/withdrawals/request blocks duplicate pending', async () => {
   const response = await request(app)
     .post('/api/withdrawals/request')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'camp-1', destination_key: 'GDEST', amount: '10.0000000' });
+    .send({ campaign_id: '00000000-0000-0000-0000-000000000001', destination_key: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN', amount: '10.0000000' });
 
   cleanup();
   assert.equal(response.status, 409);
@@ -179,7 +179,7 @@ test('POST /api/withdrawals/request denies invalid multisig config', async () =>
   const response = await request(app)
     .post('/api/withdrawals/request')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'camp-1', destination_key: 'GDEST', amount: '10.0000000' });
+    .send({ campaign_id: '00000000-0000-0000-0000-000000000001', destination_key: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN', amount: '10.0000000' });
 
   cleanup();
   assert.equal(response.status, 422);
