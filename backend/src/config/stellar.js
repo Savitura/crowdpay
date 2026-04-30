@@ -9,7 +9,7 @@ const server = new Horizon.Server(
 const networkPassphrase = isTestnet ? Networks.TESTNET : Networks.PUBLIC;
 
 // USDC asset — issuer differs between testnet and mainnet
-const USDC = new Asset('USDC', process.env.USDC_ISSUER);
+const USDC = process.env.USDC_ISSUER ? new Asset('USDC', process.env.USDC_ISSUER) : null;
 
 function parseAdditionalAssets() {
   if (!process.env.STELLAR_EXTRA_ASSETS) return {};
