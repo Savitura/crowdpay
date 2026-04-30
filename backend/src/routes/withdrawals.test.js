@@ -42,6 +42,10 @@ function buildApp({ queryImpl, stellarImpl, userId = 'creator-1', role = 'creato
         next();
       },
     },
+    '../middleware/validation': {
+      withdrawalValidation: [],
+      validateRequest: (_req, _res, next) => next(),
+    },
   });
 
   const app = express();
@@ -229,6 +233,9 @@ test('POST /api/withdrawals/:id/approve/creator signs withdrawal request', async
           }],
         };
       }
+      if (text.includes('SELECT creator_id FROM campaigns')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
       if (text.includes('wallet_secret_encrypted FROM users')) {
         return { rows: [{ wallet_secret_encrypted: 'SCREATOR' }] };
       }
@@ -354,6 +361,9 @@ test('POST /api/withdrawals/:id/cancel succeeds before creator signs', async () 
             creator_id: 'creator-1',
           }],
         };
+      }
+      if (text.includes('SELECT creator_id FROM campaigns')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
       }
       if (text.includes("SET status = 'denied'")) {
         return { rows: [{ id: 'w-1', status: 'denied', denial_reason: 'x' }] };

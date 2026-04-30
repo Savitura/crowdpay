@@ -184,6 +184,10 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
         next();
       },
     },
+    '../middleware/validation': {
+      contributionValidation: [],
+      validateRequest: (_req, _res, next) => next(),
+    },
   });
 
   const app = express();

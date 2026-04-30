@@ -30,6 +30,10 @@ function buildApp({ queryImpl, stellarImpl }) {
     '../middleware/auth': {
       requireAuth: (_req, _res, next) => next(),
     },
+    '../middleware/validation': {
+      registerValidation: [],
+      validateRequest: (_req, _res, next) => next(),
+    },
     jsonwebtoken: {
       sign: () => 'jwt-token',
     },
