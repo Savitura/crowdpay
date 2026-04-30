@@ -387,7 +387,6 @@ router.post('/submit-signed', requireAuth, async (req, res) => {
     return res.status(422).json({ error: err.message });
   }
 
-  let txHash;
   try {
     txHash = await submitPreparedTransaction(signed_xdr);
   } catch (err) {

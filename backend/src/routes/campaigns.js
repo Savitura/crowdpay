@@ -267,6 +267,7 @@ router.get('/:id/embed', async (req, res) => {
     progress_percentage: Math.round(pct * 10) / 10,
     contribution_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/campaigns/${campaign.id}`,
   });
+});
 // Get backers for a campaign
 router.get('/:id/backers', async (req, res) => {
   const campaignId = req.params.id;
