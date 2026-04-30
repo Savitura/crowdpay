@@ -628,5 +628,5 @@ module.exports = {
 
   getCampaignBalance,
   friendbotFund,
-  PLATFORM_PUBLIC_KEY: PLATFORM_KEYPAIR.publicKey(),
+  PLATFORM_PUBLIC_KEY: PLATFORM_KEYPAIR ? PLATFORM_KEYPAIR.publicKey() : null,
 };
