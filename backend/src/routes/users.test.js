@@ -32,6 +32,7 @@ function buildApp({ queryImpl, stellarImpl }) {
     },
     '../middleware/validation': {
       registerValidation: [],
+      loginValidation: [],
       validateRequest: (_req, _res, next) => next(),
     },
     jsonwebtoken: {

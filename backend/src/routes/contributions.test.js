@@ -122,6 +122,17 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
       amount,
       sendAsset,
     }) => {
+      // Call ensureCustodialAccountFundedAndTrusted so tests can inject failures
+      try {
+        await stellarStub.ensureCustodialAccountFundedAndTrusted({
+          publicKey: walletPublicKey,
+          secret: 'SDECRYPTED',
+        });
+      } catch (err) {
+        err.statusCode = err.statusCode || 503;
+        throw err;
+      }
+
       const intent = await contributionServiceStub.buildContributionIntent({
         campaign,
         amount,
@@ -148,20 +159,33 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
               memo: 'cp-c-1',
             });
 
-      const txHash = await stellarStub.submitPreparedTransaction(prepared.signedXdr);
+      let txHash;
+      try {
+        txHash = await stellarStub.submitPreparedTransaction(prepared.signedXdr);
+      } catch (err) {
+        err.statusCode = err.statusCode || 502;
+        throw err;
+      }
+
+      const flowMetadata = {
+        ...intent.flowMetadata,
+        platform_fee_amount: prepared.feeAmount || 0,
+      };
+
       const stellarTransactionId = await stellarTxStub.insertContributionSubmitted(null, {
         txHash,
         campaignId,
         userId,
         unsignedXdr: prepared.unsignedXdr,
         signedXdr: prepared.signedXdr,
-        metadata: intent.flowMetadata,
+        metadata: flowMetadata,
       });
 
       return {
         txHash,
         stellarTransactionId,
         conversionQuote: intent.conversionQuote,
+        flowMetadata,
       };
     },
   };
@@ -499,12 +523,13 @@ test('POST /api/contributions returns 502 when Stellar submit fails and skips au
 
 test('POST /api/contributions/prepare returns unsigned XDR and prepare token for Freighter', async () => {
   const sender = Keypair.random();
+  const destination = Keypair.random();
   let preparedPayload = null;
   const app = buildApp({
     queryImpl: async (text) => {
       if (text.includes('FROM campaigns')) {
         return {
-          rows: [{ id: '00000000-0000-0000-0000-000000000001', status: 'active', asset_type: 'XLM', wallet_public_key: 'GDEST' }],
+          rows: [{ id: '00000000-0000-0000-0000-000000000001', status: 'active', asset_type: 'XLM', wallet_public_key: destination.publicKey() }],
         };
       }
       return { rows: [] };

@@ -236,8 +236,8 @@ test('POST /api/withdrawals/:id/approve/creator signs withdrawal request', async
       if (text.includes('SELECT creator_id FROM campaigns')) {
         return { rows: [{ creator_id: 'creator-1' }] };
       }
-      if (text.includes('wallet_secret_encrypted FROM users')) {
-        return { rows: [{ wallet_secret_encrypted: 'SCREATOR' }] };
+      if (text.includes('wallet_secret_encrypted') && text.includes('FROM users')) {
+        return { rows: [{ wallet_secret_encrypted: 'SCREATOR', wallet_public_key: 'GCREATOR' }] };
       }
       if (text.includes('UPDATE withdrawal_requests') && text.includes('creator_signed = TRUE')) {
         return { rows: [{ id: 'w-1', creator_signed: true, unsigned_xdr: 'xdr-signed' }] };
