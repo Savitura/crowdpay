@@ -191,13 +191,6 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
 
 // Get single Campaign
 router.get('/:id', async (req, res) => {
-  const { rows } = await db.query(
-    `SELECT c.*, u.name AS creator_name, u.kyc_status AS creator_kyc_status
-     FROM campaigns c
-     JOIN users u ON u.id = c.creator_id
-     WHERE c.id = $1`,
-    [req.params.id]
-  );
   const query = `
     SELECT *,
            (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions WHERE campaign_id = $1) AS contributor_count

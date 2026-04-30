@@ -350,6 +350,7 @@ router.post('/submit-signed', requireAuth, async (req, res) => {
         error: `No conversion path found for ${send_asset} -> ${campaign.asset_type}`,
       });
     }
+  }
 
   if (prepared.user_id !== req.user.userId) {
     return res.status(403).json({ error: 'Prepared contribution token does not belong to this user' });
