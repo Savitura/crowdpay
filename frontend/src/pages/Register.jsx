@@ -15,6 +15,18 @@ export default function Register() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (!form.name.trim() || !form.email.trim() || !form.password.trim()) {
+      setError('Name, email, and password are required.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      setError('Enter a valid email address.');
+      return;
+    }
+    if (form.password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -35,7 +47,7 @@ export default function Register() {
       <p style={{ color: '#666', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
         A Stellar wallet is created for you automatically.
       </p>
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+      <form noValidate onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
         <input placeholder="Full name" value={form.name} onChange={set('name')} required />
         <input type="email" placeholder="Email" value={form.email} onChange={set('email')} required />
         <input type="password" placeholder="Password" value={form.password} onChange={set('password')} required minLength={8} />

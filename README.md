@@ -188,6 +188,22 @@ cd frontend && npm run dev
 Backend runs on `http://localhost:3001`  
 Frontend runs on `http://localhost:5173`
 
+### Testing
+
+```bash
+# Backend unit + route tests
+cd backend && npm test
+
+# Frontend component tests (Vitest + React Testing Library)
+cd frontend && npm test
+
+# End-to-end tests (Playwright — starts backend + frontend dev servers)
+# Requires PostgreSQL with schema + seed applied (see docker-compose on port 5433)
+npm install
+npx playwright install
+npm run test:e2e
+```
+
 ---
 
 ## Core Stellar Concepts Used

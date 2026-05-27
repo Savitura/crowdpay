@@ -10,6 +10,7 @@ const { requestIdMiddleware } = require('./middleware/requestId');
 const { requestLogger } = require('./middleware/requestLogger');
 const { normalizeErrorResponse, errorHandler } = require('./middleware/errorHandler');
 const { startLedgerMonitor, getLedgerStreamHealth } = require('./services/ledgerMonitor');
+const { refreshActiveCampaignStatuses } = require('./services/campaignStatusService');
 const { sendAlert } = require('./services/alerting');
 const { assertNoLegacyPlaintextUserWalletSecrets } = require('./services/walletSecrets');
 const swaggerUi = require('swagger-ui-express');
@@ -105,6 +106,17 @@ const { startWebhookRetryPoller } = require('./services/webhookDispatcher');
 
 const PORT = process.env.PORT || 3001;
 
+function startCampaignStatusCron() {
+  if (process.env.ENABLE_CAMPAIGN_STATUS_CRON === 'false') return;
+  const cron = require('node-cron');
+  cron.schedule('0 * * * *', () => {
+    refreshActiveCampaignStatuses().catch((err) => {
+      logger.error('Campaign status cron failed', { error: err.message });
+    });
+  });
+  logger.info('Campaign status cron scheduled (hourly)');
+}
+
 async function bootstrap() {
   if (process.env.NODE_ENV === 'production') {
     await assertNoLegacyPlaintextUserWalletSecrets();
@@ -114,6 +126,7 @@ async function bootstrap() {
     logger.info('CrowdPay backend running', { port: PORT, stellar_network: process.env.STELLAR_NETWORK });
     startLedgerMonitor();
     startWebhookRetryPoller();
+    startCampaignStatusCron();
   });
 }
 

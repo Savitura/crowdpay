@@ -11,6 +11,8 @@ const {
 } = require('../services/stellarService');
 const { encryptSecret } = require('../services/walletService');
 const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../services/ledgerMonitor');
+const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
+const { refreshCampaignStatus, refreshActiveCampaignStatuses } = require('../services/campaignStatusService');
 const { invokeContract, encodeMilestone, nativeToScVal } = require('../services/sorobanService');
 const { insertWithdrawalPendingSignatures } = require('../services/stellarTransactionService');
 const { sendEmail } = require('../services/emailService');
@@ -259,6 +261,7 @@ router.get('/:id', async (req, res) => {
     FROM campaigns
     WHERE id = $1
   `;
+  await refreshCampaignStatus(req.params.id);
   const { rows } = await db.query(query, [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
   
@@ -422,16 +425,8 @@ router.get('/:id/balance', async (req, res) => {
 
 // Scheduled endpoint to fail expired campaigns and prevent further contributions
 router.post('/cron/fail-expired', requireAuth, requireRole('admin'), async (req, res) => {
-  const { rows } = await db.query(
-    `UPDATE campaigns SET status = 'failed'
-       WHERE status = 'active'
-         AND deadline IS NOT NULL
-         AND deadline < CURRENT_DATE
-         AND raised_amount < target_amount
-     RETURNING id, title, target_amount, raised_amount, deadline`
-  );
-
-  res.json({ failedCampaigns: rows });
+  const { failed, funded } = await refreshActiveCampaignStatuses();
+  res.json({ failedCampaigns: failed, fundedCampaigns: funded });
 });
 
 // Scheduled endpoint to send 48h deadline reminders
@@ -538,7 +533,7 @@ router.post('/:id/trigger-refunds', requireAuth, requireRole('admin'), async (re
 });
 
 // Create campaign (authenticated)
-router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) => {
+router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignValidation, validateRequest, async (req, res) => {
   /**
    * @openapi
    * /api/campaigns:
@@ -572,14 +567,6 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), async (req, res) 
    *         description: Forbidden
    */
   const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution } = req.body;
-  if (!title || !target_amount || !asset_type) {
-    return res.status(400).json({ error: 'title, target_amount and asset_type are required' });
-  }
-  if (!SUPPORTED_ASSETS.includes(asset_type)) {
-    return res.status(400).json({
-      error: `asset_type must be one of: ${SUPPORTED_ASSETS.join(', ')}`,
-    });
-  }
 
   let normalizedMilestones;
   try {

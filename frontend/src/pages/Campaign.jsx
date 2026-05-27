@@ -9,6 +9,7 @@ import WithdrawalsSection from '../components/WithdrawalsSection';
 import CampaignDetailSkeleton from '../components/skeletons/CampaignDetailSkeleton';
 import ContributionListSkeleton from '../components/skeletons/ContributionListSkeleton';
 import VerificationBadge from '../components/VerificationBadge';
+import CampaignStatusBadge from '../components/CampaignStatusBadge';
 
 function escapeHtml(text) {
   return text
@@ -310,9 +311,14 @@ export default function Campaign() {
           <strong>Cover image upload failed:</strong> {coverUploadError}
         </div>
       )}
+      {campaign.status === 'funded' && (
+        <div className="alert alert--success" style={{ marginBottom: '1.25rem' }} role="status">
+          <strong>Goal reached.</strong> This campaign has met its funding target. Contributions may still be open until the creator closes the campaign.
+        </div>
+      )}
       {campaign.status === 'failed' && (
         <div className="alert alert--error" style={{ marginBottom: '1.25rem' }} role="status">
-          <strong>This campaign did not reach its goal.</strong> Contributions are closed and refunds can be requested.
+          <strong>Campaign ended.</strong> This campaign did not reach its goal. Contributions are closed and refunds can be requested.
         </div>
       )}
       {campaign.creator_kyc_status !== 'verified' && (
@@ -330,6 +336,7 @@ export default function Campaign() {
       <div style={styles.header}>
         <div style={styles.badgeRow}>
           <span style={styles.asset}>{campaign.asset_type}</span>
+          <CampaignStatusBadge status={campaign.status} />
           <VerificationBadge status={campaign.creator_kyc_status} />
         </div>
         <h1 style={styles.title}>{campaign.title}</h1>

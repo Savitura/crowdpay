@@ -47,10 +47,11 @@ jobs:
         working-directory: ./backend
         env:
           DATABASE_URL: postgresql://postgres:password@localhost:5432/crowdpay_test
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          PLATFORM_SECRET_KEY: ${{ secrets.PLATFORM_SECRET_KEY }}
-          STELLAR_NETWORK: ${{ secrets.STELLAR_NETWORK }}
-          USDC_ISSUER: ${{ secrets.USDC_ISSUER }}
+          JWT_SECRET: testsecret
+          PLATFORM_SECRET_KEY: SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR
+          STELLAR_NETWORK: testnet
+          USDC_ISSUER: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+          ENABLE_CAMPAIGN_STATUS_CRON: 'false'
         run: npm test
 
   frontend-checks:
@@ -75,6 +76,58 @@ jobs:
         working-directory: ./frontend
         run: npx eslint .
 
+      - name: Run unit tests
+        working-directory: ./frontend
+        run: npm test
+
       - name: Run build
         working-directory: ./frontend
         run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: crowdpay
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Install Playwright
+        run: npm ci && npx playwright install --with-deps chromium
+
+      - name: Prepare database
+        env:
+          PGPASSWORD: password
+        run: |
+          psql -h localhost -p 5433 -U postgres -d crowdpay -f backend/db/schema.sql
+          psql -h localhost -p 5433 -U postgres -d crowdpay -f backend/db/seed.sql
+
+      - name: Run E2E tests
+        env:
+          CI: true
+          DATABASE_URL: postgresql://postgres:password@localhost:5433/crowdpay
+        run: npm run test:e2e

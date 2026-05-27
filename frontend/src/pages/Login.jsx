@@ -15,6 +15,14 @@ export default function Login() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (!form.email.trim() || !form.password.trim()) {
+      setError('Email and password are required.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      setError('Enter a valid email address.');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -31,7 +39,7 @@ export default function Login() {
   return (
     <main className="container" style={{ paddingTop: '4rem', maxWidth: '400px' }}>
       <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1.5rem' }}>Log in</h1>
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+      <form noValidate onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
         <input type="email" placeholder="Email" value={form.email} onChange={set('email')} required />
         <input type="password" placeholder="Password" value={form.password} onChange={set('password')} required />
         {error && <p style={{ color: '#dc2626', fontSize: '0.875rem' }}>{error}</p>}

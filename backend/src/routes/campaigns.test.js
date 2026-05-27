@@ -4,8 +4,18 @@ const express = require('express');
 const request = require('supertest');
 const proxyquire = require('proxyquire').noCallThru();
 
-function buildApp({ queryImpl, buildWithdrawalTransactionImpl, insertWithdrawalPendingSignaturesImpl, authUser }) {
+function buildApp({
+  queryImpl,
+  buildWithdrawalTransactionImpl,
+  insertWithdrawalPendingSignaturesImpl,
+  authUser,
+  campaignStatusImpl,
+}) {
   const router = proxyquire('./campaigns', {
+    '../services/campaignStatusService': campaignStatusImpl || {
+      refreshCampaignStatus: async () => ({ failed: null, funded: null }),
+      refreshActiveCampaignStatuses: async () => ({ failed: [], funded: [] }),
+    },
     '../config/database': {
       query: queryImpl,
       connect: async () => ({ query: queryImpl, release: async () => {} }),
@@ -39,18 +49,24 @@ function buildApp({ queryImpl, buildWithdrawalTransactionImpl, insertWithdrawalP
   return app;
 }
 
-test('POST /api/campaigns/cron/fail-expired returns failed campaigns', async () => {
+test('POST /api/campaigns/cron/fail-expired returns failed and funded campaigns', async () => {
   const app = buildApp({
-    queryImpl: async (text) => {
-      if (text.includes('UPDATE campaigns SET status =')) {
-        return {
-          rows: [{ id: 'c-1', title: 'Campaign 1', target_amount: '100', raised_amount: '50', deadline: '2026-04-23' }],
-        };
-      }
-      return { rows: [] };
-    },
+    queryImpl: async () => ({ rows: [] }),
     buildWithdrawalTransactionImpl: async () => '',
     insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+    campaignStatusImpl: {
+      refreshActiveCampaignStatuses: async () => ({
+        failed: [{
+          id: 'c-1',
+          title: 'Campaign 1',
+          target_amount: '100',
+          raised_amount: '50',
+          deadline: '2026-04-23',
+          status: 'failed',
+        }],
+        funded: [{ id: 'c-2', title: 'Funded', status: 'funded' }],
+      }),
+    },
   });
 
   const response = await request(app)
@@ -59,7 +75,7 @@ test('POST /api/campaigns/cron/fail-expired returns failed campaigns', async () 
 
   assert.equal(response.status, 200);
   assert.equal(response.body.failedCampaigns.length, 1);
-  assert.equal(response.body.failedCampaigns[0].id, 'c-1');
+  assert.equal(response.body.fundedCampaigns.length, 1);
 });
 
 test('POST /api/campaigns blocks unverified creators when KYC gate is enabled', async (t) => {
@@ -73,7 +89,7 @@ test('POST /api/campaigns blocks unverified creators when KYC gate is enabled', 
   const app = buildApp({
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text) => {
-      if (text.includes('SELECT wallet_public_key, kyc_status FROM users')) {
+      if (text.includes('SELECT email, wallet_public_key, kyc_status FROM users')) {
         return { rows: [{ wallet_public_key: 'GCREATOR', kyc_status: 'pending' }] };
       }
       return { rows: [] };
@@ -102,7 +118,7 @@ test('POST /api/campaigns allows creation when KYC gate is disabled', async (t) 
   const app = buildApp({
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text) => {
-      if (text.includes('SELECT wallet_public_key, kyc_status FROM users')) {
+      if (text.includes('SELECT email, wallet_public_key, kyc_status FROM users')) {
         return { rows: [{ wallet_public_key: 'GCREATOR', kyc_status: 'unverified' }] };
       }
       if (text.includes('INSERT INTO campaigns')) {
@@ -130,6 +146,25 @@ test('POST /api/campaigns allows creation when KYC gate is disabled', async (t) 
 
   assert.equal(response.status, 201);
   assert.equal(response.body.id, 'campaign-1');
+});
+
+test('POST /api/campaigns returns 400 with validation errors for invalid payload', async () => {
+  process.env.KYC_REQUIRED_FOR_CAMPAIGNS = 'false';
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async () => ({ rows: [] }),
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .post('/api/campaigns')
+    .set('Authorization', 'Bearer token')
+    .send({ title: '', target_amount: -5, asset_type: 'INVALID' });
+
+  assert.equal(response.status, 400);
+  assert.ok(Array.isArray(response.body.errors));
+  assert.ok(response.body.errors.length >= 1);
 });
 
 test('POST /api/campaigns/:id/trigger-refunds creates refund requests for contributions', async () => {

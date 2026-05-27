@@ -392,7 +392,7 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
               the amount below in <strong>{campaign.asset_type}</strong>.
             </p>
 
-            <form onSubmit={handleSubmit}>
+            <form noValidate onSubmit={handleSubmit}>
               <fieldset style={{ border: 'none', margin: '0 0 1rem', padding: 0 }}>
                 <legend className="label-strong" style={{ marginBottom: '0.45rem' }}>
                   Payment method

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import VerificationBadge from './VerificationBadge';
+import CampaignStatusBadge from './CampaignStatusBadge';
 
 export default function CampaignCard({ campaign }) {
   const pct = Math.min(100, (campaign.raised_amount / campaign.target_amount) * 100).toFixed(1);
@@ -14,7 +15,10 @@ export default function CampaignCard({ campaign }) {
           </div>
         ) : null}
         <div style={styles.header}>
-          <span style={styles.asset}>{campaign.asset_type}</span>
+          <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={styles.asset}>{campaign.asset_type}</span>
+            <CampaignStatusBadge status={campaign.status} />
+          </div>
           <VerificationBadge status={campaign.creator_kyc_status} compact />
         </div>
         {typeof campaign.updates_count === 'number' && (

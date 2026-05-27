@@ -58,7 +58,7 @@ test('POST /api/auth/register encrypts wallet secret before insert and schedules
           rows: [
             {
               id: 'user-new',
-              email: 'a@b.c',
+              email: 'user@example.com',
               name: 'N',
               wallet_public_key: 'GUSER',
               role: 'contributor',
@@ -82,7 +82,7 @@ test('POST /api/auth/register encrypts wallet secret before insert and schedules
 
   const res = await request(app)
     .post('/api/auth/register')
-    .send({ email: 'a@b.c', password: 'longpassword1', name: 'N' });
+    .send({ email: 'user@example.com', password: 'Longpassword1', name: 'N' });
 
   assert.equal(res.status, 201);
   assert.equal(res.body.token, 'jwt-token');
@@ -92,4 +92,31 @@ test('POST /api/auth/register encrypts wallet secret before insert and schedules
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(ensureCalled, true);
+});
+
+test('POST /api/auth/register returns 400 with validation errors for invalid input', async () => {
+  const app = buildApp({
+    queryImpl: async () => ({ rows: [] }),
+  });
+
+  const res = await request(app)
+    .post('/api/auth/register')
+    .send({ email: 'not-an-email', password: 'short', name: '' });
+
+  assert.equal(res.status, 400);
+  assert.ok(Array.isArray(res.body.errors));
+  assert.ok(res.body.errors.length >= 1);
+});
+
+test('POST /api/auth/login returns 400 with validation errors for invalid email', async () => {
+  const app = buildApp({
+    queryImpl: async () => ({ rows: [] }),
+  });
+
+  const res = await request(app)
+    .post('/api/auth/login')
+    .send({ email: 'bad-email', password: '' });
+
+  assert.equal(res.status, 400);
+  assert.ok(Array.isArray(res.body.errors));
 });

@@ -7,7 +7,7 @@ const { networkPassphrase, isTestnet } = require('../config/stellar');
 const { requireAuth } = require('../middleware/auth');
 const logger = require('../config/logger');
 const { sendAlert } = require('../services/alerting');
-const { contributionValidation, validateRequest } = require('../middleware/validation');
+const { contributionValidation, contributionQuoteValidation, validateRequest } = require('../middleware/validation');
 const {
   buildUnsignedContributionPayment,
   buildUnsignedContributionPathPayment,
@@ -232,7 +232,7 @@ router.get('/finalization/:txHash', requireAuth, async (req, res) => {
 });
 
 // Quote conversion before a path payment contribution
-router.get('/quote', requireAuth, async (req, res) => {
+router.get('/quote', requireAuth, contributionQuoteValidation, validateRequest, async (req, res) => {
   /**
    * @openapi
    * /api/contributions/quote:
@@ -277,14 +277,6 @@ router.get('/quote', requireAuth, async (req, res) => {
    *         description: No path found
    */
   const { send_asset, dest_asset, dest_amount } = req.query;
-  if (!send_asset || !dest_asset || !dest_amount) {
-    return res.status(400).json({
-      error: 'send_asset, dest_asset and dest_amount are required query params',
-    });
-  }
-  if (!SUPPORTED_ASSETS.includes(send_asset) || !SUPPORTED_ASSETS.includes(dest_asset)) {
-    return res.status(400).json({ error: `Supported assets: ${SUPPORTED_ASSETS.join(', ')}` });
-  }
 
   const paths = await getPathPaymentQuote({
     sendAsset: send_asset,
@@ -557,6 +549,9 @@ router.post('/', contributionPostLimiter, requireAuth, contributionValidation, v
       stellar_transaction_id: result.stellarTransactionId,
       message: 'Transaction submitted',
       conversion_quote: result.conversionQuote,
+      ...(result.platform_fee_amount != null
+        ? { platform_fee_amount: result.platform_fee_amount }
+        : {}),
     });
   } catch (err) {
     if (err.statusCode === 422) {

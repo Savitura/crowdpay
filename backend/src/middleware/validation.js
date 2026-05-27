@@ -5,6 +5,11 @@ const { getSupportedAssetCodes } = require('../services/stellarService');
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const VALID_CAMPAIGN_STATUSES = ['active', 'funded', 'closed', 'failed'];
 const VALID_ORDER_BY = ['newest', 'ending_soon', 'most_funded', 'most_backed'];
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(value) {
+  return typeof value === 'string' && UUID_PATTERN.test(value);
+}
 
 function stripHtml(value = '') {
   return String(value).replace(/<[^>]*>/g, '').trim();
@@ -48,10 +53,14 @@ const createCampaignValidation = [
   body('title')
     .customSanitizer(stripHtml)
     .notEmpty()
-    .withMessage('Title is required'),
+    .withMessage('Title is required')
+    .isLength({ max: 100 })
+    .withMessage('Title must be at most 100 characters'),
   body('description')
     .optional({ nullable: true })
-    .customSanitizer(stripHtml),
+    .customSanitizer(stripHtml)
+    .isLength({ max: 1000 })
+    .withMessage('Description must be at most 1000 characters'),
   body('target_amount')
     .exists()
     .withMessage('Target amount is required')
@@ -130,12 +139,32 @@ const createCampaignUpdateValidation = [
     .withMessage('Body is required'),
 ];
 
+const contributionQuoteValidation = [
+  query('send_asset')
+    .notEmpty()
+    .withMessage('send_asset is required')
+    .isIn(SUPPORTED_ASSETS)
+    .withMessage(`send_asset must be one of: ${SUPPORTED_ASSETS.join(', ')}`),
+  query('dest_asset')
+    .notEmpty()
+    .withMessage('dest_asset is required')
+    .isIn(SUPPORTED_ASSETS)
+    .withMessage(`dest_asset must be one of: ${SUPPORTED_ASSETS.join(', ')}`),
+  query('dest_amount')
+    .notEmpty()
+    .withMessage('dest_amount is required')
+    .isFloat({ gt: 0 })
+    .withMessage('dest_amount must be greater than zero'),
+];
+
 const contributionValidation = [
   body('campaign_id')
     .notEmpty()
     .withMessage('campaign_id is required')
-    .isUUID()
-    .withMessage('campaign_id must be a valid UUID'),
+    .custom((value) => {
+      if (!isUuid(value)) throw new Error('campaign_id must be a valid UUID');
+      return true;
+    }),
   body('amount')
     .exists()
     .withMessage('amount is required')
@@ -157,8 +186,10 @@ const withdrawalValidation = [
   body('campaign_id')
     .notEmpty()
     .withMessage('campaign_id is required')
-    .isUUID()
-    .withMessage('campaign_id must be a valid UUID'),
+    .custom((value) => {
+      if (!isUuid(value)) throw new Error('campaign_id must be a valid UUID');
+      return true;
+    }),
   body('amount')
     .exists()
     .withMessage('amount is required')
@@ -207,20 +238,7 @@ function validateRequest(req, res, next) {
   const result = validationResult(req);
   if (result.isEmpty()) return next();
 
-  const fields = result.array().reduce((acc, error) => {
-    if (!acc[error.param]) {
-      acc[error.param] = error.msg;
-    }
-    return acc;
-  }, {});
-
-  return res.status(422).json({
-    error: {
-      code: 'VALIDATION_ERROR',
-      message: 'Validation failed',
-      fields,
-    },
-  });
+  return res.status(400).json({ errors: result.array() });
 }
 
 module.exports = {
@@ -229,6 +247,7 @@ module.exports = {
   createCampaignValidation,
   createCampaignUpdateValidation,
   contributionValidation,
+  contributionQuoteValidation,
   withdrawalValidation,
   getCampaignsValidation,
   validateRequest,
