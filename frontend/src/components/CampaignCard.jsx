@@ -13,7 +13,11 @@ export default function CampaignCard({ campaign }) {
           <div style={styles.coverImageWrapper}>
             <img alt={campaign.title} src={campaign.cover_image_url} style={styles.coverImage} />
           </div>
-        ) : null}
+        ) : (
+          <div style={styles.coverPlaceholder} aria-hidden="true">
+            <span style={styles.coverPlaceholderText}>No campaign image</span>
+          </div>
+        )}
         <div style={styles.header}>
           <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={styles.asset}>{campaign.asset_type}</span>
@@ -50,6 +54,17 @@ const styles = {
   desc: { fontSize: '0.875rem', color: '#666', marginBottom: '1rem' },
   coverImageWrapper: { overflow: 'hidden', borderRadius: '12px 12px 0 0', marginBottom: '1rem', height: '160px' },
   coverImage: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
+  coverPlaceholder: {
+    borderRadius: '12px 12px 0 0',
+    marginBottom: '1rem',
+    height: '160px',
+    background: 'linear-gradient(135deg, #ede9fe 0%, #e0e7ff 100%)',
+    border: '1px solid #ddd6fe',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  coverPlaceholderText: { color: '#6d28d9', fontWeight: 700, fontSize: '0.85rem' },
   bar: { background: '#f0f0f0', borderRadius: '99px', height: '6px', marginBottom: '0.5rem', overflow: 'hidden' },
   fill: { background: '#7c3aed', height: '100%', borderRadius: '99px', transition: 'width 0.3s' },
   meta: { display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#444' },

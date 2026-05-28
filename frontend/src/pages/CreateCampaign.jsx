@@ -44,6 +44,7 @@ export default function CreateCampaign() {
   });
   const [coverImageFile, setCoverImageFile] = useState(null);
   const [coverImagePreview, setCoverImagePreview] = useState('');
+  const [isDragOverCover, setIsDragOverCover] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showCreatorTips, setShowCreatorTips] = useState(isCreatorOnboardingVisible);
@@ -71,8 +72,7 @@ export default function CreateCampaign() {
     setForm((f) => ({ ...f, asset_type: value }));
   }
 
-  function handleCoverImageChange(e) {
-    const file = e.target.files?.[0] || null;
+  function setCoverImage(file) {
     if (!file) {
       setCoverImageFile(null);
       setCoverImagePreview('');
@@ -91,6 +91,17 @@ export default function CreateCampaign() {
     const reader = new FileReader();
     reader.onload = () => setCoverImagePreview(reader.result || '');
     reader.readAsDataURL(file);
+  }
+
+  function handleCoverImageChange(e) {
+    setCoverImage(e.target.files?.[0] || null);
+  }
+
+  function handleCoverImageDrop(e) {
+    e.preventDefault();
+    setIsDragOverCover(false);
+    const file = e.dataTransfer?.files?.[0] || null;
+    setCoverImage(file);
   }
 
   function dismissTips() {
@@ -454,12 +465,30 @@ export default function CreateCampaign() {
               <label className="label-strong" htmlFor="cc-cover">
                 Cover image <span style={{ fontWeight: 500, color: '#888' }}>(optional)</span>
               </label>
-              <input
-                id="cc-cover"
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                onChange={handleCoverImageChange}
-              />
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragOverCover(true);
+                }}
+                onDragLeave={() => setIsDragOverCover(false)}
+                onDrop={handleCoverImageDrop}
+                style={{
+                  border: `2px dashed ${isDragOverCover ? '#7c3aed' : '#d4d4d8'}`,
+                  borderRadius: '12px',
+                  padding: '0.9rem',
+                  background: isDragOverCover ? '#f5f3ff' : '#fafafa',
+                }}
+              >
+                <input
+                  id="cc-cover"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleCoverImageChange}
+                />
+                <p style={{ marginTop: '0.45rem', marginBottom: 0, color: '#666', fontSize: '0.8rem' }}>
+                  Drag and drop a JPEG, PNG, or WEBP image (max 5MB), or browse files.
+                </p>
+              </div>
               {coverImagePreview && (
                 <img
                   src={coverImagePreview}

@@ -333,6 +333,11 @@ export default function Campaign() {
           style={styles.detailCoverImage}
         />
       )}
+      {!campaign.cover_image_url && (
+        <div style={styles.detailCoverPlaceholder} aria-hidden="true">
+          <span style={styles.detailCoverPlaceholderText}>No campaign image yet</span>
+        </div>
+      )}
       <div style={styles.header}>
         <div style={styles.badgeRow}>
           <span style={styles.asset}>{campaign.asset_type}</span>
@@ -759,6 +764,18 @@ const styles = {
   walletLabel: { fontSize: '0.75rem', fontWeight: 600, color: '#888', textTransform: 'uppercase' },
   walletKey: { fontSize: '0.8rem', color: '#555', wordBreak: 'break-all' },
   detailCoverImage: { width: '100%', borderRadius: '14px', marginBottom: '1.5rem', objectFit: 'cover', maxHeight: '360px' },
+  detailCoverPlaceholder: {
+    width: '100%',
+    borderRadius: '14px',
+    marginBottom: '1.5rem',
+    height: '260px',
+    background: 'linear-gradient(135deg, #ede9fe 0%, #e0e7ff 100%)',
+    border: '1px solid #ddd6fe',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  detailCoverPlaceholderText: { color: '#6d28d9', fontWeight: 700 },
   sectionTitle: { fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.75rem' },
   list: { display: 'flex', flexDirection: 'column', gap: '0.5rem' },
   row: { display: 'flex', justifyContent: 'space-between', background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '0.6rem 0.85rem' },
