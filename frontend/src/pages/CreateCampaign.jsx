@@ -269,7 +269,7 @@ export default function CreateCampaign() {
     return (
       <main className="container page-narrow" style={{ paddingTop: '3rem', paddingBottom: '3rem' }}>
         <KycPrompt token={token} onUserUpdate={updateUser} title="Verify your identity first" />
-        <p style={{ marginTop: '1rem', fontSize: '0.9rem', color: '#666' }}>
+        <p style={{ marginTop: '1rem', fontSize: '0.9rem', color: 'var(--color-text-hint)' }}>
           Current verification status: <strong>{user?.kyc_status || 'unverified'}</strong>.
         </p>
       </main>
@@ -289,19 +289,19 @@ export default function CreateCampaign() {
             flexWrap: 'wrap',
             fontSize: '0.8rem',
             fontWeight: 600,
-            color: '#666',
+            color: 'var(--color-text-hint)',
           }}
         >
           <li>
-            <span style={{ color: step === 1 ? '#7c3aed' : '#999' }}>1. Goal & asset</span>
+            <span style={{ color: step === 1 ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>1. Goal & asset</span>
           </li>
           <li aria-hidden="true">→</li>
           <li>
-            <span style={{ color: step === 2 ? '#7c3aed' : '#999' }}>2. Details</span>
+            <span style={{ color: step === 2 ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>2. Details</span>
           </li>
           <li aria-hidden="true">→</li>
           <li>
-            <span style={{ color: step === 3 ? '#7c3aed' : '#999' }}>3. Milestones & launch</span>
+            <span style={{ color: step === 3 ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>3. Milestones & launch</span>
           </li>
         </ol>
       </nav>
@@ -309,7 +309,7 @@ export default function CreateCampaign() {
       <h1 style={{ fontSize: 'clamp(1.5rem, 4vw, 1.85rem)', fontWeight: 800, marginBottom: '0.35rem' }}>
         Start a campaign
       </h1>
-      <p style={{ color: '#555', marginBottom: '1.25rem', fontSize: '0.95rem', lineHeight: 1.55 }}>
+      <p style={{ color: 'var(--color-text-secondary)', marginBottom: '1.25rem', fontSize: '0.95rem', lineHeight: 1.55 }}>
         We create a dedicated Stellar wallet for your campaign. You choose the settlement asset and, if you want
         staged releases, define the milestone plan that unlocks funds over time.
       </p>
@@ -358,7 +358,7 @@ export default function CreateCampaign() {
               />
             </div>
 
-            <div style={{ marginTop: '1.25rem', border: '1px dashed #ccc', padding: '1rem', borderRadius: '8px' }}>
+            <div style={{ marginTop: '1.25rem', border: '1px dashed var(--color-border)', padding: '1rem', borderRadius: '8px' }}>
               <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' }}>Contribution limits (Optional)</h3>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 <div className="form-stack">
@@ -394,7 +394,7 @@ export default function CreateCampaign() {
               <legend className="label-strong" style={{ marginBottom: '0.5rem' }}>
                 Settlement asset
               </legend>
-              <p style={{ fontSize: '0.8rem', color: '#666', marginBottom: '0.65rem' }}>
+              <p style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)', marginBottom: '0.65rem' }}>
                 Progress and payouts use this asset. Contributors may use a different asset if Stellar can convert it.
               </p>
               <div className="asset-picker" role="radiogroup" aria-label="Settlement asset">
@@ -440,7 +440,7 @@ export default function CreateCampaign() {
           <>
             <div className="form-stack">
               <label className="label-strong" htmlFor="cc-desc">
-                Description <span style={{ fontWeight: 500, color: '#888' }}>(optional)</span>
+                Description <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>(optional)</span>
               </label>
               <SimpleMDE
                 id="cc-desc"
@@ -452,7 +452,7 @@ export default function CreateCampaign() {
 
             <div className="form-stack" style={{ marginTop: '1rem' }}>
               <label className="label-strong" htmlFor="cc-cover">
-                Cover image <span style={{ fontWeight: 500, color: '#888' }}>(optional)</span>
+                Cover image <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>(optional)</span>
               </label>
               <input
                 id="cc-cover"
@@ -471,7 +471,7 @@ export default function CreateCampaign() {
 
             <div className="form-stack" style={{ marginTop: '1rem' }}>
               <label className="label-strong" htmlFor="cc-deadline">
-                Deadline <span style={{ fontWeight: 500, color: '#888' }}>(optional)</span>
+                Deadline <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>(optional)</span>
               </label>
               <input id="cc-deadline" type="date" value={form.deadline} onChange={setField('deadline')} />
             </div>
@@ -488,7 +488,7 @@ export default function CreateCampaign() {
                 Show contribution amounts on backer wall
               </label>
             </div>
-            <p style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.35rem' }}>
+            <p style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)', marginTop: '0.35rem' }}>
               If unchecked, backers will be listed but their individual amounts will be hidden from the public.
             </p>
 
@@ -529,11 +529,11 @@ export default function CreateCampaign() {
             <div className="campaign-card" style={{ marginBottom: '1rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
                 <strong>Milestone plan</strong>
-                <span style={{ fontSize: '0.85rem', color: milestoneTotal === 100 || form.milestones.length === 0 ? '#166534' : '#92400e' }}>
+                <span style={{ fontSize: '0.85rem', color: milestoneTotal === 100 || form.milestones.length === 0 ? 'var(--color-success-text)' : 'var(--color-warning-text)' }}>
                   Total: {milestoneTotal.toLocaleString()}%
                 </span>
               </div>
-              <p style={{ color: '#555', fontSize: '0.88rem', lineHeight: 1.5 }}>
+              <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.88rem', lineHeight: 1.5 }}>
                 Milestones are optional. If you add them, define between 1 and 10 release checkpoints and make sure the
                 percentages sum to exactly 100.
               </p>
@@ -627,8 +627,8 @@ export default function CreateCampaign() {
         )}
       </form>
 
-      <p style={{ marginTop: '1.5rem', fontSize: '0.85rem', color: '#777' }}>
-        <Link to="/" style={{ color: '#7c3aed', fontWeight: 600 }}>
+      <p style={{ marginTop: '1.5rem', fontSize: '0.85rem', color: 'var(--color-text-hint)' }}>
+        <Link to="/" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
           ← Back to campaigns
         </Link>
       </p>

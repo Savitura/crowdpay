@@ -124,7 +124,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
     return (
       <section style={styles.section} aria-label="Fund release">
         <h2 style={styles.h2}>Manual fund release</h2>
-        <p style={{ color: '#888', fontSize: '0.9rem' }}>Loading…</p>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>Loading…</p>
       </section>
     );
   }
@@ -200,7 +200,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
 
       <h3 style={{ ...styles.h3, marginTop: '1.5rem' }}>Requests & audit</h3>
       {rows.length === 0 ? (
-        <p style={{ color: '#888', fontSize: '0.9rem' }}>No withdrawal activity yet.</p>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>No withdrawal activity yet.</p>
       ) : (
         <ul style={styles.list}>
           {rows.map((row) => (
@@ -221,7 +221,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                     href={stellarExpertTxUrl(row.tx_hash)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ fontSize: '0.82rem', color: '#7c3aed', fontWeight: 600 }}
+                    style={{ fontSize: '0.82rem', color: 'var(--color-accent)', fontWeight: 600 }}
                   >
                     View transaction
                   </a>
@@ -232,7 +232,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                       <li key={ev.id}>
                         <strong>{ev.action}</strong>
                         {ev.note ? ` — ${ev.note}` : ''}
-                        <span style={{ color: '#888' }}>
+                        <span style={{ color: 'var(--color-text-muted)' }}>
                           {' '}
                           ({new Date(ev.created_at).toLocaleString()})
                         </span>
@@ -319,14 +319,14 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
 }
 
 const styles = {
-  section: { marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid #e5e5e5' },
+  section: { marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--color-border-light)' },
   h2: { fontSize: '1.15rem', fontWeight: 800, marginBottom: '0.5rem' },
   h3: { fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' },
-  intro: { color: '#555', fontSize: '0.9rem', lineHeight: 1.55, marginBottom: '1rem' },
-  hint: { color: '#666', fontSize: '0.82rem', lineHeight: 1.45, marginBottom: '0.65rem' },
+  intro: { color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.55, marginBottom: '1rem' },
+  hint: { color: 'var(--color-text-hint)', fontSize: '0.82rem', lineHeight: 1.45, marginBottom: '0.65rem' },
   card: {
-    background: '#fff',
-    border: '1px solid #e5e5e5',
+    background: 'var(--color-bg)',
+    border: '1px solid var(--color-border-light)',
     borderRadius: '10px',
     padding: '1.1rem',
     display: 'flex',
@@ -338,20 +338,20 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '0.65rem',
-    background: '#fff',
-    border: '1px solid #eee',
+    background: 'var(--color-bg)',
+    border: '1px solid var(--color-border-lighter)',
     borderRadius: '10px',
     padding: '0.85rem 1rem',
   },
-  rowTitle: { fontSize: '0.9rem', fontWeight: 600, color: '#111' },
-  meta: { fontSize: '0.8rem', color: '#666' },
+  rowTitle: { fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-primary)' },
+  meta: { fontSize: '0.8rem', color: 'var(--color-text-hint)' },
   code: { fontSize: '0.78rem' },
   actions: { display: 'flex', flexWrap: 'wrap', gap: '0.45rem', alignItems: 'center' },
   audit: {
     marginTop: '0.5rem',
     paddingLeft: '1.1rem',
     fontSize: '0.78rem',
-    color: '#444',
+    color: 'var(--color-text-secondary)',
     lineHeight: 1.5,
   },
 };

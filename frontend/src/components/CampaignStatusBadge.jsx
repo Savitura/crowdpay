@@ -1,9 +1,9 @@
 import React from 'react';
 
 const LABELS = {
-  funded: { text: 'Goal reached', bg: '#dcfce7', color: '#166534' },
-  failed: { text: 'Campaign ended', bg: '#fee2e2', color: '#991b1b' },
-  closed: { text: 'Campaign closed', bg: '#f3f4f6', color: '#374151' },
+  funded: { text: 'Goal reached', bg: 'var(--color-success-bg)', color: 'var(--color-success-text)' },
+  failed: { text: 'Campaign ended', bg: 'var(--color-error-bg)', color: 'var(--color-error-text)' },
+  closed: { text: 'Campaign closed', bg: 'var(--color-surface)', color: 'var(--color-text-secondary)' },
 };
 
 export default function CampaignStatusBadge({ status }) {

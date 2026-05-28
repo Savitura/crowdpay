@@ -105,7 +105,7 @@ export default function Dashboard() {
   if (!ready) {
     return (
       <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
-        <p style={{ color: '#666' }}>Restoring your session...</p>
+        <p style={{ color: 'var(--color-text-hint)' }}>Restoring your session...</p>
       </main>
     );
   }
@@ -120,14 +120,14 @@ export default function Dashboard() {
       <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>Creator Dashboard</h1>
       {error && <p className="alert alert--error">{error}</p>}
       {loading ? (
-        <p style={{ color: '#666' }}>Loading dashboard...</p>
+        <p style={{ color: 'var(--color-text-hint)' }}>Loading dashboard...</p>
       ) : (
         <>
           <div className="campaign-card" style={{ marginBottom: '1rem', minHeight: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
               <div>
                 <strong>Identity verification</strong>
-                <div style={{ color: '#666', fontSize: '0.88rem', marginTop: '0.2rem' }}>
+                <div style={{ color: 'var(--color-text-hint)', fontSize: '0.88rem', marginTop: '0.2rem' }}>
                   Status: {user?.kyc_status || 'unverified'}
                   {user?.kyc_completed_at ? ` • Completed ${new Date(user.kyc_completed_at).toLocaleDateString()}` : ''}
                 </div>
@@ -147,7 +147,7 @@ export default function Dashboard() {
             <div className="campaign-card"><strong>{stats?.in_progress_campaigns || 0}</strong><div>In progress</div></div>
           </div>
           <div style={{ marginBottom: '1rem' }}>
-            <Link to="/campaigns/new" style={{ color: '#7c3aed', fontWeight: 600 }}>+ Create new campaign</Link>
+            <Link to="/campaigns/new" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>+ Create new campaign</Link>
           </div>
           {campaigns.length === 0 ? (
             <p className="alert alert--info">No campaigns yet. Create your first campaign to get started.</p>
@@ -165,15 +165,15 @@ export default function Dashboard() {
                     <div style={{ marginTop: '0.35rem', fontSize: '0.9rem' }}>
                       {Number(campaign.raised_amount).toLocaleString()} / {Number(campaign.target_amount).toLocaleString()} {campaign.asset_type}
                     </div>
-                    <div style={{ background: '#eee', borderRadius: '99px', height: '6px', marginTop: '0.35rem' }}>
-                      <div style={{ background: '#7c3aed', height: '6px', borderRadius: '99px', width: `${pct}%` }} />
+                    <div style={{ background: 'var(--color-surface)', borderRadius: '99px', height: '6px', marginTop: '0.35rem' }}>
+                      <div style={{ background: 'var(--color-accent)', height: '6px', borderRadius: '99px', width: `${pct}%` }} />
                     </div>
-                    <div style={{ marginTop: '0.35rem', color: '#666', fontSize: '0.85rem' }}>
+                    <div style={{ marginTop: '0.35rem', color: 'var(--color-text-hint)', fontSize: '0.85rem' }}>
                       {campaign.contributor_count} contributors {campaign.deadline ? `• Deadline ${new Date(campaign.deadline).toLocaleDateString()}` : ''}
                     </div>
                     <div style={{ marginTop: '0.45rem', display: 'flex', gap: '0.75rem' }}>
-                      <Link to={`/campaigns/${campaign.id}`} style={{ color: '#7c3aed' }}>View</Link>
-                      <Link to={`/campaigns/${campaign.id}`} style={{ color: '#7c3aed' }}>
+                      <Link to={`/campaigns/${campaign.id}`} style={{ color: 'var(--color-accent)' }}>View</Link>
+                      <Link to={`/campaigns/${campaign.id}`} style={{ color: 'var(--color-accent)' }}>
                         {milestones.length ? 'View milestone releases' : 'Manage withdrawals'}
                       </Link>
                     </div>
@@ -190,9 +190,9 @@ export default function Dashboard() {
                           {milestones
                             .filter((milestone) => milestone.status !== 'released')
                             .map((milestone) => (
-                              <div key={milestone.id} style={{ border: '1px solid #eee', borderRadius: '12px', padding: '0.85rem', background: '#fafafa' }}>
+                              <div key={milestone.id} style={{ border: '1px solid var(--color-border-lighter)', borderRadius: '12px', padding: '0.85rem', background: 'var(--color-surface)' }}>
                                 <strong>{milestone.title}</strong>
-                                <div style={{ fontSize: '0.84rem', color: '#666', marginTop: '0.25rem' }}>
+                                <div style={{ fontSize: '0.84rem', color: 'var(--color-text-hint)', marginTop: '0.25rem' }}>
                                   Submit proof and destination so CrowdPay can release this tranche after approval.
                                 </div>
                                 {milestone.review_note && (

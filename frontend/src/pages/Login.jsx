@@ -42,18 +42,18 @@ export default function Login() {
       <form noValidate onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
         <input type="email" placeholder="Email" value={form.email} onChange={set('email')} required />
         <input type="password" placeholder="Password" value={form.password} onChange={set('password')} required />
-        {error && <p style={{ color: '#dc2626', fontSize: '0.875rem' }}>{error}</p>}
+        {error && <p style={{ color: 'var(--color-status-error)', fontSize: '0.875rem' }}>{error}</p>}
         <button type="submit" className="btn-primary" disabled={loading} style={{ padding: '0.8rem' }}>
           {loading ? 'Logging in…' : 'Log in'}
         </button>
         <div style={{ textAlign: 'center' }}>
-          <Link to="/forgot-password" style={{ color: '#666', fontSize: '0.85rem', textDecoration: 'none' }}>
+          <Link to="/forgot-password" style={{ color: 'var(--color-text-hint)', fontSize: '0.85rem', textDecoration: 'none' }}>
             Forgot password?
           </Link>
         </div>
       </form>
-      <p style={{ marginTop: '1.25rem', color: '#666', fontSize: '0.9rem' }}>
-        No account? <Link to="/register" style={{ color: '#7c3aed', fontWeight: 600 }}>Sign up</Link>
+      <p style={{ marginTop: '1.25rem', color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
+        No account? <Link to="/register" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>Sign up</Link>
       </p>
     </main>
   );

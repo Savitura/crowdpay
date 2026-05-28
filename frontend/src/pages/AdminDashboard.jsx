@@ -40,33 +40,33 @@ function DisputeQueue({ token }) {
     }
   }
 
-  if (loading) return <p style={{ color: '#666' }}>Loading disputes…</p>;
-  if (!disputes.length) return <p style={{ color: '#666', marginBottom: '2rem' }}>No disputes on record.</p>;
+  if (loading) return <p style={{ color: 'var(--color-text-hint)' }}>Loading disputes…</p>;
+  if (!disputes.length) return <p style={{ color: 'var(--color-text-hint)', marginBottom: '2rem' }}>No disputes on record.</p>;
 
   return (
     <div style={{ display: 'grid', gap: '0.9rem', marginBottom: '2.5rem' }}>
       {disputes.map((d) => (
-        <div key={d.id} style={{ border: '1px solid #e5e5e5', borderRadius: '12px', padding: '1rem', background: '#fff' }}>
+        <div key={d.id} style={{ border: '1px solid var(--color-border-light)', borderRadius: '12px', padding: '1rem', background: 'var(--color-bg)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
             <div>
               <strong>{d.campaign_title}</strong>
-              <span style={{ marginLeft: '0.5rem', fontSize: '0.8rem', background: d.status === 'open' ? '#fee2e2' : '#ede9fe', color: d.status === 'open' ? '#dc2626' : '#7c3aed', padding: '2px 8px', borderRadius: '99px', fontWeight: 700 }}>
+              <span style={{ marginLeft: '0.5rem', fontSize: '0.8rem', background: d.status === 'open' ? 'var(--color-status-error-bg)' : 'var(--color-accent-lighter)', color: d.status === 'open' ? 'var(--color-status-error)' : 'var(--color-accent)', padding: '2px 8px', borderRadius: '99px', fontWeight: 700 }}>
                 {d.status}
               </span>
             </div>
-            <span style={{ fontSize: '0.82rem', color: '#888' }}>{new Date(d.created_at).toLocaleString()}</span>
+            <span style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>{new Date(d.created_at).toLocaleString()}</span>
           </div>
-          <div style={{ marginTop: '0.4rem', fontSize: '0.88rem', color: '#555' }}>
+          <div style={{ marginTop: '0.4rem', fontSize: '0.88rem', color: 'var(--color-text-secondary)' }}>
             <strong>Reason:</strong> {d.reason} · <strong>By:</strong> {d.raised_by_name} ({d.raised_by_email})
           </div>
-          <p style={{ marginTop: '0.5rem', color: '#333', lineHeight: 1.5, fontSize: '0.9rem' }}>{d.description}</p>
+          <p style={{ marginTop: '0.5rem', color: 'var(--color-text-primary)', lineHeight: 1.5, fontSize: '0.9rem' }}>{d.description}</p>
           {d.evidence_url && (
             <div style={{ fontSize: '0.85rem', marginTop: '0.35rem' }}>
-              Evidence: <a href={d.evidence_url} target="_blank" rel="noopener noreferrer" style={{ color: '#7c3aed', fontWeight: 600 }}>Open link</a>
+              Evidence: <a href={d.evidence_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>Open link</a>
             </div>
           )}
           {d.resolution_note && (
-            <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#7c3aed' }}>Note: {d.resolution_note}</div>
+            <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--color-accent)' }}>Note: {d.resolution_note}</div>
           )}
           {['open', 'under_review'].includes(d.status) && (
             <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginTop: '0.85rem' }}>
@@ -78,7 +78,7 @@ function DisputeQueue({ token }) {
               )}
               <button type="button" className="btn-primary" disabled={busyId === d.id}
                 onClick={() => resolve(d, 'resolved_contributor')}
-                style={{ background: '#dc2626', borderColor: '#dc2626' }}>
+                style={{ background: 'var(--color-status-error)', borderColor: 'var(--color-status-error)' }}>
                 {busyId === d.id ? 'Processing…' : 'Resolve → Refund contributor'}
               </button>
               <button type="button" className="btn-secondary" disabled={busyId === d.id}
@@ -170,21 +170,21 @@ export default function AdminDashboard() {
       <h1 style={{fontSize:'2rem', marginBottom:'1.5rem', fontWeight:800}}>Admin Dashboard</h1>
       <div style={{display:'flex', gap:'1rem', flexWrap:'wrap', marginBottom:'2.5rem'}}>
         <div style={cardStyle}>
-          <h3 style={{fontSize:'1rem', color:'#555'}}>Total Users</h3>
+          <h3 style={{fontSize:'1rem', color:'var(--color-text-secondary)'}}>Total Users</h3>
           <p style={{fontSize:'1.8rem', fontWeight:700}}>{stats.total_users}</p>
         </div>
         <div style={cardStyle}>
-          <h3 style={{fontSize:'1rem', color:'#555'}}>Active Campaigns</h3>
+          <h3 style={{fontSize:'1rem', color:'var(--color-text-secondary)'}}>Active Campaigns</h3>
           <p style={{fontSize:'1.8rem', fontWeight:700}}>
             {stats.campaign_status.find(s => s.status === 'active')?.count || 0}
           </p>
         </div>
         <div style={cardStyle}>
-          <h3 style={{fontSize:'1rem', color:'#555'}}>Total Contributions</h3>
+          <h3 style={{fontSize:'1rem', color:'var(--color-text-secondary)'}}>Total Contributions</h3>
           <p style={{fontSize:'1.8rem', fontWeight:700}}>{stats.total_contributions}</p>
         </div>
         <div style={cardStyle}>
-          <h3 style={{fontSize:'1rem', color:'#555'}}>Platform Fees Collected</h3>
+          <h3 style={{fontSize:'1rem', color:'var(--color-text-secondary)'}}>Platform Fees Collected</h3>
           <p style={{fontSize:'1.8rem', fontWeight:700}}>${stats.platform_fees_collected}</p>
         </div>
       </div>
@@ -211,7 +211,7 @@ export default function AdminDashboard() {
                     api.updateCampaignStatus(c.id, e.target.value, token).then(() => {
                       setCampaigns(campaigns.map(camp => camp.id === c.id ? {...camp, status: e.target.value} : camp));
                     });
-                  }} style={{padding:'0.3rem', borderRadius:'4px', border:'1px solid #ccc'}}>
+                  }} style={{padding:'0.3rem', borderRadius:'4px', border:'1px solid var(--color-border-light)'}}>
                     <option value="active">Active</option>
                     <option value="funded">Funded</option>
                     <option value="in_progress">In progress</option>
@@ -229,38 +229,38 @@ export default function AdminDashboard() {
 
       <h2 style={{fontSize:'1.4rem', fontWeight:700, marginBottom:'1rem'}}>Milestone Reviews</h2>
       {milestones.length === 0 ? (
-        <p style={{ color: '#666', marginBottom: '2rem' }}>No milestone activity yet.</p>
+        <p style={{ color: 'var(--color-text-hint)', marginBottom: '2rem' }}>No milestone activity yet.</p>
       ) : (
         <div style={{display:'grid', gap:'0.9rem', marginBottom:'2.5rem'}}>
           {milestones.map((milestone) => (
-            <div key={milestone.id} style={{ border:'1px solid #e5e5e5', borderRadius:'12px', padding:'1rem', background:'#fff' }}>
+            <div key={milestone.id} style={{ border:'1px solid var(--color-border-light)', borderRadius:'12px', padding:'1rem', background:'var(--color-bg)' }}>
               <div style={{ display:'flex', justifyContent:'space-between', gap:'0.75rem', flexWrap:'wrap' }}>
                 <div>
                   <strong>{milestone.title}</strong>
-                  <div style={{ color:'#666', fontSize:'0.9rem', marginTop:'0.2rem' }}>
+                  <div style={{ color:'var(--color-text-hint)', fontSize:'0.9rem', marginTop:'0.2rem' }}>
                     {milestone.campaign_title} · {milestone.release_percentage}% · {milestone.status}
                   </div>
                 </div>
-                <div style={{ color:'#666', fontSize:'0.84rem' }}>{milestone.creator_email}</div>
+                <div style={{ color:'var(--color-text-hint)', fontSize:'0.84rem' }}>{milestone.creator_email}</div>
               </div>
-              <div style={{ marginTop:'0.6rem', color:'#444', lineHeight:1.5 }}>
+              <div style={{ marginTop:'0.6rem', color:'var(--color-text-secondary)', lineHeight:1.5 }}>
                 {milestone.description || 'No description provided.'}
               </div>
               {milestone.evidence_url && (
                 <div style={{ marginTop:'0.6rem', fontSize:'0.88rem' }}>
                   Evidence:{' '}
-                  <a href={milestone.evidence_url} target="_blank" rel="noopener noreferrer" style={{ color:'#7c3aed', fontWeight:600 }}>
+                  <a href={milestone.evidence_url} target="_blank" rel="noopener noreferrer" style={{ color:'var(--color-accent)', fontWeight:600 }}>
                     Open link
                   </a>
                 </div>
               )}
               {milestone.destination_key && (
-                <div style={{ marginTop:'0.35rem', fontSize:'0.84rem', color:'#555' }}>
+                <div style={{ marginTop:'0.35rem', fontSize:'0.84rem', color:'var(--color-text-secondary)' }}>
                   Destination: {milestone.destination_key}
                 </div>
               )}
               {milestone.review_note && (
-                <div style={{ marginTop:'0.6rem', fontSize:'0.84rem', color:'#7c3aed' }}>
+                <div style={{ marginTop:'0.6rem', fontSize:'0.84rem', color:'var(--color-accent)' }}>
                   Note: {milestone.review_note}
                 </div>
               )}
@@ -320,31 +320,31 @@ export default function AdminDashboard() {
 }
 
 const cardStyle = {
-  border: '1px solid #e5e5e5',
+  border: '1px solid var(--color-border-light)',
   padding: '1.5rem',
   borderRadius: '8px',
   flex: '1 1 200px',
-  background: '#fafafa'
+  background: 'var(--color-surface)'
 };
 
 const tableStyle = {
   width: '100%',
   textAlign: 'left',
   borderCollapse: 'collapse',
-  border: '1px solid #e5e5e5',
-  background: '#fff'
+  border: '1px solid var(--color-border-light)',
+  background: 'var(--color-bg)'
 };
 
 const thStyle = {
   padding: '0.8rem',
-  background: '#f9f9f9',
-  borderBottom: '2px solid #e5e5e5',
+  background: 'var(--color-surface)',
+  borderBottom: '2px solid var(--color-border-light)',
   fontWeight: 600,
-  color: '#333'
+  color: 'var(--color-text-primary)'
 };
 
 const tdStyle = {
   padding: '0.8rem',
-  borderBottom: '1px solid #e5e5e5',
-  color: '#444'
+  borderBottom: '1px solid var(--color-border-light)',
+  color: 'var(--color-text-secondary)'
 };

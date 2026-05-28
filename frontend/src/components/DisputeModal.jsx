@@ -43,7 +43,7 @@ export default function DisputeModal({ campaign, onClose, onSubmitted }) {
           </h2>
           <button type="button" onClick={onClose} aria-label="Close" style={closeBtn}>✕</button>
         </div>
-        <p style={{ color: '#555', fontSize: '0.9rem', marginBottom: '1.25rem' }}>
+        <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: '1.25rem' }}>
           Raising a dispute will freeze any pending withdrawals on <strong>{campaign.title}</strong> while the platform reviews your claim.
         </p>
         <form onSubmit={handleSubmit}>
@@ -100,11 +100,11 @@ const overlay = {
   display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
 };
 const modal = {
-  background: '#fff', borderRadius: '12px', padding: '1.75rem',
+  background: 'var(--color-bg)', borderRadius: '12px', padding: '1.75rem',
   width: '100%', maxWidth: '480px', maxHeight: '90vh', overflowY: 'auto',
 };
 const closeBtn = {
   background: 'transparent', border: 'none', fontSize: '1.1rem',
-  cursor: 'pointer', color: '#666', padding: '0.25rem',
+  cursor: 'pointer', color: 'var(--color-text-hint)', padding: '0.25rem',
 };
 const labelStyle = { display: 'block', fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.35rem' };

@@ -22,8 +22,8 @@ export default function NotFound() {
 }
 
 const styles = {
-  code: { fontSize: '5rem', fontWeight: 800, color: '#ede9fe', lineHeight: 1, marginBottom: '0.5rem' },
-  heading: { fontSize: '1.5rem', fontWeight: 700, color: '#111', marginBottom: '0.75rem' },
-  sub: { color: '#666', fontSize: '1rem', lineHeight: 1.55, marginBottom: '2rem' },
+  code: { fontSize: '5rem', fontWeight: 800, color: 'var(--color-accent-lighter)', lineHeight: 1, marginBottom: '0.5rem' },
+  heading: { fontSize: '1.5rem', fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: '0.75rem' },
+  sub: { color: 'var(--color-text-hint)', fontSize: '1rem', lineHeight: 1.55, marginBottom: '2rem' },
   actions: { display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' },
 };

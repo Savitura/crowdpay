@@ -536,7 +536,7 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
                     if (existingSum > 0) {
                       const remaining = Math.max(0, Number(campaign.max_contribution) - existingSum);
                       return (
-                        <span style={{ display: 'block', marginTop: '0.25rem', color: '#7c3aed', fontWeight: 600 }}>
+                        <span style={{ display: 'block', marginTop: '0.25rem', color: 'var(--color-accent)', fontWeight: 600 }}>
                           You can contribute up to {remaining.toLocaleString()} {campaign.asset_type} more.
                         </span>
                       );
@@ -548,7 +548,7 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
 
               <div className="form-stack" style={{ marginBottom: '1rem' }}>
                 <label className="label-strong" htmlFor="contrib-display-name">
-                  Display name <span style={{ fontWeight: 500, color: '#888' }}>(optional)</span>
+                  Display name <span style={{ fontWeight: 500, color: 'var(--color-text-secondary)' }}>(optional)</span>
                 </label>
                 <input
                   id="contrib-display-name"
@@ -585,7 +585,7 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
 
               {isPathPayment && destAmount && Number(destAmount) > 0 && (
                 <div style={{ marginTop: '0.85rem', minHeight: '3.5rem' }}>
-                  {quoteLoading && <p style={{ fontSize: '0.85rem', color: '#666' }}>Fetching live quote…</p>}
+                  {quoteLoading && <p style={{ fontSize: '0.85rem', color: 'var(--color-text-hint)' }}>Fetching live quote…</p>}
                   {!quoteLoading && quote && (
                     <div className="alert alert--success" role="status">
                       <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>Estimated from your wallet</div>
@@ -698,7 +698,7 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
                   href={stellarExpertTxUrl(result.tx_hash)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ color: '#7c3aed', fontWeight: 600 }}
+                  style={{ color: 'var(--color-accent)', fontWeight: 600 }}
                 >
                   View on Stellar Expert
                 </a>
@@ -717,7 +717,7 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
               </div>
             )}
 
-            <div style={{ marginTop: '1.5rem', borderTop: '1px solid #eee', paddingTop: '1.25rem' }}>
+            <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--color-border-lighter)', paddingTop: '1.25rem' }}>
               <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.75rem' }}>Tell your friends!</h3>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <button
@@ -766,9 +766,9 @@ const styles = {
     zIndex: 100,
     padding: '0.75rem',
   },
-  title: { fontSize: '1.2rem', fontWeight: 800, marginBottom: '0.5rem', color: '#111' },
-  subtitle: { color: '#555', fontSize: '0.875rem', lineHeight: 1.55, marginBottom: '1.1rem' },
-  help: { fontSize: '0.78rem', color: '#777', marginTop: '0.2rem' },
+  title: { fontSize: '1.2rem', fontWeight: 800, marginBottom: '0.5rem', color: 'var(--color-text-primary)' },
+  subtitle: { color: 'var(--color-text-secondary)', fontSize: '0.875rem', lineHeight: 1.55, marginBottom: '1.1rem' },
+  help: { fontSize: '0.78rem', color: 'var(--color-text-hint)', marginTop: '0.2rem' },
   actions: {
     display: 'flex',
     flexDirection: 'row',

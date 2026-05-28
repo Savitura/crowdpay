@@ -44,7 +44,7 @@ export default function Register() {
   return (
     <main className="container" style={{ paddingTop: '4rem', maxWidth: '400px' }}>
       <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '0.5rem' }}>Create account</h1>
-      <p style={{ color: '#666', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+      <p style={{ color: 'var(--color-text-hint)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
         A Stellar wallet is created for you automatically.
       </p>
       <form noValidate onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
@@ -55,13 +55,13 @@ export default function Register() {
           <option value="contributor">Contributor</option>
           <option value="creator">Creator</option>
         </select>
-        {error && <p style={{ color: '#dc2626', fontSize: '0.875rem' }}>{error}</p>}
+        {error && <p style={{ color: 'var(--color-status-error)', fontSize: '0.875rem' }}>{error}</p>}
         <button type="submit" className="btn-primary" disabled={loading} style={{ padding: '0.8rem' }}>
           {loading ? 'Creating account…' : 'Sign up'}
         </button>
       </form>
-      <p style={{ marginTop: '1.25rem', color: '#666', fontSize: '0.9rem' }}>
-        Have an account? <Link to="/login" style={{ color: '#7c3aed', fontWeight: 600 }}>Log in</Link>
+      <p style={{ marginTop: '1.25rem', color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
+        Have an account? <Link to="/login" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>Log in</Link>
       </p>
     </main>
   );
