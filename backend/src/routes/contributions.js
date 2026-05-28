@@ -55,7 +55,9 @@ function validateFreighterPublicKey(publicKey) {
 
 async function loadActiveCampaign(campaignId) {
   const { rows } = await db.query(
-    'SELECT c.*, u.email as creator_email FROM campaigns c JOIN users u ON c.creator_id = u.id WHERE c.id = $1 AND c.status = $2',
+    `SELECT c.*, u.email as creator_email FROM campaigns c 
+     JOIN users u ON c.creator_id = u.id 
+     WHERE c.id = $1 AND c.status = $2 AND c.deleted_at IS NULL`,
     [campaignId, 'active']
   );
   return rows[0] || null;

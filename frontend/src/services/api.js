@@ -238,8 +238,19 @@ export const api = {
   getAdminStats: (token) => request('GET', '/admin/stats', null, token),
   getAdminCampaigns: (token) => request('GET', '/admin/campaigns', null, token),
   getAdminMilestones: (token, options = {}) => request('GET', '/admin/milestones', null, token, { query: options }),
-  getAdminUsers: (token) => request('GET', '/admin/users', null, token),
+  getAdminUsers: (token, include_banned = false) => request('GET', '/admin/users', null, token, { query: { include_banned: include_banned ? 'true' : 'false' } }),
+  getAdminAuditLog: (token, options = {}) => request('GET', '/admin/audit-log', null, token, { query: options }),
   updateCampaignStatus: (id, status, token) => request('PATCH', `/admin/campaigns/${id}/status`, { status }, token),
+  
+  adminSuspendCampaign: (id, body, token) => request('PATCH', `/admin/campaigns/${id}/suspend`, body, token),
+  adminRestoreCampaign: (id, token) => request('PATCH', `/admin/campaigns/${id}/restore`, {}, token),
+  adminDeleteCampaign: (id, body, token) => request('DELETE', `/admin/campaigns/${id}`, body, token),
+  
+  adminBanUser: (id, body, token) => request('PATCH', `/admin/users/${id}/ban`, body, token),
+  adminUnbanUser: (id, token) => request('PATCH', `/admin/users/${id}/unban`, {}, token),
+  adminPromoteUser: (id, token) => request('PATCH', `/admin/users/${id}/promote`, {}, token),
+  adminDemoteUser: (id, token) => request('PATCH', `/admin/users/${id}/demote`, {}, token),
+  
   listApiKeys: (token) => request('GET', '/api-keys', null, token),
   createApiKey: (body, token) => request('POST', '/api-keys', body, token),
   deleteApiKey: (id, token) => request('DELETE', `/api-keys/${id}`, null, token),
