@@ -222,6 +222,7 @@ Contributions use `pathPaymentStrictReceive` so the campaign always receives the
 
 ## Documentation
 
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** - How to deploy CrowdPay on Railway, Render, or a self-hosted Ubuntu VPS, including a full environment variable reference
 - **[WALLET_ARCHITECTURE.md](WALLET_ARCHITECTURE.md)** - Complete technical architecture for campaign wallets, including key management, lifecycle phases, security considerations, and API reference
 - **[OPERATOR_GUIDE.md](OPERATOR_GUIDE.md)** - Step-by-step guide for platform operators covering setup, daily operations, maintenance, troubleshooting, and emergency procedures
 - **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Summary of the wallet architecture implementation with quick start guides

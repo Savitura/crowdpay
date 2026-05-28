@@ -1,6 +1,7 @@
 require('dotenv').config();
 require('./config/env').validateEnv();
 
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -99,6 +100,15 @@ app.get('/health/ledger', async (_req, res) => {
     res.status(500).json({ error: err.message || 'ledger health failed' });
   }
 });
+
+if (process.env.SERVE_FRONTEND === 'true') {
+  const dist = path.join(__dirname, '../../frontend/dist');
+  app.use(express.static(dist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/health')) return next();
+    res.sendFile(path.join(dist, 'index.html'));
+  });
+}
 
 app.use(errorHandler);
 
