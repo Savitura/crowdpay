@@ -13,13 +13,22 @@ export default function ResetPassword() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
+  function validatePassword(value) {
+    if (value.length < 8) return 'Password must be at least 8 characters long';
+    if (!/[a-z]/.test(value)) return 'Password must include a lowercase letter';
+    if (!/[A-Z]/.test(value)) return 'Password must include an uppercase letter';
+    if (!/[0-9]/.test(value)) return 'Password must include a number';
+    return '';
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (password !== confirmPassword) {
       return setError('Passwords do not match');
     }
-    if (password.length < 8) {
-      return setError('Password must be at least 8 characters long');
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      return setError(passwordError);
     }
     
     setLoading(true);

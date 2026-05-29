@@ -40,7 +40,13 @@ async function request(method, path, body, token, options = {}) {
     }
   }
 
-  if (res.status === 401 && !_retry && path !== '/auth/refresh' && path !== '/auth/login') {
+  const publicAuthPaths = [
+    '/auth/refresh',
+    '/auth/login',
+    '/auth/forgot-password',
+    '/auth/reset-password',
+  ];
+  if (res.status === 401 && !_retry && !publicAuthPaths.includes(path)) {
     const promise = refresh();
     if (promise) {
       try {
@@ -166,6 +172,8 @@ export const api = {
   getPlatformConfig: () => request('GET', '/config'),
   register: (body) => request('POST', '/auth/register', body),
   login: (body) => request('POST', '/auth/login', body),
+  forgotPassword: (body) => request('POST', '/auth/forgot-password', body),
+  resetPassword: (body) => request('POST', '/auth/reset-password', body),
   logout: () => logout(),
   refresh,
   setToken,

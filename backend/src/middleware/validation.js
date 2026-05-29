@@ -15,12 +15,7 @@ function stripHtml(value = '') {
   return String(value).replace(/<[^>]*>/g, '').trim();
 }
 
-const registerValidation = [
-  body('email')
-    .trim()
-    .toLowerCase()
-    .isEmail()
-    .withMessage('Invalid email format'),
+const passwordValidation = [
   body('password')
     .isLength({ min: 8 })
     .withMessage('Password must be at least 8 characters long')
@@ -30,6 +25,15 @@ const registerValidation = [
     .withMessage('Password must include an uppercase letter')
     .matches(/[0-9]/)
     .withMessage('Password must include a number'),
+];
+
+const registerValidation = [
+  body('email')
+    .trim()
+    .toLowerCase()
+    .isEmail()
+    .withMessage('Invalid email format'),
+  ...passwordValidation,
   body('name')
     .customSanitizer(stripHtml)
     .notEmpty()
@@ -47,6 +51,19 @@ const loginValidation = [
     .isEmail()
     .withMessage('Invalid email format'),
   body('password').notEmpty().withMessage('Password is required'),
+];
+
+const forgotPasswordValidation = [
+  body('email')
+    .trim()
+    .toLowerCase()
+    .isEmail()
+    .withMessage('Invalid email format'),
+];
+
+const resetPasswordValidation = [
+  body('token').notEmpty().withMessage('Reset token is required'),
+  ...passwordValidation,
 ];
 
 const createCampaignValidation = [
@@ -241,9 +258,20 @@ function validateRequest(req, res, next) {
   return res.status(400).json({ errors: result.array() });
 }
 
+function validateRequestAsError(req, res, next) {
+  const result = validationResult(req);
+  if (result.isEmpty()) return next();
+
+  return res.status(400).json({ error: result.array()[0].msg });
+}
+
 module.exports = {
   registerValidation,
   loginValidation,
+  forgotPasswordValidation,
+  resetPasswordValidation,
+  passwordValidation,
+  validateRequestAsError,
   createCampaignValidation,
   createCampaignUpdateValidation,
   contributionValidation,
