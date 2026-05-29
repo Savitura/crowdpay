@@ -7,7 +7,7 @@ export default function ContributionListSkeleton({ rows = 4 }) {
       {Array.from({ length: rows }, (_, i) => (
         <div
           key={i}
-          style={{ display: 'flex', justifyContent: 'space-between', background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '0.6rem 0.85rem', alignItems: 'center' }}
+          style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--color-bg)', border: '1px solid var(--color-border-lighter)', borderRadius: '6px', padding: '0.6rem 0.85rem', alignItems: 'center' }}
         >
           <div>
             <div className="skeleton" style={{ height: '13px', width: `${widths[i % widths.length]}px`, marginBottom: '0.25rem' }} />

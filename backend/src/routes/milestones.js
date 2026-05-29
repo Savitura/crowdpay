@@ -37,6 +37,8 @@ function toReleaseAmount(raisedAmount, releasePercentage) {
   return ((Number(raisedAmount) * Number(releasePercentage)) / 100).toFixed(7);
 }
 
+const MILESTONE_LIMIT = 5;
+
 async function logWithdrawalEvent(client, { withdrawalRequestId, actorUserId, action, note, metadata }) {
   await client.query(
     `INSERT INTO withdrawal_approval_events
@@ -126,9 +128,9 @@ router.post('/', requireAuth, async (req, res) => {
        WHERE campaign_id = $1`,
       [campaignId]
     );
-    if ((stats[0]?.count || 0) >= 10) {
+    if ((stats[0]?.count || 0) >= MILESTONE_LIMIT) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Campaigns can define at most 10 milestones' });
+      return res.status(400).json({ error: `Campaigns can define at most ${MILESTONE_LIMIT} milestones` });
     }
 
     const newTotal = Number(stats[0]?.total_percentage || 0) + percentage;
@@ -273,7 +275,7 @@ router.post('/:id/reject', requireAuth, async (req, res) => {
   res.json(rows[0]);
 });
 
-router.post('/:id/approve', requireAuth, async (req, res) => {
+const approveMilestoneReleaseHandler = async (req, res) => {
   if (!canPerformPlatformSignature(req.user.userId)) {
     return res.status(403).json({ error: 'Only the designated platform approver can approve milestones' });
   }
@@ -468,7 +470,7 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
         campaign_id: milestone.campaign_id,
         withdrawal_request_id: withdrawalRequest.id,
         tx_hash: txHash,
-      }).catch((e) => console.error('[milestones] webhook:', e.message));
+      }).catch((e) => logger.error('Milestone webhook emit failed', { error: e.message }));
     });
 
     res.json({
@@ -492,6 +494,9 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
   } finally {
     client.release();
   }
-});
+};
+
+router.post('/:id/approve', requireAuth, approveMilestoneReleaseHandler);
+router.post('/:id/release', requireAuth, approveMilestoneReleaseHandler);
 
 module.exports = router;

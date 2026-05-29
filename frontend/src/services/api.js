@@ -40,7 +40,13 @@ async function request(method, path, body, token, options = {}) {
     }
   }
 
-  if (res.status === 401 && !_retry && path !== '/auth/refresh' && path !== '/auth/login') {
+  const publicAuthPaths = [
+    '/auth/refresh',
+    '/auth/login',
+    '/auth/forgot-password',
+    '/auth/reset-password',
+  ];
+  if (res.status === 401 && !_retry && !publicAuthPaths.includes(path)) {
     const promise = refresh();
     if (promise) {
       try {
@@ -166,14 +172,16 @@ export const api = {
   getPlatformConfig: () => request('GET', '/config'),
   register: (body) => request('POST', '/auth/register', body),
   login: (body) => request('POST', '/auth/login', body),
+  forgotPassword: (body) => request('POST', '/auth/forgot-password', body),
+  resetPassword: (body) => request('POST', '/auth/reset-password', body),
   logout: () => logout(),
   refresh,
   setToken,
   getToken: () => accessToken,
 
-  getMyCampaigns: (token) => request('GET', '/users/me/campaigns', null, token),
+  getMyCampaigns: (token) => request('GET', '/campaigns/mine', null, token),
   getMyStats: (token) => request('GET', '/users/me/stats', null, token),
-  getMyContributions: (token) => request('GET', '/users/me/contributions', null, token),
+  getMyContributions: (token) => request('GET', '/contributions/mine', null, token),
   getMe: (token) => request('GET', '/users/me', null, token),
   startKyc: (token) => request('POST', '/users/me/kyc/start', null, token),
 
@@ -184,6 +192,7 @@ export const api = {
   getCampaignTiers: (id) => request('GET', `/campaigns/${id}/tiers`),
   getCampaignBalance: (id) => request('GET', `/campaigns/${id}/balance`),
   createCampaign: (body, token) => request('POST', '/campaigns', body, token),
+  updateCampaign: (id, body, token) => request('PATCH', `/campaigns/${id}`, body, token),
   uploadCampaignCoverImage: (campaignId, file, token) => {
     const formData = new FormData();
     formData.append('cover_image', file);
@@ -203,10 +212,21 @@ export const api = {
     request('POST', `/campaigns/${campaignId}/updates`, body, token),
 
   getContributions: (campaignId) => request('GET', `/contributions/campaign/${campaignId}`),
-  getContributionFinalization: (txHash, token) => request('GET', `/contributions/finalization/${txHash}`, null, token),
-  getMilestones: (campaignId) => request('GET', `/milestones/campaign/${campaignId}`),
+getContributionFinalization: (txHash, token) =>
+	request('GET', `/contributions/finalization/${txHash}`, null, token),
+
+getMilestones: (campaignId) =>
+	request('GET', `/campaigns/${campaignId}/milestones`),
+
+setCampaignMilestones: (campaignId, milestones, token) =>
+	request(
+		'POST',
+		`/campaigns/${campaignId}/milestones`,
+		{ milestones },
+		token,
+	),
   submitMilestoneEvidence: (id, body, token) => request('POST', `/milestones/${id}/submit`, body, token),
-  approveMilestone: (id, body, token) => request('POST', `/milestones/${id}/approve`, body || {}, token),
+  approveMilestone: (id, body, token) => request('POST', `/milestones/${id}/release`, body || {}, token),
   rejectMilestone: (id, body, token) => request('POST', `/milestones/${id}/reject`, body || {}, token),
   contribute: (body, token) => request('POST', '/contributions', body, token),
   prepareContribution: (body, token) => request('POST', '/contributions/prepare', body, token),
@@ -222,13 +242,14 @@ export const api = {
   listWithdrawals: (campaignId, token) =>
     request('GET', `/withdrawals/campaign/${campaignId}`, null, token),
   requestWithdrawal: (body, token) => request('POST', '/withdrawals/request', body, token),
-  approveWithdrawalCreator: (id, token) =>
-    request('POST', `/withdrawals/${id}/approve/creator`, {}, token),
+  approveWithdrawalCreator: (id, token, body) =>
+    request('POST', `/withdrawals/${id}/approve/creator`, body || {}, token),
   approveWithdrawalPlatform: (id, token) =>
     request('POST', `/withdrawals/${id}/approve/platform`, {}, token),
   cancelWithdrawal: (id, body, token) => request('POST', `/withdrawals/${id}/cancel`, body || {}, token),
   rejectWithdrawal: (id, body, token) => request('POST', `/withdrawals/${id}/reject`, body || {}, token),
   getWithdrawalEvents: (id, token) => request('GET', `/withdrawals/${id}/events`, null, token),
+  getWithdrawal: (id, token) => request('GET', `/withdrawals/${id}`, null, token),
 
   raiseDispute: (campaignId, body, token) =>
     request('POST', `/campaigns/${campaignId}/disputes`, body, token),
@@ -240,8 +261,19 @@ export const api = {
   getAdminStats: (token) => request('GET', '/admin/stats', null, token),
   getAdminCampaigns: (token) => request('GET', '/admin/campaigns', null, token),
   getAdminMilestones: (token, options = {}) => request('GET', '/admin/milestones', null, token, { query: options }),
-  getAdminUsers: (token) => request('GET', '/admin/users', null, token),
+  getAdminUsers: (token, include_banned = false) => request('GET', '/admin/users', null, token, { query: { include_banned: include_banned ? 'true' : 'false' } }),
+  getAdminAuditLog: (token, options = {}) => request('GET', '/admin/audit-log', null, token, { query: options }),
   updateCampaignStatus: (id, status, token) => request('PATCH', `/admin/campaigns/${id}/status`, { status }, token),
+  
+  adminSuspendCampaign: (id, body, token) => request('PATCH', `/admin/campaigns/${id}/suspend`, body, token),
+  adminRestoreCampaign: (id, token) => request('PATCH', `/admin/campaigns/${id}/restore`, {}, token),
+  adminDeleteCampaign: (id, body, token) => request('DELETE', `/admin/campaigns/${id}`, body, token),
+  
+  adminBanUser: (id, body, token) => request('PATCH', `/admin/users/${id}/ban`, body, token),
+  adminUnbanUser: (id, token) => request('PATCH', `/admin/users/${id}/unban`, {}, token),
+  adminPromoteUser: (id, token) => request('PATCH', `/admin/users/${id}/promote`, {}, token),
+  adminDemoteUser: (id, token) => request('PATCH', `/admin/users/${id}/demote`, {}, token),
+  
   listApiKeys: (token) => request('GET', '/api-keys', null, token),
   createApiKey: (body, token) => request('POST', '/api-keys', body, token),
   deleteApiKey: (id, token) => request('DELETE', `/api-keys/${id}`, null, token),

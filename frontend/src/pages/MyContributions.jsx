@@ -21,7 +21,7 @@ export default function MyContributions() {
   if (!ready) {
     return (
       <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
-        <p style={{ color: '#666' }}>Restoring your session...</p>
+        <p style={{ color: 'var(--color-text-hint)' }}>Restoring your session...</p>
       </main>
     );
   }
@@ -33,7 +33,7 @@ export default function MyContributions() {
       <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>My Contributions</h1>
       {error && <p className="alert alert--error">{error}</p>}
       {loading ? (
-        <p style={{ color: '#666' }}>Loading...</p>
+        <p style={{ color: 'var(--color-text-hint)' }}>Loading...</p>
       ) : rows.length === 0 ? (
         <p className="alert alert--info">You haven't backed any campaigns yet — browse campaigns.</p>
       ) : (
@@ -41,13 +41,13 @@ export default function MyContributions() {
           {rows.map((row) => (
             <div key={row.id} className="campaign-card">
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <Link to={`/campaigns/${row.campaign_id}`} style={{ color: '#7c3aed', fontWeight: 700 }}>{row.campaign_title}</Link>
+                <Link to={`/campaigns/${row.campaign_id}`} style={{ color: 'var(--color-accent)', fontWeight: 700 }}>{row.campaign_title}</Link>
                 <span>{row.campaign_status}</span>
               </div>
               <div style={{ marginTop: '0.35rem' }}>
                 {Number(row.amount).toLocaleString()} {row.asset} • {new Date(row.created_at).toLocaleString()}
               </div>
-              <a href={stellarExpertTxUrl(row.tx_hash)} target="_blank" rel="noopener noreferrer" style={{ marginTop: '0.35rem', display: 'inline-block', color: '#7c3aed' }}>
+              <a href={stellarExpertTxUrl(row.tx_hash)} target="_blank" rel="noopener noreferrer" style={{ marginTop: '0.35rem', display: 'inline-block', color: 'var(--color-accent)' }}>
                 View transaction
               </a>
             </div>

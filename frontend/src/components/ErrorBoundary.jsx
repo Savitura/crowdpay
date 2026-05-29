@@ -48,6 +48,6 @@ const styles = {
     padding: '2rem 1.25rem',
   },
   box: { maxWidth: '420px', textAlign: 'center' },
-  heading: { fontSize: '1.4rem', fontWeight: 700, color: '#111', marginBottom: '0.75rem' },
-  sub: { color: '#666', fontSize: '0.95rem', lineHeight: 1.55, marginBottom: '1.5rem' },
+  heading: { fontSize: '1.4rem', fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: '0.75rem' },
+  sub: { color: 'var(--color-text-hint)', fontSize: '0.95rem', lineHeight: 1.55, marginBottom: '1.5rem' },
 };

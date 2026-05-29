@@ -1,5 +1,9 @@
 # CrowdPay Backend API
 
+## Interactive Swagger UI
+
+In development, browse the interactive API docs at `GET /api/docs`.
+
 ## Contribution conversion model
 
 - Campaigns define a default settlement asset via `campaigns.asset_type` (`USDC` or `XLM`).
@@ -12,7 +16,21 @@
 
 ### `GET /api/users/me`
 
-Authenticated. Returns the current profile, including `kyc_status` (`unverified`, `pending`, `verified`, `rejected`) and `kyc_completed_at`.
+Authenticated. Returns the current profile, including `email_verified` (boolean), `kyc_status` (`unverified`, `pending`, `verified`, `rejected`) and `kyc_completed_at`.
+
+### `GET /api/users/verify-email`
+
+Public. Validates a verification token and marks the associated user's email as verified.
+
+Query params:
+- `token` (required): The UUID token sent via email.
+
+Returns `200` on success or `400/410` if the token is invalid or expired (> 24 hours).
+
+### `POST /api/users/resend-verification`
+
+Authenticated. Generates a new verification token and sends a new email.
+Rate-limited to 3 requests per hour per user.
 
 ### `POST /api/users/me/kyc/start`
 
@@ -26,7 +44,7 @@ KYC provider callback. Updates the matched user to `verified` or `rejected` from
 
 ### `POST /api/campaigns`
 
-Authenticated creator/admin endpoint. When `KYC_REQUIRED_FOR_CAMPAIGNS` is not `false`, the user must have `kyc_status=verified`; otherwise the API returns `403` with `code=KYC_REQUIRED`.
+Authenticated creator/admin endpoint. The user must have `email_verified=true`. Additionally, when `KYC_REQUIRED_FOR_CAMPAIGNS` is not `false`, the user must have `kyc_status=verified`; otherwise the API returns `403` with `code=KYC_REQUIRED` or `code=EMAIL_NOT_VERIFIED`.
 
 ### `GET /api/contributions/quote`
 
@@ -183,6 +201,15 @@ Success response includes:
 ### `GET /api/anchor/deposits/:id`
 
 Authenticated. Polls the anchor transaction, updates the local anchor session, and once the deposit completes automatically submits the normal Stellar contribution from the user’s custodial wallet.
+
+### Anchor environment configuration
+
+Anchor deposit support requires a configured backend anchor signing wallet and an enabled anchor.
+Set `ANCHOR_WALLET_HOME_DOMAIN` and `ANCHOR_WALLET_SIGNING_SECRET` in the backend environment.
+MoneyGram anchor support is enabled by default unless `ANCHOR_MONEYGRAM_ENABLED=false`.
+Use `ANCHOR_MONEYGRAM_ENV=sandbox|preview|production` to select the MoneyGram deployment.
+
+For a custom anchor, configure `ANCHOR_CUSTOM_ID`, `ANCHOR_CUSTOM_NAME`, `ANCHOR_CUSTOM_HOME_DOMAIN`, `ANCHOR_CUSTOM_WEB_AUTH_ENDPOINT`, `ANCHOR_CUSTOM_SEP24_ENDPOINT`, `ANCHOR_CUSTOM_SIGNING_KEY`, `ANCHOR_CUSTOM_ASSET_CODE`, and `ANCHOR_CUSTOM_ASSET_ISSUER`.
 
 ### `GET /api/contributions/campaign/:campaignId`
 

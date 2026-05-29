@@ -12,7 +12,7 @@ export default function CampaignDetailSkeleton() {
       </div>
 
       {/* Progress card */}
-      <div style={{ background: '#fff', border: '1px solid #e5e5e5', borderRadius: '10px', padding: '1.5rem', marginBottom: '1rem' }}>
+      <div style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border-light)', borderRadius: '10px', padding: '1.5rem', marginBottom: '1rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
           <div>
             <div className="skeleton" style={{ height: '28px', width: '120px', marginBottom: '0.4rem' }} />
@@ -28,7 +28,7 @@ export default function CampaignDetailSkeleton() {
       </div>
 
       {/* Wallet info */}
-      <div style={{ background: '#f8f8f8', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1.75rem' }}>
+      <div style={{ background: 'var(--color-surface)', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1.75rem' }}>
         <div className="skeleton" style={{ height: '11px', width: '100px', marginBottom: '0.4rem' }} />
         <div className="skeleton" style={{ height: '14px', width: '85%' }} />
       </div>
@@ -46,7 +46,7 @@ function ContributionListSkeleton() {
       {[80, 65, 72].map((w, i) => (
         <div
           key={i}
-          style={{ display: 'flex', justifyContent: 'space-between', background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '0.6rem 0.85rem' }}
+          style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--color-bg)', border: '1px solid var(--color-border-lighter)', borderRadius: '6px', padding: '0.6rem 0.85rem' }}
         >
           <div className="skeleton" style={{ height: '14px', width: `${w}%` }} />
           <div className="skeleton" style={{ height: '14px', width: '50px', flexShrink: 0, marginLeft: '1rem' }} />

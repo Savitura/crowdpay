@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
 import CampaignCard from '../components/CampaignCard';
@@ -15,10 +15,10 @@ const STATUS_OPTIONS = ['', 'active', 'funded', 'closed', 'failed'];
 const ASSET_OPTIONS = ['', 'USDC', 'XLM'];
 const SORT_OPTIONS = [
   { value: 'newest', label: 'Newest' },
-  { value: 'ending_soon', label: 'Ending soon' },
   { value: 'most_funded', label: 'Most funded' },
-  { value: 'most_backed', label: 'Most backed' },
+  { value: 'closest_to_goal', label: 'Closest to goal' },
 ];
+const SEARCH_DEBOUNCE_MS = 450;
 
 export default function Home() {
   const [campaigns, setCampaigns] = useState([]);
@@ -29,6 +29,7 @@ export default function Home() {
   const [showContributorTips, setShowContributorTips] = useState(isContributorOnboardingVisible);
   const [welcomeNewUser, setWelcomeNewUser] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+  const [searchInput, setSearchInput] = useState(() => searchParams.get('search') || '');
 
   const search = searchParams.get('search') || '';
   const status = searchParams.get('status') || '';
@@ -40,11 +41,26 @@ export default function Home() {
   const page = Math.floor(offset / limit) + 1;
   const lastItem = Math.min(total, offset + campaigns.length);
 
+  const hasActiveFilters =
+    Boolean(search.trim()) || Boolean(asset) || Boolean(status) || sort !== 'newest';
+
   useEffect(() => {
     if (consumeJustRegistered()) {
       setWelcomeNewUser(true);
     }
   }, []);
+
+  useEffect(() => {
+    setSearchInput(search);
+  }, [search]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchInput.trim() === search.trim()) return;
+      setFilters({ search: searchInput.trim() });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput, search]);
 
   useEffect(() => {
     setListError('');
@@ -99,7 +115,7 @@ export default function Home() {
             style={{
               marginLeft: '0.5rem',
               background: 'transparent',
-              color: '#065f46',
+              color: 'var(--color-success-text)',
               fontWeight: 600,
               textDecoration: 'underline',
               padding: 0,
@@ -158,10 +174,11 @@ export default function Home() {
         <label style={styles.filterItem}>
           Search
           <input
-            value={search}
-            onChange={(e) => setFilters({ search: e.target.value })}
-            placeholder="Search campaigns"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search by title or description"
             style={styles.filterInput}
+            aria-label="Search campaigns"
           />
         </label>
         <label style={styles.filterItem}>
@@ -220,10 +237,31 @@ export default function Home() {
         </p>
       ) : campaigns.length === 0 ? (
         <div className="alert alert--info">
-          {user && (user.role === 'creator' || user.role === 'admin') ? (
+          {hasActiveFilters ? (
+            <>
+              No campaigns match your search or filters.{' '}
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchInput('');
+                  setSearchParams({}, { replace: true });
+                }}
+                style={{
+                  background: 'transparent',
+                  color: 'var(--color-info-text)',
+                  fontWeight: 700,
+                  textDecoration: 'underline',
+                  padding: 0,
+                  minHeight: 'auto',
+                }}
+              >
+                Clear filters
+              </button>
+            </>
+          ) : user && (user.role === 'creator' || user.role === 'admin') ? (
             <>
               No campaigns yet.{' '}
-              <Link to="/campaigns/new" style={{ color: '#1e40af', fontWeight: 700 }}>
+              <Link to="/campaigns/new" style={{ color: 'var(--color-info-text)', fontWeight: 700 }}>
                 Launch the first one
               </Link>
               .
@@ -270,27 +308,27 @@ export default function Home() {
 
 const styles = {
   hero: { textAlign: 'center', padding: '2rem 0 2.5rem' },
-  h1: { fontSize: 'clamp(1.85rem, 5vw, 2.85rem)', fontWeight: 800, marginBottom: '1rem', color: '#111' },
+  h1: { fontSize: 'clamp(1.85rem, 5vw, 2.85rem)', fontWeight: 800, marginBottom: '1rem', color: 'var(--color-text-primary)' },
   sub: {
     fontSize: 'clamp(0.95rem, 2.5vw, 1.1rem)',
-    color: '#555',
+    color: 'var(--color-text-secondary)',
     marginBottom: '1.5rem',
     maxWidth: '560px',
     margin: '0 auto 1.5rem',
     lineHeight: 1.55,
   },
-  muted: { fontSize: '0.85rem', color: '#777', maxWidth: '320px', lineHeight: 1.4, textAlign: 'center' },
-  sectionTitle: { fontSize: '1.2rem', fontWeight: 700, marginBottom: '1.1rem', color: '#111' },
+  muted: { fontSize: '0.85rem', color: 'var(--color-text-hint)', maxWidth: '320px', lineHeight: 1.4, textAlign: 'center' },
+  sectionTitle: { fontSize: '1.2rem', fontWeight: 700, marginBottom: '1.1rem', color: 'var(--color-text-primary)' },
   filterBar: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
     gap: '1rem',
     marginBottom: '1.25rem',
   },
-  filterItem: { display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.9rem', color: '#333' },
-  filterInput: { width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #d4d4d8', fontSize: '0.95rem' },
+  filterItem: { display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.9rem', color: 'var(--color-text-primary)' },
+  filterInput: { width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--color-border)', fontSize: '0.95rem' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', gap: '1.25rem' },
   pagination: { marginTop: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' },
-  paginationInfo: { color: '#555', fontSize: '0.95rem' },
+  paginationInfo: { color: 'var(--color-text-secondary)', fontSize: '0.95rem' },
   paginationButtons: { display: 'flex', gap: '0.75rem' },
 };

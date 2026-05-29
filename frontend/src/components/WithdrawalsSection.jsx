@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../services/api';
+import { getNetwork, signTransaction } from '@stellar/freighter-api';
 import { stellarExpertTxUrl } from '../config/stellar';
 
 const ELIGIBLE = ['active', 'funded'];
@@ -25,6 +26,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
   const [busyId, setBusyId] = useState(null);
   const [eventsById, setEventsById] = useState({});
   const [openAudit, setOpenAudit] = useState(null);
+  const [milestoneForms, setMilestoneForms] = useState({});
 
   const isCreator = user?.id && campaign.creator_id === user.id;
   const isAdmin = user?.role === 'admin';
@@ -33,6 +35,24 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
   const hasPending = rows.some((r) => r.status === 'pending');
   const canOpenRequest =
     isCreator && !hasMilestonePlan && ELIGIBLE.includes(campaign.status) && !hasPending;
+  const pendingMilestones = milestones.filter((milestone) => milestone.status !== 'released');
+
+  useEffect(() => {
+    setMilestoneForms((current) => {
+      const next = { ...current };
+      let changed = false;
+      for (const milestone of pendingMilestones) {
+        if (!next[milestone.id]) {
+          next[milestone.id] = {
+            evidence_url: milestone.evidence_url || '',
+            destination_key: milestone.destination_key || '',
+          };
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [pendingMilestones]);
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -119,12 +139,74 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
     }
   }
 
+  async function signAsFreighter(id) {
+    // Fetch unsigned_xdr from server
+    setBusyId(id);
+    setError('');
+    try {
+      const wr = await api.getWithdrawal(id, token);
+      const unsignedXdr = wr.unsigned_xdr;
+      if (!unsignedXdr) throw new Error('Missing unsigned transaction');
+
+      const network = await getNetwork();
+      if (network?.error) throw new Error('Could not read Freighter network');
+
+      const signed = await signTransaction(unsignedXdr, {
+        networkPassphrase: network?.networkPassphrase,
+        address: user?.wallet_public_key,
+      });
+      if (signed?.error) throw new Error(signed.error?.message || 'Freighter signing failed');
+      if (!signed?.signedTxXdr) throw new Error('Freighter did not return a signed transaction');
+
+      await api.approveWithdrawalCreator(id, token, { signed_xdr: signed.signedTxXdr });
+    } catch (err) {
+      setError(err.message || 'Could not sign with Freighter');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function setMilestoneField(milestoneId, field, value) {
+    setMilestoneForms((current) => ({
+      ...current,
+      [milestoneId]: {
+        ...(current[milestoneId] || {}),
+        [field]: value,
+      },
+    }));
+  }
+
+  async function requestMilestoneRelease(milestoneId) {
+    const payload = milestoneForms[milestoneId] || {};
+    if (!payload.evidence_url?.trim() || !payload.destination_key?.trim()) {
+      setError('Milestone evidence and payout destination are both required.');
+      return;
+    }
+    setBusyId(`milestone-${milestoneId}`);
+    setError('');
+    try {
+      await api.submitMilestoneEvidence(
+        milestoneId,
+        {
+          evidence_url: payload.evidence_url.trim(),
+          destination_key: payload.destination_key.trim(),
+        },
+        token
+      );
+      onReleased?.();
+    } catch (err) {
+      setError(err.message || 'Milestone release request failed.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   if (!token || forbidden) return null;
   if (loading) {
     return (
       <section style={styles.section} aria-label="Fund release">
         <h2 style={styles.h2}>Manual fund release</h2>
-        <p style={{ color: '#888', fontSize: '0.9rem' }}>Loading…</p>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>Loading…</p>
       </section>
     );
   }
@@ -142,6 +224,53 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
         <p className="alert alert--info" role="status">
           This campaign uses milestone-based releases. Manual one-shot withdrawal requests are disabled; approvals happen through milestone review.
         </p>
+      )}
+
+      {hasMilestonePlan && isCreator && (
+        <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '1rem' }}>
+          {pendingMilestones.map((milestone) => (
+            <div key={milestone.id} style={styles.card}>
+              <h3 style={styles.h3}>Request milestone release</h3>
+              <p style={styles.hint}>
+                {milestone.title} · {Number(milestone.release_percentage).toLocaleString()}% of raised funds
+              </p>
+              {milestone.review_note && (
+                <div className="alert alert--info" style={{ marginBottom: '0.55rem' }}>
+                  {milestone.review_note}
+                </div>
+              )}
+              <label className="label-strong" htmlFor={`milestone-evidence-${milestone.id}`}>
+                Evidence URL
+              </label>
+              <input
+                id={`milestone-evidence-${milestone.id}`}
+                value={milestoneForms[milestone.id]?.evidence_url || ''}
+                onChange={(e) => setMilestoneField(milestone.id, 'evidence_url', e.target.value)}
+                placeholder="https://"
+                style={{ marginBottom: '0.65rem' }}
+              />
+              <label className="label-strong" htmlFor={`milestone-destination-${milestone.id}`}>
+                Destination address
+              </label>
+              <input
+                id={`milestone-destination-${milestone.id}`}
+                value={milestoneForms[milestone.id]?.destination_key || ''}
+                onChange={(e) => setMilestoneField(milestone.id, 'destination_key', e.target.value)}
+                placeholder="G..."
+                style={{ marginBottom: '0.65rem' }}
+              />
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busyId === `milestone-${milestone.id}` || milestone.status === 'released'}
+                onClick={() => requestMilestoneRelease(milestone.id)}
+                style={{ width: '100%' }}
+              >
+                {busyId === `milestone-${milestone.id}` ? 'Submitting…' : 'Request milestone release'}
+              </button>
+            </div>
+          ))}
+        </div>
       )}
 
       {!ELIGIBLE.includes(campaign.status) && (
@@ -200,7 +329,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
 
       <h3 style={{ ...styles.h3, marginTop: '1.5rem' }}>Requests & audit</h3>
       {rows.length === 0 ? (
-        <p style={{ color: '#888', fontSize: '0.9rem' }}>No withdrawal activity yet.</p>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>No withdrawal activity yet.</p>
       ) : (
         <ul style={styles.list}>
           {rows.map((row) => (
@@ -221,7 +350,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                     href={stellarExpertTxUrl(row.tx_hash)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ fontSize: '0.82rem', color: '#7c3aed', fontWeight: 600 }}
+                    style={{ fontSize: '0.82rem', color: 'var(--color-accent)', fontWeight: 600 }}
                   >
                     View transaction
                   </a>
@@ -232,7 +361,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                       <li key={ev.id}>
                         <strong>{ev.action}</strong>
                         {ev.note ? ` — ${ev.note}` : ''}
-                        <span style={{ color: '#888' }}>
+                        <span style={{ color: 'var(--color-text-muted)' }}>
                           {' '}
                           ({new Date(ev.created_at).toLocaleString()})
                         </span>
@@ -260,15 +389,27 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                     >
                       Cancel
                     </button>
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      disabled={busyId === row.id}
-                      onClick={() => runAction(row.id, () => api.approveWithdrawalCreator(row.id, token))}
-                      style={{ fontSize: '0.8rem' }}
-                    >
-                      Sign as creator
-                    </button>
+                    {user?.wallet_type === 'freighter' ? (
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={busyId === row.id}
+                        onClick={() => signAsFreighter(row.id)}
+                        style={{ fontSize: '0.8rem' }}
+                      >
+                        Sign in Freighter
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={busyId === row.id}
+                        onClick={() => runAction(row.id, () => api.approveWithdrawalCreator(row.id, token))}
+                        style={{ fontSize: '0.8rem' }}
+                      >
+                        Sign as creator
+                      </button>
+                    )}
                   </>
                 )}
                 {row.status === 'pending' && row.creator_signed && !row.platform_signed && cap.can_approve_platform && (
@@ -319,14 +460,14 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
 }
 
 const styles = {
-  section: { marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid #e5e5e5' },
+  section: { marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--color-border-light)' },
   h2: { fontSize: '1.15rem', fontWeight: 800, marginBottom: '0.5rem' },
   h3: { fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' },
-  intro: { color: '#555', fontSize: '0.9rem', lineHeight: 1.55, marginBottom: '1rem' },
-  hint: { color: '#666', fontSize: '0.82rem', lineHeight: 1.45, marginBottom: '0.65rem' },
+  intro: { color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.55, marginBottom: '1rem' },
+  hint: { color: 'var(--color-text-hint)', fontSize: '0.82rem', lineHeight: 1.45, marginBottom: '0.65rem' },
   card: {
-    background: '#fff',
-    border: '1px solid #e5e5e5',
+    background: 'var(--color-bg)',
+    border: '1px solid var(--color-border-light)',
     borderRadius: '10px',
     padding: '1.1rem',
     display: 'flex',
@@ -338,20 +479,20 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '0.65rem',
-    background: '#fff',
-    border: '1px solid #eee',
+    background: 'var(--color-bg)',
+    border: '1px solid var(--color-border-lighter)',
     borderRadius: '10px',
     padding: '0.85rem 1rem',
   },
-  rowTitle: { fontSize: '0.9rem', fontWeight: 600, color: '#111' },
-  meta: { fontSize: '0.8rem', color: '#666' },
+  rowTitle: { fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text-primary)' },
+  meta: { fontSize: '0.8rem', color: 'var(--color-text-hint)' },
   code: { fontSize: '0.78rem' },
   actions: { display: 'flex', flexWrap: 'wrap', gap: '0.45rem', alignItems: 'center' },
   audit: {
     marginTop: '0.5rem',
     paddingLeft: '1.1rem',
     fontSize: '0.78rem',
-    color: '#444',
+    color: 'var(--color-text-secondary)',
     lineHeight: 1.5,
   },
 };

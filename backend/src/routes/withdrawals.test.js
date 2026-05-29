@@ -51,9 +51,11 @@ function buildApp({ queryImpl, stellarImpl, userId = 'creator-1', role = 'creato
   return { app, cleanup: () => {} };
 }
 
+const VALID_DESTINATION = 'GASXEYHSSVN3WSHD4WSZ4O37HC2AG4JH2EB6UPHM6IXDXDRJRDJD4RZK';
+
 function campaignRow(overrides = {}) {
   return {
-    id: 'camp-1',
+    id: '11111111-1111-1111-1111-111111111111',
     creator_id: 'creator-1',
     wallet_public_key: 'GCAMPAIGN',
     asset_type: 'USDC',
@@ -105,7 +107,7 @@ test('POST /api/withdrawals/request creates pending request and logs event', asy
   const response = await request(app)
     .post('/api/withdrawals/request')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'camp-1', destination_key: 'GDEST', amount: '10.0000000' });
+    .send({ campaign_id: '11111111-1111-1111-1111-111111111111', destination_key: VALID_DESTINATION, amount: '10.0000000' });
 
   cleanup();
   assert.equal(response.status, 201);
@@ -128,7 +130,7 @@ test('POST /api/withdrawals/request blocks when campaign not active or funded', 
   const response = await request(app)
     .post('/api/withdrawals/request')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'camp-1', destination_key: 'GDEST', amount: '10.0000000' });
+    .send({ campaign_id: '11111111-1111-1111-1111-111111111111', destination_key: VALID_DESTINATION, amount: '10.0000000' });
 
   cleanup();
   assert.equal(response.status, 409);
@@ -150,7 +152,7 @@ test('POST /api/withdrawals/request blocks duplicate pending', async () => {
   const response = await request(app)
     .post('/api/withdrawals/request')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'camp-1', destination_key: 'GDEST', amount: '10.0000000' });
+    .send({ campaign_id: '11111111-1111-1111-1111-111111111111', destination_key: VALID_DESTINATION, amount: '10.0000000' });
 
   cleanup();
   assert.equal(response.status, 409);
@@ -179,7 +181,7 @@ test('POST /api/withdrawals/request denies invalid multisig config', async () =>
   const response = await request(app)
     .post('/api/withdrawals/request')
     .set('Authorization', 'Bearer token')
-    .send({ campaign_id: 'camp-1', destination_key: 'GDEST', amount: '10.0000000' });
+    .send({ campaign_id: '11111111-1111-1111-1111-111111111111', destination_key: VALID_DESTINATION, amount: '10.0000000' });
 
   cleanup();
   assert.equal(response.status, 422);
@@ -216,6 +218,9 @@ test('POST /api/withdrawals/:id/approve/creator signs withdrawal request', async
     queryImpl: async (text) => {
       calls.push(text);
       if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [] };
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
       if (text.includes('FROM withdrawal_requests wr')) {
         return {
           rows: [{
@@ -225,12 +230,13 @@ test('POST /api/withdrawals/:id/approve/creator signs withdrawal request', async
             platform_signed: false,
             unsigned_xdr: 'xdr-base',
             creator_id: 'creator-1',
+            campaign_id: '11111111-1111-1111-1111-111111111111',
             campaign_status: 'active',
           }],
         };
       }
-      if (text.includes('wallet_secret_encrypted FROM users')) {
-        return { rows: [{ wallet_secret_encrypted: 'SCREATOR' }] };
+      if (text.includes('wallet_secret_encrypted') && text.includes('FROM users')) {
+        return { rows: [{ wallet_secret_encrypted: 'SCREATOR', wallet_public_key: 'GCREATOR' }] };
       }
       if (text.includes('UPDATE withdrawal_requests') && text.includes('creator_signed = TRUE')) {
         return { rows: [{ id: 'w-1', creator_signed: true, unsigned_xdr: 'xdr-signed' }] };
@@ -345,6 +351,9 @@ test('POST /api/withdrawals/:id/cancel succeeds before creator signs', async () 
   const { app, cleanup } = buildApp({
     queryImpl: async (text) => {
       if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [] };
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
       if (text.includes('FROM withdrawal_requests wr')) {
         return {
           rows: [{
@@ -352,6 +361,7 @@ test('POST /api/withdrawals/:id/cancel succeeds before creator signs', async () 
             status: 'pending',
             creator_signed: false,
             creator_id: 'creator-1',
+            campaign_id: '11111111-1111-1111-1111-111111111111',
           }],
         };
       }

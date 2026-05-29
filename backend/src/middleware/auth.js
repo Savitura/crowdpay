@@ -35,14 +35,26 @@ async function authenticate(req) {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     req.user = payload;
     req.auth = { kind: 'jwt', scopes: null };
+    
+    // Load admin status from database
+    if (req.user.userId) {
+      const { rows } = await db.query(
+        'SELECT is_admin, is_banned FROM users WHERE id = $1',
+        [req.user.userId]
+      );
+      if (rows.length) {
+        req.user.is_admin = rows[0].is_admin;
+        req.user.is_banned = rows[0].is_banned;
+      }
+    }
   } catch {
     throw new Error('Invalid token');
   }
 }
 
 function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Requires admin role' });
+  if (!req.user || !req.user.is_admin) {
+    return res.status(403).json({ error: 'Requires admin privileges' });
   }
   next();
 }

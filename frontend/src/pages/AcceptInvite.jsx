@@ -63,7 +63,7 @@ export default function AcceptInvite() {
         </p>
       ) : (
         <>
-          <p style={{ color: '#555', marginBottom: '1.5rem', lineHeight: 1.55 }}>
+          <p style={{ color: 'var(--color-text-secondary)', marginBottom: '1.5rem', lineHeight: 1.55 }}>
             You have been invited to participate in this crowdfunding project. Accepting gives you access to the campaign permissions granted to your account.
           </p>
           {error && <p className="alert alert--error" style={{ marginBottom: '1rem' }}>{error}</p>}

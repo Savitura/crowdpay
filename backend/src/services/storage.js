@@ -14,6 +14,13 @@ function createStorageClient() {
     endpoint,
     region: process.env.STORAGE_REGION || 'auto',
     forcePathStyle: true,
+    credentials:
+      process.env.STORAGE_ACCESS_KEY && process.env.STORAGE_SECRET_KEY
+        ? {
+            accessKeyId: process.env.STORAGE_ACCESS_KEY,
+            secretAccessKey: process.env.STORAGE_SECRET_KEY,
+          }
+        : undefined,
   });
 }
 

@@ -14,22 +14,49 @@ const { isKycRequiredForCampaigns } = require('../services/kycProvider');
 const {
   registerValidation,
   loginValidation,
+  forgotPasswordValidation,
+  resetPasswordValidation,
   validateRequest,
+  validateRequestAsError,
 } = require('../middleware/validation');
+
+/**
+ * @openapi
+ * tags:
+ *   - name: Users
+ *     description: User registration and login
+ */
 
 const REFRESH_TOKEN_COOKIE_NAME = 'cp_refresh_token';
 const REFRESH_TOKEN_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
+const FORGOT_PASSWORD_MESSAGE =
+  'If that email exists, a password reset link has been sent.';
 
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
+const isTest = process.env.NODE_ENV === 'test';
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: isTest ? 100000 : 10,
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => isTest,
+});
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isTest ? 100000 : 20,
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => isTest,
 });
 
 function hashToken(token) {
   return crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
+function getFrontendUrl() {
+  return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
 }
 
 function generateTokens(user) {
@@ -110,7 +137,74 @@ async function rotateRefreshToken(oldToken, userId) {
   return createRefreshToken(userId);
 }
 
-router.post('/register', authLimiter, registerValidation, validateRequest, async (req, res) => {
+router.post('/register', registerLimiter, registerValidation, validateRequest, async (req, res) => {
+  /**
+   * @openapi
+   * /api/auth/register:
+   *   post:
+   *     tags: [Users]
+   *     summary: Register a new user
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [email, password, name]
+   *             properties:
+   *               email: { type: string, format: email }
+   *               password: { type: string, minLength: 6 }
+   *               name: { type: string }
+   *               role: { type: string, enum: [contributor, creator] }
+   *     responses:
+   *       201:
+   *         description: Created
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               required: [token, user]
+   *               properties:
+   *                 token: { type: string }
+   *                 user:
+   *                   type: object
+   *                   properties:
+   *                     id: { type: integer }
+   *                     email: { type: string, format: email }
+   *                     name: { type: string }
+   *                     wallet_public_key: { type: string }
+   *                     role: { type: string }
+   *                     kyc_status: { type: string }
+   *                     kyc_completed_at: { type: string, nullable: true }
+   *                     kyc_required_for_campaigns: { type: boolean }
+   *       409:
+   *         description: Email already registered
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 error: { type: string }
+   * /api/users/register:
+   *   post:
+   *     tags: [Users]
+   *     summary: Register a new user (alias of /api/auth/register)
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [email, password, name]
+   *             properties:
+   *               email: { type: string, format: email }
+   *               password: { type: string, minLength: 6 }
+   *               name: { type: string }
+   *               role: { type: string, enum: [contributor, creator] }
+   *     responses:
+   *       201: { description: Created }
+   *       409: { description: Email already registered }
+   */
   const { email, password, name, role } = req.body;
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const normalizedName = String(name || '').trim();
@@ -126,16 +220,28 @@ router.post('/register', authLimiter, registerValidation, validateRequest, async
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
-  const keypair = Keypair.random();
-  const publicKey = keypair.publicKey();
-  const secret = keypair.secret();
-  const encryptedSecret = await encryptWalletSecret(secret, { walletPublicKey: publicKey });
+
+  // Support freighter (non-custodial) registration where frontend provides wallet_public_key
+  let publicKey;
+  let encryptedSecret = null;
+  let walletType = req.body.wallet_type || 'custodial';
+
+  if (walletType === 'freighter') {
+    publicKey = req.body.wallet_public_key;
+    // wallet_public_key validated by middleware when wallet_type=freighter
+    encryptedSecret = null;
+  } else {
+    const keypair = Keypair.random();
+    publicKey = keypair.publicKey();
+    const secret = keypair.secret();
+    encryptedSecret = await encryptWalletSecret(secret, { walletPublicKey: publicKey });
+  }
 
   const { rows } = await db.query(
-    `INSERT INTO users (email, password_hash, name, wallet_public_key, wallet_secret_encrypted, role)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, email, name, wallet_public_key, role, kyc_status, kyc_completed_at`,
-    [normalizedEmail, passwordHash, normalizedName, publicKey, encryptedSecret, userRole]
+    `INSERT INTO users (email, password_hash, name, wallet_public_key, wallet_secret_encrypted, role, wallet_type)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id, email, name, wallet_public_key, role, kyc_status, kyc_completed_at, wallet_type`,
+    [normalizedEmail, passwordHash, normalizedName, publicKey, encryptedSecret, userRole, walletType]
   );
 
   const user = {
@@ -166,7 +272,70 @@ router.post('/register', authLimiter, registerValidation, validateRequest, async
   res.status(201).json({ token: accessToken, user });
 });
 
-router.post('/login', authLimiter, loginValidation, validateRequest, async (req, res) => {
+router.post('/login', loginLimiter, loginValidation, validateRequest, async (req, res) => {
+  /**
+   * @openapi
+   * /api/auth/login:
+   *   post:
+   *     tags: [Users]
+   *     summary: Login
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [email, password]
+   *             properties:
+   *               email: { type: string, format: email }
+   *               password: { type: string }
+   *     responses:
+   *       200:
+   *         description: OK
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               required: [token, user]
+   *               properties:
+   *                 token: { type: string }
+   *                 user:
+   *                   type: object
+   *                   properties:
+   *                     id: { type: integer }
+   *                     email: { type: string, format: email }
+   *                     name: { type: string }
+   *                     wallet_public_key: { type: string }
+   *                     role: { type: string }
+   *                     kyc_status: { type: string }
+   *                     kyc_completed_at: { type: string, nullable: true }
+   *                     kyc_required_for_campaigns: { type: boolean }
+   *       401:
+   *         description: Invalid credentials
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 error: { type: string }
+   * /api/users/login:
+   *   post:
+   *     tags: [Users]
+   *     summary: Login (alias of /api/auth/login)
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [email, password]
+   *             properties:
+   *               email: { type: string, format: email }
+   *               password: { type: string }
+   *     responses:
+   *       200: { description: OK }
+   *       401: { description: Invalid credentials }
+   */
   const { email, password } = req.body;
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const { rows } = await db.query('SELECT * FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
@@ -188,6 +357,7 @@ router.post('/login', authLimiter, loginValidation, validateRequest, async (req,
       email: user.email,
       name: user.name,
       wallet_public_key: user.wallet_public_key,
+      wallet_type: user.wallet_type || 'custodial',
       role: user.role,
       kyc_status: user.kyc_status,
       kyc_completed_at: user.kyc_completed_at,
@@ -219,6 +389,7 @@ router.post('/refresh', async (req, res) => {
       email: user.email,
       name: user.name,
       wallet_public_key: user.wallet_public_key,
+      wallet_type: user.wallet_type || 'custodial',
       role: user.role,
       kyc_status: user.kyc_status,
       kyc_completed_at: user.kyc_completed_at,
@@ -236,8 +407,92 @@ router.post('/logout', requireAuth, async (req, res) => {
   res.json({ message: 'Logged out successfully' });
 });
 
-router.post('/forgot-password', authLimiter, async (req, res) => {
-  res.json({ message: 'If that email exists, a password reset link has been sent.' });
-});
+router.post(
+  '/forgot-password',
+  loginLimiter,
+  forgotPasswordValidation,
+  validateRequestAsError,
+  async (req, res) => {
+    const normalizedEmail = req.body.email.trim().toLowerCase();
+
+    const { rows } = await db.query(
+      'SELECT id, email FROM users WHERE LOWER(email) = $1',
+      [normalizedEmail]
+    );
+
+    if (rows.length) {
+      const user = rows[0];
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      const tokenHash = hashToken(rawToken);
+      const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_MS);
+
+      await db.query(
+        `UPDATE password_reset_tokens SET used_at = NOW()
+         WHERE user_id = $1 AND used_at IS NULL`,
+        [user.id]
+      );
+      await db.query(
+        `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+         VALUES ($1, $2, $3)`,
+        [user.id, tokenHash, expiresAt]
+      );
+
+      const resetUrl = `${getFrontendUrl()}/reset-password?token=${rawToken}`;
+      sendEmail({
+        to: user.email,
+        subject: 'Reset your CrowdPay password',
+        text: `You requested a password reset. Open this link within 1 hour to choose a new password:\n\n${resetUrl}\n\nIf you did not request this, you can ignore this email.`,
+        html: `<p>You requested a password reset. <a href="${resetUrl}">Reset your password</a> within 1 hour.</p><p>If you did not request this, you can ignore this email.</p>`,
+      });
+    }
+
+    res.json({ message: FORGOT_PASSWORD_MESSAGE });
+  }
+);
+
+router.post(
+  '/reset-password',
+  loginLimiter,
+  resetPasswordValidation,
+  validateRequestAsError,
+  async (req, res) => {
+    const { token, password } = req.body;
+    const tokenHash = hashToken(token);
+
+    const { rows } = await db.query(
+      `SELECT prt.id, prt.user_id
+       FROM password_reset_tokens prt
+       WHERE prt.token_hash = $1
+         AND prt.used_at IS NULL
+         AND prt.expires_at > NOW()`,
+      [tokenHash]
+    );
+
+    if (!rows.length) {
+      return res.status(400).json({
+        error: 'Invalid or expired reset link. Please request a new one.',
+      });
+    }
+
+    const resetToken = rows[0];
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [
+      passwordHash,
+      resetToken.user_id,
+    ]);
+    await db.query(
+      'UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1',
+      [resetToken.id]
+    );
+    await db.query(
+      `UPDATE refresh_tokens SET revoked_at = NOW()
+       WHERE user_id = $1 AND revoked_at IS NULL`,
+      [resetToken.user_id]
+    );
+
+    res.json({ message: 'Password reset successfully' });
+  }
+);
 
 module.exports = router;

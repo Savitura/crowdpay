@@ -8,6 +8,7 @@
 
 const { server } = require('../config/stellar');
 const db = require('../config/database');
+const logger = require('../config/logger');
 const { markContributionIndexed } = require('./stellarTransactionService');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('./webhookDispatcher');
 
@@ -105,10 +106,11 @@ async function replayMissedPayments(campaignId, walletPublicKey) {
         .limit(100)
         .call();
     } catch (err) {
-      console.error(
-        `[monitor] REST replay failed for ${walletPublicKey}; continuing with stream:`,
-        err.message
-      );
+      logger.error('Ledger REST replay failed; continuing with stream', {
+        wallet_public_key: walletPublicKey,
+        campaign_id: campaignId,
+        error: err.message,
+      });
       return;
     }
 
@@ -138,7 +140,11 @@ async function onPaymentRecord(campaignId, walletPublicKey, record) {
       try {
         await saveCursor(campaignId, walletPublicKey, token);
       } catch (e) {
-        console.error('[monitor] Failed to persist ledger cursor:', e.message);
+        logger.error('Failed to persist ledger cursor', {
+          wallet_public_key: walletPublicKey,
+          campaign_id: campaignId,
+          error: e.message,
+        });
       }
     }
   }
@@ -305,9 +311,13 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
         anchor_transaction_id: anchorMetadata?.anchor_transaction_id || null,
       },
     };
-    console.log(
-      `[monitor] Contribution indexed: ${destinationAmount} ${destinationAsset} -> campaign ${campaignId}`
-    );
+    logger.info('Contribution indexed', {
+      campaign_id: campaignId,
+      wallet_public_key: walletPublicKey,
+      amount: destinationAmount,
+      asset: destinationAsset,
+      tx_hash: txHash,
+    });
 
     broadcastCampaignUpdate(campaignId, {
       type: 'contribution',
@@ -348,13 +358,17 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
         postCommitHooks.creatorId,
         WEBHOOK_EVENTS.CONTRIBUTION_RECEIVED,
         postCommitHooks.contributionPayload
-      ).catch((e) => console.error('[monitor] contribution webhook:', e.message));
+      ).catch((e) =>
+        logger.error('Contribution webhook emit failed', { error: e.message })
+      );
       if (postCommitHooks.fundedCampaign) {
         emitWebhookEventForUser(
           postCommitHooks.fundedCampaign.creator_id,
           WEBHOOK_EVENTS.CAMPAIGN_FUNDED,
           { campaign: postCommitHooks.fundedCampaign }
-        ).catch((e) => console.error('[monitor] funded webhook:', e.message));
+        ).catch((e) =>
+          logger.error('Funded webhook emit failed', { error: e.message })
+        );
       }
     });
   }
@@ -367,14 +381,21 @@ function scheduleStreamReconnect(campaignId, walletPublicKey, attempt) {
     reconnect_attempt: attempt,
     next_reconnect_at: new Date(Date.now() + delay).toISOString(),
   });
-  console.log(
-    `[monitor] Scheduling stream reconnect for ${walletPublicKey} in ${delay}ms (attempt ${attempt})`
-  );
+  logger.info('Scheduling ledger stream reconnect', {
+    wallet_public_key: walletPublicKey,
+    campaign_id: campaignId,
+    delay_ms: delay,
+    attempt,
+  });
   setTimeout(() => {
     watchCampaignWallet(campaignId, walletPublicKey)
       .then(() => reconnectAttempts.delete(walletPublicKey))
       .catch((err) =>
-        console.error(`[monitor] Reconnect failed for ${walletPublicKey}:`, err.message)
+        logger.error('Ledger stream reconnect failed', {
+          wallet_public_key: walletPublicKey,
+          campaign_id: campaignId,
+          error: err.message,
+        })
       );
   }, delay);
 }
@@ -383,9 +404,11 @@ async function openStreamForWallet(campaignId, walletPublicKey) {
   const stored = await loadCursor(campaignId);
   const streamCursor = stored || 'now';
 
-  console.log(
-    `[monitor] Stream ${walletPublicKey} cursor=${stored ? 'resumed' : 'now'} campaign=${campaignId}`
-  );
+  logger.info('Opening ledger stream', {
+    wallet_public_key: walletPublicKey,
+    campaign_id: campaignId,
+    cursor_mode: stored ? 'resumed' : 'now',
+  });
 
   const closeStream = server
     .payments()
@@ -401,11 +424,19 @@ async function openStreamForWallet(campaignId, walletPublicKey) {
           last_error: null,
         });
         onPaymentRecord(campaignId, walletPublicKey, record).catch((err) =>
-          console.error('[monitor] onPaymentRecord:', err.message)
+          logger.error('Ledger onPaymentRecord failed', {
+            wallet_public_key: walletPublicKey,
+            campaign_id: campaignId,
+            error: err.message,
+          })
         );
       },
       onerror: (err) => {
-        console.error(`[monitor] Stream error for ${walletPublicKey}:`, err.message);
+        logger.error('Ledger stream error', {
+          wallet_public_key: walletPublicKey,
+          campaign_id: campaignId,
+          error: err.message,
+        });
         const snap = streamRegistry.get(walletPublicKey);
         const attempt = (reconnectAttempts.get(walletPublicKey) || 0) + 1;
         reconnectAttempts.set(walletPublicKey, attempt);
@@ -460,22 +491,25 @@ async function startLedgerMonitor() {
   await Promise.all(
     rows.map((campaign) =>
       watchCampaignWallet(campaign.id, campaign.wallet_public_key).catch((err) =>
-        console.error(`[monitor] Failed to watch ${campaign.wallet_public_key}:`, err.message)
+        logger.error('Failed to watch campaign wallet', {
+          wallet_public_key: campaign.wallet_public_key,
+          campaign_id: campaign.id,
+          error: err.message,
+        })
       )
     )
   );
 
-  console.log(`[monitor] Watching ${rows.length} active campaign(s)`);
+  logger.info('Watching active campaigns', { active_campaigns: rows.length });
 
   setInterval(() => {
     getLedgerStreamHealth()
       .then((h) => {
         const bad = h.streams.filter((s) => s.stale_stream_no_messages_15m);
         if (bad.length) {
-          console.warn(
-            '[monitor] health: connected streams idle >15m:',
-            bad.map((b) => b.wallet_public_key).join(', ')
-          );
+          logger.warn('Ledger stream health: connected streams idle >15m', {
+            wallet_public_keys: bad.map((b) => b.wallet_public_key),
+          });
         }
       })
       .catch(() => {});

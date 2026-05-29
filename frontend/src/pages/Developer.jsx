@@ -121,24 +121,24 @@ export default function Developer() {
   return (
     <main className="container" style={{ paddingTop: '3rem', paddingBottom: '4rem', maxWidth: '900px' }}>
       <h1 style={{ fontSize: '1.75rem', fontWeight: 800, marginBottom: '0.35rem' }}>Developer</h1>
-      <p style={{ color: '#666', marginBottom: '2rem', fontSize: '0.95rem' }}>
+      <p style={{ color: 'var(--color-text-hint)', marginBottom: '2rem', fontSize: '0.95rem' }}>
         API keys and webhooks for integrating CrowdPay as a funding backend. See{' '}
         <code style={{ fontSize: '0.85rem' }}>backend/docs/webhooks-integration.md</code> for HMAC verification.
       </p>
-      {error && <p style={{ color: '#dc2626', marginBottom: '1rem' }}>{error}</p>}
-      {loading && <p style={{ color: '#666' }}>Loading…</p>}
+      {error && <p style={{ color: 'var(--color-status-error)', marginBottom: '1rem' }}>{error}</p>}
+      {loading && <p style={{ color: 'var(--color-text-hint)' }}>Loading…</p>}
 
       <section style={{ marginBottom: '2.5rem' }}>
         <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.75rem' }}>API keys</h2>
         {revealedKey && (
-          <div style={{ background: '#fef3c7', border: '1px solid #fcd34d', padding: '0.85rem', borderRadius: 8, marginBottom: '1rem' }}>
+          <div style={{ background: 'var(--color-warning-bg)', border: '1px solid var(--color-warning-border)', padding: '0.85rem', borderRadius: 8, marginBottom: '1rem' }}>
             <strong>Copy now:</strong>
             <pre style={{ margin: '0.5rem 0 0', wordBreak: 'break-all', fontSize: '0.8rem' }}>{revealedKey}</pre>
           </div>
         )}
         <form onSubmit={createKey} style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem' }}>
           <input value={newKeyLabel} onChange={(e) => setNewKeyLabel(e.target.value)} placeholder="Label" style={{ minWidth: '160px' }} />
-          <span style={{ fontSize: '0.85rem', color: '#555' }}>Scopes:</span>
+          <span style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>Scopes:</span>
           {SCOPE_OPTIONS.map((sc) => (
             <label key={sc} style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
               <input type="checkbox" checked={newKeyScopes.includes(sc)} onChange={() => toggleScope(sc)} />
@@ -149,7 +149,7 @@ export default function Developer() {
         </form>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
           <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid #e5e5e5' }}>
+            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border-light)' }}>
               <th style={{ padding: '0.4rem' }}>Label</th>
               <th>Prefix</th>
               <th>Scopes</th>
@@ -159,11 +159,11 @@ export default function Developer() {
           </thead>
           <tbody>
             {keys.filter((k) => !k.revoked_at).map((k) => (
-              <tr key={k.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+              <tr key={k.id} style={{ borderBottom: '1px solid var(--color-border-lighter)' }}>
                 <td style={{ padding: '0.45rem' }}>{k.label}</td>
                 <td><code>{k.key_prefix}</code></td>
                 <td>{(k.scopes || []).join(', ')}</td>
-                <td style={{ color: '#666' }}>{k.last_used_at ? new Date(k.last_used_at).toLocaleString() : '—'}</td>
+                <td style={{ color: 'var(--color-text-hint)' }}>{k.last_used_at ? new Date(k.last_used_at).toLocaleString() : '—'}</td>
                 <td>
                   <button type="button" className="btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }} onClick={() => revokeKey(k.id)}>Revoke</button>
                 </td>
@@ -176,7 +176,7 @@ export default function Developer() {
       <section style={{ marginBottom: '2.5rem' }}>
         <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.75rem' }}>Webhooks</h2>
         {revealedSecret && (
-          <div style={{ background: '#fef3c7', border: '1px solid #fcd34d', padding: '0.85rem', borderRadius: 8, marginBottom: '1rem' }}>
+          <div style={{ background: 'var(--color-warning-bg)', border: '1px solid var(--color-warning-border)', padding: '0.85rem', borderRadius: 8, marginBottom: '1rem' }}>
             <strong>Signing secret (copy once):</strong>
             <pre style={{ margin: '0.5rem 0 0', wordBreak: 'break-all', fontSize: '0.8rem' }}>{revealedSecret}</pre>
           </div>
@@ -195,10 +195,10 @@ export default function Developer() {
         </form>
         <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {hooks.filter((h) => !h.revoked_at).map((h) => (
-            <li key={h.id} style={{ padding: '0.5rem 0', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+            <li key={h.id} style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--color-border-lighter)', display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontWeight: 600 }}>{h.url}</div>
-                <div style={{ fontSize: '0.8rem', color: '#666' }}>{(h.events || []).join(', ')} · {h.secret_hint}</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>{(h.events || []).join(', ')} · {h.secret_hint}</div>
               </div>
               <button type="button" className="btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }} onClick={() => revokeHook(h.id)}>Remove</button>
             </li>
@@ -211,7 +211,7 @@ export default function Developer() {
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
             <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid #e5e5e5' }}>
+              <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border-light)' }}>
                 <th style={{ padding: '0.35rem' }}>Time</th>
                 <th>Event</th>
                 <th>Status</th>
@@ -222,7 +222,7 @@ export default function Developer() {
             </thead>
             <tbody>
               {deliveries.map((d) => (
-                <tr key={d.id} style={{ borderBottom: '1px solid #f3f3f3' }}>
+                <tr key={d.id} style={{ borderBottom: '1px solid var(--color-border-lightest)' }}>
                   <td style={{ padding: '0.35rem', whiteSpace: 'nowrap' }}>{new Date(d.created_at).toLocaleString()}</td>
                   <td>{d.event_type}</td>
                   <td>{d.status}</td>
