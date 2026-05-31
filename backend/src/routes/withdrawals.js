@@ -10,6 +10,7 @@ const {
   signTransactionXdr,
   signatureCountFromXdr,
   submitSignedWithdrawal,
+  isXdrExpired,
   PLATFORM_PUBLIC_KEY,
 } = require('../services/stellarService');
 const {
@@ -392,6 +393,14 @@ const platformApproveHandler = async (req, res) => {
   }
   if (requestRow.platform_signed) {
     return res.status(409).json({ error: 'Platform already approved this withdrawal' });
+  }
+
+  // Check whether the XDR time bounds have already elapsed before adding our signature.
+  // If expired, tell the creator to re-request so a fresh XDR is built.
+  if (isXdrExpired(requestRow.unsigned_xdr)) {
+    return res.status(410).json({
+      error: 'Withdrawal XDR has expired. The creator must cancel and submit a new withdrawal request.',
+    });
   }
 
   const signedXdr = signTransactionXdr({

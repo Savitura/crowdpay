@@ -19,6 +19,8 @@ function buildApp({ queryImpl, stellarImpl, userId = 'creator-1', role = 'creato
     signTransactionXdr: () => 'xdr-signed',
     signatureCountFromXdr: () => 2,
     submitSignedWithdrawal: async () => 'tx-hash',
+    // Default: XDR is not expired. Override in specific tests via stellarImpl.
+    isXdrExpired: () => false,
     PLATFORM_PUBLIC_KEY: 'GPLATFORM',
     ...stellarImpl,
   };
@@ -494,4 +496,38 @@ test('POST /api/withdrawals/:id/approve/platform logs failure when Stellar rejec
 
   cleanup();
   assert.equal(response.status, 502);
+});
+
+test('POST /api/withdrawals/:id/approve/platform returns 410 when XDR time bounds are expired', async () => {
+  const { app, cleanup } = buildApp({
+    role: 'admin',
+    queryImpl: async (text) => {
+      if (text.includes('SELECT wr.*, c.status')) {
+        return {
+          rows: [{
+            id: 'w-expired',
+            status: 'pending',
+            creator_signed: true,
+            platform_signed: false,
+            unsigned_xdr: 'xdr-expired',
+            campaign_status: 'active',
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+    stellarImpl: {
+      // Simulate an expired XDR — isXdrExpired returns true
+      isXdrExpired: () => true,
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/withdrawals/w-expired/approve/platform')
+    .set('Authorization', 'Bearer token')
+    .send({});
+
+  cleanup();
+  assert.equal(response.status, 410);
+  assert.match(response.body.error, /expired/i);
 });

@@ -5,7 +5,8 @@ import { stellarExpertTxUrl } from '../config/stellar';
 
 const ELIGIBLE = ['active', 'funded'];
 
-function statusLabel(row) {
+function statusLabel(row, isExpired) {
+  if (isExpired) return 'Expired — please re-request';
   if (row.status === 'pending') {
     if (!row.creator_signed) return 'Awaiting creator signature';
     if (!row.platform_signed) return 'Awaiting platform release';
@@ -27,6 +28,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
   const [eventsById, setEventsById] = useState({});
   const [openAudit, setOpenAudit] = useState(null);
   const [milestoneForms, setMilestoneForms] = useState({});
+  const [expiredIds, setExpiredIds] = useState(() => new Set());
 
   const isCreator = user?.id && campaign.creator_id === user.id;
   const isAdmin = user?.role === 'admin';
@@ -133,7 +135,12 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
       await refresh();
       onReleased?.();
     } catch (err) {
-      setError(err.message || 'Action failed.');
+      if (err.status === 410) {
+        // XDR has expired — mark this row so the UI can prompt the creator to re-request
+        setExpiredIds((prev) => new Set([...prev, id]));
+      } else {
+        setError(err.message || 'Action failed.');
+      }
     } finally {
       setBusyId(null);
     }
@@ -339,7 +346,12 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                   {Number(row.amount).toLocaleString()} {campaign.asset_type} →{' '}
                   <code style={styles.code}>{row.destination_key.slice(0, 6)}…{row.destination_key.slice(-4)}</code>
                 </div>
-                <div style={styles.meta}>{statusLabel(row)}</div>
+                <div style={styles.meta}>{statusLabel(row, expiredIds.has(row.id))}</div>
+                {expiredIds.has(row.id) && (
+                  <div className="alert alert--warning" style={{ marginTop: '0.5rem', fontSize: '0.8rem' }} role="alert">
+                    This withdrawal XDR has expired. Please cancel this request and submit a new one.
+                  </div>
+                )}
                 {row.denial_reason && (
                   <div className="alert alert--error" style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>
                     {row.denial_reason}
@@ -412,7 +424,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                     )}
                   </>
                 )}
-                {row.status === 'pending' && row.creator_signed && !row.platform_signed && cap.can_approve_platform && (
+                {row.status === 'pending' && row.creator_signed && !row.platform_signed && cap.can_approve_platform && !expiredIds.has(row.id) && (
                   <>
                     <button
                       type="button"

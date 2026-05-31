@@ -438,7 +438,7 @@ async function buildWithdrawalTransaction({
         amount: String(amount),
       })
     )
-    .setTimeout(300) // 5 minutes for both parties to sign
+    .setTimeout(60 * 60 * 24 * 7) // 7 days — platform approver may not be available immediately
     .build();
 
   return tx.toXDR();
@@ -462,6 +462,20 @@ function signTransactionXdr({ xdr, signerSecret }) {
 function signatureCountFromXdr(xdr) {
   const tx = new Transaction(xdr, networkPassphrase);
   return tx.signatures.length;
+}
+
+/**
+ * Returns true if the XDR transaction's maxTime has already passed.
+ * Returns false if the XDR cannot be parsed or has no time bounds set.
+ */
+function isXdrExpired(xdr) {
+  try {
+    const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
+    const { timeBounds } = tx;
+    return !!(timeBounds && Math.floor(Date.now() / 1000) > Number(timeBounds.maxTime));
+  } catch {
+    return false;
+  }
 }
 
 async function submitPreparedTransaction(xdr) {
@@ -571,6 +585,7 @@ module.exports = {
   getAccountMultisigConfig,
   signTransactionXdr,
   signatureCountFromXdr,
+  isXdrExpired,
   submitSignedWithdrawal,
   recoverWalletFromSecret,
   getWalletTransactionHistory,
