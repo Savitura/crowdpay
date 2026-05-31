@@ -121,12 +121,16 @@ router.get('/mine', requireAuth, async (req, res) => {
 
 // Get contributions for a campaign
 router.get('/campaign/:campaignId', async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+
   const { rows } = await db.query(
     `SELECT c.id, c.sender_public_key, c.amount, c.asset, c.payment_type,
             c.anchor_id, c.anchor_transaction_id, c.anchor_asset, c.anchor_amount,
             c.source_amount, c.source_asset, c.conversion_rate, c.path,
             c.tx_hash, c.created_at,
-            wr.status AS refund_status, wr.tx_hash AS refund_tx_hash
+            wr.status AS refund_status, wr.tx_hash AS refund_tx_hash,
+            COUNT(*) OVER() AS total_count
      FROM contributions c
      LEFT JOIN LATERAL (
        SELECT status, tx_hash
@@ -136,10 +140,14 @@ router.get('/campaign/:campaignId', async (req, res) => {
        LIMIT 1
      ) wr ON TRUE
      WHERE c.campaign_id = $1
-     ORDER BY c.created_at DESC`,
-    [req.params.campaignId]
+     ORDER BY c.created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [req.params.campaignId, limit, offset]
   );
-  res.json(rows);
+
+  const total = rows[0]?.total_count ?? 0;
+  const cleanedRows = rows.map(({ total_count, ...rest }) => rest);
+  res.json({ contributions: cleanedRows, total: Number(total), limit, offset });
 });
 
 // List contributions for the authenticated user (alias for /api/contributions/mine)

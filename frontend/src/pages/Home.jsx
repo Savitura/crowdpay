@@ -21,9 +21,12 @@ const SORT_OPTIONS = [
 const SEARCH_DEBOUNCE_MS = 450;
 
 export default function Home() {
+  const [page, setPage] = useState(0);
   const [campaigns, setCampaigns] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [listError, setListError] = useState('');
   const { user } = useAuth();
   const [showContributorTips, setShowContributorTips] = useState(isContributorOnboardingVisible);
@@ -35,11 +38,6 @@ export default function Home() {
   const status = searchParams.get('status') || '';
   const asset = searchParams.get('asset') || '';
   const sort = searchParams.get('sort') || 'newest';
-  const limit = Number(searchParams.get('limit') || 20);
-  const offset = Number(searchParams.get('offset') || 0);
-
-  const page = Math.floor(offset / limit) + 1;
-  const lastItem = Math.min(total, offset + campaigns.length);
 
   const hasActiveFilters =
     Boolean(search.trim()) || Boolean(asset) || Boolean(status) || sort !== 'newest';
@@ -66,14 +64,45 @@ export default function Home() {
     setListError('');
     setLoading(true);
     api
-      .getCampaigns({ search, status, asset, sort, limit, offset })
+      .getCampaigns({ search, status, asset, sort, limit: 20, offset: 0 })
       .then((data) => {
-        setCampaigns(data.campaigns || []);
-        setTotal(data.total || 0);
+        const nextCampaigns = data.campaigns || [];
+        const nextTotal = data.total || 0;
+        setCampaigns(nextCampaigns);
+        setTotal(nextTotal);
+        setHasMore(nextCampaigns.length < nextTotal);
+        setPage(1);
       })
       .catch((err) => setListError(err.message || 'Could not load campaigns.'))
       .finally(() => setLoading(false));
-  }, [search, status, asset, sort, limit, offset]);
+  }, [search, status, asset, sort]);
+
+  async function loadMore() {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    setListError('');
+    try {
+      const { campaigns: next, total: nextTotal } = await api.getCampaigns({
+        search,
+        status,
+        asset,
+        sort,
+        limit: 20,
+        offset: page * 20,
+      });
+      setCampaigns((prev) => {
+        const updated = [...prev, ...next];
+        setHasMore(updated.length < nextTotal);
+        return updated;
+      });
+      setTotal(nextTotal);
+      setPage((p) => p + 1);
+    } catch (err) {
+      setListError(err.message || 'Could not load more campaigns.');
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   const setFilters = (next) => {
     const params = new URLSearchParams(searchParams);
@@ -85,16 +114,6 @@ export default function Home() {
       }
     });
     params.delete('offset');
-    setSearchParams(params, { replace: true });
-  };
-
-  const setPageOffset = (nextOffset) => {
-    const params = new URLSearchParams(searchParams);
-    if (nextOffset <= 0) {
-      params.delete('offset');
-    } else {
-      params.set('offset', String(nextOffset));
-    }
     setSearchParams(params, { replace: true });
   };
 
@@ -279,26 +298,21 @@ export default function Home() {
           </div>
           <div style={styles.pagination}>
             <span style={styles.paginationInfo}>
-              Showing {campaigns.length ? offset + 1 : 0}–{lastItem} of {total} campaigns
+              Showing {campaigns.length} of {total} campaigns
             </span>
-            <div style={styles.paginationButtons}>
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={offset === 0}
-                onClick={() => setPageOffset(Math.max(0, offset - limit))}
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={offset + limit >= total}
-                onClick={() => setPageOffset(offset + limit)}
-              >
-                Next
-              </button>
-            </div>
+            {hasMore && (
+              <div style={styles.loadMoreContainer}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  style={styles.loadMoreButton}
+                >
+                  {loadingMore ? 'Loading...' : 'Load more'}
+                </button>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -328,7 +342,8 @@ const styles = {
   filterItem: { display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.9rem', color: 'var(--color-text-primary)' },
   filterInput: { width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--color-border)', fontSize: '0.95rem' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', gap: '1.25rem' },
-  pagination: { marginTop: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' },
+  pagination: { marginTop: '1.25rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' },
   paginationInfo: { color: 'var(--color-text-secondary)', fontSize: '0.95rem' },
-  paginationButtons: { display: 'flex', gap: '0.75rem' },
+  loadMoreContainer: { display: 'flex', justifyContent: 'center', width: '100%' },
+  loadMoreButton: { padding: '0.75rem 2rem', fontSize: '1.05rem', cursor: 'pointer', borderRadius: '8px', border: '1px solid var(--color-border)' },
 };

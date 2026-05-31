@@ -210,7 +210,8 @@ export const api = {
   postCampaignUpdate: (campaignId, body, token) =>
     request('POST', `/campaigns/${campaignId}/updates`, body, token),
 
-  getContributions: (campaignId) => request('GET', `/contributions/campaign/${campaignId}`),
+  getContributions: (campaignId, options = {}) =>
+    request('GET', `/contributions/campaign/${campaignId}`, null, null, { query: options }),
   getMilestones: (campaignId) => request('GET', `/campaigns/${campaignId}/milestones`),
   setCampaignMilestones: (campaignId, milestones, token) =>
     request('POST', `/campaigns/${campaignId}/milestones`, { milestones }, token),

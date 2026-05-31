@@ -42,6 +42,8 @@ export default function Campaign() {
   const [campaign, setCampaign] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [contributions, setContributions] = useState(null);
+  const [totalContributions, setTotalContributions] = useState(0);
+  const [showAll, setShowAll] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [disputeSubmitted, setDisputeSubmitted] = useState(false);
@@ -95,9 +97,15 @@ export default function Campaign() {
       })
       .catch((err) => setLoadError(err.message || "Could not load campaign."));
     api
-      .getContributions(id)
-      .then(setContributions)
-      .catch(() => setContributions([]));
+      .getContributions(id, { limit: showAll ? 100 : 10, offset: 0 })
+      .then((data) => {
+        setContributions(data.contributions || []);
+        setTotalContributions(data.total || 0);
+      })
+      .catch(() => {
+        setContributions([]);
+        setTotalContributions(0);
+      });
     api
       .getMilestones(id)
       .then(setMilestones)
@@ -106,7 +114,7 @@ export default function Campaign() {
       .getCampaignUpdates(id, { limit: 20 })
       .then(setUpdates)
       .catch(() => setUpdates([]));
-  }, [id, token, contributed]);
+  }, [id, token, contributed, showAll]);
 
   useEffect(() => {
     if (!id) return;
@@ -129,13 +137,14 @@ export default function Campaign() {
       if (aborted) return;
       if (document.visibilityState !== "visible") return;
       try {
-        const [nextCampaign, nextContributions] = await Promise.all([
+        const [nextCampaign, nextContributionsData] = await Promise.all([
           api.getCampaign(id, token),
-          api.getContributions(id),
+          api.getContributions(id, { limit: showAll ? 100 : 10, offset: 0 }),
         ]);
         if (aborted) return;
         setCampaign(nextCampaign);
-        setContributions(nextContributions);
+        setContributions(nextContributionsData.contributions || []);
+        setTotalContributions(nextContributionsData.total || 0);
       } catch {
         // ignore transient polling errors
       }
@@ -166,7 +175,7 @@ export default function Campaign() {
       stop();
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [id, token, isLive, campaign]);
+  }, [id, token, isLive, campaign, showAll]);
 
   useEffect(() => {
     if (!window.EventSource) return;
@@ -192,7 +201,15 @@ export default function Campaign() {
           const exists = current.some(
             (c) => c.tx_hash === msg.contribution.tx_hash,
           );
-          return exists ? current : [msg.contribution, ...current];
+          if (exists) return current;
+
+          setTotalContributions((t) => t + 1);
+
+          const updated = [msg.contribution, ...current];
+          if (!showAll && updated.length > 10) {
+            return updated.slice(0, 10);
+          }
+          return updated;
         });
       }
     };
@@ -206,7 +223,7 @@ export default function Campaign() {
       es.close();
       setIsLive(false);
     };
-  }, [id]);
+  }, [id, showAll]);
 
   useEffect(() => {
     if (location.state?.created) {
@@ -1159,7 +1176,7 @@ export default function Campaign() {
       )}
 
       <h2 style={styles.sectionTitle}>
-        Backer Wall {contributions !== null ? `(${contributions.length})` : ""}
+        Backer Wall {contributions !== null ? `(${totalContributions})` : ""}
         {isLive && (
           <span style={styles.liveIndicator} title="Live updates active">
             <span style={styles.liveDot} />
@@ -1179,49 +1196,63 @@ export default function Campaign() {
           </p>
         </div>
       ) : (
-        <div style={styles.list}>
-          {contributions.map((c) => (
-            <div key={c.id} style={styles.row}>
-              <div
-                style={{
-                  minWidth: 0,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.75rem",
-                }}
-              >
-                <div style={styles.avatar}>
-                  {(c.display_name || "A")[0].toUpperCase()}
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={styles.sender}>
-                    {c.display_name || "Anonymous"}
+        <>
+          <div style={styles.list}>
+            {contributions.map((c) => (
+              <div key={c.id} style={styles.row}>
+                <div
+                  style={{
+                    minWidth: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.75rem",
+                  }}
+                >
+                  <div style={styles.avatar}>
+                    {(c.display_name || "A")[0].toUpperCase()}
                   </div>
-                  <div style={styles.convHint}>
-                    {c.sender_public_key.slice(0, 4)}…
-                    {c.sender_public_key.slice(-4)} •{" "}
-                    {new Date(c.created_at).toLocaleDateString()}
-                  </div>
-                  {c.refund_status && (
-                    <div style={styles.refundTag}>
-                      {c.refund_status === "pending" && "Refund pending"}
-                      {c.refund_status === "submitted" && "Refunded"}
-                      {c.refund_status === "indexed" && "Refunded"}
-                      {c.refund_status === "failed" && "Refund failed"}
-                      {c.refund_status === "denied" && "Refund denied"}
+                  <div style={{ minWidth: 0 }}>
+                    <div style={styles.sender}>
+                      {c.display_name || "Anonymous"}
                     </div>
-                  )}
+                    <div style={styles.convHint}>
+                      {c.sender_public_key.slice(0, 4)}…
+                      {c.sender_public_key.slice(-4)} •{" "}
+                      {new Date(c.created_at).toLocaleDateString()}
+                    </div>
+                    {c.refund_status && (
+                      <div style={styles.refundTag}>
+                        {c.refund_status === "pending" && "Refund pending"}
+                        {c.refund_status === "submitted" && "Refunded"}
+                        {c.refund_status === "indexed" && "Refunded"}
+                        {c.refund_status === "failed" && "Refund failed"}
+                        {c.refund_status === "denied" && "Refund denied"}
+                      </div>
+                    )}
+                  </div>
                 </div>
+                {c.amount != null && (
+                  <span style={styles.amount}>
+                    {Number(c.amount).toLocaleString()} {c.asset}
+                  </span>
+                )}
               </div>
-              {c.amount != null && (
-                <span style={styles.amount}>
-                  {Number(c.amount).toLocaleString()} {c.asset}
-                </span>
-              )}
+            ))}
+          </div>
+          {totalContributions > 10 && (
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowAll((prev) => !prev)}
+                style={{ padding: '0.5rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer' }}
+              >
+                {showAll ? 'Show less' : `Show all (${totalContributions})`}
+              </button>
             </div>
-          ))}
-        </div>
-      )}
+          )}
+        </>
+      )}}
 
       {showModal && (
         <ContributeModal

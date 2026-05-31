@@ -195,8 +195,8 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
    *                     type: object
    */
   const { search, status, asset, sort = 'newest' } = req.query;
-  const limit = Number(req.query.limit || 20);
-  const offset = Number(req.query.offset || 0);
+  const limit = Math.min(Number(req.query.limit || 20), 100);
+  const offset = Math.max(Number(req.query.offset || 0), 0);
   const filters = [];
   const params = [];
 
