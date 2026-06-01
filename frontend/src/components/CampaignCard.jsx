@@ -3,8 +3,26 @@ import { Link } from 'react-router-dom';
 import VerificationBadge from './VerificationBadge';
 import CampaignStatusBadge from './CampaignStatusBadge';
 
+function progressColor(pct, status) {
+  if (status === 'funded' || pct >= 100) return '#10b981'; // green — goal reached
+  if (status === 'closed' || status === 'withdrawn') return '#6b7280'; // grey — ended
+  if (pct >= 75) return '#3b82f6'; // blue — nearly there
+  return '#7c3aed'; // default purple
+}
+
+function daysLeft(deadline) {
+  if (!deadline) return null;
+  const diff = Math.ceil((new Date(deadline) - Date.now()) / (1000 * 60 * 60 * 24));
+  if (diff < 0) return 'Ended';
+  if (diff === 0) return 'Last day';
+  return `${diff}d left`;
+}
+
 export default function CampaignCard({ campaign }) {
   const pct = Math.min(100, (campaign.raised_amount / campaign.target_amount) * 100).toFixed(1);
+  const fillColor = progressColor(parseFloat(pct), campaign.status);
+  const deadline = daysLeft(campaign.deadline);
+  const deadlineColor = deadline === 'Ended' ? '#ef4444' : deadline === 'Last day' ? '#f59e0b' : '#f59e0b';
 
   return (
     <Link to={`/campaigns/${campaign.id}`} style={{ display: 'block' }} className="campaign-card-link">
@@ -31,8 +49,13 @@ export default function CampaignCard({ campaign }) {
         <h3 style={styles.title}>{campaign.title}</h3>
         <p style={styles.desc}>{campaign.description?.slice(0, 100)}{campaign.description?.length > 100 ? '…' : ''}</p>
         <div style={styles.bar}>
-          <div style={{ ...styles.fill, width: `${pct}%` }} />
+          <div style={{ ...styles.fill, background: fillColor, width: `${pct}%` }} />
         </div>
+        {deadline && (
+          <span style={{ ...styles.deadline, background: deadlineColor === '#ef4444' ? '#fee2e2' : '#fef3c7', color: deadlineColor, borderColor: deadlineColor }}>
+            {deadline}
+          </span>
+        )}
         <div style={styles.meta}>
           <span><strong>{Number(campaign.raised_amount).toLocaleString()}</strong> {campaign.asset_type} raised</span>
           <span>{pct}% by <strong>{campaign.contributor_count || 0}</strong> backers</span>
@@ -55,7 +78,8 @@ const styles = {
   coverImageWrapper: { overflow: 'hidden', borderRadius: '12px 12px 0 0', marginBottom: '1rem', height: '160px' },
   coverImage: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
   bar: { background: 'var(--color-surface)', borderRadius: '99px', height: '6px', marginBottom: '0.5rem', overflow: 'hidden' },
-  fill: { background: 'var(--color-accent)', height: '100%', borderRadius: '99px', transition: 'width 0.3s' },
+  fill: { height: '100%', borderRadius: '99px', transition: 'width 0.3s' },
+  deadline: { display: 'inline-block', fontSize: '0.75rem', fontWeight: 700, padding: '4px 8px', borderRadius: '99px', marginBottom: '0.5rem', border: '1px solid' },
   meta: { display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: 'var(--color-text-secondary)' },
   target: { fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.3rem' },
   coverPlaceholder: {
@@ -69,8 +93,4 @@ const styles = {
     justifyContent: 'center',
   },
   coverPlaceholderText: { color: '#6d28d9', fontWeight: 700, fontSize: '0.85rem' },
-  bar: { background: '#f0f0f0', borderRadius: '99px', height: '6px', marginBottom: '0.5rem', overflow: 'hidden' },
-  fill: { background: '#7c3aed', height: '100%', borderRadius: '99px', transition: 'width 0.3s' },
-  meta: { display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#444' },
-  target: { fontSize: '0.8rem', color: '#999', marginTop: '0.3rem' },
 };

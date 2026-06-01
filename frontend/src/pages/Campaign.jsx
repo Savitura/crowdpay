@@ -35,6 +35,13 @@ function markdownToHtml(markdown) {
     .replace(/\n/g, "<br />");
 }
 
+function progressColor(pct, status) {
+  if (status === 'funded' || pct >= 100) return '#10b981'; // green — goal reached
+  if (status === 'closed' || status === 'withdrawn') return '#6b7280'; // grey — ended
+  if (pct >= 75) return '#3b82f6'; // blue — nearly there
+  return '#7c3aed'; // default purple
+}
+
 export default function Campaign() {
   const { id } = useParams();
   const location = useLocation();
@@ -552,7 +559,7 @@ export default function Campaign() {
           </div>
         </div>
         <div style={styles.bar}>
-          <div style={{ ...styles.fill, width: `${pct}%` }} />
+          <div style={{ ...styles.fill, background: progressColor(parseFloat(pct), campaign.status), width: `${pct}%` }} />
         </div>
 
         {(campaign.min_contribution || campaign.max_contribution) && (
