@@ -132,6 +132,18 @@ function startCampaignStatusCron() {
   logger.info('Campaign status cron scheduled (hourly)');
 }
 
+function startReconciliationCron() {
+  if (process.env.ENABLE_RECONCILIATION_CRON === 'false') return;
+  const cron = require('node-cron');
+  const { reconcileCampaignBalances } = require('./services/reconciliation');
+  cron.schedule('*/15 * * * *', () => {
+    reconcileCampaignBalances().catch((err) => {
+      logger.error('Reconciliation cron failed', { error: err.message });
+    });
+  });
+  logger.info('Reconciliation cron scheduled (every 15 minutes)');
+}
+
 async function bootstrap() {
   if (process.env.NODE_ENV === 'production') {
     await assertNoLegacyPlaintextUserWalletSecrets();
@@ -142,6 +154,7 @@ async function bootstrap() {
     startLedgerMonitor();
     startWebhookRetryPoller();
     startCampaignStatusCron();
+    startReconciliationCron();
   });
 }
 

@@ -2,6 +2,7 @@ const router = require('express').Router();
 const db = require('../config/database');
 const logger = require('../config/logger');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { reconcileSingleCampaign } = require('../services/reconciliation');
 
 router.use(requireAuth);
 router.use(requireAdmin);
@@ -449,6 +450,23 @@ router.get('/milestones', async (req, res) => {
     params
   );
   res.json(rows);
+});
+
+/**
+ * POST /api/admin/campaigns/:id/reconcile
+ * Manually force a sync for a specific campaign's raised_amount.
+ */
+router.post('/campaigns/:id/reconcile', async (req, res) => {
+  try {
+    const result = await reconcileSingleCampaign(req.params.id);
+    res.json({ message: 'Reconciliation completed', result });
+  } catch (err) {
+    if (err.message === 'Campaign not found') {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+    logger.error('Error during manual reconciliation', { error: err.message, campaignId: req.params.id });
+    res.status(500).json({ error: 'Failed to reconcile campaign' });
+  }
 });
 
 module.exports = router;
