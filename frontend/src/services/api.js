@@ -2,6 +2,14 @@ const BASE = '/api';
 
 let refreshPromise = null;
 
+// Timeouts in milliseconds
+const TIMEOUTS = {
+  GET:    10_000,  // 10 s
+  POST:   20_000,  // 20 s — Stellar submissions can be slow
+  PATCH:  15_000,
+  DELETE: 10_000,
+};
+
 function jsonHeaders() {
   return {
     'Content-Type': 'application/json',
@@ -19,12 +27,27 @@ async function request(method, path, body, options = {}) {
     url += `?${params.toString()}`;
   }
 
-  const res = await fetch(url, {
-    method,
-    headers: body ? jsonHeaders() : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-    credentials: 'include',
-  });
+  const controller = new AbortController();
+  const timeoutMs = TIMEOUTS[method] ?? 15_000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: body ? jsonHeaders() : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: 'include',
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error('Request timed out. Check your connection and try again.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const text = await res.text();
   let data = {};
@@ -197,7 +220,7 @@ export const api = {
   postCampaignUpdate: (campaignId, body) => request('POST', `/campaigns/${campaignId}/updates`, body),
 
   getContributions: (campaignId, options = {}) =>
-    request('GET', `/contributions/campaign/${campaignId}`, null, null, { query: options }),
+    request('GET', `/contributions/campaign/${campaignId}`, null, { query: options }),
   getMilestones: (campaignId) => request('GET', `/campaigns/${campaignId}/milestones`),
   setCampaignMilestones: (campaignId, milestones) =>
     request('POST', `/campaigns/${campaignId}/milestones`, { milestones }),
@@ -211,23 +234,10 @@ export const api = {
     request('GET', '/contributions/quote', null, {
       query: { send_asset, dest_asset, dest_amount },
     }),
-  getContributionFinalization: (txHash, token) =>
-    request('GET', `/contributions/finalization/${txHash}`, null, token),
-  failExpiredCampaigns: (token) => request('POST', '/campaigns/cron/fail-expired', null, token),
-  triggerCampaignRefunds: (campaignId, token) => request('POST', `/campaigns/${campaignId}/trigger-refunds`, null, token),
-
-  getWithdrawalCapabilities: (token) => request('GET', '/withdrawals/capabilities', null, token),
-  listWithdrawals: (campaignId, token) =>
-    request('GET', `/withdrawals/campaign/${campaignId}`, null, token),
-  requestWithdrawal: (body, token) => request('POST', '/withdrawals/request', body, token),
-  approveWithdrawalCreator: (id, token, body) =>
-    request('POST', `/withdrawals/${id}/approve/creator`, body || {}, token),
-  approveWithdrawalPlatform: (id, token) =>
-    request('POST', `/withdrawals/${id}/approve/platform`, {}, token),
-  cancelWithdrawal: (id, body, token) => request('POST', `/withdrawals/${id}/cancel`, body || {}, token),
-  rejectWithdrawal: (id, body, token) => request('POST', `/withdrawals/${id}/reject`, body || {}, token),
-  getWithdrawalEvents: (id, token) => request('GET', `/withdrawals/${id}/events`, null, token),
-  getWithdrawal: (id, token) => request('GET', `/withdrawals/${id}`, null, token),
+  getContributionFinalization: (txHash) =>
+    request('GET', `/contributions/finalization/${txHash}`),
+  failExpiredCampaigns: () => request('POST', '/campaigns/cron/fail-expired'),
+  triggerCampaignRefunds: (campaignId) => request('POST', `/campaigns/${campaignId}/trigger-refunds`),
 
   getWithdrawalCapabilities: () => request('GET', '/withdrawals/capabilities'),
   listWithdrawals: (campaignId) =>
@@ -256,7 +266,7 @@ export const api = {
   getAdminAuditLog: (options = {}) => request('GET', '/admin/audit-log', null, { query: options }),
   updateCampaignStatus: (id, status) => request('PATCH', `/admin/campaigns/${id}/status`, { status }),
   adminSuspendCampaign: (id, body) => request('PATCH', `/admin/campaigns/${id}/suspend`, body),
-  adminRestoreCampaign: (id) => request('PATCH', `/admin/campaigns/${id}/restore`, {},),
+  adminRestoreCampaign: (id) => request('PATCH', `/admin/campaigns/${id}/restore`, {}),
   adminDeleteCampaign: (id, body) => request('DELETE', `/admin/campaigns/${id}`, body),
   adminBanUser: (id, body) => request('PATCH', `/admin/users/${id}/ban`, body),
   adminUnbanUser: (id) => request('PATCH', `/admin/users/${id}/unban`, {}),
