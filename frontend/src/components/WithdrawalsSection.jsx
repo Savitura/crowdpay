@@ -31,6 +31,10 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
   const [openAudit, setOpenAudit] = useState(null);
   const [milestoneForms, setMilestoneForms] = useState({});
   const [expiredIds, setExpiredIds] = useState(() => new Set());
+  const [liveBalance, setLiveBalance] = useState(null);
+  const [loadingBalance, setLoadingBalance] = useState(false);
+  const [rejectingId, setRejectingId] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   const isCreator = user?.id && campaign.creator_id === user.id;
   const isAdmin = user?.role === 'admin';
@@ -57,6 +61,22 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
       return changed ? next : current;
     });
   }, [pendingMilestones]);
+
+  useEffect(() => {
+    if (!canOpenRequest) {
+      setLiveBalance(null);
+      return;
+    }
+    setLoadingBalance(true);
+    api.getCampaignBalance(campaign.id)
+      .then((b) => {
+        setLiveBalance(parseFloat(b[campaign.asset_type] || '0'));
+        setLoadingBalance(false);
+      })
+      .catch(() => {
+        setLoadingBalance(false);
+      });
+  }, [canOpenRequest, campaign.id, campaign.asset_type]);
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -299,6 +319,19 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
         <form onSubmit={handleRequest} style={styles.card}>
           <h3 style={styles.h3}>Request a release</h3>
           <p style={styles.hint}>Destination must be a valid Stellar public key. Amount is in {campaign.asset_type}.</p>
+          {liveBalance !== null && (
+            <p style={{ fontSize: '0.82rem', color: '#555', marginBottom: '0.5rem' }}>
+              Available on-chain: <strong>{liveBalance.toLocaleString()} {campaign.asset_type}</strong>
+              {' '}
+              <button type="button" style={{ fontSize: '0.8rem', color: '#7c3aed', background: 'none', padding: 0, border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+                onClick={() => setForm((f) => ({ ...f, amount: String(liveBalance) }))}>
+                Use max
+              </button>
+            </p>
+          )}
+          {loadingBalance && (
+            <p style={{ fontSize: '0.82rem', color: '#999', marginBottom: '0.5rem' }}>Loading balance…</p>
+          )}
           <label className="label-strong" htmlFor="wd-dest">
             Destination address
           </label>
@@ -325,8 +358,13 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
             required
             style={{ marginBottom: '0.75rem' }}
           />
-          <button type="submit" className="btn-primary" disabled={busyId === 'new'} style={{ width: '100%' }}>
-            {busyId === 'new' ? 'Submitting…' : 'Submit request'}
+          {liveBalance !== null && Number(form.amount) > liveBalance && (
+            <p className="alert alert--error" style={{ fontSize: '0.82rem', marginBottom: '0.75rem' }} role="alert">
+              Amount exceeds available balance
+            </p>
+          )}
+          <button type="submit" className="btn-primary" disabled={busyId === 'new' || (liveBalance !== null && Number(form.amount) > liveBalance)} style={{ width: '100%' }}>
+            {liveBalance !== null && Number(form.amount) > liveBalance ? 'Amount exceeds balance' : busyId === 'new' ? 'Submitting…' : 'Submit request'}
           </button>
         </form>
       )}
@@ -459,6 +497,64 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                     >
                       Admin approve & submit
                     </button>
+                    {rejectingId === row.id ? (
+                      <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', width: '100%' }}>
+                        <textarea
+                          value={rejectReason}
+                          onChange={(e) => setRejectReason(e.target.value)}
+                          placeholder="Reason for rejection (saved to audit log)"
+                          rows={2}
+                          style={{ fontSize: '0.85rem', resize: 'vertical', padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--color-border-light)', fontFamily: 'inherit' }}
+                          autoFocus
+                        />
+                        <div style={{ display: 'flex', gap: '0.4rem' }}>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ fontSize: '0.8rem', flex: 1 }}
+                            disabled={busyId === row.id}
+                            onClick={() => {
+                              runAction(row.id, () =>
+                                api.rejectWithdrawal(row.id, { reason: rejectReason || 'Rejected by platform' }, token)
+                              );
+                              setRejectingId(null);
+                              setRejectReason('');
+                            }}
+                          >
+                            Confirm reject
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: '0.8rem', flex: 1 }}
+                            onClick={() => { setRejectingId(null); setRejectReason(''); }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={busyId === row.id}
+                          onClick={() => setRejectingId(row.id)}
+                          style={{ fontSize: '0.8rem' }}
+                        >
+                          Reject
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          disabled={busyId === row.id}
+                          onClick={() => runAction(row.id, () => api.approveWithdrawalPlatform(row.id, token))}
+                          style={{ fontSize: '0.8rem' }}
+                        >
+                          Admin approve & submit
+                        </button>
+                      </>
+                    )}
                   </>
                 )}
               </div>

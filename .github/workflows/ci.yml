@@ -39,9 +39,9 @@ jobs:
         working-directory: ./backend
         run: npm ci
 
-      - name: Run linter (ESLint)
+      - name: Run linter
         working-directory: ./backend
-        run: npx eslint .
+        run: npm run lint
 
       - name: Run test suite
         working-directory: ./backend
@@ -75,7 +75,7 @@ jobs:
 
       - name: Run linter
         working-directory: ./frontend
-        run: npx eslint .
+        run: npm run lint
 
       - name: Run unit tests
         working-directory: ./frontend

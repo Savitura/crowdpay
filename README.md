@@ -1,5 +1,7 @@
 # CrowdPay
 
+[![CI](https://github.com/Savitura/crowdpay/actions/workflows/ci.yml/badge.svg)](https://github.com/Savitura/crowdpay/actions/workflows/ci.yml)
+
 **Global funding infrastructure built on Stellar.**
 
 CrowdPay is not a crowdfunding website — it is a payments protocol with a product layer on top. Contributors anywhere in the world can fund campaigns in any currency. Stellar handles the conversion, settlement, and custody automatically.
