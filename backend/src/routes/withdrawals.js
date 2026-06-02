@@ -21,6 +21,7 @@ const {
 const { sendEmail } = require('../services/emailService');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
 const { withDecryptedWalletSecret } = require('../services/walletSecrets');
+const { createNotification } = require('../services/notifications');
 
 const ALLOWED_CAMPAIGN_STATUS_FOR_REQUEST = ['active', 'funded'];
 
@@ -485,7 +486,7 @@ const platformApproveHandler = async (req, res) => {
 
     // Notify creator
     const { rows: cRows } = await db.query(
-      `SELECT u.email FROM users u JOIN campaigns c ON c.creator_id = u.id WHERE c.id = $1`,
+      `SELECT u.email, c.creator_id FROM users u JOIN campaigns c ON c.creator_id = u.id WHERE c.id = $1`,
       [requestRow.campaign_id]
     );
     if (cRows.length) {
@@ -494,6 +495,12 @@ const platformApproveHandler = async (req, res) => {
         subject: 'Withdrawal Approved',
         text: `Your withdrawal for ${requestRow.amount} has been approved by the platform. Transaction Hash: ${txHash}`
       });
+      createNotification(cRows[0].creator_id, {
+        type: 'withdrawal_approved',
+        title: 'Withdrawal approved',
+        body: `Your withdrawal of ${requestRow.amount} was approved and submitted on-chain.`,
+        link: `/campaigns/${requestRow.campaign_id}`,
+      }).catch(() => {});
     }
 
     const withdrawalRow = updated[0];
@@ -656,7 +663,7 @@ router.post('/:id/reject', requireAuth, requirePlatformApprover, async (req, res
     await client.query('COMMIT');
 
     const { rows: cRows } = await db.query(
-      `SELECT u.email FROM users u JOIN campaigns c ON c.creator_id = u.id WHERE c.id = $1`,
+      `SELECT u.email, c.creator_id FROM users u JOIN campaigns c ON c.creator_id = u.id WHERE c.id = $1`,
       [requestRow.campaign_id]
     );
     if (cRows.length) {
@@ -665,6 +672,12 @@ router.post('/:id/reject', requireAuth, requirePlatformApprover, async (req, res
         subject: 'Withdrawal Rejected',
         text: `Your withdrawal request has been rejected by the platform. Reason: ${reason}`
       });
+      createNotification(cRows[0].creator_id, {
+        type: 'withdrawal_rejected',
+        title: 'Withdrawal rejected',
+        body: `Your withdrawal request was rejected. Reason: ${reason}`,
+        link: `/campaigns/${requestRow.campaign_id}`,
+      }).catch(() => {});
     }
 
     res.json(updated[0]);

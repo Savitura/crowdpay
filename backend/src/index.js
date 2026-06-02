@@ -91,6 +91,7 @@ app.use('/api/api-keys', require('./routes/apiKeys'));
 app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/milestones', require('./routes/milestones'));
 app.use('/api', require('./routes/disputes'));
+app.use('/api/notifications', require('./routes/notifications'));
 
 app.get('/health', (_, res) => res.json({ status: 'ok' }));
 app.get('/api/config', (_, res) =>

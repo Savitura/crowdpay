@@ -3,7 +3,7 @@ import { Link, useParams, useLocation } from "react-router-dom";
 import { api } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import ContributeModal from "../components/ContributeModal";
-import DisputeModal from "../components/DisputeModal"
+import DisputeModal from "../components/DisputeModal";
 import TransactionHistory from "../components/TransactionHistory";
 import MilestoneTracker from "../components/MilestoneTracker";
 import WithdrawalsSection from "../components/WithdrawalsSection";
@@ -39,10 +39,10 @@ function markdownToHtml(markdown) {
 }
 
 function progressColor(pct, status) {
-  if (status === 'funded' || pct >= 100) return '#10b981'; // green — goal reached
-  if (status === 'closed' || status === 'withdrawn') return '#6b7280'; // grey — ended
-  if (pct >= 75) return '#3b82f6'; // blue — nearly there
-  return '#7c3aed'; // default purple
+  if (status === "funded" || pct >= 100) return "#10b981"; // green — goal reached
+  if (status === "closed" || status === "withdrawn") return "#6b7280"; // grey — ended
+  if (pct >= 75) return "#3b82f6"; // blue — nearly there
+  return "#7c3aed"; // default purple
 }
 
 function ContributionRow({ c }) {
@@ -68,9 +68,7 @@ function ContributionRow({ c }) {
           {(c.display_name || "A")[0].toUpperCase()}
         </div>
         <div style={{ minWidth: 0 }}>
-          <div style={styles.sender}>
-            {c.display_name || "Anonymous"}
-          </div>
+          <div style={styles.sender}>{c.display_name || "Anonymous"}</div>
           <div style={styles.convHint}>
             <button
               type="button"
@@ -90,9 +88,9 @@ function ContributionRow({ c }) {
             </button>
             {" • "}
             {new Date(c.created_at).toLocaleDateString(undefined, {
-              month: 'short',
-              day: 'numeric',
-              year: 'numeric',
+              month: "short",
+              day: "numeric",
+              year: "numeric",
             })}
           </div>
           {c.refund_status && (
@@ -109,7 +107,7 @@ function ContributionRow({ c }) {
               href={stellarExpertTxUrl(c.tx_hash)}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ fontSize: '0.75rem', color: '#7c3aed', fontWeight: 600 }}
+              style={{ fontSize: "0.75rem", color: "#7c3aed", fontWeight: 600 }}
             >
               View on chain ↗
             </a>
@@ -164,12 +162,17 @@ export default function Campaign() {
   const [editFormData, setEditFormData] = useState({
     title: "",
     description: "",
-    deadline: ""
+    deadline: "",
   });
   const [editError, setEditError] = useState("");
   const [editSuccess, setEditSuccess] = useState("");
   const [editLoading, setEditLoading] = useState(false);
   const [analytics, setAnalytics] = useState(null);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [hasPendingWithdrawal, setHasPendingWithdrawal] = useState(false);
 
   useEffect(() => {
     setLoadError("");
@@ -210,6 +213,17 @@ export default function Campaign() {
       .getCampaignAnalytics(id)
       .then(setAnalytics)
       .catch(() => setAnalytics(null));
+
+    // Check for pending withdrawals
+    if (token) {
+      api
+        .listWithdrawals(id)
+        .then((withdrawals) => {
+          const hasPending = withdrawals.some((w) => w.status === "pending");
+          setHasPendingWithdrawal(hasPending);
+        })
+        .catch(() => setHasPendingWithdrawal(false));
+    }
   }, [id, token, contributed, showAll]);
 
   useEffect(() => {
@@ -381,7 +395,7 @@ export default function Campaign() {
     setEditFormData({
       title: campaign.title || "",
       description: campaign.description || "",
-      deadline: campaign.deadline ? campaign.deadline.split("T")[0] : ""
+      deadline: campaign.deadline ? campaign.deadline.split("T")[0] : "",
     });
     setEditError("");
     setEditSuccess("");
@@ -425,9 +439,14 @@ export default function Campaign() {
     try {
       setEditLoading(true);
       const updates = {};
-      if (editFormData.title !== campaign.title) updates.title = editFormData.title;
-      if (editFormData.description !== campaign.description) updates.description = editFormData.description;
-      if (editFormData.deadline !== (campaign.deadline ? campaign.deadline.split("T")[0] : "")) {
+      if (editFormData.title !== campaign.title)
+        updates.title = editFormData.title;
+      if (editFormData.description !== campaign.description)
+        updates.description = editFormData.description;
+      if (
+        editFormData.deadline !==
+        (campaign.deadline ? campaign.deadline.split("T")[0] : "")
+      ) {
         updates.deadline = editFormData.deadline || null;
       }
 
@@ -447,6 +466,30 @@ export default function Campaign() {
       setEditError(err.message || "Failed to update campaign");
     } finally {
       setEditLoading(false);
+    }
+  }
+
+  async function handleDeleteCampaign() {
+    setDeleteError("");
+    if (!campaign) return;
+
+    // Check if confirmation matches campaign title
+    if (deleteConfirmation !== campaign.title) {
+      setDeleteError("Confirmation does not match campaign title");
+      return;
+    }
+
+    try {
+      setDeleteLoading(true);
+      await api.deleteCampaign(campaign.id, token);
+      setShowDeleteDialog(false);
+      setDeleteConfirmation("");
+      // Redirect to home after successful deletion
+      window.location.href = "/";
+    } catch (err) {
+      setDeleteError(err.message || "Failed to delete campaign");
+    } finally {
+      setDeleteLoading(false);
     }
   }
 
@@ -612,7 +655,9 @@ export default function Campaign() {
       )}
       {!campaign.cover_image_url && (
         <div style={styles.detailCoverPlaceholder} aria-hidden="true">
-          <span style={styles.detailCoverPlaceholderText}>No campaign image yet</span>
+          <span style={styles.detailCoverPlaceholderText}>
+            No campaign image yet
+          </span>
         </div>
       )}
       <div style={styles.header}>
@@ -655,7 +700,10 @@ export default function Campaign() {
           aria-label={`${pct}% of goal raised`}
           style={styles.bar}
         >
-          <div style={{ ...styles.fill, width: `${pct}%` }} aria-hidden="true" />
+          <div
+            style={{ ...styles.fill, width: `${pct}%` }}
+            aria-hidden="true"
+          />
         </div>
 
         {user ? (
@@ -670,7 +718,13 @@ export default function Campaign() {
             Contribute
           </button>
         ) : (
-          <p style={{ color: "var(--color-text-secondary)", fontSize: "0.9rem", lineHeight: 1.5 }}>
+          <p
+            style={{
+              color: "var(--color-text-secondary)",
+              fontSize: "0.9rem",
+              lineHeight: 1.5,
+            }}
+          >
             Contributions are closed while this campaign is{" "}
             <strong>{campaign.status}</strong>.
           </p>
@@ -786,44 +840,77 @@ export default function Campaign() {
       </div>
 
       {/* Edit campaign button - visible only to creator */}
-      {user && campaign && user.userId === campaign.creator_id && ['active', 'funded'].includes(campaign.status) && (
-        <div
-          style={{
-            display: "flex",
-            gap: "0.65rem",
-            marginBottom: "1.75rem",
-          }}
-        >
-          <button
-            type="button"
-            className="btn-secondary"
+      {user &&
+        campaign &&
+        user.userId === campaign.creator_id &&
+        ["active", "funded"].includes(campaign.status) && (
+          <div
             style={{
-              flex: 1,
-              fontSize: "0.85rem",
               display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "0.5rem",
+              gap: "0.65rem",
+              marginBottom: "1.75rem",
             }}
-            onClick={handleOpenEditModal}
           >
-            Edit Campaign
-          </button>
-        </div>
-      )}
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{
+                flex: 1,
+                fontSize: "0.85rem",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "0.5rem",
+              }}
+              onClick={handleOpenEditModal}
+            >
+              Edit Campaign
+            </button>
+            {campaign.status === "active" && !hasPendingWithdrawal && (
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{
+                  color: "#dc2626",
+                  fontSize: "0.85rem",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "0.5rem",
+                }}
+                onClick={() => setShowDeleteDialog(true)}
+              >
+                Delete campaign
+              </button>
+            )}
+          </div>
+        )}
 
       <div style={styles.walletInfo}>
         <span style={styles.walletLabel}>Campaign wallet</span>
         <code style={styles.walletKey}>{campaign.wallet_public_key}</code>
       </div>
 
-      <div style={{ marginBottom: '1.75rem' }}>
-        <button type="button" className="btn-secondary" onClick={() => setShowQR((v) => !v)}>
-          {showQR ? 'Hide QR code' : 'Show QR code'}
+      <div style={{ marginBottom: "1.75rem" }}>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => setShowQR((v) => !v)}
+        >
+          {showQR ? "Hide QR code" : "Show QR code"}
         </button>
         {showQR && (
-          <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'center' }}>
-            <CampaignQRCode url={`${window.location.origin}/campaigns/${id}`} size={200} />
+          <div
+            style={{
+              marginTop: "1rem",
+              display: "flex",
+              justifyContent: "center",
+            }}
+          >
+            <CampaignQRCode
+              url={`${window.location.origin}/campaigns/${id}`}
+              size={200}
+            />
           </div>
         )}
       </div>
@@ -930,7 +1017,9 @@ export default function Campaign() {
                       position: "absolute",
                       top: "0.5rem",
                       right: "0.5rem",
-                      background: embedCopied ? "var(--color-success-text)" : "var(--color-accent)",
+                      background: embedCopied
+                        ? "var(--color-success-text)"
+                        : "var(--color-accent)",
                       color: "#fff",
                       padding: "0.4rem 0.8rem",
                       fontSize: "0.8rem",
@@ -961,7 +1050,10 @@ export default function Campaign() {
                     height="280"
                     frameBorder="0"
                     title="Campaign embed preview"
-                    style={{ border: "1px solid var(--color-border-light)", borderRadius: "6px" }}
+                    style={{
+                      border: "1px solid var(--color-border-light)",
+                      borderRadius: "6px",
+                    }}
                   />
                 </div>
               </div>
@@ -972,22 +1064,22 @@ export default function Campaign() {
 
       {token && (
         <div id="withdrawals">
-        <WithdrawalsSection
-          campaign={campaign}
-          milestones={milestones}
-          user={user}
-          token={token}
-          onReleased={() => {
-            api
-              .getCampaign(id)
-              .then(setCampaign)
-              .catch(() => {});
-            api
-              .getMilestones(id)
-              .then(setMilestones)
-              .catch(() => {});
-          }}
-        />
+          <WithdrawalsSection
+            campaign={campaign}
+            milestones={milestones}
+            user={user}
+            token={token}
+            onReleased={() => {
+              api
+                .getCampaign(id)
+                .then(setCampaign)
+                .catch(() => {});
+              api
+                .getMilestones(id)
+                .then(setMilestones)
+                .catch(() => {});
+            }}
+          />
         </div>
       )}
 
@@ -1093,7 +1185,9 @@ export default function Campaign() {
               Current Team
             </strong>
             {members.length === 0 ? (
-              <p style={{ color: "var(--color-text-muted)" }}>No team members yet.</p>
+              <p style={{ color: "var(--color-text-muted)" }}>
+                No team members yet.
+              </p>
             ) : (
               <div style={{ display: "grid", gap: "0.75rem" }}>
                 {members.map((member) => (
@@ -1124,7 +1218,9 @@ export default function Campaign() {
                       <div
                         style={{
                           fontSize: "0.75rem",
-                          color: member.accepted_at ? "var(--color-success-text)" : "var(--color-warning-text)",
+                          color: member.accepted_at
+                            ? "var(--color-success-text)"
+                            : "var(--color-warning-text)",
                           fontWeight: 600,
                         }}
                       >
@@ -1237,13 +1333,22 @@ export default function Campaign() {
                 }}
               >
                 <strong>{update.title}</strong>
-                <span style={{ color: "var(--color-text-hint)", fontSize: "0.85rem" }}>
+                <span
+                  style={{
+                    color: "var(--color-text-hint)",
+                    fontSize: "0.85rem",
+                  }}
+                >
                   {update.author_name} •{" "}
                   {new Date(update.created_at).toLocaleString()}
                 </span>
               </div>
               <div
-                style={{ marginTop: "0.5rem", color: "var(--color-text-primary)", lineHeight: 1.5 }}
+                style={{
+                  marginTop: "0.5rem",
+                  color: "var(--color-text-primary)",
+                  lineHeight: 1.5,
+                }}
                 dangerouslySetInnerHTML={{
                   __html: markdownToHtml(update.body),
                 }}
@@ -1258,22 +1363,47 @@ export default function Campaign() {
         <div style={{ marginBottom: "2rem" }}>
           <h2 style={styles.sectionTitle}>Analytics</h2>
           {!analytics.dailyTotals || analytics.dailyTotals.length === 0 ? (
-            <p style={{ color: "var(--color-text-muted)" }}>No analytics data available yet.</p>
+            <p style={{ color: "var(--color-text-muted)" }}>
+              No analytics data available yet.
+            </p>
           ) : (
             <div style={{ display: "grid", gap: "1.5rem" }}>
               <div className="campaign-card">
-                <strong style={{ display: "block", marginBottom: "1rem" }}>Contributions (Last 30 Days)</strong>
-                <svg width="100%" height={150} viewBox={`0 0 600 150`} preserveAspectRatio="none">
+                <strong style={{ display: "block", marginBottom: "1rem" }}>
+                  Contributions (Last 30 Days)
+                </strong>
+                <svg
+                  width="100%"
+                  height={150}
+                  viewBox={`0 0 600 150`}
+                  preserveAspectRatio="none"
+                >
                   {analytics.dailyTotals.map((day, i) => {
-                    const maxAmount = Math.max(...analytics.dailyTotals.map(d => Number(d.total_amount) || 0), 1);
-                    const barWidth = 600 / Math.max(analytics.dailyTotals.length, 1);
-                    const barHeight = Math.max(5, (Number(day.total_amount) / maxAmount) * 150);
+                    const maxAmount = Math.max(
+                      ...analytics.dailyTotals.map(
+                        (d) => Number(d.total_amount) || 0,
+                      ),
+                      1,
+                    );
+                    const barWidth =
+                      600 / Math.max(analytics.dailyTotals.length, 1);
+                    const barHeight = Math.max(
+                      5,
+                      (Number(day.total_amount) / maxAmount) * 150,
+                    );
                     const y = 150 - barHeight;
                     const x = i * barWidth;
                     return (
                       <g key={i}>
                         <title>{`${new Date(day.day).toLocaleDateString()}: ${day.total_amount} ${day.asset}`}</title>
-                        <rect x={x} y={y} width={Math.max(barWidth - 2, 2)} height={barHeight} fill="var(--color-accent)" rx="2" />
+                        <rect
+                          x={x}
+                          y={y}
+                          width={Math.max(barWidth - 2, 2)}
+                          height={barHeight}
+                          fill="var(--color-accent)"
+                          rx="2"
+                        />
                       </g>
                     );
                   })}
@@ -1281,9 +1411,18 @@ export default function Campaign() {
               </div>
 
               <div className="campaign-card">
-                <strong style={{ display: "block", marginBottom: "1rem" }}>Asset Breakdown</strong>
-                {analytics.assetBreakdown.map(asset => (
-                  <div key={asset.paid_with} style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+                <strong style={{ display: "block", marginBottom: "1rem" }}>
+                  Asset Breakdown
+                </strong>
+                {analytics.assetBreakdown.map((asset) => (
+                  <div
+                    key={asset.paid_with}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      marginBottom: "0.5rem",
+                    }}
+                  >
                     <span>{asset.paid_with}</span>
                     <strong>{asset.total_sent}</strong>
                   </div>
@@ -1291,11 +1430,26 @@ export default function Campaign() {
               </div>
 
               <div className="campaign-card">
-                <strong style={{ display: "block", marginBottom: "1rem" }}>Top Contributors</strong>
+                <strong style={{ display: "block", marginBottom: "1rem" }}>
+                  Top Contributors
+                </strong>
                 {analytics.topContributors.map((c, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem", fontFamily: "monospace" }}>
-                    <span>{c.sender_public_key.slice(0, 4)}...{c.sender_public_key.slice(-4)}</span>
-                    <span>{c.total} ({c.times} contributions)</span>
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      marginBottom: "0.5rem",
+                      fontFamily: "monospace",
+                    }}
+                  >
+                    <span>
+                      {c.sender_public_key.slice(0, 4)}...
+                      {c.sender_public_key.slice(-4)}
+                    </span>
+                    <span>
+                      {c.total} ({c.times} contributions)
+                    </span>
                   </div>
                 ))}
               </div>
@@ -1319,7 +1473,11 @@ export default function Campaign() {
         <div style={styles.emptyBackers}>
           <p>Be the first to back this!</p>
           <p
-            style={{ fontSize: "0.9rem", color: "var(--color-text-secondary)", marginTop: "0.25rem" }}
+            style={{
+              fontSize: "0.9rem",
+              color: "var(--color-text-secondary)",
+              marginTop: "0.25rem",
+            }}
           >
             Every contribution counts towards making this goal a reality.
           </p>
@@ -1332,14 +1490,24 @@ export default function Campaign() {
             ))}
           </div>
           {totalContributions > 10 && (
-            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                marginTop: "1rem",
+              }}
+            >
               <button
                 type="button"
                 className="btn-secondary"
                 onClick={() => setShowAll((prev) => !prev)}
-                style={{ padding: '0.5rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer' }}
+                style={{
+                  padding: "0.5rem 1.5rem",
+                  fontSize: "0.9rem",
+                  cursor: "pointer",
+                }}
               >
-                {showAll ? 'Show less' : `Show all (${totalContributions})`}
+                {showAll ? "Show less" : `Show all (${totalContributions})`}
               </button>
             </div>
           )}
@@ -1394,24 +1562,46 @@ export default function Campaign() {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 style={{ marginTop: 0, marginBottom: "1.5rem", fontSize: "1.5rem" }}>
+            <h2
+              style={{
+                marginTop: 0,
+                marginBottom: "1.5rem",
+                fontSize: "1.5rem",
+              }}
+            >
               Edit Campaign
             </h2>
 
             {editError && (
-              <p style={{ color: "#d32f2f", marginBottom: "1rem", padding: "0.75rem", background: "#ffebee", borderRadius: "6px" }}>
+              <p
+                style={{
+                  color: "#d32f2f",
+                  marginBottom: "1rem",
+                  padding: "0.75rem",
+                  background: "#ffebee",
+                  borderRadius: "6px",
+                }}
+              >
                 {editError}
               </p>
             )}
 
             <div style={{ marginBottom: "1.5rem" }}>
-              <label style={{ display: "block", fontWeight: 600, marginBottom: "0.5rem" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontWeight: 600,
+                  marginBottom: "0.5rem",
+                }}
+              >
                 Title
               </label>
               <input
                 type="text"
                 value={editFormData.title}
-                onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
+                onChange={(e) =>
+                  setEditFormData({ ...editFormData, title: e.target.value })
+                }
                 maxLength={100}
                 style={{
                   width: "100%",
@@ -1422,18 +1612,35 @@ export default function Campaign() {
                   boxSizing: "border-box",
                 }}
               />
-              <p style={{ fontSize: "0.85rem", color: "#888", margin: "0.25rem 0 0" }}>
+              <p
+                style={{
+                  fontSize: "0.85rem",
+                  color: "#888",
+                  margin: "0.25rem 0 0",
+                }}
+              >
                 {editFormData.title.length}/100
               </p>
             </div>
 
             <div style={{ marginBottom: "1.5rem" }}>
-              <label style={{ display: "block", fontWeight: 600, marginBottom: "0.5rem" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontWeight: 600,
+                  marginBottom: "0.5rem",
+                }}
+              >
                 Description
               </label>
               <textarea
                 value={editFormData.description}
-                onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                onChange={(e) =>
+                  setEditFormData({
+                    ...editFormData,
+                    description: e.target.value,
+                  })
+                }
                 maxLength={1000}
                 rows={5}
                 style={{
@@ -1446,19 +1653,33 @@ export default function Campaign() {
                   boxSizing: "border-box",
                 }}
               />
-              <p style={{ fontSize: "0.85rem", color: "#888", margin: "0.25rem 0 0" }}>
+              <p
+                style={{
+                  fontSize: "0.85rem",
+                  color: "#888",
+                  margin: "0.25rem 0 0",
+                }}
+              >
                 {editFormData.description.length}/1000
               </p>
             </div>
 
             <div style={{ marginBottom: "1.5rem" }}>
-              <label style={{ display: "block", fontWeight: 600, marginBottom: "0.5rem" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontWeight: 600,
+                  marginBottom: "0.5rem",
+                }}
+              >
                 Deadline (optional)
               </label>
               <input
                 type="date"
                 value={editFormData.deadline}
-                onChange={(e) => setEditFormData({ ...editFormData, deadline: e.target.value })}
+                onChange={(e) =>
+                  setEditFormData({ ...editFormData, deadline: e.target.value })
+                }
                 style={{
                   width: "100%",
                   padding: "0.75rem",
@@ -1470,7 +1691,13 @@ export default function Campaign() {
               />
             </div>
 
-            <div style={{ display: "flex", gap: "1rem", justifyContent: "flex-end" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: "1rem",
+                justifyContent: "flex-end",
+              }}
+            >
               <button
                 type="button"
                 className="btn-secondary"
@@ -1493,49 +1720,260 @@ export default function Campaign() {
           </div>
         </div>
       )}
+
+      {/* Delete Campaign Confirmation Dialog */}
+      {showDeleteDialog && campaign && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0, 0, 0, 0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+          }}
+        >
+          <div
+            style={{
+              background: "var(--color-surface)",
+              borderRadius: "8px",
+              padding: "2rem",
+              maxWidth: "500px",
+              width: "90%",
+              boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+            }}
+          >
+            <h2
+              style={{
+                fontSize: "1.5rem",
+                fontWeight: 700,
+                marginBottom: "1rem",
+                color: "var(--color-text-primary)",
+              }}
+            >
+              Delete Campaign
+            </h2>
+            <p
+              style={{
+                fontSize: "0.95rem",
+                color: "var(--color-text-secondary)",
+                marginBottom: "1.5rem",
+                lineHeight: 1.5,
+              }}
+            >
+              Are you sure you want to delete this campaign? This action cannot
+              be undone. All contribution and withdrawal history will be
+              preserved, but the campaign will no longer be visible to the
+              public.
+            </p>
+            <div style={{ marginBottom: "1.5rem" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontWeight: 600,
+                  marginBottom: "0.5rem",
+                  fontSize: "0.9rem",
+                  color: "var(--color-text-primary)",
+                }}
+              >
+                Type the campaign title to confirm:
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmation}
+                onChange={(e) => setDeleteConfirmation(e.target.value)}
+                placeholder={campaign.title}
+                style={{
+                  width: "100%",
+                  padding: "0.75rem",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "4px",
+                  fontSize: "1rem",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+            {deleteError && (
+              <p
+                className="alert alert--error"
+                style={{ marginBottom: "1.5rem" }}
+              >
+                {deleteError}
+              </p>
+            )}
+            <div
+              style={{
+                display: "flex",
+                gap: "1rem",
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  setShowDeleteDialog(false);
+                  setDeleteConfirmation("");
+                  setDeleteError("");
+                }}
+                disabled={deleteLoading}
+                style={{ opacity: deleteLoading ? 0.6 : 1 }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleDeleteCampaign}
+                disabled={
+                  deleteLoading || deleteConfirmation !== campaign.title
+                }
+                style={{
+                  opacity:
+                    deleteLoading || deleteConfirmation !== campaign.title
+                      ? 0.6
+                      : 1,
+                  background: "#dc2626",
+                  borderColor: "#dc2626",
+                }}
+              >
+                {deleteLoading ? "Deleting..." : "Delete Campaign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
 
 const styles = {
-  header: { marginBottom: '1.5rem' },
-  badgeRow: { display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' },
-  asset: { background: '#ede9fe', color: '#7c3aed', fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: '99px' },
-  title: { fontSize: '1.8rem', fontWeight: 800, margin: '0.5rem 0', color: '#111' },
-  creator: { color: '#666', fontSize: '0.9rem', marginBottom: '0.5rem' },
-  desc: { color: '#555', fontSize: '1rem', lineHeight: 1.6 },
-  card: { background: '#fff', border: '1px solid #e5e5e5', borderRadius: '10px', padding: '1.5rem', marginBottom: '1rem' },
-  amounts: { display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' },
-  big: { fontSize: '1.5rem', fontWeight: 800, color: '#111' },
-  small: { fontSize: '0.85rem', color: '#888' },
-  bar: { background: '#f0f0f0', borderRadius: '99px', height: '8px', marginBottom: '1.25rem', overflow: 'hidden' },
-  fill: { background: '#7c3aed', height: '100%', borderRadius: '99px' },
-  cta: { width: '100%', padding: '0.85rem', fontSize: '1rem' },
-  walletInfo: { background: '#f8f8f8', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1.75rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' },
-  walletLabel: { fontSize: '0.75rem', fontWeight: 600, color: '#888', textTransform: 'uppercase' },
-  walletKey: { fontSize: '0.8rem', color: '#555', wordBreak: 'break-all' },
-  detailCoverImage: { width: '100%', borderRadius: '14px', marginBottom: '1.5rem', objectFit: 'cover', maxHeight: '360px' },
-  detailCoverPlaceholder: {
-    width: '100%',
-    borderRadius: '14px',
-    marginBottom: '1.5rem',
-    height: '260px',
-    background: 'linear-gradient(135deg, #ede9fe 0%, #e0e7ff 100%)',
-    border: '1px solid #ddd6fe',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
+  header: { marginBottom: "1.5rem" },
+  badgeRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+    flexWrap: "wrap",
   },
-  detailCoverPlaceholderText: { color: '#6d28d9', fontWeight: 700 },
-  sectionTitle: { fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.75rem' },
-  list: { display: 'flex', flexDirection: 'column', gap: '0.5rem' },
-  row: { display: 'flex', justifyContent: 'space-between', background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '0.6rem 0.85rem' },
-  sender: { fontSize: '0.85rem', color: '#555', fontFamily: 'monospace' },
-  amount: { fontSize: '0.85rem', fontWeight: 600, flexShrink: 0 },
-  convHint: { fontSize: '0.72rem', color: '#888', marginTop: '0.15rem' },
-  refundTag: { marginTop: '0.45rem', fontSize: '0.75rem', color: '#7c3aed', fontWeight: 700 },
-  liveIndicator: { display: 'inline-flex', alignItems: 'center', gap: '4px', marginLeft: '0.5rem', fontSize: '0.72rem', fontWeight: 600, color: '#16a34a', verticalAlign: 'middle' },
-  liveDot: { display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: '#16a34a', animation: 'pulse 1.5s ease-in-out infinite' },
+  asset: {
+    background: "#ede9fe",
+    color: "#7c3aed",
+    fontSize: "0.75rem",
+    fontWeight: 700,
+    padding: "2px 8px",
+    borderRadius: "99px",
+  },
+  title: {
+    fontSize: "1.8rem",
+    fontWeight: 800,
+    margin: "0.5rem 0",
+    color: "#111",
+  },
+  creator: { color: "#666", fontSize: "0.9rem", marginBottom: "0.5rem" },
+  desc: { color: "#555", fontSize: "1rem", lineHeight: 1.6 },
+  card: {
+    background: "#fff",
+    border: "1px solid #e5e5e5",
+    borderRadius: "10px",
+    padding: "1.5rem",
+    marginBottom: "1rem",
+  },
+  amounts: {
+    display: "flex",
+    justifyContent: "space-between",
+    marginBottom: "1rem",
+  },
+  big: { fontSize: "1.5rem", fontWeight: 800, color: "#111" },
+  small: { fontSize: "0.85rem", color: "#888" },
+  bar: {
+    background: "#f0f0f0",
+    borderRadius: "99px",
+    height: "8px",
+    marginBottom: "1.25rem",
+    overflow: "hidden",
+  },
+  fill: { background: "#7c3aed", height: "100%", borderRadius: "99px" },
+  cta: { width: "100%", padding: "0.85rem", fontSize: "1rem" },
+  walletInfo: {
+    background: "#f8f8f8",
+    borderRadius: "8px",
+    padding: "0.75rem 1rem",
+    marginBottom: "1.75rem",
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.25rem",
+  },
+  walletLabel: {
+    fontSize: "0.75rem",
+    fontWeight: 600,
+    color: "#888",
+    textTransform: "uppercase",
+  },
+  walletKey: { fontSize: "0.8rem", color: "#555", wordBreak: "break-all" },
+  detailCoverImage: {
+    width: "100%",
+    borderRadius: "14px",
+    marginBottom: "1.5rem",
+    objectFit: "cover",
+    maxHeight: "360px",
+  },
+  detailCoverPlaceholder: {
+    width: "100%",
+    borderRadius: "14px",
+    marginBottom: "1.5rem",
+    height: "260px",
+    background: "linear-gradient(135deg, #ede9fe 0%, #e0e7ff 100%)",
+    border: "1px solid #ddd6fe",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  detailCoverPlaceholderText: { color: "#6d28d9", fontWeight: 700 },
+  sectionTitle: {
+    fontSize: "1.1rem",
+    fontWeight: 700,
+    marginBottom: "0.75rem",
+  },
+  list: { display: "flex", flexDirection: "column", gap: "0.5rem" },
+  row: {
+    display: "flex",
+    justifyContent: "space-between",
+    background: "#fff",
+    border: "1px solid #eee",
+    borderRadius: "6px",
+    padding: "0.6rem 0.85rem",
+  },
+  sender: { fontSize: "0.85rem", color: "#555", fontFamily: "monospace" },
+  amount: { fontSize: "0.85rem", fontWeight: 600, flexShrink: 0 },
+  convHint: { fontSize: "0.72rem", color: "#888", marginTop: "0.15rem" },
+  refundTag: {
+    marginTop: "0.45rem",
+    fontSize: "0.75rem",
+    color: "#7c3aed",
+    fontWeight: 700,
+  },
+  liveIndicator: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    marginLeft: "0.5rem",
+    fontSize: "0.72rem",
+    fontWeight: 600,
+    color: "#16a34a",
+    verticalAlign: "middle",
+  },
+  liveDot: {
+    display: "inline-block",
+    width: "7px",
+    height: "7px",
+    borderRadius: "50%",
+    background: "#16a34a",
+    animation: "pulse 1.5s ease-in-out infinite",
+  },
   header: { marginBottom: "1.5rem" },
   badgeRow: {
     display: "flex",
@@ -1557,8 +1995,16 @@ const styles = {
     margin: "0.5rem 0",
     color: "var(--color-text-primary)",
   },
-  creator: { color: "var(--color-text-hint)", fontSize: "0.9rem", marginBottom: "0.5rem" },
-  desc: { color: "var(--color-text-secondary)", fontSize: "1rem", lineHeight: 1.6 },
+  creator: {
+    color: "var(--color-text-hint)",
+    fontSize: "0.9rem",
+    marginBottom: "0.5rem",
+  },
+  desc: {
+    color: "var(--color-text-secondary)",
+    fontSize: "1rem",
+    lineHeight: 1.6,
+  },
   card: {
     background: "var(--color-bg)",
     border: "1px solid var(--color-border-light)",
@@ -1571,7 +2017,11 @@ const styles = {
     justifyContent: "space-between",
     marginBottom: "1rem",
   },
-  big: { fontSize: "1.5rem", fontWeight: 800, color: "var(--color-text-primary)" },
+  big: {
+    fontSize: "1.5rem",
+    fontWeight: 800,
+    color: "var(--color-text-primary)",
+  },
   small: { fontSize: "0.85rem", color: "var(--color-text-secondary)" },
   bar: {
     background: "var(--color-surface)",
@@ -1580,7 +2030,11 @@ const styles = {
     marginBottom: "1.25rem",
     overflow: "hidden",
   },
-  fill: { background: "var(--color-accent)", height: "100%", borderRadius: "99px" },
+  fill: {
+    background: "var(--color-accent)",
+    height: "100%",
+    borderRadius: "99px",
+  },
   cta: { width: "100%", padding: "0.85rem", fontSize: "1rem" },
   walletInfo: {
     background: "var(--color-surface)",
@@ -1597,7 +2051,11 @@ const styles = {
     color: "var(--color-text-secondary)",
     textTransform: "uppercase",
   },
-  walletKey: { fontSize: "0.8rem", color: "var(--color-text-hint)", wordBreak: "break-all" },
+  walletKey: {
+    fontSize: "0.8rem",
+    color: "var(--color-text-hint)",
+    wordBreak: "break-all",
+  },
   detailCoverImage: {
     width: "100%",
     borderRadius: "14px",
@@ -1619,9 +2077,17 @@ const styles = {
     borderRadius: "6px",
     padding: "0.6rem 0.85rem",
   },
-  sender: { fontSize: "0.85rem", color: "var(--color-text-secondary)", fontFamily: "monospace" },
+  sender: {
+    fontSize: "0.85rem",
+    color: "var(--color-text-secondary)",
+    fontFamily: "monospace",
+  },
   amount: { fontSize: "0.85rem", fontWeight: 600, flexShrink: 0 },
-  convHint: { fontSize: "0.72rem", color: "var(--color-text-secondary)", marginTop: "0.15rem" },
+  convHint: {
+    fontSize: "0.72rem",
+    color: "var(--color-text-secondary)",
+    marginTop: "0.15rem",
+  },
   refundTag: {
     marginTop: "0.45rem",
     fontSize: "0.75rem",
