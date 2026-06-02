@@ -25,7 +25,6 @@ const {
   configuredAssets,
 } = require('../config/stellar');
 const Sentry = require('@sentry/node');
-} = require("../config/stellar");
 
 const PLATFORM_KEYPAIR = Keypair.fromSecret(process.env.PLATFORM_SECRET_KEY);
 
