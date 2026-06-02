@@ -273,6 +273,12 @@ Contributions use `pathPaymentStrictReceive` so the campaign always receives the
 
 ---
 
+## Contributing
+
+Want to contribute? Read the **[CONTRIBUTING.md](CONTRIBUTING.md)** for setup instructions, branch naming conventions, commit message format, and the PR checklist.
+
+---
+
 ## Documentation
 
 - **[DEPLOYMENT.md](DEPLOYMENT.md)** - How to deploy CrowdPay on Railway, Render, or a self-hosted Ubuntu VPS, including a full environment variable reference

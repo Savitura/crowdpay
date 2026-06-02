@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const db = require('../config/database');
+const Sentry = require('@sentry/node');
 
 function apiKeyPepper() {
   return process.env.API_KEY_PEPPER || process.env.JWT_SECRET || 'dev-api-key-pepper';
@@ -123,6 +124,7 @@ function requireAuth(req, res, next) {
   authenticate(req)
     .then(() => {
       if (!assertApiKeyScopes(req, res)) return;
+      if (req.user?.userId) Sentry.setUser({ id: req.user.userId });
       next();
     })
     .catch((err) => {

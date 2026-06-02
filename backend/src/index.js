@@ -1,6 +1,14 @@
 require('dotenv').config();
 require('./config/env').validateEnv();
 
+const Sentry = require('@sentry/node');
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV || 'development',
+  tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
+  enabled: !!process.env.SENTRY_DSN,
+});
+
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -29,6 +37,8 @@ app.use(
 );
 app.use(express.json({ limit: '50kb' }));
 app.use(cookieParser());
+app.use(Sentry.Handlers.requestHandler());
+app.use(Sentry.Handlers.tracingHandler());
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(normalizeErrorResponse);
@@ -81,7 +91,8 @@ app.use('/api/auth', require('./routes/auth'));
 // Backwards/alternate compatibility for docs + clients expecting /api/users/register|login.
 app.use('/api/users', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
-app.use('/api/campaigns', require('./routes/campaigns'));
+app.use("/api/campaigns", require("./routes/campaignUpdates"));
+app.use("/api/campaigns", require("./routes/campaigns"));
 app.use('/api/anchor', require('./routes/anchor'));
 app.use('/api/contributions', require('./routes/contributions'));
 app.use('/api/withdrawals', require('./routes/withdrawals'));
@@ -91,6 +102,7 @@ app.use('/api/api-keys', require('./routes/apiKeys'));
 app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/milestones', require('./routes/milestones'));
 app.use('/api', require('./routes/disputes'));
+app.use('/api/notifications', require('./routes/notifications'));
 
 app.get('/health', (_, res) => res.json({ status: 'ok' }));
 app.get('/api/config', (_, res) =>
@@ -115,6 +127,7 @@ if (process.env.SERVE_FRONTEND === 'true') {
   });
 }
 
+app.use(Sentry.Handlers.errorHandler());
 app.use(errorHandler);
 
 const { startWebhookRetryPoller } = require('./services/webhookDispatcher');
