@@ -40,6 +40,18 @@ CREATE TABLE campaigns (
   show_backer_amounts BOOLEAN DEFAULT TRUE,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS campaign_updates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  campaign_id UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  author_id UUID NOT NULL REFERENCES users(id),
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS campaign_updates_campaign_created_idx
+  ON campaign_updates (campaign_id, created_at DESC);
 
 CREATE TABLE contributions (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -261,16 +273,7 @@ CREATE INDEX anchor_deposits_user_created_idx
 CREATE INDEX anchor_deposits_campaign_created_idx
   ON anchor_deposits (campaign_id, created_at DESC);
 
-CREATE TABLE campaign_updates (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  campaign_id     UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-  author_id       UUID NOT NULL REFERENCES users(id),
-  title           TEXT NOT NULL,
-  body            TEXT NOT NULL,
-  created_at      TIMESTAMPTZ DEFAULT NOW()
-);
 
-CREATE INDEX campaign_updates_campaign_idx ON campaign_updates (campaign_id, created_at DESC);
 
 CREATE TABLE password_reset_tokens (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),

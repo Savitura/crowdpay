@@ -81,7 +81,8 @@ app.use('/api/auth', require('./routes/auth'));
 // Backwards/alternate compatibility for docs + clients expecting /api/users/register|login.
 app.use('/api/users', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
-app.use('/api/campaigns', require('./routes/campaigns'));
+app.use("/api/campaigns", require("./routes/campaignUpdates"));
+app.use("/api/campaigns", require("./routes/campaigns"));
 app.use('/api/anchor', require('./routes/anchor'));
 app.use('/api/contributions', require('./routes/contributions'));
 app.use('/api/withdrawals', require('./routes/withdrawals'));

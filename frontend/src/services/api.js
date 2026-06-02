@@ -3,10 +3,8 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(
   "",
 );
 const BASE = `${API_BASE_URL}/api`;
-
 let refreshPromise = null;
 
-// Timeouts in milliseconds
 const TIMEOUTS = {
   GET: 10_000, // 10 s
   POST: 20_000, // 20 s — Stellar submissions can be slow
@@ -21,8 +19,9 @@ function jsonHeaders() {
 }
 
 async function request(method, path, body, options = {}) {
-  const { query, _retry = false } = options;
+  const { query, _retry = false } = options || {};
   let url = `${BASE}${path}`;
+
   if (query && Object.keys(query).length) {
     const params = new URLSearchParams();
     Object.entries(query).forEach(([k, v]) => {
@@ -71,6 +70,7 @@ async function request(method, path, body, options = {}) {
     "/auth/forgot-password",
     "/auth/reset-password",
   ];
+
   if (res.status === 401 && !_retry && !publicAuthPaths.includes(path)) {
     const promise = refresh();
     if (promise) {
@@ -89,12 +89,15 @@ async function request(method, path, body, options = {}) {
       typeof errorBody === "string"
         ? errorBody
         : errorBody?.message || `Request failed (${res.status})`;
+
     const err = new Error(message);
     err.status = res.status;
+
     if (errorBody && typeof errorBody === "object") {
       err.code = errorBody.code;
       err.fields = errorBody.fields;
     }
+
     throw err;
   }
 
@@ -103,6 +106,7 @@ async function request(method, path, body, options = {}) {
 
 async function uploadFormData(path, formData) {
   const url = `${BASE}${path}`;
+
   const res = await fetch(url, {
     method: "POST",
     body: formData,
@@ -125,12 +129,15 @@ async function uploadFormData(path, formData) {
       typeof errorBody === "string"
         ? errorBody
         : errorBody?.message || `Request failed (${res.status})`;
+
     const err = new Error(message);
     err.status = res.status;
+
     if (errorBody && typeof errorBody === "object") {
       err.code = errorBody.code;
       err.fields = errorBody.fields;
     }
+
     throw err;
   }
 
@@ -188,6 +195,7 @@ async function logout() {
 
 export const api = {
   getPlatformConfig: () => request("GET", "/config"),
+
   register: (body) => request("POST", "/auth/register", body),
   login: (body) => request("POST", "/auth/login", body),
   forgotPassword: (body) => request("POST", "/auth/forgot-password", body),
@@ -195,13 +203,13 @@ export const api = {
   logout: () => logout(),
   refresh,
 
-  getMyCampaigns: () => request("GET", "/campaigns/mine"),
-  getMyStats: () => request("GET", "/users/me/stats"),
-  getMyContributions: () => request("GET", "/contributions/mine"),
   getMe: () => request("GET", "/users/me"),
   getMyBalance: () => request("GET", "/users/me/balance"),
+  getMyStats: () => request("GET", "/users/me/stats"),
+  getMyContributions: () => request("GET", "/contributions/mine"),
   startKyc: () => request("POST", "/users/me/kyc/start"),
 
+  getMyCampaigns: () => request("GET", "/campaigns/mine"),
   getCampaigns: (options = {}) =>
     request("GET", "/campaigns", null, { query: options }),
   getCampaign: (id) => request("GET", `/campaigns/${id}`),
@@ -220,6 +228,7 @@ export const api = {
       formData,
     );
   },
+
   getCampaignMembers: (campaignId) =>
     request("GET", `/campaigns/${campaignId}/members`),
   inviteCampaignMember: (campaignId, body) =>
@@ -239,6 +248,10 @@ export const api = {
     }),
   postCampaignUpdate: (campaignId, body) =>
     request("POST", `/campaigns/${campaignId}/updates`, body),
+  updateCampaignUpdate: (campaignId, updateId, body) =>
+    request("PATCH", `/campaigns/${campaignId}/updates/${updateId}`, body),
+  deleteCampaignUpdate: (campaignId, updateId) =>
+    request("DELETE", `/campaigns/${campaignId}/updates/${updateId}`),
 
   getContributions: (campaignId, options = {}) =>
     request("GET", `/contributions/campaign/${campaignId}`, null, {
@@ -265,6 +278,22 @@ export const api = {
     }),
   getContributionFinalization: (txHash) =>
     request("GET", `/contributions/finalization/${txHash}`),
+
+  getMilestones: (campaignId) =>
+    request("GET", `/campaigns/${campaignId}/milestones`),
+  setCampaignMilestones: (campaignId, milestones) =>
+    request("POST", `/campaigns/${campaignId}/milestones`, { milestones }),
+  submitMilestoneEvidence: (id, body) =>
+    request("POST", `/milestones/${id}/submit`, body),
+  approveMilestone: (id, body) =>
+    request("POST", `/milestones/${id}/release`, body || {}),
+  rejectMilestone: (id, body) =>
+    request("POST", `/milestones/${id}/reject`, body || {}),
+
+  getAnchorInfo: () => request("GET", "/anchor/info"),
+  startAnchorDeposit: (body) => request("POST", "/anchor/deposits/start", body),
+  getAnchorDepositStatus: (id) => request("GET", `/anchor/deposits/${id}`),
+
   failExpiredCampaigns: () => request("POST", "/campaigns/cron/fail-expired"),
   triggerCampaignRefunds: (campaignId) =>
     request("POST", `/campaigns/${campaignId}/trigger-refunds`),
