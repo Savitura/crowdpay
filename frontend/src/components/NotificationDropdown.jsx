@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
+import RelativeTime from './RelativeTime';
 
 export default function NotificationDropdown({ notifications, onMarkRead, onMarkAllRead, onClose }) {
   const navigate = useNavigate();
@@ -31,7 +32,7 @@ export default function NotificationDropdown({ notifications, onMarkRead, onMark
           >
             <div style={styles.itemTitle}>{n.title}</div>
             {n.body && <div style={styles.itemBody}>{n.body}</div>}
-            <div style={styles.itemTime}>{new Date(n.created_at).toLocaleString()}</div>
+            <div style={styles.itemTime}><RelativeTime date={n.created_at} /></div>
           </button>
         ))
       )}

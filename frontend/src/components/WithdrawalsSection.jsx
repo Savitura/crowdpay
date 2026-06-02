@@ -3,6 +3,7 @@ import { api } from '../services/api';
 import { getNetwork, signTransaction } from '@stellar/freighter-api';
 import { stellarExpertTxUrl } from '../config/stellar';
 import { useToast } from '../context/ToastContext';
+import RelativeTime from './RelativeTime';
 
 const ELIGIBLE = ['active', 'funded'];
 
@@ -455,7 +456,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                         {ev.note ? ` — ${ev.note}` : ''}
                         <span style={{ color: 'var(--color-text-muted)' }}>
                           {' '}
-                          ({new Date(ev.created_at).toLocaleString()})
+                          (<RelativeTime date={ev.created_at} />)
                         </span>
                       </li>
                     ))}

@@ -3,6 +3,7 @@ import { Link, useParams, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import ContributeModal from "../components/ContributeModal";
+import RelativeTime from "../components/RelativeTime";
 import DisputeModal from "../components/DisputeModal";
 import TransactionHistory from "../components/TransactionHistory";
 import MilestoneTracker from "../components/MilestoneTracker";
@@ -89,11 +90,7 @@ function ContributionRow({ c }) {
               {c.sender_public_key.slice(0, 4)}…{c.sender_public_key.slice(-4)}
             </button>
             {" • "}
-            {new Date(c.created_at).toLocaleDateString(undefined, {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })}
+            <RelativeTime date={c.created_at} />
           </div>
           {c.refund_status && (
             <div style={styles.refundTag}>
@@ -1643,7 +1640,7 @@ export default function Campaign() {
                   }}
                 >
                   {update.author_name} •{" "}
-                  {new Date(update.created_at).toLocaleString()}
+                  <RelativeTime date={update.created_at} />
                 </span>
               </div>
               <div
@@ -1853,7 +1850,7 @@ export default function Campaign() {
                       }}
                     >
                       {update.author_name} •{" "}
-                      {new Date(update.created_at).toLocaleString()}
+                      <RelativeTime date={update.created_at} />
                     </span>
                   </div>
 
