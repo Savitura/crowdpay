@@ -8,6 +8,21 @@ const {
   getCampaignBalance,
   getSupportedAssetCodes,
   buildWithdrawalTransaction,
+  buildBatchRefundTransaction,
+  signTransactionXdr,
+  submitPreparedTransaction,
+} = require('../services/stellarService');
+const { withDecryptedWalletSecret } = require('../services/walletSecrets');
+const { encryptSecret } = require('../services/walletService');
+const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../services/ledgerMonitor');
+const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
+const { refreshCampaignStatus, refreshActiveCampaignStatuses } = require('../services/campaignStatusService');
+const { invokeContract, encodeMilestone, nativeToScVal } = require('../services/sorobanService');
+const { insertWithdrawalPendingSignatures } = require('../services/stellarTransactionService');
+const { sendEmail } = require('../services/emailService');
+const { uploadCampaignCoverImage } = require('../services/storage');
+const { isKycRequiredForCampaigns } = require('../services/kycProvider');
+const { listCreatorCampaigns } = require('../services/userDashboardService');
 } = require("../services/stellarService");
 const { encryptSecret } = require("../services/walletService");
 const {
@@ -1792,5 +1807,216 @@ router.post(
     res.json({ restored: true });
   }),
 );
+
+// POST /campaigns/:id/refund/initiate - Creator requests a batch refund XDR
+router.post('/:id/refund/initiate', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+  const { rows: campaignRows } = await db.query(
+    'SELECT id, wallet_public_key, status, refund_initiated_at FROM campaigns WHERE id = $1',
+    [campaignId]
+  );
+  if (!campaignRows.length) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+  const campaign = campaignRows[0];
+
+  if (campaign.status !== 'failed') {
+    return res.status(409).json({ error: 'Refunds may only be initiated for failed campaigns' });
+  }
+  if (campaign.refund_initiated_at) {
+    return res.status(409).json({ error: 'Refund has already been initiated' });
+  }
+
+  const { rows: contributions } = await db.query(
+    `SELECT id, sender_public_key, amount, asset 
+     FROM contributions 
+     WHERE campaign_id = $1 AND refunded = FALSE 
+     ORDER BY created_at ASC`,
+    [campaignId]
+  );
+
+  if (!contributions.length) {
+    return res.status(400).json({ error: 'No contributions to refund' });
+  }
+
+  const refunds = contributions.map(c => ({
+    destinationPublicKey: c.sender_public_key,
+    amount: c.amount,
+    asset: c.asset,
+  }));
+
+  let unsignedXdr;
+  try {
+    unsignedXdr = await buildBatchRefundTransaction({
+      campaignWalletPublicKey: campaign.wallet_public_key,
+      refunds,
+    });
+  } catch (err) {
+    logger.error('Failed to build batch refund transaction', { campaign_id: campaignId, error: err.message });
+    return res.status(500).json({ error: 'Could not construct Stellar transaction' });
+  }
+
+  await db.query(
+    `UPDATE campaigns 
+     SET refund_xdr = $1, refund_initiated_at = NOW() 
+     WHERE id = $2`,
+    [unsignedXdr, campaignId]
+  );
+
+  res.status(200).json({ unsigned_xdr: unsignedXdr });
+}));
+
+// POST /campaigns/:id/refund/approve/creator - Creator signs the batch refund XDR
+router.post('/:id/refund/approve/creator', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+  const { rows: campaignRows } = await db.query(
+    'SELECT id, refund_xdr, status FROM campaigns WHERE id = $1',
+    [campaignId]
+  );
+  if (!campaignRows.length) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+  const campaign = campaignRows[0];
+
+  if (campaign.status !== 'failed') {
+    return res.status(409).json({ error: 'Campaign status is not failed' });
+  }
+  if (!campaign.refund_xdr) {
+    return res.status(409).json({ error: 'Refund has not been initiated' });
+  }
+
+  const { rows: users } = await db.query(
+    'SELECT wallet_secret_encrypted, wallet_public_key, wallet_type FROM users WHERE id = $1',
+    [req.user.userId]
+  );
+  if (!users.length) {
+    return res.status(404).json({ error: 'Creator not found' });
+  }
+  const userRow = users[0];
+
+  let signedXdr;
+  try {
+    if (userRow.wallet_type === 'freighter') {
+      const { signed_xdr } = req.body || {};
+      if (!signed_xdr) {
+        return res.status(400).json({ error: 'signed_xdr is required for freighter users' });
+      }
+
+      try {
+        const tx = require('@stellar/stellar-sdk').TransactionBuilder.fromXDR(
+          signed_xdr,
+          require('../config/stellar').networkPassphrase
+        );
+        const signer = require('@stellar/stellar-sdk').Keypair.fromPublicKey(userRow.wallet_public_key);
+        const signatureValid = tx.signatures.some((decorated) => {
+          try {
+            return signer.verify(tx.hash(), decorated.signature());
+          } catch (_err) {
+            return false;
+          }
+        });
+        if (!signatureValid) {
+          return res.status(422).json({ error: 'Signed transaction does not include a valid signature by the creator' });
+        }
+      } catch (err) {
+        return res.status(422).json({ error: 'Invalid signed_xdr' });
+      }
+      signedXdr = signed_xdr;
+    } else {
+      signedXdr = await withDecryptedWalletSecret(
+        userRow.wallet_secret_encrypted,
+        {
+          userId: req.user.userId,
+          walletPublicKey: userRow.wallet_public_key,
+        },
+        async (creatorSecret) =>
+          signTransactionXdr({
+            xdr: campaign.refund_xdr,
+            signerSecret: creatorSecret,
+          })
+      );
+    }
+  } catch (err) {
+    logger.error('Creator refund signing failed', { campaign_id: campaignId, error: err.message });
+    return res.status(503).json({ error: 'Signing failed' });
+  }
+
+  await db.query(
+    'UPDATE campaigns SET refund_xdr = $1 WHERE id = $2',
+    [signedXdr, campaignId]
+  );
+
+  res.status(200).json({ signed_xdr: signedXdr });
+}));
+
+// POST /campaigns/:id/refund/approve/platform - Platform signs and submits
+router.post('/:id/refund/approve/platform', requireAuth, asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+
+  if (!process.env.PLATFORM_APPROVER_USER_ID || req.user.userId !== process.env.PLATFORM_APPROVER_USER_ID) {
+    return res.status(403).json({ error: 'Only the designated platform approver can perform this action' });
+  }
+
+  const { rows: campaignRows } = await db.query(
+    'SELECT id, wallet_public_key, refund_xdr, status FROM campaigns WHERE id = $1',
+    [campaignId]
+  );
+  if (!campaignRows.length) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+  const campaign = campaignRows[0];
+
+  if (campaign.status !== 'failed') {
+    return res.status(409).json({ error: 'Campaign status is not failed' });
+  }
+  if (!campaign.refund_xdr) {
+    return res.status(409).json({ error: 'Refund has not been approved by the creator yet' });
+  }
+
+  let signedXdr;
+  try {
+    signedXdr = signTransactionXdr({
+      xdr: campaign.refund_xdr,
+      signerSecret: process.env.PLATFORM_SECRET_KEY,
+    });
+  } catch (err) {
+    logger.error('Platform refund signing failed', { campaign_id: campaignId, error: err.message });
+    return res.status(500).json({ error: 'Platform signing failed' });
+  }
+
+  let txHash;
+  try {
+    txHash = await submitPreparedTransaction(signedXdr);
+  } catch (err) {
+    logger.error('Platform refund submission failed', { campaign_id: campaignId, error: err.message });
+    return res.status(502).json({ error: `Stellar submission failed: ${err.message}` });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE campaigns 
+       SET status = 'refunded', refund_tx_hash = $1, refund_xdr = $2 
+       WHERE id = $3`,
+      [txHash, signedXdr, campaignId]
+    );
+    await client.query(
+      `UPDATE contributions 
+       SET refunded = TRUE 
+       WHERE campaign_id = $1 AND refunded = FALSE`,
+      [campaignId]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    logger.error('Failed to update database after batch refund submission', { campaign_id: campaignId, error: err.message });
+    return res.status(500).json({ error: 'Stellar transaction submitted but failed to update database' });
+  } finally {
+    client.release();
+  }
+
+  res.status(200).json({ success: true, tx_hash: txHash });
+}));
 
 module.exports = router;

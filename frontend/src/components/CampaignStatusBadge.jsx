@@ -4,6 +4,7 @@ const LABELS = {
   funded: { text: 'Goal reached', bg: 'var(--color-success-bg)', color: 'var(--color-success-text)' },
   failed: { text: 'Campaign ended', bg: 'var(--color-error-bg)', color: 'var(--color-error-text)' },
   closed: { text: 'Campaign closed', bg: 'var(--color-surface)', color: 'var(--color-text-secondary)' },
+  refunded: { text: 'Refunded', bg: 'var(--color-surface)', color: 'var(--color-text-secondary)' },
 };
 
 export default function CampaignStatusBadge({ status }) {

@@ -463,6 +463,38 @@ async function buildWithdrawalTransaction({
   return tx.toXDR();
 }
 
+/**
+ * Build a batch refund transaction for a campaign wallet returning funds to multiple contributors.
+ * Returns the unsigned XDR.
+ */
+async function buildBatchRefundTransaction({
+  campaignWalletPublicKey,
+  refunds,
+}) {
+  const campaignAccount = await server.loadAccount(campaignWalletPublicKey);
+  const builder = new TransactionBuilder(campaignAccount, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  });
+
+  for (const refund of refunds) {
+    const stellarAsset = toStellarAsset(refund.asset);
+    builder.addOperation(
+      Operation.payment({
+        destination: refund.destinationPublicKey,
+        asset: stellarAsset,
+        amount: String(refund.amount),
+      })
+    );
+  }
+
+  const tx = builder
+    .setTimeout(60 * 60 * 24 * 7) // 7 days
+    .build();
+
+  return tx.toXDR();
+}
+
 async function getAccountMultisigConfig(publicKey) {
   const account = await server.loadAccount(publicKey);
   return {
@@ -661,5 +693,6 @@ module.exports = {
 
   getCampaignBalance,
   friendbotFund,
+  buildBatchRefundTransaction,
   PLATFORM_PUBLIC_KEY: PLATFORM_KEYPAIR.publicKey(),
 };

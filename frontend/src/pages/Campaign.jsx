@@ -13,6 +13,7 @@ import VerificationBadge from "../components/VerificationBadge";
 import CampaignStatusBadge from "../components/CampaignStatusBadge";
 import { stellarExpertTxUrl } from "../config/stellar";
 import CampaignQRCode from "../components/CampaignQRCode";
+import { getNetwork, signTransaction } from '@stellar/freighter-api';
 import { isConnected, getPublicKey } from "@stellar/freighter-api";
 
 function escapeHtml(text) {
@@ -40,10 +41,10 @@ function markdownToHtml(markdown) {
 }
 
 function progressColor(pct, status) {
-  if (status === "funded" || pct >= 100) return "#10b981"; // green — goal reached
-  if (status === "closed" || status === "withdrawn") return "#6b7280"; // grey — ended
-  if (pct >= 75) return "#3b82f6"; // blue — nearly there
-  return "#7c3aed"; // default purple
+  if (status === 'funded' || pct >= 100) return '#10b981'; // green — goal reached
+  if (status === 'closed' || status === 'withdrawn' || status === 'refunded' || status === 'failed') return '#6b7280'; // grey — ended
+  if (pct >= 75) return '#3b82f6'; // blue — nearly there
+  return '#7c3aed'; // default purple
 }
 
 function ContributionRow({ c }) {
@@ -176,6 +177,9 @@ export default function Campaign() {
   const [activeTab, setActiveTab] = useState("contributions");
   const [editingUpdateId, setEditingUpdateId] = useState(null);
   const [analytics, setAnalytics] = useState(null);
+  const [refundBusy, setRefundBusy] = useState(false);
+  const [refundError, setRefundError] = useState("");
+  const [refundSuccess, setRefundSuccess] = useState("");
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -245,6 +249,7 @@ export default function Campaign() {
       "withdrawn",
       "failed",
       "completed",
+      "refunded",
     ].includes(campaign.status);
     if (isCampaignClosed) return;
 
@@ -486,6 +491,56 @@ export default function Campaign() {
     }
   }
 
+  async function handleInitiateRefund() {
+    setRefundBusy(true);
+    setRefundError("");
+    setRefundSuccess("");
+    try {
+      const initRes = await api.initiateRefund(campaign.id);
+      const unsignedXdr = initRes.unsigned_xdr;
+
+      let signedXdr = unsignedXdr;
+      if (user?.wallet_type === "freighter") {
+        const network = await getNetwork();
+        if (network?.error) throw new Error("Could not read Freighter network");
+
+        const signed = await signTransaction(unsignedXdr, {
+          networkPassphrase: network?.networkPassphrase,
+          address: user?.wallet_public_key,
+        });
+        if (signed?.error) throw new Error(signed.error?.message || "Freighter signing failed");
+        if (!signed?.signedTxXdr) throw new Error("Freighter did not return a signed transaction");
+
+        const approveRes = await api.approveRefundCreator(campaign.id, { signed_xdr: signed.signedTxXdr });
+        signedXdr = approveRes.signed_xdr;
+      } else {
+        const approveRes = await api.approveRefundCreator(campaign.id, {});
+        signedXdr = approveRes.signed_xdr;
+      }
+
+      let isPlatformApprover = false;
+      try {
+        const capRes = await api.getWithdrawalCapabilities();
+        if (capRes.can_approve_platform) {
+          isPlatformApprover = true;
+        }
+      } catch (err) {
+        // ignore
+      }
+
+      if (isPlatformApprover) {
+        await api.approveRefundPlatform(campaign.id);
+        setRefundSuccess("Campaign contributions successfully refunded!");
+      } else {
+        setRefundSuccess("Refund signed by creator. Awaiting platform release.");
+      }
+
+      const updatedCampaign = await api.getCampaign(campaign.id);
+      setCampaign(updatedCampaign);
+    } catch (err) {
+      setRefundError(err.message || "Failed to initiate refund.");
+    } finally {
+      setRefundBusy(false);
   async function handleDeleteCampaign() {
     setDeleteError("");
     if (!campaign) return;
@@ -703,6 +758,73 @@ export default function Campaign() {
           Contributions are closed and refunds can be requested.
         </div>
       )}
+      {campaign.status === "refunded" && (
+        <div
+          className="alert alert--success"
+          style={{ marginBottom: "1.25rem" }}
+          role="status"
+        >
+          <strong>Campaign refunded.</strong> This campaign was refunded — all contributions have been returned to their original senders.
+        </div>
+      )}
+      {campaign.status === "failed" &&
+        user &&
+        user.id === campaign.creator_id && (
+          <div
+            style={{
+              background: "var(--color-bg-card, #1e1e2f)",
+              border: "1px solid var(--color-border-light)",
+              borderRadius: "10px",
+              padding: "1.1rem 1.25rem",
+              marginBottom: "1.25rem",
+            }}
+          >
+            <p
+              style={{
+                margin: "0 0 0.75rem",
+                fontSize: "0.9rem",
+                color: "var(--color-text-secondary)",
+                lineHeight: 1.55,
+              }}
+            >
+              This campaign did not reach its goal. You can refund all
+              contributors — this will build and sign a Stellar transaction that
+              returns each contributor's exact amount.
+            </p>
+            {refundError && (
+              <p
+                className="alert alert--error"
+                style={{ marginBottom: "0.75rem", fontSize: "0.875rem" }}
+                role="alert"
+              >
+                {refundError}
+              </p>
+            )}
+            {refundSuccess && (
+              <p
+                className="alert alert--success"
+                style={{ marginBottom: "0.75rem", fontSize: "0.875rem" }}
+                role="status"
+              >
+                {refundSuccess}
+              </p>
+            )}
+            <button
+              id="btn-refund-contributors"
+              type="button"
+              className="btn-primary"
+              disabled={refundBusy}
+              onClick={handleInitiateRefund}
+              style={{
+                background: refundBusy ? undefined : "#dc2626",
+                borderColor: refundBusy ? undefined : "#dc2626",
+                fontSize: "0.9rem",
+              }}
+            >
+              {refundBusy ? "Processing refund…" : "Refund contributors"}
+            </button>
+          </div>
+        )}
       {campaign.creator_kyc_status !== "verified" && (
         <div
           className="alert alert--warning"
@@ -786,6 +908,28 @@ export default function Campaign() {
           />
         </div>
 
+        {user && !['failed', 'refunded', 'closed', 'withdrawn'].includes(campaign.status) ? (
+          <button
+            type="button"
+            className="btn-primary"
+            style={styles.cta}
+            ref={contributeBtnRef}
+            aria-label={`Contribute to ${campaign.title}`}
+            onClick={() => setShowModal(true)}
+          >
+            Contribute
+          </button>
+        ) : campaign.status === 'refunded' ? (
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
+            This campaign has been <strong>refunded</strong>. All contributions were returned to their original senders.
+          </p>
+        ) : !user && !['failed', 'refunded', 'closed', 'withdrawn'].includes(campaign.status) ? (
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
+            <Link to="/login" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>Log in</Link> to contribute to this campaign.
+          </p>
+        ) : (
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
+            Contributions are closed while this campaign is{' '}
         {(campaign.min_contribution || campaign.max_contribution) && (
           <div
             style={{

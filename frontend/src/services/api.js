@@ -274,6 +274,12 @@ export const api = {
       query: { send_asset, dest_asset, dest_amount },
     }),
   getContributionFinalization: (txHash) =>
+    request('GET', `/contributions/finalization/${txHash}`),
+  failExpiredCampaigns: () => request('POST', '/campaigns/cron/fail-expired'),
+  triggerCampaignRefunds: (campaignId) => request('POST', `/campaigns/${campaignId}/trigger-refunds`),
+  initiateRefund: (id) => request('POST', `/campaigns/${id}/refund/initiate`, {}),
+  approveRefundCreator: (id, body) => request('POST', `/campaigns/${id}/refund/approve/creator`, body || {}),
+  approveRefundPlatform: (id) => request('POST', `/campaigns/${id}/refund/approve/platform`, {}),
     request("GET", `/contributions/finalization/${txHash}`),
 
   getMilestones: (campaignId) =>

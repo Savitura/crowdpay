@@ -25,6 +25,12 @@ function buildApp({
       getCampaignBalance: async () => ({}),
       getSupportedAssetCodes: () => ['XLM', 'USDC'],
       buildWithdrawalTransaction: buildWithdrawalTransactionImpl,
+      buildBatchRefundTransaction: async () => 'unsigned-refund-xdr',
+      signTransactionXdr: ({ xdr }) => xdr + '-signed',
+      submitPreparedTransaction: async () => 'refund-tx-hash',
+    },
+    '../services/walletSecrets': {
+      withDecryptedWalletSecret: async (enc, opts, fn) => fn('DECRYPTED_SECRET'),
     },
     '../services/ledgerMonitor': {
       watchCampaignWallet: async () => {},
@@ -317,6 +323,44 @@ test('GET /api/campaigns supports search, asset filter, and sort', async () => {
   assert.ok(listQuery.params.includes('USDC'));
 });
 
+test('POST /api/campaigns/:id/refund/initiate builds unsigned XDR and initiates refund', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('FROM campaigns') || text.includes('SELECT creator_id')) {
+        return { rows: [{ id: 'camp-1', creator_id: 'creator-1', wallet_public_key: 'GPK', status: 'failed', refund_initiated_at: null }] };
+      }
+      if (text.includes('FROM contributions')) {
+        return { rows: [{ id: 'contrib-1', sender_public_key: 'GSENDER', amount: '10.0', asset: 'XLM' }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/campaigns/camp-1/refund/initiate')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.unsigned_xdr, 'unsigned-refund-xdr');
+  const updateQuery = queries.find((q) => q.text.includes('UPDATE campaigns') && q.text.includes('refund_xdr'));
+  assert.ok(updateQuery);
+  assert.equal(updateQuery.params[0], 'unsigned-refund-xdr');
+});
+
+test('POST /api/campaigns/:id/refund/approve/creator signs refund XDR as creator', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('FROM campaigns') || text.includes('SELECT creator_id')) {
+        return { rows: [{ id: 'camp-1', creator_id: 'creator-1', refund_xdr: 'unsigned-refund-xdr', status: 'failed' }] };
+      }
+      if (text.includes('FROM users')) {
+        return { rows: [{ wallet_secret_encrypted: 'ENC', wallet_public_key: 'GCREATOR', wallet_type: 'custodial' }] };
 test('GET /api/campaigns uses plainto_tsquery for multi-word search', async () => {
 test('GET /api/campaigns supports sort=trending with CTE query', async () => {
 test('GET /api/campaigns/categories returns category counts', async () => {
@@ -352,6 +396,50 @@ test('GET /api/campaigns supports category filter', async () => {
     },
   });
 
+  const response = await request(app)
+    .post('/api/campaigns/camp-1/refund/approve/creator')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.signed_xdr, 'unsigned-refund-xdr-signed');
+  const updateQuery = queries.find((q) => q.text.includes('UPDATE campaigns') && q.text.includes('refund_xdr'));
+  assert.ok(updateQuery);
+  assert.equal(updateQuery.params[0], 'unsigned-refund-xdr-signed');
+});
+
+test('POST /api/campaigns/:id/refund/approve/platform signs and submits refund to Stellar', async () => {
+  const originalApprover = process.env.PLATFORM_APPROVER_USER_ID;
+  process.env.PLATFORM_APPROVER_USER_ID = 'admin-1';
+  
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'admin-1', role: 'admin' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('FROM campaigns')) {
+        return { rows: [{ id: 'camp-1', wallet_public_key: 'GPK', refund_xdr: 'unsigned-refund-xdr-signed', status: 'failed' }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/campaigns/camp-1/refund/approve/platform')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.success, true);
+  assert.equal(response.body.tx_hash, 'refund-tx-hash');
+
+  const updateCampQuery = queries.find((q) => q.text.includes('UPDATE campaigns') && q.text.includes('refunded'));
+  assert.ok(updateCampQuery);
+  assert.equal(updateCampQuery.params[0], 'refund-tx-hash');
+
+  const updateContribQuery = queries.find((q) => q.text.includes('UPDATE contributions') && q.text.includes('refunded = TRUE'));
+  assert.ok(updateContribQuery);
+
+  process.env.PLATFORM_APPROVER_USER_ID = originalApprover;
+});
   const response = await request(app).get(
     '/api/campaigns?search=clean%20energy%20project'
   );

@@ -4,10 +4,10 @@ import VerificationBadge from "./VerificationBadge";
 import CampaignStatusBadge from "./CampaignStatusBadge";
 
 function progressColor(pct, status) {
-  if (status === "funded" || pct >= 100) return "#10b981"; // green — goal reached
-  if (status === "closed" || status === "withdrawn") return "#6b7280"; // grey — ended
-  if (pct >= 75) return "#3b82f6"; // blue — nearly there
-  return "#7c3aed"; // default purple
+  if (status === 'funded' || pct >= 100) return '#10b981'; // green — goal reached
+  if (status === 'closed' || status === 'withdrawn' || status === 'refunded' || status === 'failed') return '#6b7280'; // grey — ended
+  if (pct >= 75) return '#3b82f6'; // blue — nearly there
+  return '#7c3aed'; // default purple
 }
 
 function daysLeft(deadline) {
