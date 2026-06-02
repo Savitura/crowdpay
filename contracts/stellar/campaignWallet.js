@@ -22,6 +22,9 @@ const {
   Horizon,
 } = require('@stellar/stellar-sdk');
 
+// Authoritative value lives in backend/src/config/constants.js TX_TIMEOUT_CONTRIBUTION_S
+const TX_TIMEOUT_CONTRIBUTION_S = 30;
+
 const server = new Horizon.Server(
   process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org'
 );
@@ -70,7 +73,7 @@ async function createCampaignWallet(creatorPublicKey) {
         startingBalance: '2',
       })
     )
-    .setTimeout(30)
+    .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
     .build();
 
   fundTx.sign(platformKeypair);
@@ -85,7 +88,7 @@ async function createCampaignWallet(creatorPublicKey) {
     .addOperation(Operation.setOptions({ signer: { ed25519PublicKey: creatorPublicKey, weight: 1 } }))
     .addOperation(Operation.setOptions({ signer: { ed25519PublicKey: platformKeypair.publicKey(), weight: 1 } }))
     .addOperation(Operation.setOptions({ masterWeight: 0, lowThreshold: 1, medThreshold: 2, highThreshold: 2 }))
-    .setTimeout(30)
+    .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
     .build();
 
   setupTx.sign(campaignKeypair);

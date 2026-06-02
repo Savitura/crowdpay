@@ -12,6 +12,13 @@ const {
   Operation,
   TransactionBuilder,
 } = require('@stellar/stellar-sdk');
+const { TX_TIMEOUT_CONTRIBUTION_S } = require('../config/constants');
+
+// Provide a dummy USDC issuer so stellar.js does not throw at module load time
+// in environments (e.g. CI, unit tests) where USDC_ISSUER is not set.
+process.env.USDC_ISSUER = process.env.USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+// Provide a dummy JWT_SECRET for token signing/verification in unit tests.
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-for-unit-tests';
 
 const TESTNET_PASSPHRASE = Networks.TESTNET;
 const VALID_G = 'GASXEYHSSVN3WSHD4WSZ4O37HC2AG4JH2EB6UPHM6IXDXDRJRDJD4RZK';
@@ -29,7 +36,7 @@ function buildUnsignedPaymentXdr({ senderPublicKey, destinationPublicKey, amount
       })
     )
     .addMemo(require('@stellar/stellar-sdk').Memo.text('cp-c-1'))
-    .setTimeout(30)
+    .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
     .build()
     .toXDR();
 }
@@ -49,9 +56,11 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
       feeAmount: 0,
     }),
     submitPreparedTransaction: async () => 'tx-from-submit',
+    submitWithFeeBumpFallback: async (...args) => stellarStub.submitPreparedTransaction(...args),
     getPathPaymentQuote: async () => [],
     getSupportedAssetCodes: () => ['XLM', 'USDC'],
     ensureCustodialAccountFundedAndTrusted: async () => null,
+    isBadSequenceError: () => false,
     ...stellarImpl,
   };
 
@@ -199,6 +208,11 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
         req.user = { userId: 'user-1' };
         next();
       },
+    },
+    '../middleware/validation': {
+      contributionValidation: [],
+      contributionQuoteValidation: [],
+      validateRequest: (_req, _res, next) => next(),
     },
   });
 
