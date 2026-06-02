@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { stellarExpertTxUrl } from '../config/stellar';
+import { isConnected, getPublicKey, signTransaction } from '@stellar/freighter-api';
 
 const SEND_OPTIONS = [
   { value: 'XLM', label: 'XLM', hint: 'Native Stellar' },
@@ -37,11 +38,11 @@ function friendlyFreighterError(err, fallback) {
   return fallback;
 }
 
-export default function ContributeModal({ campaign, onClose, onSuccess }) {
+export default function ContributeModal({ campaign, onClose, onSuccess, guestFreighterMode = false }) {
   const { token } = useAuth();
   const [amount, setAmount] = useState('');
   const [sendAsset, setSendAsset] = useState(campaign.asset_type);
-  const [paymentMethod, setPaymentMethod] = useState('custodial');
+  const [paymentMethod, setPaymentMethod] = useState(guestFreighterMode ? 'freighter' : 'custodial');
   const [anchorInfo, setAnchorInfo] = useState({ anchors: [] });
   const [selectedAnchorId, setSelectedAnchorId] = useState('');
   const [anchorSession, setAnchorSession] = useState(null);
@@ -68,6 +69,26 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
 
   const isPathPayment = sendAsset !== campaign.asset_type;
   const destAmount = amount.trim();
+  const effectiveSendAsset = paymentMethod === 'anchor' ? selectedAnchorId
+    ? anchorInfo.anchors.find((a) => a.id === selectedAnchorId)?.asset?.code
+    : undefined
+    : sendAsset;
+  const selectedAnchor = anchorInfo.anchors.find((a) => a.id === selectedAnchorId) || null;
+
+  // Fetch anchor info and existing contributions on mount
+  useEffect(() => {
+    api.getAnchorInfo().then(setAnchorInfo).catch(() => {});
+    api.getContributions(campaign.id, { limit: 100 }).then((d) => setExistingContributions(d.contributions || [])).catch(() => {});
+  }, [campaign.id]);
+
+  // Check Freighter availability
+  useEffect(() => {
+    isConnected().then((res) => {
+      const connected = res?.isConnected ?? res;
+      setFreighterAvailable(!!connected);
+      setFreighterChecked(true);
+    }).catch(() => setFreighterChecked(true));
+  }, []);
 
   const fetchQuote = useCallback(async () => {
     if (!isPathPayment || !effectiveSendAsset || !destAmount || Number(destAmount) <= 0) {
@@ -142,6 +163,59 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
     modal.addEventListener('keydown', trapTab);
     return () => modal.removeEventListener('keydown', trapTab);
   }, [phase]);
+
+  async function submitWithCustodial() {
+    return api.contribute({
+      campaign_id: campaign.id,
+      amount: destAmount,
+      send_asset: effectiveSendAsset,
+      display_name: displayName || undefined,
+    });
+  }
+
+  async function submitWithFreighter() {
+    const connected = await isConnected().then((r) => r?.isConnected ?? r).catch(() => false);
+    if (!connected) throw new Error('Freighter is not installed or not connected.');
+
+    const pkResult = await getPublicKey();
+    const senderPublicKey = pkResult?.publicKey ?? pkResult;
+    if (!senderPublicKey) throw new Error('Could not get public key from Freighter.');
+
+    setLoadingLabel('Building transaction…');
+    const { unsigned_xdr, network_name } = await api.buildContributionXdr({
+      campaign_id: campaign.id,
+      amount: destAmount,
+      send_asset: effectiveSendAsset,
+      sender_public_key: senderPublicKey,
+    });
+
+    setLoadingLabel('Waiting for Freighter signature…');
+    const signResult = await signTransaction(unsigned_xdr, { network: network_name });
+    const signedXdr = signResult?.signedTransaction ?? signResult;
+    if (!signedXdr) throw new Error('Freighter did not return a signed transaction.');
+
+    setLoadingLabel('Submitting…');
+    return api.guestContribute({
+      campaign_id: campaign.id,
+      sender_public_key: senderPublicKey,
+      signed_xdr: signedXdr,
+      unsigned_xdr,
+    });
+  }
+
+  async function submitWithAnchor() {
+    if (!selectedAnchorId) throw new Error('Please select a deposit partner.');
+    const session = await api.startAnchorDeposit({
+      campaign_id: campaign.id,
+      amount: destAmount,
+      anchor_id: selectedAnchorId,
+    });
+    setAnchorSession(session);
+    setPhase('anchor');
+    if (session.interactive_url) {
+      anchorPopupRef.current = window.open(session.interactive_url, '_blank', 'noopener,noreferrer,width=600,height=700');
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -257,6 +331,7 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
                   Payment method
                 </legend>
                 <div className="asset-picker" role="radiogroup" aria-label="Contribution payment method">
+                  {!guestFreighterMode && (
                   <label
                     className={`asset-picker__option${paymentMethod === 'custodial' ? ' asset-picker__option--selected' : ''}`}
                   >
@@ -270,7 +345,8 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
                     <div className="asset-picker__code">CrowdPay wallet</div>
                     <div className="asset-picker__hint">Uses your existing custodial balance</div>
                   </label>
-                  {freighterAvailable && (
+                  )}
+                  {(freighterAvailable || guestFreighterMode) && (
                     <label
                       className={`asset-picker__option${paymentMethod === 'freighter' ? ' asset-picker__option--selected' : ''}`}
                     >
@@ -301,9 +377,11 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
                     </label>
                   )}
                 </div>
-                {freighterChecked && !freighterAvailable && (
+                {freighterChecked && !freighterAvailable && (paymentMethod === 'freighter' || guestFreighterMode) && (
                   <span id="contrib-wallet-help" style={styles.help}>
-                    Freighter extension not detected. Install it to contribute from your own Stellar wallet.
+                    Freighter extension not detected.{' '}
+                    <a href="https://www.freighter.app/" target="_blank" rel="noopener noreferrer">Install Freighter</a>{' '}
+                    to contribute from your own Stellar wallet.
                   </span>
                 )}
               </fieldset>

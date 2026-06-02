@@ -213,8 +213,8 @@ router.get('/finalization/:txHash', requireAuth, asyncHandler(async (req, res) =
   });
 }));
 
-// Quote conversion before a path payment contribution
-router.get('/quote', requireAuth, contributionQuoteValidation, validateRequest, asyncHandler(async (req, res) => {
+// Quote conversion before a path payment contribution (unauthenticated allowed for guest flow)
+router.get('/quote', contributionQuoteValidation, validateRequest, asyncHandler(async (req, res) => {
   /**
    * @openapi
    * /api/contributions/quote:
@@ -288,6 +288,106 @@ router.get('/quote', requireAuth, contributionQuoteValidation, validateRequest, 
     path: bestPath.path,
     path_count: paths.length,
   });
+}));
+
+// Build unsigned XDR for guest (Freighter) contributors — no auth required
+router.post('/build-xdr', contributionPostLimiter, contributionValidation, validateRequest, asyncHandler(async (req, res) => {
+  const { campaign_id, amount, send_asset, sender_public_key } = req.body;
+
+  if (!sender_public_key) {
+    return res.status(422).json({ error: 'sender_public_key is required' });
+  }
+  if (!validateFreighterPublicKey(sender_public_key)) {
+    return res.status(422).json({ error: 'sender_public_key must be a valid Stellar public key' });
+  }
+
+  const campaign = await loadActiveCampaign(campaign_id);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+  if (campaign.min_contribution && parseFloat(amount) < parseFloat(campaign.min_contribution)) {
+    return res.status(400).json({ error: `Contribution amount is below the minimum limit of ${campaign.min_contribution} ${campaign.asset_type}` });
+  }
+
+  try {
+    const intent = await buildContributionIntent({
+      campaign,
+      amount,
+      sendAsset: send_asset,
+      contributorPublicKey: sender_public_key,
+    });
+
+    const unsignedXdr =
+      intent.kind === 'payment'
+        ? await buildUnsignedContributionPayment({
+            senderPublicKey: sender_public_key,
+            destinationPublicKey: campaign.wallet_public_key,
+            asset: send_asset,
+            amount,
+            memo: buildContributionMemo(campaign_id),
+          })
+        : await buildUnsignedContributionPathPayment({
+            senderPublicKey: sender_public_key,
+            destinationPublicKey: campaign.wallet_public_key,
+            sendAsset: send_asset,
+            sendMax: intent.sendMax,
+            destAmount: amount,
+            destAssetCode: campaign.asset_type,
+            memo: buildContributionMemo(campaign_id),
+          });
+
+    res.json({
+      unsigned_xdr: unsignedXdr,
+      conversion_quote: intent.conversionQuote,
+      network_passphrase: networkPassphrase,
+      network_name: isTestnet ? 'TESTNET' : 'PUBLIC',
+    });
+  } catch (err) {
+    if (err.statusCode === 422) return res.status(422).json({ error: err.message });
+    logger.error('Guest build-xdr failed', { campaign_id, error: err.message });
+    return res.status(503).json({ error: 'Could not build the transaction. Please try again.' });
+  }
+}));
+
+// Submit pre-signed XDR from Freighter — no auth required
+router.post('/guest', contributionPostLimiter, asyncHandler(async (req, res) => {
+  const { campaign_id, sender_public_key, signed_xdr, unsigned_xdr } = req.body;
+
+  if (!campaign_id || !sender_public_key || !signed_xdr || !unsigned_xdr) {
+    return res.status(400).json({ error: 'campaign_id, sender_public_key, signed_xdr, and unsigned_xdr are required' });
+  }
+
+  if (!validateFreighterPublicKey(sender_public_key)) {
+    return res.status(422).json({ error: 'sender_public_key must be a valid Stellar public key' });
+  }
+
+  const campaign = await loadActiveCampaign(campaign_id);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+  try {
+    validateSubmittedContributionXdr({ signedXdr: signed_xdr, unsignedXdr: unsigned_xdr, senderPublicKey: sender_public_key });
+  } catch (err) {
+    return res.status(422).json({ error: err.message });
+  }
+
+  let txHash;
+  try {
+    txHash = await submitPreparedTransaction(signed_xdr);
+  } catch (err) {
+    logger.error('Guest Freighter submission failed', { campaign_id, error: err.message });
+    sendAlert('Guest Freighter submission failed', { campaign_id, error: err.message });
+    return res.status(502).json({ error: 'Stellar network rejected the transaction', detail: err.message || String(err) });
+  }
+
+  const stellarTransactionId = await insertContributionSubmitted(null, {
+    txHash,
+    campaignId: campaign_id,
+    userId: null,
+    unsignedXdr: unsigned_xdr,
+    signedXdr: signed_xdr,
+    metadata: { flow: 'guest_freighter', sender_public_key },
+  });
+
+  res.status(202).json({ tx_hash: txHash, stellar_transaction_id: stellarTransactionId, message: 'Transaction submitted' });
 }));
 
 router.post('/prepare', requireAuth, contributionValidation, validateRequest, asyncHandler(async (req, res) => {
