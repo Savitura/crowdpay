@@ -1,0 +1,26 @@
+# ── Stage 1: install dependencies ──────────────────────────────────────────
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev  # production deps only
+
+# ── Stage 2: final image ────────────────────────────────────────────────────
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+# Run as non-root user
+RUN addgroup -S crowdpay && adduser -S crowdpay -G crowdpay
+USER crowdpay
+
+# Copy only what's needed
+COPY --from=deps --chown=crowdpay:crowdpay /app/node_modules ./node_modules
+COPY --chown=crowdpay:crowdpay src/ ./src/
+COPY --chown=crowdpay:crowdpay db/ ./db/
+
+ENV NODE_ENV=production
+EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://localhost:3001/health || exit 1
+
+CMD ["node", "src/index.js"]

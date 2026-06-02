@@ -1,12 +1,13 @@
 # CrowdPay Deployment Guide
 
-This guide covers three ways to deploy CrowdPay to production:
+This guide covers four ways to deploy CrowdPay to production:
 
 - **[Option A — Railway](#option-a--railway)** (recommended for most contributors)
 - **[Option B — Render](#option-b--render)**
 - **[Option C — Self-hosted VPS (Ubuntu 22.04)](#option-c--self-hosted-vps-ubuntu-2204)**
+- **[Option D — Docker Compose (Production-ready)](#option-d--docker-compose-production-ready)**
 
-All three options end with the same running system: a Node.js backend on port 3001, a static React frontend, and a PostgreSQL 14+ database. A [full environment variable reference](#environment-variable-reference) is at the bottom.
+All options end with the same running system: a Node.js backend on port 3001, a static React frontend, and a PostgreSQL 14+ database. A [full environment variable reference](#environment-variable-reference) is at the bottom.
 
 ---
 
@@ -412,6 +413,41 @@ journalctl -u crowdpay-backend -f
 
 # Hit the health / docs endpoint
 curl https://yourdomain.com/api/docs
+```
+
+---
+
+## Option D — Docker Compose (Production-ready)
+
+This option details launching the production-ready application stack locally or on a virtual private server using Docker Compose. The configuration uses multi-stage builds to minimize image sizes, runs the backend process under a non-root user for security, and configures an Nginx server to handle SPA client-side routing and API requests.
+
+### 1. Build and Run Configuration
+
+Orchestrate the production containers with the root [docker-compose.prod.yml](file:///c:/Users/HP/Desktop/Code/crowdpay/docker-compose.prod.yml) configuration:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+### 2. Services Defined
+
+*   **`backend`**: Builds using [backend/Dockerfile.prod](file:///c:/Users/HP/Desktop/Code/crowdpay/backend/Dockerfile.prod) on port `3001` and includes:
+    *   Dependency isolation (only production packages in final runner).
+    *   Process security (non-root `crowdpay` user execution).
+    *   Container health check verifying `/health` endpoint response.
+*   **`frontend`**: Builds using [frontend/Dockerfile.prod](file:///c:/Users/HP/Desktop/Code/crowdpay/frontend/Dockerfile.prod), compiling and serving static React build files via Nginx.
+*   **`nginx`**: Routes frontend static pages on port `80` with SPA fallback routes (`try_files $uri $uri/ /index.html`) and forwards API calls under `/api/` directly to the `backend` container on port `3001` based on [nginx.conf](file:///c:/Users/HP/Desktop/Code/crowdpay/frontend/nginx.conf).
+
+### 3. Verify Containers Status
+
+Check container health status and logs:
+
+```bash
+# Verify running containers & health status
+docker compose -f docker-compose.prod.yml ps
+
+# Show logs
+docker compose -f docker-compose.prod.yml logs -f
 ```
 
 ---
