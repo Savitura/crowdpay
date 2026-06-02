@@ -10,6 +10,7 @@ const {
 } = require('@stellar/stellar-sdk');
 const { server, networkPassphrase } = require('../config/stellar');
 const logger = require('../config/logger');
+const { TX_TIMEOUT_CONTRIBUTION_S } = require('../config/constants');
 
 async function simulateAndPrepare(tx) {
   const simulation = await server.simulateTransaction(tx);
@@ -29,7 +30,7 @@ async function invokeContract({ contractId, method, args, signerSecret }) {
     networkPassphrase,
   })
     .addOperation(contract.call(method, ...args))
-    .setTimeout(30)
+    .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
     .build();
     
   const preparedTx = await simulateAndPrepare(tx);

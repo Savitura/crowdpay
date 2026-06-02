@@ -22,6 +22,9 @@ const {
   Horizon,
 } = require('@stellar/stellar-sdk');
 
+// Authoritative value lives in backend/src/config/constants.js TX_TIMEOUT_CONTRIBUTION_S
+const TX_TIMEOUT_CONTRIBUTION_S = 30;
+
 const server = new Horizon.Server(
   process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org'
 );
@@ -81,7 +84,7 @@ async function sendPathPayment(senderSecret, destPublicKey, sendAssetCode, sendM
         path: [], // let Stellar discover the path
       })
     )
-    .setTimeout(30)
+    .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
     .build();
 
   tx.sign(senderKeypair);
