@@ -14,6 +14,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import AcceptInvite from './pages/AcceptInvite';
 import Developer from './pages/Developer';
 import Dashboard from './pages/Dashboard';
+import Profile from './pages/Profile';
 import NotFound from './pages/NotFound';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="/developer" element={<Developer />} />
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/profile" element={<Profile />} />
           <Route path="/my-contributions" element={<Navigate to="/dashboard?tab=contributions" replace />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

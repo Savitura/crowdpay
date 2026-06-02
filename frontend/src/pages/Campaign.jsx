@@ -1761,50 +1761,40 @@ export default function Campaign() {
         </div>
       )}
 
-      {activeTab === "updates" && (
-        <section role="tabpanel" style={{ marginBottom: "1.5rem" }}>
-          {canPostUpdate && (
-            <form
-              onSubmit={submitUpdate}
-              className="campaign-card"
-              style={{ marginBottom: "1rem" }}
-            >
-              <strong style={{ marginBottom: "0.5rem", display: "block" }}>
-                {editingUpdateId ? "Edit update" : "Post update"}
-              </strong>
-
-              <input
-                placeholder="Update title"
-                value={updateForm.title}
-                onChange={(e) =>
-                  setUpdateForm((s) => ({ ...s, title: e.target.value }))
-                }
-                required
-                style={{ marginBottom: "0.5rem" }}
-              />
-
-              <textarea
-                placeholder="Share a progress milestone, shipment update, or setback..."
-                value={updateForm.body}
-                onChange={(e) =>
-                  setUpdateForm((s) => ({ ...s, body: e.target.value }))
-                }
-                rows={4}
-                required
-              />
-
-              {updatesError && (
-                <p
-                  className="alert alert--error"
-                  style={{ marginTop: "0.5rem" }}
-                  role="alert"
-                >
-                  {updatesError}
-                </p>
-              )}
-
-              <div
-                style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}
+      <h2 style={styles.sectionTitle}>
+        Backer Wall {contributions !== null ? `(${totalContributions})` : ""}
+        {isLive && (
+          <span style={styles.liveIndicator} title="Live updates active">
+            <span style={styles.liveDot} />
+            Live
+          </span>
+        )}
+      </h2>
+      {contributions === null ? (
+        <ContributionListSkeleton />
+      ) : contributions.length === 0 ? (
+        <div style={styles.emptyBackers}>
+          <p>Be the first to back this!</p>
+          <p
+            style={{ fontSize: "0.9rem", color: "var(--color-text-secondary)", marginTop: "0.25rem" }}
+          >
+            Every contribution counts towards making this goal a reality.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div style={styles.list} className="contributions-list">
+            {contributions.map((c) => (
+              <ContributionRow key={c.id} c={c} />
+            ))}
+          </div>
+          {totalContributions > 10 && (
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowAll((prev) => !prev)}
+                style={{ padding: '0.5rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer' }}
               >
                 <button
                   type="submit"

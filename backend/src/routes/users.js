@@ -101,4 +101,28 @@ router.get('/me/contributions', requireAuth, asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
+// GET /api/users/me — already proposed in issue #163, implement together
+router.get('/me', requireAuth, async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT id, email, name, wallet_public_key, created_at FROM users WHERE id = $1`,
+    [req.user.userId]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'User not found' });
+  res.json(rows[0]);
+});
+
+// PATCH /api/users/me — update display name only
+router.patch('/me', requireAuth, async (req, res) => {
+  const { name } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'name is required' });
+  }
+  const { rows } = await db.query(
+    `UPDATE users SET name = $1 WHERE id = $2
+     RETURNING id, email, name, wallet_public_key, created_at`,
+    [name.trim(), req.user.userId]
+  );
+  res.json(rows[0]);
+});
+
 module.exports = router;
