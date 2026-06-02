@@ -314,3 +314,43 @@ test('GET /api/campaigns supports search, asset filter, and sort', async () => {
   assert.ok(listQuery.params.includes('%solar%'));
   assert.ok(listQuery.params.includes('USDC'));
 });
+
+test('GET /api/campaigns supports sort=trending with CTE query', async () => {
+  const queries = [];
+  const app = buildApp({
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('COUNT(*)::int AS total')) {
+        return { rows: [{ total: 1 }] };
+      }
+      return {
+        rows: [
+          {
+            id: 'camp-1',
+            title: 'Solar panels',
+            description: 'Clean energy',
+            asset_type: 'USDC',
+            status: 'active',
+            raised_amount: '80',
+            target_amount: '100',
+            recentContributions: 3,
+            recent_contributions: 3,
+            recent_volume: 150,
+            trending_score: 380,
+          },
+        ],
+      };
+    },
+  });
+
+  const response = await request(app).get('/api/campaigns?sort=trending');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.total, 1);
+  assert.equal(response.body.campaigns.length, 1);
+  assert.equal(response.body.campaigns[0].recentContributions, 3);
+  
+  const listQuery = queries.find((q) => q.text.includes('WITH recent AS'));
+  assert.ok(listQuery);
+  assert.match(listQuery.text, /ORDER BY trending_score DESC/i);
+});

@@ -40,6 +40,11 @@ export default function CampaignCard({ campaign }) {
           <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={styles.asset}>{campaign.asset_type}</span>
             <CampaignStatusBadge status={campaign.status} />
+            {campaign.recentContributions > 0 && (
+              <span style={styles.trending}>
+                {campaign.recentContributions} contribution{campaign.recentContributions > 1 ? 's' : ''} in 48h
+              </span>
+            )}
           </div>
           <VerificationBadge status={campaign.creator_kyc_status} compact />
         </div>
@@ -82,6 +87,7 @@ const styles = {
   card: { background: 'var(--color-bg)', border: '1px solid var(--color-border-light)', borderRadius: '10px', padding: '1.25rem', transition: 'box-shadow 0.15s' },
   header: { marginBottom: '0.6rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   asset: { background: 'var(--color-accent-lightest)', color: 'var(--color-accent)', fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: '99px' },
+  trending: { background: 'var(--color-success-bg)', color: 'var(--color-success-text)', border: '1px solid var(--color-success-border)', fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: '99px' },
   updates: { fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-success-text)', marginBottom: '0.45rem' },
   title: { fontSize: '1.05rem', fontWeight: 700, marginBottom: '0.4rem', color: 'var(--color-text-primary)' },
   creator: { fontSize: '0.8rem', color: 'var(--color-text-hint)', marginBottom: '0.4rem' },

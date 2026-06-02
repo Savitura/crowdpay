@@ -53,4 +53,14 @@ describe('CampaignCard', () => {
     renderCard({ ...baseCampaign, status: 'failed' });
     expect(screen.getByText('Campaign ended')).toBeInTheDocument();
   });
+
+  it('renders trending badge when recentContributions is present', () => {
+    renderCard({ ...baseCampaign, recentContributions: 5 });
+    expect(screen.getByText('5 contributions in 48h')).toBeInTheDocument();
+  });
+
+  it('does not render trending badge when recentContributions is 0 or missing', () => {
+    renderCard({ ...baseCampaign });
+    expect(screen.queryByText(/in 48h/)).toBeNull();
+  });
 });

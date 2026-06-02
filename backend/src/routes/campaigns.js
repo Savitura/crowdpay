@@ -231,24 +231,56 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
     newest: 'c.created_at DESC',
     ending_soon: 'c.deadline ASC NULLS LAST',
     most_funded: 'c.raised_amount DESC',
+    funded: 'c.raised_amount DESC',
     most_backed: '(SELECT COUNT(*) FROM contributions ctr WHERE ctr.campaign_id = c.id) DESC',
     closest_to_goal: '(c.raised_amount / NULLIF(c.target_amount, 0)) DESC NULLS LAST, c.raised_amount DESC',
   };
-  const orderBy = sortExpressions[sort] || sortExpressions.newest;
 
-  const query = `
-    SELECT c.*,
-           u.name AS creator_name,
-           u.kyc_status AS creator_kyc_status,
-           (SELECT COUNT(*)::int FROM campaign_updates cu WHERE cu.campaign_id = c.id) AS updates_count,
-           (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions con WHERE con.campaign_id = c.id) AS contributor_count
-    FROM campaigns c
-    JOIN users u ON u.id = c.creator_id
-    ${whereClause}
-    ORDER BY ${orderBy}
-    LIMIT $${params.length + 1}
-    OFFSET $${params.length + 2}
-  `;
+  let query;
+  if (sort === 'trending') {
+    query = `
+      WITH recent AS (
+        SELECT
+          campaign_id,
+          COUNT(*)::int AS recent_count,
+          COALESCE(SUM(amount), 0) AS recent_volume
+        FROM contributions
+        WHERE created_at >= NOW() - INTERVAL '48 hours'
+        GROUP BY campaign_id
+      )
+      SELECT c.*,
+             u.name AS creator_name,
+             u.kyc_status AS creator_kyc_status,
+             (SELECT COUNT(*)::int FROM campaign_updates cu WHERE cu.campaign_id = c.id) AS updates_count,
+             (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions con WHERE con.campaign_id = c.id) AS contributor_count,
+             COALESCE(r.recent_count, 0) AS recent_contributions,
+             COALESCE(r.recent_count, 0) AS "recentContributions",
+             COALESCE(r.recent_volume, 0) AS recent_volume,
+             (COALESCE(r.recent_volume, 0) * 2 + (c.raised_amount / NULLIF(c.target_amount, 0) * 100)) AS trending_score
+      FROM campaigns c
+      JOIN users u ON u.id = c.creator_id
+      LEFT JOIN recent r ON r.campaign_id = c.id
+      ${whereClause}
+      ORDER BY trending_score DESC, c.created_at DESC
+      LIMIT $${params.length + 1}
+      OFFSET $${params.length + 2}
+    `;
+  } else {
+    const orderBy = sortExpressions[sort] || sortExpressions.newest;
+    query = `
+      SELECT c.*,
+             u.name AS creator_name,
+             u.kyc_status AS creator_kyc_status,
+             (SELECT COUNT(*)::int FROM campaign_updates cu WHERE cu.campaign_id = c.id) AS updates_count,
+             (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions con WHERE con.campaign_id = c.id) AS contributor_count
+      FROM campaigns c
+      JOIN users u ON u.id = c.creator_id
+      ${whereClause}
+      ORDER BY ${orderBy}
+      LIMIT $${params.length + 1}
+      OFFSET $${params.length + 2}
+    `;
+  }
   const result = await db.query(query, [...params, limit, offset]);
 
   res.json({ total, limit, offset, campaigns: result.rows });

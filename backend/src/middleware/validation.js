@@ -4,7 +4,7 @@ const { getSupportedAssetCodes } = require('../services/stellarService');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const VALID_CAMPAIGN_STATUSES = ['active', 'funded', 'closed', 'failed'];
-const VALID_ORDER_BY = ['newest', 'ending_soon', 'most_funded', 'most_backed', 'closest_to_goal'];
+const VALID_ORDER_BY = ['newest', 'ending_soon', 'most_funded', 'funded', 'most_backed', 'closest_to_goal', 'trending'];
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isUuid(value) {
