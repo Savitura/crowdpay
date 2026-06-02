@@ -136,6 +136,16 @@ const createCampaignValidation = [
       }
       return true;
     }),
+  body('max_per_user')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ gt: 0 })
+    .withMessage('Per-contributor cap must be greater than zero')
+    .custom((value, { req }) => {
+      if (value && req.body.min_contribution && parseFloat(value) <= parseFloat(req.body.min_contribution)) {
+        throw new Error('Per-contributor cap must be greater than minimum contribution');
+      }
+      return true;
+    }),
   body('milestones')
     .optional({ nullable: true })
     .custom((value) => {

@@ -314,18 +314,33 @@ router.post('/prepare', requireAuth, contributionValidation, validateRequest, as
   const campaign = await loadActiveCampaign(campaign_id);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-  if (campaign.min_contribution && parseFloat(amount) < parseFloat(campaign.min_contribution)) {
-    return res.status(400).json({ error: `Contribution amount is below the minimum limit of ${campaign.min_contribution} ${campaign.asset_type}` });
+  // 1. Minimum contribution check
+  if (campaign.min_contribution && Number(amount) < Number(campaign.min_contribution)) {
+    return res.status(400).json({
+      error: `Minimum contribution is ${campaign.min_contribution} ${campaign.asset_type}`,
+    });
   }
 
-  if (campaign.max_contribution) {
-    const { rows: sumRows } = await db.query(
-      'SELECT COALESCE(SUM(amount), 0) as total FROM contributions WHERE campaign_id = $1 AND sender_public_key = $2',
+  // 2. Maximum contribution check
+  if (campaign.max_contribution && Number(amount) > Number(campaign.max_contribution)) {
+    return res.status(400).json({
+      error: `Maximum contribution is ${campaign.max_contribution} ${campaign.asset_type}`,
+    });
+  }
+
+  // 3. Per-user cap check
+  if (campaign.max_per_user) {
+    const { rows: userTotal } = await db.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total
+       FROM contributions
+       WHERE campaign_id = $1 AND sender_public_key = $2`,
       [campaign_id, sender_public_key]
     );
-    const totalExisting = parseFloat(sumRows[0].total);
-    if (totalExisting + parseFloat(amount) > parseFloat(campaign.max_contribution)) {
-      return res.status(400).json({ error: `Contribution violates the maximum limit of ${campaign.max_contribution} ${campaign.asset_type} per backer` });
+    const alreadyContributed = Number(userTotal[0].total);
+    if (alreadyContributed + Number(amount) > Number(campaign.max_per_user)) {
+      return res.status(400).json({
+        error: `You have already contributed ${alreadyContributed} ${campaign.asset_type}. The per-contributor limit is ${campaign.max_per_user}.`,
+      });
     }
   }
 
@@ -500,18 +515,33 @@ router.post('/', contributionPostLimiter, requireAuth, contributionValidation, v
   );
   const contributorPublicKey = users[0].wallet_public_key;
 
-  if (campaign.min_contribution && parseFloat(amount) < parseFloat(campaign.min_contribution)) {
-    return res.status(400).json({ error: `Contribution amount is below the minimum limit of ${campaign.min_contribution} ${campaign.asset_type}` });
+  // 1. Minimum contribution check
+  if (campaign.min_contribution && Number(amount) < Number(campaign.min_contribution)) {
+    return res.status(400).json({
+      error: `Minimum contribution is ${campaign.min_contribution} ${campaign.asset_type}`,
+    });
   }
 
-  if (campaign.max_contribution) {
-    const { rows: sumRows } = await db.query(
-      'SELECT COALESCE(SUM(amount), 0) as total FROM contributions WHERE campaign_id = $1 AND sender_public_key = $2',
+  // 2. Maximum contribution check
+  if (campaign.max_contribution && Number(amount) > Number(campaign.max_contribution)) {
+    return res.status(400).json({
+      error: `Maximum contribution is ${campaign.max_contribution} ${campaign.asset_type}`,
+    });
+  }
+
+  // 3. Per-user cap check
+  if (campaign.max_per_user) {
+    const { rows: userTotal } = await db.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total
+       FROM contributions
+       WHERE campaign_id = $1 AND sender_public_key = $2`,
       [campaign_id, contributorPublicKey]
     );
-    const totalExisting = parseFloat(sumRows[0].total);
-    if (totalExisting + parseFloat(amount) > parseFloat(campaign.max_contribution)) {
-      return res.status(400).json({ error: `Contribution violates the maximum limit of ${campaign.max_contribution} ${campaign.asset_type} per backer` });
+    const alreadyContributed = Number(userTotal[0].total);
+    if (alreadyContributed + Number(amount) > Number(campaign.max_per_user)) {
+      return res.status(400).json({
+        error: `You have already contributed ${alreadyContributed} ${campaign.asset_type}. The per-contributor limit is ${campaign.max_per_user}.`,
+      });
     }
   }
 

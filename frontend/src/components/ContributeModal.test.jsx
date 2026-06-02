@@ -110,6 +110,45 @@ describe('ContributeModal', () => {
     });
   });
 
+  it('validates minimum contribution limit', async () => {
+    const user = userEvent.setup();
+    renderModal({ min_contribution: '5' });
+    await user.clear(screen.getByLabelText(/amount campaign receives/i));
+    await user.type(screen.getByLabelText(/amount campaign receives/i), '4');
+    await user.click(screen.getByRole('button', { name: /confirm payment/i }));
+    expect(await screen.findByText(/Minimum contribution is 5 USDC/i)).toBeInTheDocument();
+    expect(mockContribute).not.toHaveBeenCalled();
+  });
+
+  it('validates maximum contribution limit', async () => {
+    const user = userEvent.setup();
+    renderModal({ max_contribution: '100' });
+    await user.clear(screen.getByLabelText(/amount campaign receives/i));
+    await user.type(screen.getByLabelText(/amount campaign receives/i), '101');
+    await user.click(screen.getByRole('button', { name: /confirm payment/i }));
+    expect(await screen.findByText(/Maximum contribution is 100 USDC/i)).toBeInTheDocument();
+    expect(mockContribute).not.toHaveBeenCalled();
+  });
+
+  it('validates cumulative per-contributor cap', async () => {
+    const { api } = await import('../services/api');
+    api.getContributions.mockResolvedValueOnce({
+      contributions: [
+        { sender_public_key: 'GUSER', amount: '30' }
+      ]
+    });
+
+    const user = userEvent.setup();
+    renderModal({ max_per_user: '50' });
+    
+    await user.clear(screen.getByLabelText(/amount campaign receives/i));
+    await user.type(screen.getByLabelText(/amount campaign receives/i), '25');
+    await user.click(screen.getByRole('button', { name: /confirm payment/i }));
+    
+    expect(await screen.findByText(/You have already contributed 30 USDC. The per-contributor limit is 50./i)).toBeInTheDocument();
+    expect(mockContribute).not.toHaveBeenCalled();
+  });
+
   it('closes on cancel', async () => {
     const user = userEvent.setup();
     renderModal();

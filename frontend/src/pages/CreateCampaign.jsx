@@ -40,6 +40,7 @@ export default function CreateCampaign() {
     milestones: [],
     min_contribution: '',
     max_contribution: '',
+    max_per_user: '',
     show_backer_amounts: true,
   });
   const [coverImageFile, setCoverImageFile] = useState(null);
@@ -142,6 +143,15 @@ export default function CreateCampaign() {
       setError('Enter a fundraising goal greater than zero.');
       return false;
     }
+    setError('');
+    return true;
+  }
+
+  function validateStep2() {
+    if (form.deadline && form.deadline < today) {
+      setError('Deadline must be today or in the future.');
+      return false;
+    }
     if (form.min_contribution && Number(form.min_contribution) <= 0) {
       setError('Minimum contribution must be greater than zero.');
       return false;
@@ -160,14 +170,15 @@ export default function CreateCampaign() {
         return false;
       }
     }
-    setError('');
-    return true;
-  }
-
-  function validateStep2() {
-    if (form.deadline && form.deadline < today) {
-      setError('Deadline must be today or in the future.');
-      return false;
+    if (form.max_per_user) {
+      if (Number(form.max_per_user) <= 0) {
+        setError('Per-contributor cap must be greater than zero.');
+        return false;
+      }
+      if (form.min_contribution && Number(form.max_per_user) <= Number(form.min_contribution)) {
+        setError('Per-contributor cap must be greater than minimum contribution.');
+        return false;
+      }
     }
 
     setError('');
@@ -225,6 +236,7 @@ export default function CreateCampaign() {
           deadline: form.deadline || undefined,
           min_contribution: form.min_contribution ? Number(form.min_contribution) : undefined,
           max_contribution: form.max_contribution ? Number(form.max_contribution) : undefined,
+          max_per_user: form.max_per_user ? Number(form.max_per_user) : undefined,
           milestones: form.milestones.length
             ? form.milestones.map((milestone) => ({
                 title: milestone.title.trim(),
@@ -377,37 +389,7 @@ export default function CreateCampaign() {
               />
             </div>
 
-            <div style={{ marginTop: '1.25rem', border: '1px dashed var(--color-border)', padding: '1rem', borderRadius: '8px' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' }}>Contribution limits (Optional)</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                <div className="form-stack">
-                  <label className="label-strong" htmlFor="cc-min-contrib">Min contribution</label>
-                  <input
-                    id="cc-min-contrib"
-                    type="number"
-                    inputMode="decimal"
-                    min="0.0000001"
-                    step="any"
-                    value={form.min_contribution}
-                    onChange={setField('min_contribution')}
-                    placeholder="e.g. 5"
-                  />
-                </div>
-                <div className="form-stack">
-                  <label className="label-strong" htmlFor="cc-max-contrib">Max contribution</label>
-                  <input
-                    id="cc-max-contrib"
-                    type="number"
-                    inputMode="decimal"
-                    min="0.0000001"
-                    step="any"
-                    value={form.max_contribution}
-                    onChange={setField('max_contribution')}
-                    placeholder="e.g. 500"
-                  />
-                </div>
-              </div>
-            </div>
+            {/* Contribution limits moved to Step 2 Advanced limits */}
 
             <fieldset style={{ border: 'none', margin: '1.25rem 0 0', padding: 0 }}>
               <legend className="label-strong" style={{ marginBottom: '0.5rem' }}>
@@ -564,6 +546,26 @@ export default function CreateCampaign() {
               If unchecked, backers will be listed but their individual amounts will be hidden from the public.
             </p>
 
+            <details style={{ marginTop: '1rem' }}>
+              <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem' }}>
+                Contribution limits (optional)
+              </summary>
+              <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div className="form-stack">
+                  <label htmlFor="cc-min">Minimum per contribution ({form.asset_type})</label>
+                  <input id="cc-min" type="number" min="0" step="any" value={form.min_contribution} onChange={setField('min_contribution')} placeholder="No minimum" />
+                </div>
+                <div className="form-stack">
+                  <label htmlFor="cc-max">Maximum per contribution ({form.asset_type})</label>
+                  <input id="cc-max" type="number" min="0" step="any" value={form.max_contribution} onChange={setField('max_contribution')} placeholder="No maximum" />
+                </div>
+                <div className="form-stack">
+                  <label htmlFor="cc-maxuser">Per-contributor cap ({form.asset_type})</label>
+                  <input id="cc-maxuser" type="number" min="0" step="any" value={form.max_per_user} onChange={setField('max_per_user')} placeholder="No cap" />
+                </div>
+              </div>
+            </details>
+
             {error && (
               <p className="alert alert--error" style={{ marginTop: '1rem' }} role="alert">
                 {error}
@@ -669,6 +671,7 @@ export default function CreateCampaign() {
               <strong>Launch summary:</strong> {form.title || 'Untitled'} with a goal of {form.target_amount || '—'} {form.asset_type}
               {form.min_contribution && ` (Min: ${form.min_contribution} ${form.asset_type})`}
               {form.max_contribution && ` (Max: ${form.max_contribution} ${form.asset_type})`}
+              {form.max_per_user && ` (Cap: ${form.max_per_user} ${form.asset_type})`}
               {form.milestones.length ? ` and ${form.milestones.length} milestone release${form.milestones.length > 1 ? 's' : ''}.` : ' and no milestone plan.'}
             </div>
 

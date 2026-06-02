@@ -38,6 +38,9 @@ CREATE TABLE campaigns (
                         CHECK (status IN ('active', 'funded', 'in_progress', 'completed', 'closed', 'withdrawn', 'failed')),
   deadline            DATE,
   show_backer_amounts BOOLEAN DEFAULT TRUE,
+  min_contribution    NUMERIC(20, 7),
+  max_contribution    NUMERIC(20, 7),
+  max_per_user        NUMERIC(20, 7),
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 

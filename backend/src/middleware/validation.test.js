@@ -71,3 +71,38 @@ test('register validation passes for valid payload', async () => {
   });
   assert.equal(result.ok, true);
 });
+
+test('createCampaign validation rejects negative max_per_user', async () => {
+  const result = await runValidation(createCampaignValidation, {
+    title: 'Valid Title',
+    target_amount: '10',
+    asset_type: 'USDC',
+    max_per_user: '-5',
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.path === 'max_per_user'));
+});
+
+test('createCampaign validation rejects max_per_user less than or equal to min_contribution', async () => {
+  const result = await runValidation(createCampaignValidation, {
+    title: 'Valid Title',
+    target_amount: '100',
+    asset_type: 'USDC',
+    min_contribution: '10',
+    max_per_user: '10',
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.path === 'max_per_user' && e.msg === 'Per-contributor cap must be greater than minimum contribution'));
+});
+
+test('createCampaign validation passes with valid limit parameters', async () => {
+  const result = await runValidation(createCampaignValidation, {
+    title: 'Valid Title',
+    target_amount: '100',
+    asset_type: 'USDC',
+    min_contribution: '10',
+    max_contribution: '50',
+    max_per_user: '80',
+  });
+  assert.equal(result.ok, true);
+});

@@ -1,4 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import {
+  getNetwork,
+  isConnected as isFreighterConnected,
+  requestAccess,
+  signTransaction,
+} from '@stellar/freighter-api';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { stellarExpertTxUrl } from '../config/stellar';
@@ -38,7 +44,7 @@ function friendlyFreighterError(err, fallback) {
 }
 
 export default function ContributeModal({ campaign, onClose, onSuccess }) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [amount, setAmount] = useState('');
   const [sendAsset, setSendAsset] = useState(campaign.asset_type);
   const [paymentMethod, setPaymentMethod] = useState('custodial');
@@ -66,7 +72,18 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
 
   const modalRef = useRef(null);
 
-  const isPathPayment = sendAsset !== campaign.asset_type;
+  useEffect(() => {
+    if (campaign?.id) {
+      api.getContributions(campaign.id)
+        .then((data) => setExistingContributions(data?.contributions || []))
+        .catch(() => setExistingContributions([]));
+    }
+  }, [campaign?.id]);
+
+  const selectedAnchor = anchorInfo.anchors.find((anchor) => anchor.id === selectedAnchorId) || null;
+  const effectiveSendAsset =
+    paymentMethod === 'anchor' ? selectedAnchor?.asset?.code || campaign.asset_type : sendAsset;
+  const isPathPayment = effectiveSendAsset !== campaign.asset_type;
   const destAmount = amount.trim();
 
   const fetchQuote = useCallback(async () => {
@@ -116,6 +133,100 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
   }, [onClose]);
 
   useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const connection = await isFreighterConnected();
+        if (active) {
+          setFreighterAvailable(Boolean(connection?.isConnected));
+        }
+      } catch {
+        if (active) {
+          setFreighterAvailable(false);
+        }
+      } finally {
+        if (active) {
+          setFreighterChecked(true);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .getAnchorInfo()
+      .then((info) => {
+        if (!active) return;
+        setAnchorInfo(info || { anchors: [] });
+        const firstAvailable = (info?.anchors || []).find((anchor) => anchor.available);
+        if (firstAvailable) {
+          setSelectedAnchorId(firstAvailable.id);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAnchorInfo({ anchors: [] });
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (phase !== 'anchor' || !anchorSession?.id) return undefined;
+    let stopped = false;
+
+    const closePopup = () => {
+      if (anchorPopupRef.current && !anchorPopupRef.current.closed) {
+        anchorPopupRef.current.close();
+      }
+    };
+
+    const poll = async () => {
+      try {
+        const next = await api.getAnchorDepositStatus(anchorSession.id, token);
+        if (stopped) return;
+        setAnchorSession(next);
+        if (next.contribution_tx_hash) {
+          setResult({
+            tx_hash: next.contribution_tx_hash,
+            conversion_quote: next.conversion_quote,
+            anchor_transaction_id: next.anchor_transaction_id,
+            anchor_id: next.anchor_id,
+          });
+          setPhase('success');
+          closePopup();
+          onSuccess();
+          return;
+        }
+        if (next.status === 'failed') {
+          setError(next.last_error || 'The anchor deposit could not be completed.');
+          setPhase('form');
+          closePopup();
+        }
+      } catch (err) {
+        if (!stopped) {
+          setError(err.message || 'Could not refresh the anchor deposit status.');
+        }
+      }
+    };
+
+    poll();
+    const intervalId = window.setInterval(poll, 4000);
+    return () => {
+      stopped = true;
+      window.clearInterval(intervalId);
+    };
+  }, [anchorSession?.id, onSuccess, phase, token]);
+
+  useEffect(() => {
     const modal = modalRef.current;
     if (!modal) return;
     const focusable = modal.querySelectorAll(
@@ -143,6 +254,97 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
     return () => modal.removeEventListener('keydown', trapTab);
   }, [phase]);
 
+  async function submitWithCustodial() {
+    setLoadingLabel('Submitting with CrowdPay wallet…');
+    return api.contribute(
+      { campaign_id: campaign.id, amount: destAmount, send_asset: sendAsset, display_name: displayName.trim() || undefined },
+      token
+    );
+  }
+
+  async function submitWithFreighter() {
+    setLoadingLabel('Connecting to Freighter…');
+    const access = await requestAccess();
+    if (access?.error) {
+      throw new Error(friendlyFreighterError(access.error, 'Could not connect to Freighter.'));
+    }
+    const signerAddress = access?.address;
+    if (!signerAddress) {
+      throw new Error('Freighter did not return a Stellar account.');
+    }
+
+    setLoadingLabel('Preparing transaction…');
+    const prepared = await api.prepareContribution(
+      {
+        campaign_id: campaign.id,
+        amount: destAmount,
+        send_asset: sendAsset,
+        sender_public_key: signerAddress,
+        display_name: displayName.trim() || undefined,
+      },
+      token
+    );
+
+    setLoadingLabel('Checking Freighter network…');
+    const network = await getNetwork();
+    if (network?.error) {
+      throw new Error(friendlyFreighterError(network.error, 'Could not read Freighter network.'));
+    }
+    if (network?.networkPassphrase !== prepared.network_passphrase) {
+      const current = network?.network || 'another network';
+      throw new Error(`Freighter is connected to ${current}. Switch it to ${prepared.network_name} and try again.`);
+    }
+
+    setLoadingLabel('Waiting for signature…');
+    const signed = await signTransaction(prepared.unsigned_xdr, {
+      networkPassphrase: prepared.network_passphrase,
+      address: signerAddress,
+    });
+    if (signed?.error) {
+      throw new Error(friendlyFreighterError(signed.error, 'Freighter could not sign this transaction.'));
+    }
+    if (!signed?.signedTxXdr) {
+      throw new Error('Freighter did not return a signed transaction.');
+    }
+
+    setLoadingLabel('Submitting signed transaction…');
+    return api.submitSignedContribution(
+      {
+        prepare_token: prepared.prepare_token,
+        signed_xdr: signed.signedTxXdr,
+      },
+      token
+    );
+  }
+
+  async function submitWithAnchor() {
+    if (!selectedAnchorId) {
+      throw new Error('No deposit anchor is available right now.');
+    }
+
+    const popup = window.open('', 'crowdpay-anchor-deposit', 'popup,width=520,height=780');
+    anchorPopupRef.current = popup;
+
+    setLoadingLabel('Preparing deposit flow…');
+    const session = await api.startAnchorDeposit(
+      {
+        campaign_id: campaign.id,
+        amount: destAmount,
+        anchor_id: selectedAnchorId,
+      },
+      token
+    );
+
+    if (popup && !popup.closed) {
+      popup.location.href = session.interactive_url;
+    } else {
+      window.open(session.interactive_url, '_blank', 'noopener,noreferrer');
+    }
+
+    setAnchorSession(session);
+    setPhase('anchor');
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (!destAmount || Number(destAmount) <= 0) {
@@ -152,19 +354,25 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
 
     const amountNum = Number(destAmount);
     if (campaign.min_contribution && amountNum < Number(campaign.min_contribution)) {
-      setError(`Contribution amount is below the minimum limit of ${campaign.min_contribution} ${campaign.asset_type}.`);
+      setError(`Minimum contribution is ${campaign.min_contribution} ${campaign.asset_type}`);
       return;
     }
-    if (campaign.max_contribution) {
-      const existingSum = existingContributions
-        .filter((c) => c.sender_public_key === user?.wallet_public_key)
-        .reduce((sum, c) => sum + Number(c.amount), 0);
-
-      if (existingSum + amountNum > Number(campaign.max_contribution)) {
-        setError(`Contribution violates the maximum limit of ${campaign.max_contribution} ${campaign.asset_type} per backer.`);
+    if (campaign.max_contribution && amountNum > Number(campaign.max_contribution)) {
+      setError(`Maximum contribution is ${campaign.max_contribution} ${campaign.asset_type}`);
+      return;
+    }
+    if (campaign.max_per_user) {
+      const existingSum = user?.wallet_public_key
+        ? existingContributions
+            .filter((c) => c.sender_public_key === user.wallet_public_key)
+            .reduce((sum, c) => sum + Number(c.amount), 0)
+        : 0;
+      if (existingSum + amountNum > Number(campaign.max_per_user)) {
+        setError(`You have already contributed ${existingSum} ${campaign.asset_type}. The per-contributor limit is ${campaign.max_per_user}.`);
         return;
       }
     }
+
     setLoading(true);
     setLoadingLabel('Submitting…');
     setError('');
@@ -386,22 +594,36 @@ export default function ContributeModal({ campaign, onClose, onSuccess }) {
                   aria-describedby="contrib-amount-help"
                 />
                 <span id="contrib-amount-help" style={styles.help}>
-                  This is the credited amount toward the campaign goal, in {campaign.asset_type}.
-                  {(() => {
-                    if (!campaign.max_contribution) return null;
-                    const existingSum = existingContributions
-                      .filter((c) => c.sender_public_key === user?.wallet_public_key)
-                      .reduce((sum, c) => sum + Number(c.amount), 0);
-                    if (existingSum > 0) {
-                      const remaining = Math.max(0, Number(campaign.max_contribution) - existingSum);
-                      return (
-                        <span style={{ display: 'block', marginTop: '0.25rem', color: 'var(--color-accent)', fontWeight: 600 }}>
-                          You can contribute up to {remaining.toLocaleString()} {campaign.asset_type} more.
-                        </span>
-                      );
-                    }
-                    return null;
-                  })()}
+                  <span style={{ display: 'block', marginBottom: '0.25rem' }}>
+                    This is the credited amount toward the campaign goal, in {campaign.asset_type}.
+                  </span>
+                  {(campaign.min_contribution || campaign.max_contribution || campaign.max_per_user) && (
+                    <span style={{ display: 'block', marginTop: '0.35rem', borderTop: '1px dashed var(--color-border-lighter)', paddingTop: '0.35rem' }}>
+                      <strong>Limits for this campaign:</strong>
+                      <ul style={{ margin: '0.25rem 0 0', paddingLeft: '1rem', listStyleType: 'disc' }}>
+                        {campaign.min_contribution && (
+                          <li>Minimum per contribution: {Number(campaign.min_contribution).toLocaleString()} {campaign.asset_type}</li>
+                        )}
+                        {campaign.max_contribution && (
+                          <li>Maximum per contribution: {Number(campaign.max_contribution).toLocaleString()} {campaign.asset_type}</li>
+                        )}
+                        {campaign.max_per_user && (() => {
+                          const existingSum = user?.wallet_public_key
+                            ? existingContributions
+                                .filter((c) => c.sender_public_key === user.wallet_public_key)
+                                .reduce((sum, c) => sum + Number(c.amount), 0)
+                            : 0;
+                          const remaining = Math.max(0, Number(campaign.max_per_user) - existingSum);
+                          return (
+                            <li>
+                              Per-contributor limit: {Number(campaign.max_per_user).toLocaleString()} {campaign.asset_type}
+                              {existingSum > 0 && ` (You have contributed ${existingSum.toLocaleString()} ${campaign.asset_type}; ${remaining.toLocaleString()} remaining)`}
+                            </li>
+                          );
+                        })()}
+                      </ul>
+                    </span>
+                  )}
                 </span>
               </div>
 

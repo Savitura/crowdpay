@@ -685,7 +685,7 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
    *       403:
    *         description: Forbidden
    */
-  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution } = req.body;
+  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution, max_per_user } = req.body;
 
   if (deadline) {
     const [year, month, day] = String(deadline).split('-').map(Number);
@@ -743,11 +743,11 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
     const { rows } = await client.query(
       `INSERT INTO campaigns
          (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, 
-          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          min_contribution, max_contribution, max_per_user, escrow_contract_id, milestones_contract_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
       [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline, 
-       min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId]
+       min_contribution || null, max_contribution || null, max_per_user || null, escrowContractId, milestonesContractId]
     );
     campaign = rows[0];
 
