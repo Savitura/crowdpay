@@ -13,6 +13,7 @@ import VerificationBadge from "../components/VerificationBadge";
 import CampaignStatusBadge from "../components/CampaignStatusBadge";
 import { stellarExpertTxUrl } from "../config/stellar";
 import CampaignQRCode from "../components/CampaignQRCode";
+import { isConnected, getPublicKey } from "@stellar/freighter-api";
 
 function escapeHtml(text) {
   return text
@@ -137,6 +138,8 @@ export default function Campaign() {
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [disputeSubmitted, setDisputeSubmitted] = useState(false);
   const [contributed, setContributed] = useState(false);
+  const contributeBtnRef = useRef(null);
+  const [freighterGuestMode, setFreighterGuestMode] = useState(false);
   const [showCreatedBanner, setShowCreatedBanner] = useState(
     !!location.state?.created,
   );
@@ -570,6 +573,20 @@ export default function Campaign() {
     setUpdatesError("");
   }
 
+  async function handleFreighterContribute() {
+    try {
+      const connected = await isConnected().then((r) => r?.isConnected ?? r).catch(() => false);
+      if (!connected) {
+        window.open('https://www.freighter.app/', '_blank', 'noopener,noreferrer');
+        return;
+      }
+      setFreighterGuestMode(true);
+      setShowModal(true);
+    } catch {
+      window.open('https://www.freighter.app/', '_blank', 'noopener,noreferrer');
+    }
+  }
+
   async function submitUpdate(e) {
     e.preventDefault();
     setUpdatesError("");
@@ -818,6 +835,23 @@ export default function Campaign() {
             </p>
           )
         ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+            <Link
+              to="/login"
+              className="btn-primary"
+              style={{ ...styles.cta, textAlign: 'center', textDecoration: 'none', display: 'block' }}
+            >
+              Log in to contribute
+            </Link>
+            <button
+              type="button"
+              className="btn-secondary"
+              style={styles.cta}
+              onClick={handleFreighterContribute}
+            >
+              Contribute with Freighter
+            </button>
+          </div>
           <p
             style={{
               color: "var(--color-text-secondary)",
@@ -1810,8 +1844,10 @@ export default function Campaign() {
       {showModal && (
         <ContributeModal
           campaign={campaign}
+          guestFreighterMode={freighterGuestMode}
           onClose={() => {
             setShowModal(false);
+            setFreighterGuestMode(false);
             contributeBtnRef.current?.focus();
           }}
           onSuccess={() => setContributed((v) => !v)}

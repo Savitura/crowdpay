@@ -249,6 +249,201 @@ router.get(
   }),
 );
 
+// Quote conversion before a path payment contribution (unauthenticated allowed for guest flow)
+router.get('/quote', contributionQuoteValidation, validateRequest, asyncHandler(async (req, res) => {
+  /**
+   * @openapi
+   * /api/contributions/quote:
+   *   get:
+   *     tags: [Contributions]
+   *     summary: Get a DEX quote before submitting a conversion contribution
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: query
+   *         name: send_asset
+   *         required: true
+   *         schema: { type: string }
+   *       - in: query
+   *         name: dest_asset
+   *         required: true
+   *         schema: { type: string }
+   *       - in: query
+   *         name: dest_amount
+   *         required: true
+   *         schema: { type: string }
+   *     responses:
+   *       200:
+   *         description: OK
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               required: [send_asset, dest_asset, dest_amount, quoted_source_amount, max_send_amount, estimated_rate, path, path_count]
+   *               properties:
+   *                 send_asset: { type: string }
+   *                 dest_asset: { type: string }
+   *                 dest_amount: { type: string }
+   *                 quoted_source_amount: { type: string }
+   *                 max_send_amount: { type: string }
+   *                 estimated_rate: { type: string }
+   *                 path: { type: array, items: { type: string } }
+   *                 path_count: { type: integer }
+   *       400:
+   *         description: Missing/invalid query params
+   *       404:
+   *         description: No path found
+   */
+  const { send_asset, dest_asset, dest_amount } = req.query;
+
+  const paths = await getPathPaymentQuote({
+    sendAsset: send_asset,
+    destAsset: dest_asset,
+    destAmount: dest_amount,
+  });
+
+  if (!paths.length) {
+    return res.status(404).json({ error: 'No conversion path found for requested assets' });
+  }
+
+  const bestPath = paths[0];
+  const maxSendWithSlippage = (
+    parseFloat(bestPath.source_amount) *
+    (1 + SLIPPAGE_BPS / 10000)
+  ).toFixed(7);
+
+  res.json({
+    send_asset,
+    dest_asset,
+    dest_amount: String(dest_amount),
+    quoted_source_amount: bestPath.source_amount,
+    max_send_amount: maxSendWithSlippage,
+    estimated_rate: (
+      parseFloat(dest_amount) / parseFloat(bestPath.source_amount)
+    ).toFixed(15),
+    path: bestPath.path,
+    path_count: paths.length,
+  });
+}));
+
+// Build unsigned XDR for guest (Freighter) contributors — no auth required
+router.post('/build-xdr', contributionPostLimiter, contributionValidation, validateRequest, asyncHandler(async (req, res) => {
+  const { campaign_id, amount, send_asset, sender_public_key } = req.body;
+
+  if (!sender_public_key) {
+    return res.status(422).json({ error: 'sender_public_key is required' });
+  }
+  if (!validateFreighterPublicKey(sender_public_key)) {
+    return res.status(422).json({ error: 'sender_public_key must be a valid Stellar public key' });
+  }
+
+  const campaign = await loadActiveCampaign(campaign_id);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+  if (campaign.min_contribution && parseFloat(amount) < parseFloat(campaign.min_contribution)) {
+    return res.status(400).json({ error: `Contribution amount is below the minimum limit of ${campaign.min_contribution} ${campaign.asset_type}` });
+  }
+
+  try {
+    const intent = await buildContributionIntent({
+      campaign,
+      amount,
+      sendAsset: send_asset,
+      contributorPublicKey: sender_public_key,
+    });
+
+    const unsignedXdr =
+      intent.kind === 'payment'
+        ? await buildUnsignedContributionPayment({
+            senderPublicKey: sender_public_key,
+            destinationPublicKey: campaign.wallet_public_key,
+            asset: send_asset,
+            amount,
+            memo: buildContributionMemo(campaign_id),
+          })
+        : await buildUnsignedContributionPathPayment({
+            senderPublicKey: sender_public_key,
+            destinationPublicKey: campaign.wallet_public_key,
+            sendAsset: send_asset,
+            sendMax: intent.sendMax,
+            destAmount: amount,
+            destAssetCode: campaign.asset_type,
+            memo: buildContributionMemo(campaign_id),
+          });
+
+    res.json({
+      unsigned_xdr: unsignedXdr,
+      conversion_quote: intent.conversionQuote,
+      network_passphrase: networkPassphrase,
+      network_name: isTestnet ? 'TESTNET' : 'PUBLIC',
+    });
+  } catch (err) {
+    if (err.statusCode === 422) return res.status(422).json({ error: err.message });
+    logger.error('Guest build-xdr failed', { campaign_id, error: err.message });
+    return res.status(503).json({ error: 'Could not build the transaction. Please try again.' });
+  }
+}));
+
+// Submit pre-signed XDR from Freighter — no auth required
+router.post('/guest', contributionPostLimiter, asyncHandler(async (req, res) => {
+  const { campaign_id, sender_public_key, signed_xdr, unsigned_xdr } = req.body;
+
+  if (!campaign_id || !sender_public_key || !signed_xdr || !unsigned_xdr) {
+    return res.status(400).json({ error: 'campaign_id, sender_public_key, signed_xdr, and unsigned_xdr are required' });
+  }
+
+  if (!validateFreighterPublicKey(sender_public_key)) {
+    return res.status(422).json({ error: 'sender_public_key must be a valid Stellar public key' });
+  }
+
+  const campaign = await loadActiveCampaign(campaign_id);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+  try {
+    validateSubmittedContributionXdr({ signedXdr: signed_xdr, unsignedXdr: unsigned_xdr, senderPublicKey: sender_public_key });
+  } catch (err) {
+    return res.status(422).json({ error: err.message });
+  }
+
+  let txHash;
+  try {
+    txHash = await submitPreparedTransaction(signed_xdr);
+  } catch (err) {
+    logger.error('Guest Freighter submission failed', { campaign_id, error: err.message });
+    sendAlert('Guest Freighter submission failed', { campaign_id, error: err.message });
+    return res.status(502).json({ error: 'Stellar network rejected the transaction', detail: err.message || String(err) });
+  }
+
+  const stellarTransactionId = await insertContributionSubmitted(null, {
+    txHash,
+    campaignId: campaign_id,
+    userId: null,
+    unsignedXdr: unsigned_xdr,
+    signedXdr: signed_xdr,
+    metadata: { flow: 'guest_freighter', sender_public_key },
+  });
+
+  res.status(202).json({ tx_hash: txHash, stellar_transaction_id: stellarTransactionId, message: 'Transaction submitted' });
+}));
+
+router.post('/prepare', requireAuth, contributionValidation, validateRequest, asyncHandler(async (req, res) => {
+  const { campaign_id, amount, send_asset, sender_public_key, display_name } = req.body;
+  if (!sender_public_key) {
+    return res.status(422).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'sender_public_key is required for Freighter contributions',
+        fields: { sender_public_key: 'sender_public_key is required for Freighter contributions' },
+      },
+    });
+  }
+  if (!validateFreighterPublicKey(sender_public_key)) {
+    return res.status(422).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'sender_public_key must be a valid Stellar public key',
+        fields: { sender_public_key: 'Invalid Stellar public key' },
+      },
 // Quote conversion before a path payment contribution
 router.get(
   "/quote",

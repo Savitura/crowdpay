@@ -260,18 +260,15 @@ export const api = {
   getMilestones: (campaignId) =>
     request("GET", `/campaigns/${campaignId}/milestones`),
   setCampaignMilestones: (campaignId, milestones) =>
-    request("POST", `/campaigns/${campaignId}/milestones`, { milestones }),
-  submitMilestoneEvidence: (id, body) =>
-    request("POST", `/milestones/${id}/submit`, body),
-  approveMilestone: (id, body) =>
-    request("POST", `/milestones/${id}/release`, body || {}),
-  rejectMilestone: (id, body) =>
-    request("POST", `/milestones/${id}/reject`, body || {}),
-  contribute: (body) => request("POST", "/contributions", body),
-  prepareContribution: (body) =>
-    request("POST", "/contributions/prepare", body),
-  submitSignedContribution: (body) =>
-    request("POST", "/contributions/submit-signed", body),
+    request('POST', `/campaigns/${campaignId}/milestones`, { milestones }),
+  submitMilestoneEvidence: (id, body) => request('POST', `/milestones/${id}/submit`, body),
+  approveMilestone: (id, body) => request('POST', `/milestones/${id}/release`, body || {}),
+  rejectMilestone: (id, body) => request('POST', `/milestones/${id}/reject`, body || {}),
+  contribute: (body) => request('POST', '/contributions', body),
+  prepareContribution: (body) => request('POST', '/contributions/prepare', body),
+  submitSignedContribution: (body) => request('POST', '/contributions/submit-signed', body),
+  buildContributionXdr: (body) => request('POST', '/contributions/build-xdr', body),
+  guestContribute: (body) => request('POST', '/contributions/guest', body),
   quoteContribution: ({ send_asset, dest_asset, dest_amount }) =>
     request("GET", "/contributions/quote", null, {
       query: { send_asset, dest_asset, dest_amount },
