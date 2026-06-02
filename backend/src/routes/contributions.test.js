@@ -771,3 +771,98 @@ test('POST /api/contributions includes platform_fee_amount in response and metad
   assert.equal(response.body.platform_fee_amount, 0.15);
   assert.equal(capturedMetadata.platform_fee_amount, 0.15);
 });
+
+test('POST /api/contributions validates min_contribution limit', async () => {
+  const app = buildApp({
+    queryImpl: async (text) => {
+      if (text.includes('FROM campaigns')) {
+        return {
+          rows: [{
+            id: '11111111-1111-1111-1111-111111111111',
+            status: 'active',
+            asset_type: 'USDC',
+            wallet_public_key: VALID_G,
+            min_contribution: '15.0000000',
+          }],
+        };
+      }
+      if (text.includes('FROM users')) {
+        return { rows: [{ wallet_secret_encrypted: 'SSECRET', wallet_public_key: 'GSENDER' }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions')
+    .set('Authorization', 'Bearer token')
+    .send({ campaign_id: '11111111-1111-1111-1111-111111111111', amount: '10.0000000', send_asset: 'USDC' });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, 'Minimum contribution is 15.0000000 USDC');
+});
+
+test('POST /api/contributions validates max_contribution limit', async () => {
+  const app = buildApp({
+    queryImpl: async (text) => {
+      if (text.includes('FROM campaigns')) {
+        return {
+          rows: [{
+            id: '11111111-1111-1111-1111-111111111111',
+            status: 'active',
+            asset_type: 'USDC',
+            wallet_public_key: VALID_G,
+            max_contribution: '50.0000000',
+          }],
+        };
+      }
+      if (text.includes('FROM users')) {
+        return { rows: [{ wallet_secret_encrypted: 'SSECRET', wallet_public_key: 'GSENDER' }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions')
+    .set('Authorization', 'Bearer token')
+    .send({ campaign_id: '11111111-1111-1111-1111-111111111111', amount: '60.0000000', send_asset: 'USDC' });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, 'Maximum contribution is 50.0000000 USDC');
+});
+
+test('POST /api/contributions validates cumulative max_per_user cap', async () => {
+  const app = buildApp({
+    queryImpl: async (text) => {
+      if (text.includes('FROM campaigns')) {
+        return {
+          rows: [{
+            id: '11111111-1111-1111-1111-111111111111',
+            status: 'active',
+            asset_type: 'USDC',
+            wallet_public_key: VALID_G,
+            max_per_user: '100.0000000',
+          }],
+        };
+      }
+      if (text.includes('FROM users')) {
+        return { rows: [{ wallet_secret_encrypted: 'SSECRET', wallet_public_key: 'GSENDER' }] };
+      }
+      if (text.includes('COALESCE(SUM(amount)')) {
+        return {
+          rows: [{ total: '80.0000000' }],
+        };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions')
+    .set('Authorization', 'Bearer token')
+    .send({ campaign_id: '11111111-1111-1111-1111-111111111111', amount: '30.0000000', send_asset: 'USDC' });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, 'You have already contributed 80 USDC. The per-contributor limit is 100.0000000.');
+});

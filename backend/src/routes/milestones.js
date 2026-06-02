@@ -20,7 +20,7 @@ const { invokeContract, nativeToScVal } = require('../services/sorobanService');
 const crypto = require('crypto');
 
 function canPerformPlatformSignature(userId) {
-  if (!process.env.PLATFORM_APPROVER_USER_ID) return true;
+  if (!process.env.PLATFORM_APPROVER_USER_ID) return false;
   return userId === process.env.PLATFORM_APPROVER_USER_ID;
 }
 

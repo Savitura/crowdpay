@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const db = require('../config/database');
+const Sentry = require('@sentry/node');
 
 function apiKeyPepper() {
   return process.env.API_KEY_PEPPER || process.env.JWT_SECRET || 'dev-api-key-pepper';
@@ -12,10 +13,7 @@ function hashApiKey(rawKey) {
 
 async function authenticate(req) {
   const header = req.headers.authorization;
-  if (!header || !header.startsWith('Bearer ')) {
-    throw new Error('Missing token');
-  }
-  const token = header.slice(7).trim();
+  const token = req.cookies?.cp_token || (header && header.startsWith('Bearer ') ? header.slice(7).trim() : null);
   if (!token) throw new Error('Missing token');
 
   if (token.startsWith('cp_live_')) {
@@ -126,6 +124,7 @@ function requireAuth(req, res, next) {
   authenticate(req)
     .then(() => {
       if (!assertApiKeyScopes(req, res)) return;
+      if (req.user?.userId) Sentry.setUser({ id: req.user.userId });
       next();
     })
     .catch((err) => {

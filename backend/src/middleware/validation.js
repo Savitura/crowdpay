@@ -4,7 +4,11 @@ const { getSupportedAssetCodes } = require('../services/stellarService');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const VALID_CAMPAIGN_STATUSES = ['active', 'funded', 'closed', 'failed'];
-const VALID_ORDER_BY = ['newest', 'ending_soon', 'most_funded', 'most_backed', 'closest_to_goal'];
+const VALID_ORDER_BY = ['newest', 'ending_soon', 'most_funded', 'most_backed', 'closest_to_goal', 'trending'];
+const VALID_CATEGORIES = [
+  'technology', 'community', 'arts', 'education',
+  'environment', 'health', 'business', 'open_source', 'other',
+];
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isUuid(value) {
@@ -136,6 +140,16 @@ const createCampaignValidation = [
       }
       return true;
     }),
+  body('max_per_user')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ gt: 0 })
+    .withMessage('Per-contributor cap must be greater than zero')
+    .custom((value, { req }) => {
+      if (value && req.body.min_contribution && parseFloat(value) <= parseFloat(req.body.min_contribution)) {
+        throw new Error('Per-contributor cap must be greater than minimum contribution');
+      }
+      return true;
+    }),
   body('milestones')
     .optional({ nullable: true })
     .custom((value) => {
@@ -162,34 +176,10 @@ const createCampaignValidation = [
     .optional()
     .isBoolean()
     .withMessage('show_backer_amounts must be a boolean'),
-  body('reward_tiers')
-    .optional({ nullable: true })
-    .custom((value) => {
-      if (value == null) return true;
-      if (!Array.isArray(value)) throw new Error('reward_tiers must be an array');
-      if (value.length > 10) throw new Error('Campaigns can define at most 10 reward tiers');
-      for (const [index, tier] of value.entries()) {
-        if (!tier || typeof tier !== 'object') {
-          throw new Error(`Tier ${index + 1} must be an object`);
-        }
-        if (!String(tier.title || '').trim()) {
-          throw new Error(`Tier ${index + 1} title is required`);
-        }
-        const minAmount = Number(tier.min_amount);
-        if (!Number.isFinite(minAmount) || minAmount <= 0) {
-          throw new Error(`Tier ${index + 1} min_amount must be greater than zero`);
-        }
-        if (tier.limit !== undefined && tier.limit !== null) {
-          const limit = Number(tier.limit);
-          if (!Number.isInteger(limit) || limit < 1) {
-            throw new Error(`Tier ${index + 1} limit must be a positive integer`);
-          }
-        }
-      }
-      return true;
-    }),
-  body('reward_tiers.*.title').optional().customSanitizer(stripHtml),
-  body('reward_tiers.*.description').optional().customSanitizer(stripHtml),
+  body('category')
+    .optional({ nullable: true, checkFalsy: true })
+    .isIn(VALID_CATEGORIES)
+    .withMessage(`category must be one of: ${VALID_CATEGORIES.join(', ')}`),
 ];
 
 const createCampaignUpdateValidation = [
@@ -282,6 +272,10 @@ const getCampaignsValidation = [
     .optional()
     .isIn(SUPPORTED_ASSETS)
     .withMessage(`asset must be one of: ${SUPPORTED_ASSETS.join(', ')}`),
+  query('category')
+    .optional()
+    .isIn(VALID_CATEGORIES)
+    .withMessage(`category must be one of: ${VALID_CATEGORIES.join(', ')}`),
   query('sort')
     .optional()
     .isIn(VALID_ORDER_BY)

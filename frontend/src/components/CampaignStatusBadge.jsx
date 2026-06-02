@@ -1,12 +1,18 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 
 const LABELS = {
+  funded: { key: 'campaignStatus.goalReached', bg: 'var(--color-success-bg)', color: 'var(--color-success-text)' },
+  failed: { key: 'campaignStatus.campaignEnded', bg: 'var(--color-error-bg)', color: 'var(--color-error-text)' },
+  closed: { key: 'campaignStatus.campaignClosed', bg: 'var(--color-surface)', color: 'var(--color-text-secondary)' },
   funded: { text: 'Goal reached', bg: 'var(--color-success-bg)', color: 'var(--color-success-text)' },
   failed: { text: 'Campaign ended', bg: 'var(--color-error-bg)', color: 'var(--color-error-text)' },
   closed: { text: 'Campaign closed', bg: 'var(--color-surface)', color: 'var(--color-text-secondary)' },
+  refunded: { text: 'Refunded', bg: 'var(--color-surface)', color: 'var(--color-text-secondary)' },
 };
 
 export default function CampaignStatusBadge({ status }) {
+  const { t } = useTranslation();
   if (!status || status === 'active') return null;
   const style = LABELS[status];
   if (!style) return null;
@@ -23,7 +29,7 @@ export default function CampaignStatusBadge({ status }) {
         whiteSpace: 'nowrap',
       }}
     >
-      {style.text}
+      {t(style.key)}
     </span>
   );
 }

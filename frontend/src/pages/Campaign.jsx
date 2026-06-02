@@ -1,15 +1,20 @@
-import React, { useEffect, useState } from "react";
-import { Link, useParams, useLocation } from "react-router-dom";
+import React, { useEffect, useState, useRef } from "react";
+import { Link, useParams, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import ContributeModal from "../components/ContributeModal";
 import DisputeModal from "../components/DisputeModal";
+import TransactionHistory from "../components/TransactionHistory";
 import MilestoneTracker from "../components/MilestoneTracker";
 import WithdrawalsSection from "../components/WithdrawalsSection";
 import CampaignDetailSkeleton from "../components/skeletons/CampaignDetailSkeleton";
 import ContributionListSkeleton from "../components/skeletons/ContributionListSkeleton";
 import VerificationBadge from "../components/VerificationBadge";
 import CampaignStatusBadge from "../components/CampaignStatusBadge";
+import { stellarExpertTxUrl } from "../config/stellar";
+import CampaignQRCode from "../components/CampaignQRCode";
+import { getNetwork, signTransaction } from '@stellar/freighter-api';
+import { isConnected, getPublicKey } from "@stellar/freighter-api";
 
 function escapeHtml(text) {
   return text
@@ -35,17 +40,109 @@ function markdownToHtml(markdown) {
     .replace(/\n/g, "<br />");
 }
 
+function progressColor(pct, status) {
+  if (status === 'funded' || pct >= 100) return '#10b981'; // green — goal reached
+  if (status === 'closed' || status === 'withdrawn' || status === 'refunded' || status === 'failed') return '#6b7280'; // grey — ended
+  if (pct >= 75) return '#3b82f6'; // blue — nearly there
+  return '#7c3aed'; // default purple
+}
+
+function ContributionRow({ c }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(c.sender_public_key);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div style={styles.row}>
+      <div
+        style={{
+          minWidth: 0,
+          display: "flex",
+          alignItems: "center",
+          gap: "0.75rem",
+        }}
+      >
+        <div style={styles.avatar}>
+          {(c.display_name || "A")[0].toUpperCase()}
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={styles.sender}>{c.display_name || "Anonymous"}</div>
+          <div style={styles.convHint}>
+            <button
+              type="button"
+              onClick={handleCopy}
+              title="Copy full public key"
+              style={{
+                background: "none",
+                border: "none",
+                color: "inherit",
+                fontFamily: "monospace",
+                fontSize: "inherit",
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
+              {c.sender_public_key.slice(0, 4)}…{c.sender_public_key.slice(-4)}
+            </button>
+            {" • "}
+            {new Date(c.created_at).toLocaleDateString(undefined, {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })}
+          </div>
+          {c.refund_status && (
+            <div style={styles.refundTag}>
+              {c.refund_status === "pending" && "Refund pending"}
+              {c.refund_status === "submitted" && "Refunded"}
+              {c.refund_status === "indexed" && "Refunded"}
+              {c.refund_status === "failed" && "Refund failed"}
+              {c.refund_status === "denied" && "Refund denied"}
+            </div>
+          )}
+          {c.tx_hash && (
+            <a
+              href={stellarExpertTxUrl(c.tx_hash)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: "0.75rem", color: "#7c3aed", fontWeight: 600 }}
+            >
+              View on chain ↗
+            </a>
+          )}
+        </div>
+      </div>
+      {c.amount != null && (
+        <span style={styles.amount}>
+          {Number(c.amount).toLocaleString()} {c.asset}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function Campaign() {
+  const contributeBtnRef = useRef(null);
   const { id } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const { user, token } = useAuth();
+  const contributeBtnRef = useRef(null);
   const [campaign, setCampaign] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [contributions, setContributions] = useState(null);
+  const [totalContributions, setTotalContributions] = useState(0);
+  const [showAll, setShowAll] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [disputeSubmitted, setDisputeSubmitted] = useState(false);
   const [contributed, setContributed] = useState(false);
+  const contributeBtnRef = useRef(null);
+  const [freighterGuestMode, setFreighterGuestMode] = useState(false);
   const [showCreatedBanner, setShowCreatedBanner] = useState(
     !!location.state?.created,
   );
@@ -64,9 +161,38 @@ export default function Campaign() {
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState("");
   const [inviteSuccess, setInviteSuccess] = useState(false);
-  const [showEmbedSection, setShowEmbedSection] = useState(false);
+  const [showQR, setShowQR] = useState(false);
   const [embedCopied, setEmbedCopied] = useState(false);
-const [tiers, setTiers] = useState([])
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [isEditingCampaign, setIsEditingCampaign] = useState(false);
+  const [editFormData, setEditFormData] = useState({
+    title: "",
+    description: "",
+    deadline: "",
+  });
+  const [editError, setEditError] = useState("");
+  const [editSuccess, setEditSuccess] = useState("");
+  const [editLoading, setEditLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("contributions");
+  const [editingUpdateId, setEditingUpdateId] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
+  const [refundBusy, setRefundBusy] = useState(false);
+  const [refundError, setRefundError] = useState("");
+  const [refundSuccess, setRefundSuccess] = useState("");
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [hasPendingWithdrawal, setHasPendingWithdrawal] = useState(false);
+
+  useEffect(() => {
+    document.body.dataset.printUrl = window.location.href;
+    document.body.dataset.printDate = new Date().toLocaleDateString();
+    return () => {
+      delete document.body.dataset.printUrl;
+      delete document.body.dataset.printDate;
+    };
+  }, []);
 
 const [linkCopied, setLinkCopied] = useState(false)
 const [isEditingCampaign, setIsEditingCampaign] = useState(false)
@@ -94,28 +220,41 @@ const [editLoading, setEditLoading] = useState(false)
           setIsOwner(false);
         }
       })
-.catch((err) => setLoadError(err.message || "Could not load campaign."))
+      .catch((err) => setLoadError(err.message || "Could not load campaign."));
+    api
+      .getContributions(id, { limit: showAll ? 100 : 10, offset: 0 })
+      .then((data) => {
+        setContributions(data.contributions || []);
+        setTotalContributions(data.total || 0);
+      })
+      .catch(() => {
+        setContributions([]);
+        setTotalContributions(0);
+      });
+    api
+      .getMilestones(id)
+      .then(setMilestones)
+      .catch(() => setMilestones([]));
+    api
+      .getCampaignUpdates(id, { limit: 20 })
+      .then(setUpdates)
+      .catch(() => setUpdates([]));
+    api
+      .getCampaignAnalytics(id)
+      .then(setAnalytics)
+      .catch(() => setAnalytics(null));
 
-api
-	.getContributions(id)
-	.then(setContributions)
-	.catch(() => setContributions([]))
-
-api
-	.getMilestones(id)
-	.then(setMilestones)
-	.catch(() => setMilestones([]))
-
-api
-	.getCampaignUpdates(id, { limit: 20 })
-	.then(setUpdates)
-	.catch(() => setUpdates([]))
-
-api
-	.getCampaignTiers(id)
-	.then(setTiers)
-	.catch(() => setTiers([]))
-  }, [id, token, contributed]);
+    // Check for pending withdrawals
+    if (token) {
+      api
+        .listWithdrawals(id)
+        .then((withdrawals) => {
+          const hasPending = withdrawals.some((w) => w.status === "pending");
+          setHasPendingWithdrawal(hasPending);
+        })
+        .catch(() => setHasPendingWithdrawal(false));
+    }
+  }, [id, token, contributed, showAll]);
 
   useEffect(() => {
     if (!id) return;
@@ -128,6 +267,7 @@ api
       "withdrawn",
       "failed",
       "completed",
+      "refunded",
     ].includes(campaign.status);
     if (isCampaignClosed) return;
 
@@ -138,13 +278,14 @@ api
       if (aborted) return;
       if (document.visibilityState !== "visible") return;
       try {
-        const [nextCampaign, nextContributions] = await Promise.all([
+        const [nextCampaign, nextContributionsData] = await Promise.all([
           api.getCampaign(id, token),
-          api.getContributions(id),
+          api.getContributions(id, { limit: showAll ? 100 : 10, offset: 0 }),
         ]);
         if (aborted) return;
         setCampaign(nextCampaign);
-        setContributions(nextContributions);
+        setContributions(nextContributionsData.contributions || []);
+        setTotalContributions(nextContributionsData.total || 0);
       } catch {
         // ignore transient polling errors
       }
@@ -175,7 +316,7 @@ api
       stop();
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [id, token, isLive, campaign]);
+  }, [id, token, isLive, campaign, showAll]);
 
   useEffect(() => {
     if (!window.EventSource) return;
@@ -201,7 +342,15 @@ api
           const exists = current.some(
             (c) => c.tx_hash === msg.contribution.tx_hash,
           );
-          return exists ? current : [msg.contribution, ...current];
+          if (exists) return current;
+
+          setTotalContributions((t) => t + 1);
+
+          const updated = [msg.contribution, ...current];
+          if (!showAll && updated.length > 10) {
+            return updated.slice(0, 10);
+          }
+          return updated;
         });
       }
     };
@@ -215,13 +364,22 @@ api
       es.close();
       setIsLive(false);
     };
-  }, [id]);
+  }, [id, showAll]);
 
   useEffect(() => {
     if (location.state?.created) {
       window.history.replaceState({}, document.title);
     }
   }, [location.state]);
+
+  async function handleClone() {
+    try {
+      const data = await api.getCloneData(id, token);
+      navigate('/campaigns/new', { state: { prefill: data } });
+    } catch (err) {
+      alert(err.message || 'Failed to fetch campaign clone data');
+    }
+  }
 
   async function handleInviteSubmit(e) {
     e.preventDefault();
@@ -277,7 +435,7 @@ api
     setEditFormData({
       title: campaign.title || "",
       description: campaign.description || "",
-      deadline: campaign.deadline ? campaign.deadline.split("T")[0] : ""
+      deadline: campaign.deadline ? campaign.deadline.split("T")[0] : "",
     });
     setEditError("");
     setEditSuccess("");
@@ -321,9 +479,14 @@ api
     try {
       setEditLoading(true);
       const updates = {};
-      if (editFormData.title !== campaign.title) updates.title = editFormData.title;
-      if (editFormData.description !== campaign.description) updates.description = editFormData.description;
-      if (editFormData.deadline !== (campaign.deadline ? campaign.deadline.split("T")[0] : "")) {
+      if (editFormData.title !== campaign.title)
+        updates.title = editFormData.title;
+      if (editFormData.description !== campaign.description)
+        updates.description = editFormData.description;
+      if (
+        editFormData.deadline !==
+        (campaign.deadline ? campaign.deadline.split("T")[0] : "")
+      ) {
         updates.deadline = editFormData.deadline || null;
       }
 
@@ -343,6 +506,80 @@ api
       setEditError(err.message || "Failed to update campaign");
     } finally {
       setEditLoading(false);
+    }
+  }
+
+  async function handleInitiateRefund() {
+    setRefundBusy(true);
+    setRefundError("");
+    setRefundSuccess("");
+    try {
+      const initRes = await api.initiateRefund(campaign.id);
+      const unsignedXdr = initRes.unsigned_xdr;
+
+      let signedXdr = unsignedXdr;
+      if (user?.wallet_type === "freighter") {
+        const network = await getNetwork();
+        if (network?.error) throw new Error("Could not read Freighter network");
+
+        const signed = await signTransaction(unsignedXdr, {
+          networkPassphrase: network?.networkPassphrase,
+          address: user?.wallet_public_key,
+        });
+        if (signed?.error) throw new Error(signed.error?.message || "Freighter signing failed");
+        if (!signed?.signedTxXdr) throw new Error("Freighter did not return a signed transaction");
+
+        const approveRes = await api.approveRefundCreator(campaign.id, { signed_xdr: signed.signedTxXdr });
+        signedXdr = approveRes.signed_xdr;
+      } else {
+        const approveRes = await api.approveRefundCreator(campaign.id, {});
+        signedXdr = approveRes.signed_xdr;
+      }
+
+      let isPlatformApprover = false;
+      try {
+        const capRes = await api.getWithdrawalCapabilities();
+        if (capRes.can_approve_platform) {
+          isPlatformApprover = true;
+        }
+      } catch (err) {
+        // ignore
+      }
+
+      if (isPlatformApprover) {
+        await api.approveRefundPlatform(campaign.id);
+        setRefundSuccess("Campaign contributions successfully refunded!");
+      } else {
+        setRefundSuccess("Refund signed by creator. Awaiting platform release.");
+      }
+
+      const updatedCampaign = await api.getCampaign(campaign.id);
+      setCampaign(updatedCampaign);
+    } catch (err) {
+      setRefundError(err.message || "Failed to initiate refund.");
+    } finally {
+      setRefundBusy(false);
+  async function handleDeleteCampaign() {
+    setDeleteError("");
+    if (!campaign) return;
+
+    // Check if confirmation matches campaign title
+    if (deleteConfirmation !== campaign.title) {
+      setDeleteError("Confirmation does not match campaign title");
+      return;
+    }
+
+    try {
+      setDeleteLoading(true);
+      await api.deleteCampaign(campaign.id, token);
+      setShowDeleteDialog(false);
+      setDeleteConfirmation("");
+      // Redirect to home after successful deletion
+      window.location.href = "/";
+    } catch (err) {
+      setDeleteError(err.message || "Failed to delete campaign");
+    } finally {
+      setDeleteLoading(false);
     }
   }
 
@@ -399,27 +636,89 @@ api
     (campaign.raised_amount / campaign.target_amount) * 100,
   ).toFixed(1);
   const canPostUpdate = user?.id && campaign.creator_id === user.id;
+  const campaignUrl = `${window.location.origin}/campaigns/${id}`;
+  const embedCode = `<iframe src="${window.location.origin}/widget/campaigns/${id}" width="320" height="120" frameborder="0" style="border-radius:10px"></iframe>`;
+  const currentUserId = user?.id || user?.userId;
+  const canPostUpdate =
+    currentUserId && String(campaign.creator_id) === String(currentUserId);
+
+  function canEditUpdate(update) {
+    return (
+      Date.now() - new Date(update.created_at).getTime() <= 24 * 60 * 60 * 1000
+    );
+  }
+
+  function startEditUpdate(update) {
+    setEditingUpdateId(update.id);
+    setUpdateForm({ title: update.title, body: update.body });
+    setUpdatesError("");
+  }
+
+  function cancelUpdateEdit() {
+    setEditingUpdateId(null);
+    setUpdateForm({ title: "", body: "" });
+    setUpdatesError("");
+  }
+
+  async function handleFreighterContribute() {
+    try {
+      const connected = await isConnected().then((r) => r?.isConnected ?? r).catch(() => false);
+      if (!connected) {
+        window.open('https://www.freighter.app/', '_blank', 'noopener,noreferrer');
+        return;
+      }
+      setFreighterGuestMode(true);
+      setShowModal(true);
+    } catch {
+      window.open('https://www.freighter.app/', '_blank', 'noopener,noreferrer');
+    }
+  }
 
   async function submitUpdate(e) {
     e.preventDefault();
     setUpdatesError("");
     setUpdateBusy(true);
+
     try {
-      await api.postCampaignUpdate(
-        campaign.id,
-        { title: updateForm.title.trim(), body: updateForm.body.trim() },
-        token,
-      );
+      if (editingUpdateId) {
+        const updated = await api.updateCampaignUpdate(
+          campaign.id,
+          editingUpdateId,
+          { title: updateForm.title.trim(), body: updateForm.body.trim() },
+        );
+
+        setUpdates((prev) =>
+          prev.map((item) => (item.id === editingUpdateId ? updated : item)),
+        );
+        setEditingUpdateId(null);
+      } else {
+        const created = await api.postCampaignUpdate(campaign.id, {
+          title: updateForm.title.trim(),
+          body: updateForm.body.trim(),
+        });
+
+        setUpdates((prev) => [created, ...prev]);
+      }
+
       setUpdateForm({ title: "", body: "" });
-      const list = await api.getCampaignUpdates(id, { limit: 20 });
-      setUpdates(list);
     } catch (err) {
-      setUpdatesError(err.message || "Could not publish update");
+      setUpdatesError(err.message || "Could not save update");
     } finally {
       setUpdateBusy(false);
     }
   }
 
+  async function deleteUpdate(updateId) {
+    if (!confirm("Delete this campaign update?")) return;
+
+    setUpdatesError("");
+    try {
+      await api.deleteCampaignUpdate(campaign.id, updateId);
+      setUpdates((prev) => prev.filter((item) => item.id !== updateId));
+    } catch (err) {
+      setUpdatesError(err.message || "Could not delete update");
+    }
+  }
   return (
     <main
       className="container"
@@ -480,6 +779,73 @@ api
           Contributions are closed and refunds can be requested.
         </div>
       )}
+      {campaign.status === "refunded" && (
+        <div
+          className="alert alert--success"
+          style={{ marginBottom: "1.25rem" }}
+          role="status"
+        >
+          <strong>Campaign refunded.</strong> This campaign was refunded — all contributions have been returned to their original senders.
+        </div>
+      )}
+      {campaign.status === "failed" &&
+        user &&
+        user.id === campaign.creator_id && (
+          <div
+            style={{
+              background: "var(--color-bg-card, #1e1e2f)",
+              border: "1px solid var(--color-border-light)",
+              borderRadius: "10px",
+              padding: "1.1rem 1.25rem",
+              marginBottom: "1.25rem",
+            }}
+          >
+            <p
+              style={{
+                margin: "0 0 0.75rem",
+                fontSize: "0.9rem",
+                color: "var(--color-text-secondary)",
+                lineHeight: 1.55,
+              }}
+            >
+              This campaign did not reach its goal. You can refund all
+              contributors — this will build and sign a Stellar transaction that
+              returns each contributor's exact amount.
+            </p>
+            {refundError && (
+              <p
+                className="alert alert--error"
+                style={{ marginBottom: "0.75rem", fontSize: "0.875rem" }}
+                role="alert"
+              >
+                {refundError}
+              </p>
+            )}
+            {refundSuccess && (
+              <p
+                className="alert alert--success"
+                style={{ marginBottom: "0.75rem", fontSize: "0.875rem" }}
+                role="status"
+              >
+                {refundSuccess}
+              </p>
+            )}
+            <button
+              id="btn-refund-contributors"
+              type="button"
+              className="btn-primary"
+              disabled={refundBusy}
+              onClick={handleInitiateRefund}
+              style={{
+                background: refundBusy ? undefined : "#dc2626",
+                borderColor: refundBusy ? undefined : "#dc2626",
+                fontSize: "0.9rem",
+              }}
+            >
+              {refundBusy ? "Processing refund…" : "Refund contributors"}
+            </button>
+          </div>
+        )}
       {campaign.creator_kyc_status !== "verified" && (
         <div
           className="alert alert--warning"
@@ -508,7 +874,9 @@ api
       )}
       {!campaign.cover_image_url && (
         <div style={styles.detailCoverPlaceholder} aria-hidden="true">
-          <span style={styles.detailCoverPlaceholderText}>No campaign image yet</span>
+          <span style={styles.detailCoverPlaceholderText}>
+            No campaign image yet
+          </span>
         </div>
       )}
       <div style={styles.header}>
@@ -543,10 +911,47 @@ api
             </div>
           </div>
         </div>
-        <div style={styles.bar}>
-          <div style={{ ...styles.fill, width: `${pct}%` }} />
+        <div
+          role="progressbar"
+          className="campaign-progress-bar"
+          aria-valuenow={Number(pct)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`${pct}% of goal raised`}
+          style={styles.bar}
+        >
+          <div
+            style={{
+              ...styles.fill,
+              background: progressColor(parseFloat(pct), campaign.status),
+              width: `${pct}%`,
+            }}
+            aria-hidden="true"
+          />
         </div>
 
+        {user && !['failed', 'refunded', 'closed', 'withdrawn'].includes(campaign.status) ? (
+          <button
+            type="button"
+            className="btn-primary"
+            style={styles.cta}
+            ref={contributeBtnRef}
+            aria-label={`Contribute to ${campaign.title}`}
+            onClick={() => setShowModal(true)}
+          >
+            Contribute
+          </button>
+        ) : campaign.status === 'refunded' ? (
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
+            This campaign has been <strong>refunded</strong>. All contributions were returned to their original senders.
+          </p>
+        ) : !user && !['failed', 'refunded', 'closed', 'withdrawn'].includes(campaign.status) ? (
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
+            <Link to="/login" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>Log in</Link> to contribute to this campaign.
+          </p>
+        ) : (
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
+            Contributions are closed while this campaign is{' '}
         {(campaign.min_contribution || campaign.max_contribution) && (
           <div
             style={{
@@ -683,12 +1088,20 @@ api
               type="button"
               className="btn-primary"
               style={styles.cta}
+              ref={contributeBtnRef}
+              aria-label={`Contribute to ${campaign.title}`}
               onClick={() => setShowModal(true)}
             >
               Contribute
             </button>
           ) : (
-            <p style={{ color: "var(--color-text-secondary)", fontSize: "0.9rem", lineHeight: 1.5 }}>
+            <p
+              style={{
+                color: "var(--color-text-secondary)",
+                fontSize: "0.9rem",
+                lineHeight: 1.5,
+              }}
+            >
               <Link
                 to="/login"
                 state={{ from: `/campaigns/${id}` }}
@@ -708,14 +1121,49 @@ api
             </p>
           )
         ) : (
-          <p style={{ color: "var(--color-text-secondary)", fontSize: "0.9rem", lineHeight: 1.5 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+            <Link
+              to="/login"
+              className="btn-primary"
+              style={{ ...styles.cta, textAlign: 'center', textDecoration: 'none', display: 'block' }}
+            >
+              Log in to contribute
+            </Link>
+            <button
+              type="button"
+              className="btn-secondary"
+              style={styles.cta}
+              onClick={handleFreighterContribute}
+            >
+              Contribute with Freighter
+            </button>
+          </div>
+          <p
+            style={{
+              color: "var(--color-text-secondary)",
+              fontSize: "0.9rem",
+              lineHeight: 1.5,
+            }}
+          >
             Contributions are closed while this campaign is{" "}
             <strong>{campaign.status}</strong>.
           </p>
         )}
+
+        {user && (
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ ...styles.cta, marginTop: "0.75rem" }}
+            onClick={handleClone}
+          >
+            Clone campaign
+          </button>
+        )}
       </div>
 
       <div
+        data-no-print
         style={{
           display: "flex",
           gap: "0.65rem",
@@ -826,6 +1274,7 @@ api
       {/* Edit campaign button - visible only to creator */}
       {user && campaign && user.userId === campaign.creator_id && ['active', 'funded'].includes(campaign.status) && (
         <div
+          data-no-print
           style={{
             display: "flex",
             gap: "0.65rem",
@@ -836,30 +1285,92 @@ api
             type="button"
             className="btn-secondary"
             style={{
-              flex: 1,
-              fontSize: "0.85rem",
               display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "0.5rem",
+              gap: "0.65rem",
+              marginBottom: "1.75rem",
             }}
-            onClick={handleOpenEditModal}
           >
-            Edit Campaign
-          </button>
-        </div>
-      )}
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{
+                flex: 1,
+                fontSize: "0.85rem",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "0.5rem",
+              }}
+              onClick={handleOpenEditModal}
+            >
+              Edit Campaign
+            </button>
+            {campaign.status === "active" && !hasPendingWithdrawal && (
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{
+                  color: "#dc2626",
+                  fontSize: "0.85rem",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "0.5rem",
+                }}
+                onClick={() => setShowDeleteDialog(true)}
+              >
+                Delete campaign
+              </button>
+            )}
+          </div>
+        )}
 
       <div style={styles.walletInfo}>
         <span style={styles.walletLabel}>Campaign wallet</span>
         <code style={styles.walletKey}>{campaign.wallet_public_key}</code>
       </div>
 
+      <div style={{ marginBottom: '1.75rem' }}>
+        <button type="button" className="btn-secondary" data-no-print onClick={() => setShowQR((v) => !v)}>
+          {showQR ? 'Hide QR code' : 'Show QR code'}
+        </button>
+        <div className="qr-wrapper" style={{ marginTop: '1rem', display: showQR ? 'flex' : 'none', justifyContent: 'center' }}>
+          <CampaignQRCode url={`${window.location.origin}/campaigns/${id}`} size={200} />
+        </div>
+        {showQR && (
+          <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'center' }}>
+            <CampaignQRCode url={campaignUrl} size={200} />
+          </div>
+        )}
+      </div>
+
+      <details style={{ ...styles.card, marginTop: "-0.75rem" }}>
+        <summary style={styles.embedSummary}>
+          Embed on your site
+        </summary>
+        <pre style={{ ...styles.embedCode, marginTop: "0.75rem" }}>
+          {embedCode}
+        </pre>
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard.writeText(embedCode).then(() => {
+              setEmbedCopied(true);
+              setTimeout(() => setEmbedCopied(false), 2000);
+            });
+          }}
+          className="btn-secondary"
+          style={{ marginTop: "0.75rem", fontSize: "0.85rem", minHeight: "auto" }}
+        >
+          {embedCopied ? "Copied!" : "Copy snippet"}
+        </button>
+      </details>
+
       {/* Report a problem — visible to contributors who have backed this campaign */}
       {user &&
         contributions?.some((c) => c.sender_public_key) &&
         campaign.creator_id !== user.id && (
-          <div style={{ marginBottom: "1.25rem" }}>
+          <div style={{ marginBottom: "1.25rem" }} data-no-print>
             {disputeSubmitted ? (
               <p className="alert alert--success" role="status">
                 Your dispute has been submitted. The platform team will review
@@ -886,7 +1397,7 @@ api
           </div>
         )}
       {canPostUpdate && (
-        <div style={styles.card}>
+        <div style={styles.card} data-no-print>
           <div
             style={{
               display: "flex",
@@ -957,7 +1468,9 @@ api
                       position: "absolute",
                       top: "0.5rem",
                       right: "0.5rem",
-                      background: embedCopied ? "var(--color-success-text)" : "var(--color-accent)",
+                      background: embedCopied
+                        ? "var(--color-success-text)"
+                        : "var(--color-accent)",
                       color: "#fff",
                       padding: "0.4rem 0.8rem",
                       fontSize: "0.8rem",
@@ -988,7 +1501,10 @@ api
                     height="280"
                     frameBorder="0"
                     title="Campaign embed preview"
-                    style={{ border: "1px solid var(--color-border-light)", borderRadius: "6px" }}
+                    style={{
+                      border: "1px solid var(--color-border-light)",
+                      borderRadius: "6px",
+                    }}
                   />
                 </div>
               </div>
@@ -998,7 +1514,7 @@ api
       )}
 
       {token && (
-        <div id="withdrawals">
+        <div id="withdrawals" data-no-print>
         <WithdrawalsSection
           campaign={campaign}
           milestones={milestones}
@@ -1018,13 +1534,17 @@ api
         </div>
       )}
 
+      <TransactionHistory
+        campaignId={campaign.id}
+        isCreator={!!(user?.id && campaign.creator_id === user.id)}
+      />
+
       <MilestoneTracker
         milestones={milestones}
         assetType={campaign.asset_type}
       />
-
       {isOwner && (
-        <div style={{ marginBottom: "2rem" }}>
+        <div style={{ marginBottom: "2rem" }} data-no-print>
           <h2 style={styles.sectionTitle}>Team Management</h2>
           <div className="campaign-card" style={{ marginBottom: "1.5rem" }}>
             <strong style={{ marginBottom: "0.75rem", display: "block" }}>
@@ -1116,7 +1636,9 @@ api
               Current Team
             </strong>
             {members.length === 0 ? (
-              <p style={{ color: "var(--color-text-muted)" }}>No team members yet.</p>
+              <p style={{ color: "var(--color-text-muted)" }}>
+                No team members yet.
+              </p>
             ) : (
               <div style={{ display: "grid", gap: "0.75rem" }}>
                 {members.map((member) => (
@@ -1147,7 +1669,9 @@ api
                       <div
                         style={{
                           fontSize: "0.75rem",
-                          color: member.accepted_at ? "var(--color-success-text)" : "var(--color-warning-text)",
+                          color: member.accepted_at
+                            ? "var(--color-success-text)"
+                            : "var(--color-warning-text)",
                           fontWeight: 600,
                         }}
                       >
@@ -1204,51 +1728,22 @@ api
           onSubmit={submitUpdate}
           className="campaign-card"
           style={{ marginBottom: "1rem" }}
+          data-no-print
         >
-          <strong style={{ marginBottom: "0.5rem", display: "block" }}>
-            Post update
-          </strong>
-          <input
-            placeholder="Update title"
-            value={updateForm.title}
-            onChange={(e) =>
-              setUpdateForm((s) => ({ ...s, title: e.target.value }))
-            }
-            required
-            style={{ marginBottom: "0.5rem" }}
-          />
-          <textarea
-            placeholder="Write markdown update..."
-            value={updateForm.body}
-            onChange={(e) =>
-              setUpdateForm((s) => ({ ...s, body: e.target.value }))
-            }
-            rows={4}
-            required
-          />
-          {updatesError && (
-            <p className="alert alert--error" style={{ marginTop: "0.5rem" }}>
-              {updatesError}
-            </p>
-          )}
-          <button
-            type="submit"
-            className="btn-primary"
-            disabled={updateBusy}
-            style={{ marginTop: "0.5rem" }}
-          >
-            {updateBusy ? "Posting..." : "Post update"}
-          </button>
-        </form>
-      )}
-      {updates.length === 0 ? (
-        <p style={{ color: "var(--color-text-muted)", marginBottom: "1rem" }}>
-          No updates posted yet.
-        </p>
-      ) : (
-        <div
-          style={{ display: "grid", gap: "0.75rem", marginBottom: "1.25rem" }}
+          Contributions{" "}
+          {contributions !== null ? `(${totalContributions})` : ""}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "updates"}
+          className={activeTab === "updates" ? "btn-primary" : "btn-secondary"}
+          onClick={() => setActiveTab("updates")}
+          style={styles.tabButton}
         >
+          Updates ({updates.length})
+        </button>
+      </div>
           {updates.map((update) => (
             <article key={update.id} className="campaign-card">
               <div
@@ -1260,13 +1755,22 @@ api
                 }}
               >
                 <strong>{update.title}</strong>
-                <span style={{ color: "var(--color-text-hint)", fontSize: "0.85rem" }}>
+                <span
+                  style={{
+                    color: "var(--color-text-hint)",
+                    fontSize: "0.85rem",
+                  }}
+                >
                   {update.author_name} •{" "}
                   {new Date(update.created_at).toLocaleString()}
                 </span>
               </div>
               <div
-                style={{ marginTop: "0.5rem", color: "var(--color-text-primary)", lineHeight: 1.5 }}
+                style={{
+                  marginTop: "0.5rem",
+                  color: "var(--color-text-primary)",
+                  lineHeight: 1.5,
+                }}
                 dangerouslySetInnerHTML={{
                   __html: markdownToHtml(update.body),
                 }}
@@ -1276,8 +1780,108 @@ api
         </div>
       )}
 
+      {/* Analytics Section */}
+      {analytics && (
+        <div style={{ marginBottom: "2rem" }}>
+          <h2 style={styles.sectionTitle}>Analytics</h2>
+          {!analytics.dailyTotals || analytics.dailyTotals.length === 0 ? (
+            <p style={{ color: "var(--color-text-muted)" }}>
+              No analytics data available yet.
+            </p>
+          ) : (
+            <div style={{ display: "grid", gap: "1.5rem" }}>
+              <div className="campaign-card">
+                <strong style={{ display: "block", marginBottom: "1rem" }}>
+                  Contributions (Last 30 Days)
+                </strong>
+                <svg
+                  width="100%"
+                  height={150}
+                  viewBox={`0 0 600 150`}
+                  preserveAspectRatio="none"
+                >
+                  {analytics.dailyTotals.map((day, i) => {
+                    const maxAmount = Math.max(
+                      ...analytics.dailyTotals.map(
+                        (d) => Number(d.total_amount) || 0,
+                      ),
+                      1,
+                    );
+                    const barWidth =
+                      600 / Math.max(analytics.dailyTotals.length, 1);
+                    const barHeight = Math.max(
+                      5,
+                      (Number(day.total_amount) / maxAmount) * 150,
+                    );
+                    const y = 150 - barHeight;
+                    const x = i * barWidth;
+                    return (
+                      <g key={i}>
+                        <title>{`${new Date(day.day).toLocaleDateString()}: ${day.total_amount} ${day.asset}`}</title>
+                        <rect
+                          x={x}
+                          y={y}
+                          width={Math.max(barWidth - 2, 2)}
+                          height={barHeight}
+                          fill="var(--color-accent)"
+                          rx="2"
+                        />
+                      </g>
+                    );
+                  })}
+                </svg>
+              </div>
+
+              <div className="campaign-card">
+                <strong style={{ display: "block", marginBottom: "1rem" }}>
+                  Asset Breakdown
+                </strong>
+                {analytics.assetBreakdown.map((asset) => (
+                  <div
+                    key={asset.paid_with}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      marginBottom: "0.5rem",
+                    }}
+                  >
+                    <span>{asset.paid_with}</span>
+                    <strong>{asset.total_sent}</strong>
+                  </div>
+                ))}
+              </div>
+
+              <div className="campaign-card">
+                <strong style={{ display: "block", marginBottom: "1rem" }}>
+                  Top Contributors
+                </strong>
+                {analytics.topContributors.map((c, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      marginBottom: "0.5rem",
+                      fontFamily: "monospace",
+                    }}
+                  >
+                    <span>
+                      {c.sender_public_key.slice(0, 4)}...
+                      {c.sender_public_key.slice(-4)}
+                    </span>
+                    <span>
+                      {c.total} ({c.times} contributions)
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <h2 style={styles.sectionTitle}>
-        Backer Wall {contributions !== null ? `(${contributions.length})` : ""}
+        Backer Wall {contributions !== null ? `(${totalContributions})` : ""}
         {isLive && (
           <span style={styles.liveIndicator} title="Live updates active">
             <span style={styles.liveDot} />
@@ -1297,54 +1901,259 @@ api
           </p>
         </div>
       ) : (
-        <div style={styles.list}>
-          {contributions.map((c) => (
-            <div key={c.id} style={styles.row}>
-              <div
-                style={{
-                  minWidth: 0,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.75rem",
-                }}
+        <>
+          <div style={styles.list} className="contributions-list">
+            {contributions.map((c) => (
+              <ContributionRow key={c.id} c={c} />
+            ))}
+          </div>
+          {totalContributions > 10 && (
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '1rem' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowAll((prev) => !prev)}
+                style={{ padding: '0.5rem 1.5rem', fontSize: '0.9rem', cursor: 'pointer' }}
               >
-                <div style={styles.avatar}>
-                  {(c.display_name || "A")[0].toUpperCase()}
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={styles.sender}>
-                    {c.display_name || "Anonymous"}
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={updateBusy}
+                >
+                  {updateBusy
+                    ? "Saving..."
+                    : editingUpdateId
+                      ? "Save update"
+                      : "Post update"}
+                </button>
+
+                {editingUpdateId && (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={cancelUpdateEdit}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          )}
+
+          {updates.length === 0 ? (
+            <p
+              style={{ color: "var(--color-text-muted)", marginBottom: "1rem" }}
+            >
+              No updates yet — the creator hasn't posted anything.
+            </p>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gap: "0.75rem",
+                marginBottom: "1.25rem",
+              }}
+            >
+              {updates.map((update) => (
+                <article key={update.id} className="campaign-card">
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: "0.5rem",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <strong>{update.title}</strong>
+                    <span
+                      style={{
+                        color: "var(--color-text-hint)",
+                        fontSize: "0.85rem",
+                      }}
+                    >
+                      {update.author_name} •{" "}
+                      {new Date(update.created_at).toLocaleString()}
+                    </span>
                   </div>
-                  <div style={styles.convHint}>
-                    {c.sender_public_key.slice(0, 4)}…
-                    {c.sender_public_key.slice(-4)} •{" "}
-                    {new Date(c.created_at).toLocaleDateString()}
-                  </div>
-                  {c.refund_status && (
-                    <div style={styles.refundTag}>
-                      {c.refund_status === "pending" && "Refund pending"}
-                      {c.refund_status === "submitted" && "Refunded"}
-                      {c.refund_status === "indexed" && "Refunded"}
-                      {c.refund_status === "failed" && "Refund failed"}
-                      {c.refund_status === "denied" && "Refund denied"}
+
+                  <div
+                    style={{
+                      marginTop: "0.5rem",
+                      color: "var(--color-text-primary)",
+                      lineHeight: 1.5,
+                    }}
+                    dangerouslySetInnerHTML={{
+                      __html: markdownToHtml(update.body),
+                    }}
+                  />
+
+                  {canPostUpdate && (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "0.5rem",
+                        marginTop: "0.75rem",
+                      }}
+                    >
+                      {canEditUpdate(update) && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => startEditUpdate(update)}
+                          style={{
+                            fontSize: "0.85rem",
+                            padding: "0.4rem 0.75rem",
+                          }}
+                        >
+                          Edit
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => deleteUpdate(update.id)}
+                        style={{
+                          fontSize: "0.85rem",
+                          padding: "0.4rem 0.75rem",
+                          color: "var(--color-status-error)",
+                          borderColor: "var(--color-status-error)",
+                        }}
+                      >
+                        Delete
+                      </button>
                     </div>
                   )}
-                </div>
-              </div>
-              {c.amount != null && (
-                <span style={styles.amount}>
-                  {Number(c.amount).toLocaleString()} {c.asset}
-                </span>
-              )}
+                </article>
+              ))}
             </div>
-          ))}
+          )}
+        </section>
+      )}
+
+      {activeTab === "contributions" && (
+        <section role="tabpanel">
+          <h2 style={styles.sectionTitle}>
+            Backer Wall{" "}
+            {contributions !== null ? `(${totalContributions})` : ""}
+            {isLive && (
+              <span style={styles.liveIndicator} title="Live updates active">
+                <span style={styles.liveDot} />
+                Live
+              </span>
+            )}
+          </h2>
+
+          {contributions === null ? (
+            <ContributionListSkeleton />
+          ) : contributions.length === 0 ? (
+            <div style={styles.emptyBackers}>
+              <p>Be the first to back this!</p>
+              <p
+                style={{
+                  fontSize: "0.9rem",
+                  color: "var(--color-text-secondary)",
+                  marginTop: "0.25rem",
+                }}
+              >
+                Every contribution counts towards making this goal a reality.
+              </p>
+      <h2 style={styles.sectionTitle}>
+        Backer Wall {contributions !== null ? `(${totalContributions})` : ""}
+        {isLive && (
+          <span style={styles.liveIndicator} title="Live updates active">
+            <span style={styles.liveDot} />
+            Live
+          </span>
+        )}
+      </h2>
+      {contributions === null ? (
+        <ContributionListSkeleton />
+      ) : contributions.length === 0 ? (
+        <div style={styles.emptyBackers}>
+          <p>Be the first to back this!</p>
+          <p
+            style={{
+              fontSize: "0.9rem",
+              color: "var(--color-text-secondary)",
+              marginTop: "0.25rem",
+            }}
+          >
+            Every contribution counts towards making this goal a reality.
+          </p>
         </div>
+      ) : (
+        <>
+          <div style={styles.list} className="contributions-list">
+            {contributions.map((c) => (
+              <ContributionRow key={c.id} c={c} />
+            ))}
+          </div>
+          {totalContributions > 10 && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                marginTop: "1rem",
+              }}
+            >
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowAll((prev) => !prev)}
+                style={{
+                  padding: "0.5rem 1.5rem",
+                  fontSize: "0.9rem",
+                  cursor: "pointer",
+                }}
+              >
+                {showAll ? "Show less" : `Show all (${totalContributions})`}
+              </button>
+            </div>
+          ) : (
+            <>
+              <div style={styles.list}>
+                {contributions.map((c) => (
+                  <ContributionRow key={c.id} c={c} />
+                ))}
+              </div>
+
+              {totalContributions > 10 && (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "center",
+                    marginTop: "1rem",
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setShowAll((prev) => !prev)}
+                    style={{
+                      padding: "0.5rem 1.5rem",
+                      fontSize: "0.9rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {showAll ? "Show less" : `Show all (${totalContributions})`}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </section>
       )}
 
       {showModal && (
         <ContributeModal
           campaign={campaign}
-          onClose={() => setShowModal(false)}
+          guestFreighterMode={freighterGuestMode}
+          onClose={() => {
+            setShowModal(false);
+            setFreighterGuestMode(false);
+            contributeBtnRef.current?.focus();
+          }}
           onSuccess={() => setContributed((v) => !v)}
         />
       )}
@@ -1386,24 +2195,46 @@ api
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 style={{ marginTop: 0, marginBottom: "1.5rem", fontSize: "1.5rem" }}>
+            <h2
+              style={{
+                marginTop: 0,
+                marginBottom: "1.5rem",
+                fontSize: "1.5rem",
+              }}
+            >
               Edit Campaign
             </h2>
 
             {editError && (
-              <p style={{ color: "#d32f2f", marginBottom: "1rem", padding: "0.75rem", background: "#ffebee", borderRadius: "6px" }}>
+              <p
+                style={{
+                  color: "#d32f2f",
+                  marginBottom: "1rem",
+                  padding: "0.75rem",
+                  background: "#ffebee",
+                  borderRadius: "6px",
+                }}
+              >
                 {editError}
               </p>
             )}
 
             <div style={{ marginBottom: "1.5rem" }}>
-              <label style={{ display: "block", fontWeight: 600, marginBottom: "0.5rem" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontWeight: 600,
+                  marginBottom: "0.5rem",
+                }}
+              >
                 Title
               </label>
               <input
                 type="text"
                 value={editFormData.title}
-                onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
+                onChange={(e) =>
+                  setEditFormData({ ...editFormData, title: e.target.value })
+                }
                 maxLength={100}
                 style={{
                   width: "100%",
@@ -1414,18 +2245,35 @@ api
                   boxSizing: "border-box",
                 }}
               />
-              <p style={{ fontSize: "0.85rem", color: "#888", margin: "0.25rem 0 0" }}>
+              <p
+                style={{
+                  fontSize: "0.85rem",
+                  color: "#888",
+                  margin: "0.25rem 0 0",
+                }}
+              >
                 {editFormData.title.length}/100
               </p>
             </div>
 
             <div style={{ marginBottom: "1.5rem" }}>
-              <label style={{ display: "block", fontWeight: 600, marginBottom: "0.5rem" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontWeight: 600,
+                  marginBottom: "0.5rem",
+                }}
+              >
                 Description
               </label>
               <textarea
                 value={editFormData.description}
-                onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                onChange={(e) =>
+                  setEditFormData({
+                    ...editFormData,
+                    description: e.target.value,
+                  })
+                }
                 maxLength={1000}
                 rows={5}
                 style={{
@@ -1438,19 +2286,33 @@ api
                   boxSizing: "border-box",
                 }}
               />
-              <p style={{ fontSize: "0.85rem", color: "#888", margin: "0.25rem 0 0" }}>
+              <p
+                style={{
+                  fontSize: "0.85rem",
+                  color: "#888",
+                  margin: "0.25rem 0 0",
+                }}
+              >
                 {editFormData.description.length}/1000
               </p>
             </div>
 
             <div style={{ marginBottom: "1.5rem" }}>
-              <label style={{ display: "block", fontWeight: 600, marginBottom: "0.5rem" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontWeight: 600,
+                  marginBottom: "0.5rem",
+                }}
+              >
                 Deadline (optional)
               </label>
               <input
                 type="date"
                 value={editFormData.deadline}
-                onChange={(e) => setEditFormData({ ...editFormData, deadline: e.target.value })}
+                onChange={(e) =>
+                  setEditFormData({ ...editFormData, deadline: e.target.value })
+                }
                 style={{
                   width: "100%",
                   padding: "0.75rem",
@@ -1462,7 +2324,13 @@ api
               />
             </div>
 
-            <div style={{ display: "flex", gap: "1rem", justifyContent: "flex-end" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: "1rem",
+                justifyContent: "flex-end",
+              }}
+            >
               <button
                 type="button"
                 className="btn-secondary"
@@ -1485,49 +2353,260 @@ api
           </div>
         </div>
       )}
+
+      {/* Delete Campaign Confirmation Dialog */}
+      {showDeleteDialog && campaign && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0, 0, 0, 0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+          }}
+        >
+          <div
+            style={{
+              background: "var(--color-surface)",
+              borderRadius: "8px",
+              padding: "2rem",
+              maxWidth: "500px",
+              width: "90%",
+              boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+            }}
+          >
+            <h2
+              style={{
+                fontSize: "1.5rem",
+                fontWeight: 700,
+                marginBottom: "1rem",
+                color: "var(--color-text-primary)",
+              }}
+            >
+              Delete Campaign
+            </h2>
+            <p
+              style={{
+                fontSize: "0.95rem",
+                color: "var(--color-text-secondary)",
+                marginBottom: "1.5rem",
+                lineHeight: 1.5,
+              }}
+            >
+              Are you sure you want to delete this campaign? This action cannot
+              be undone. All contribution and withdrawal history will be
+              preserved, but the campaign will no longer be visible to the
+              public.
+            </p>
+            <div style={{ marginBottom: "1.5rem" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontWeight: 600,
+                  marginBottom: "0.5rem",
+                  fontSize: "0.9rem",
+                  color: "var(--color-text-primary)",
+                }}
+              >
+                Type the campaign title to confirm:
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmation}
+                onChange={(e) => setDeleteConfirmation(e.target.value)}
+                placeholder={campaign.title}
+                style={{
+                  width: "100%",
+                  padding: "0.75rem",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "4px",
+                  fontSize: "1rem",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+            {deleteError && (
+              <p
+                className="alert alert--error"
+                style={{ marginBottom: "1.5rem" }}
+              >
+                {deleteError}
+              </p>
+            )}
+            <div
+              style={{
+                display: "flex",
+                gap: "1rem",
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  setShowDeleteDialog(false);
+                  setDeleteConfirmation("");
+                  setDeleteError("");
+                }}
+                disabled={deleteLoading}
+                style={{ opacity: deleteLoading ? 0.6 : 1 }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleDeleteCampaign}
+                disabled={
+                  deleteLoading || deleteConfirmation !== campaign.title
+                }
+                style={{
+                  opacity:
+                    deleteLoading || deleteConfirmation !== campaign.title
+                      ? 0.6
+                      : 1,
+                  background: "#dc2626",
+                  borderColor: "#dc2626",
+                }}
+              >
+                {deleteLoading ? "Deleting..." : "Delete Campaign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
 
 const styles = {
-  header: { marginBottom: '1.5rem' },
-  badgeRow: { display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' },
-  asset: { background: '#ede9fe', color: '#7c3aed', fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: '99px' },
-  title: { fontSize: '1.8rem', fontWeight: 800, margin: '0.5rem 0', color: '#111' },
-  creator: { color: '#666', fontSize: '0.9rem', marginBottom: '0.5rem' },
-  desc: { color: '#555', fontSize: '1rem', lineHeight: 1.6 },
-  card: { background: '#fff', border: '1px solid #e5e5e5', borderRadius: '10px', padding: '1.5rem', marginBottom: '1rem' },
-  amounts: { display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' },
-  big: { fontSize: '1.5rem', fontWeight: 800, color: '#111' },
-  small: { fontSize: '0.85rem', color: '#888' },
-  bar: { background: '#f0f0f0', borderRadius: '99px', height: '8px', marginBottom: '1.25rem', overflow: 'hidden' },
-  fill: { background: '#7c3aed', height: '100%', borderRadius: '99px' },
-  cta: { width: '100%', padding: '0.85rem', fontSize: '1rem' },
-  walletInfo: { background: '#f8f8f8', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1.75rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' },
-  walletLabel: { fontSize: '0.75rem', fontWeight: 600, color: '#888', textTransform: 'uppercase' },
-  walletKey: { fontSize: '0.8rem', color: '#555', wordBreak: 'break-all' },
-  detailCoverImage: { width: '100%', borderRadius: '14px', marginBottom: '1.5rem', objectFit: 'cover', maxHeight: '360px' },
-  detailCoverPlaceholder: {
-    width: '100%',
-    borderRadius: '14px',
-    marginBottom: '1.5rem',
-    height: '260px',
-    background: 'linear-gradient(135deg, #ede9fe 0%, #e0e7ff 100%)',
-    border: '1px solid #ddd6fe',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
+  header: { marginBottom: "1.5rem" },
+  badgeRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+    flexWrap: "wrap",
   },
-  detailCoverPlaceholderText: { color: '#6d28d9', fontWeight: 700 },
-  sectionTitle: { fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.75rem' },
-  list: { display: 'flex', flexDirection: 'column', gap: '0.5rem' },
-  row: { display: 'flex', justifyContent: 'space-between', background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '0.6rem 0.85rem' },
-  sender: { fontSize: '0.85rem', color: '#555', fontFamily: 'monospace' },
-  amount: { fontSize: '0.85rem', fontWeight: 600, flexShrink: 0 },
-  convHint: { fontSize: '0.72rem', color: '#888', marginTop: '0.15rem' },
-  refundTag: { marginTop: '0.45rem', fontSize: '0.75rem', color: '#7c3aed', fontWeight: 700 },
-  liveIndicator: { display: 'inline-flex', alignItems: 'center', gap: '4px', marginLeft: '0.5rem', fontSize: '0.72rem', fontWeight: 600, color: '#16a34a', verticalAlign: 'middle' },
-  liveDot: { display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: '#16a34a', animation: 'pulse 1.5s ease-in-out infinite' },
+  asset: {
+    background: "#ede9fe",
+    color: "#7c3aed",
+    fontSize: "0.75rem",
+    fontWeight: 700,
+    padding: "2px 8px",
+    borderRadius: "99px",
+  },
+  title: {
+    fontSize: "1.8rem",
+    fontWeight: 800,
+    margin: "0.5rem 0",
+    color: "#111",
+  },
+  creator: { color: "#666", fontSize: "0.9rem", marginBottom: "0.5rem" },
+  desc: { color: "#555", fontSize: "1rem", lineHeight: 1.6 },
+  card: {
+    background: "#fff",
+    border: "1px solid #e5e5e5",
+    borderRadius: "10px",
+    padding: "1.5rem",
+    marginBottom: "1rem",
+  },
+  amounts: {
+    display: "flex",
+    justifyContent: "space-between",
+    marginBottom: "1rem",
+  },
+  big: { fontSize: "1.5rem", fontWeight: 800, color: "#111" },
+  small: { fontSize: "0.85rem", color: "#888" },
+  bar: {
+    background: "#f0f0f0",
+    borderRadius: "99px",
+    height: "8px",
+    marginBottom: "1.25rem",
+    overflow: "hidden",
+  },
+  fill: { background: "#7c3aed", height: "100%", borderRadius: "99px" },
+  cta: { width: "100%", padding: "0.85rem", fontSize: "1rem" },
+  walletInfo: {
+    background: "#f8f8f8",
+    borderRadius: "8px",
+    padding: "0.75rem 1rem",
+    marginBottom: "1.75rem",
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.25rem",
+  },
+  walletLabel: {
+    fontSize: "0.75rem",
+    fontWeight: 600,
+    color: "#888",
+    textTransform: "uppercase",
+  },
+  walletKey: { fontSize: "0.8rem", color: "#555", wordBreak: "break-all" },
+  detailCoverImage: {
+    width: "100%",
+    borderRadius: "14px",
+    marginBottom: "1.5rem",
+    objectFit: "cover",
+    maxHeight: "360px",
+  },
+  detailCoverPlaceholder: {
+    width: "100%",
+    borderRadius: "14px",
+    marginBottom: "1.5rem",
+    height: "260px",
+    background: "linear-gradient(135deg, #ede9fe 0%, #e0e7ff 100%)",
+    border: "1px solid #ddd6fe",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  detailCoverPlaceholderText: { color: "#6d28d9", fontWeight: 700 },
+  sectionTitle: {
+    fontSize: "1.1rem",
+    fontWeight: 700,
+    marginBottom: "0.75rem",
+  },
+  list: { display: "flex", flexDirection: "column", gap: "0.5rem" },
+  row: {
+    display: "flex",
+    justifyContent: "space-between",
+    background: "#fff",
+    border: "1px solid #eee",
+    borderRadius: "6px",
+    padding: "0.6rem 0.85rem",
+  },
+  sender: { fontSize: "0.85rem", color: "#555", fontFamily: "monospace" },
+  amount: { fontSize: "0.85rem", fontWeight: 600, flexShrink: 0 },
+  convHint: { fontSize: "0.72rem", color: "#888", marginTop: "0.15rem" },
+  refundTag: {
+    marginTop: "0.45rem",
+    fontSize: "0.75rem",
+    color: "#7c3aed",
+    fontWeight: 700,
+  },
+  liveIndicator: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    marginLeft: "0.5rem",
+    fontSize: "0.72rem",
+    fontWeight: 600,
+    color: "#16a34a",
+    verticalAlign: "middle",
+  },
+  liveDot: {
+    display: "inline-block",
+    width: "7px",
+    height: "7px",
+    borderRadius: "50%",
+    background: "#16a34a",
+    animation: "pulse 1.5s ease-in-out infinite",
+  },
   header: { marginBottom: "1.5rem" },
   badgeRow: {
     display: "flex",
@@ -1549,8 +2628,16 @@ const styles = {
     margin: "0.5rem 0",
     color: "var(--color-text-primary)",
   },
-  creator: { color: "var(--color-text-hint)", fontSize: "0.9rem", marginBottom: "0.5rem" },
-  desc: { color: "var(--color-text-secondary)", fontSize: "1rem", lineHeight: 1.6 },
+  creator: {
+    color: "var(--color-text-hint)",
+    fontSize: "0.9rem",
+    marginBottom: "0.5rem",
+  },
+  desc: {
+    color: "var(--color-text-secondary)",
+    fontSize: "1rem",
+    lineHeight: 1.6,
+  },
   card: {
     background: "var(--color-bg)",
     border: "1px solid var(--color-border-light)",
@@ -1563,7 +2650,11 @@ const styles = {
     justifyContent: "space-between",
     marginBottom: "1rem",
   },
-  big: { fontSize: "1.5rem", fontWeight: 800, color: "var(--color-text-primary)" },
+  big: {
+    fontSize: "1.5rem",
+    fontWeight: 800,
+    color: "var(--color-text-primary)",
+  },
   small: { fontSize: "0.85rem", color: "var(--color-text-secondary)" },
   bar: {
     background: "var(--color-surface)",
@@ -1572,7 +2663,11 @@ const styles = {
     marginBottom: "1.25rem",
     overflow: "hidden",
   },
-  fill: { background: "var(--color-accent)", height: "100%", borderRadius: "99px" },
+  fill: {
+    background: "var(--color-accent)",
+    height: "100%",
+    borderRadius: "99px",
+  },
   cta: { width: "100%", padding: "0.85rem", fontSize: "1rem" },
   walletInfo: {
     background: "var(--color-surface)",
@@ -1589,7 +2684,11 @@ const styles = {
     color: "var(--color-text-secondary)",
     textTransform: "uppercase",
   },
-  walletKey: { fontSize: "0.8rem", color: "var(--color-text-hint)", wordBreak: "break-all" },
+  walletKey: {
+    fontSize: "0.8rem",
+    color: "var(--color-text-hint)",
+    wordBreak: "break-all",
+  },
   detailCoverImage: {
     width: "100%",
     borderRadius: "14px",
@@ -1611,9 +2710,17 @@ const styles = {
     borderRadius: "6px",
     padding: "0.6rem 0.85rem",
   },
-  sender: { fontSize: "0.85rem", color: "var(--color-text-secondary)", fontFamily: "monospace" },
+  sender: {
+    fontSize: "0.85rem",
+    color: "var(--color-text-secondary)",
+    fontFamily: "monospace",
+  },
   amount: { fontSize: "0.85rem", fontWeight: 600, flexShrink: 0 },
-  convHint: { fontSize: "0.72rem", color: "var(--color-text-secondary)", marginTop: "0.15rem" },
+  convHint: {
+    fontSize: "0.72rem",
+    color: "var(--color-text-secondary)",
+    marginTop: "0.15rem",
+  },
   refundTag: {
     marginTop: "0.45rem",
     fontSize: "0.75rem",
@@ -1651,6 +2758,12 @@ const styles = {
     wordBreak: "break-all",
     paddingRight: "5rem",
   },
+  embedSummary: {
+    cursor: "pointer",
+    fontSize: "0.85rem",
+    color: "var(--color-accent)",
+    fontWeight: 600,
+  },
   embedPreview: {
     background: "var(--color-surface)",
     border: "1px solid var(--color-border-light)",
@@ -1678,5 +2791,17 @@ const styles = {
     fontSize: "0.9rem",
     fontWeight: 800,
     flexShrink: 0,
+  },
+  tabs: {
+    display: "flex",
+    gap: "0.75rem",
+    marginBottom: "1rem",
+    borderBottom: "1px solid var(--color-border-light)",
+    paddingBottom: "0.75rem",
+  },
+  tabButton: {
+    flex: 1,
+    fontSize: "0.9rem",
+    justifyContent: "center",
   },
 };

@@ -1,6 +1,12 @@
 const { validateWalletSecretConfig } = require('../services/walletSecrets');
 
-const REQUIRED = ['JWT_SECRET', 'DATABASE_URL', 'PLATFORM_SECRET_KEY', 'STELLAR_NETWORK'];
+const REQUIRED = [
+  'DATABASE_URL',
+  'JWT_SECRET',
+  'PLATFORM_SECRET_KEY',
+  'STELLAR_NETWORK',
+  'STELLAR_HORIZON_URL',
+];
 const STORAGE_VARS = ['STORAGE_BUCKET', 'STORAGE_ENDPOINT'];
 
 function validateEnv() {
@@ -28,6 +34,18 @@ function validateEnv() {
   } catch (err) {
     process.stderr.write(`\n[crowdpay] Cannot start: ${err.message}\n\n`);
     process.exit(1);
+  }
+
+  // Warn about important optional variables
+  if (!process.env.PLATFORM_APPROVER_USER_ID) {
+    process.stderr.write(
+      '[crowdpay] Warning: PLATFORM_APPROVER_USER_ID not set — withdrawal approvals are open to all users (dev mode)\n'
+    );
+  }
+  if (!process.env.JWT_EXPIRES_IN) {
+    process.stderr.write(
+      '[crowdpay] Warning: JWT_EXPIRES_IN not set — access tokens will use the default expiry (15m)\n'
+    );
   }
 }
 

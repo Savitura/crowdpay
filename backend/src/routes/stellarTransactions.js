@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const db = require('../config/database');
 const { requireAuth } = require('../middleware/auth');
+const asyncHandler = require('../utils/asyncHandler');
 
 function isPlatformApprover(userId) {
   if (!process.env.PLATFORM_APPROVER_USER_ID) return false;
@@ -20,7 +21,7 @@ async function assertCampaignReportingAccess(req, campaignId) {
 /**
  * Reporting index: Stellar transactions auditable by campaign creators and platform operators.
  */
-router.get('/', requireAuth, async (req, res) => {
+router.get('/', requireAuth, asyncHandler(async (req, res) => {
   const { campaign_id: campaignId, status, limit } = req.query;
   const max = Math.min(parseInt(limit, 10) || 50, 200);
 
@@ -63,9 +64,9 @@ router.get('/', requireAuth, async (req, res) => {
   );
 
   res.json(rows);
-});
+}));
 
-router.get('/:id', requireAuth, async (req, res) => {
+router.get('/:id', requireAuth, asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `SELECT st.*, c.title AS campaign_title, c.creator_id
      FROM stellar_transactions st
@@ -83,6 +84,6 @@ router.get('/:id', requireAuth, async (req, res) => {
 
   delete row.creator_id;
   res.json(row);
-});
+}));
 
 module.exports = router;

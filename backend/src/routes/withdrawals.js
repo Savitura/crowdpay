@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const db = require('../config/database');
 const logger = require('../config/logger');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
 const { sendAlert } = require('../services/alerting');
 const { withdrawalValidation, validateRequest } = require('../middleware/validation');
 const {
@@ -10,6 +10,7 @@ const {
   signTransactionXdr,
   signatureCountFromXdr,
   submitSignedWithdrawal,
+  isXdrExpired,
   PLATFORM_PUBLIC_KEY,
 } = require('../services/stellarService');
 const {
@@ -20,8 +21,22 @@ const {
 const { sendEmail } = require('../services/emailService');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
 const { withDecryptedWalletSecret } = require('../services/walletSecrets');
+const { createNotification } = require('../services/notifications');
 
 const ALLOWED_CAMPAIGN_STATUS_FOR_REQUEST = ['active', 'funded'];
+
+/** Fail closed when PLATFORM_APPROVER_USER_ID is unset. */
+function canPerformPlatformSignature(userId) {
+  if (!process.env.PLATFORM_APPROVER_USER_ID) return false;
+  return userId === process.env.PLATFORM_APPROVER_USER_ID;
+}
+
+function requirePlatformApprover(req, res, next) {
+  if (!canPerformPlatformSignature(req.user.userId)) {
+    return res.status(403).json({ error: 'Only the designated platform approver can perform this action' });
+  }
+  next();
+}
 
 /**
  * @openapi
@@ -75,7 +90,7 @@ async function assertWithdrawalAccess(req, campaignId) {
 }
 
 router.get('/capabilities', requireAuth, (req, res) => {
-  res.json({ can_approve_platform: req.user.role === 'admin' });
+  res.json({ can_approve_platform: canPerformPlatformSignature(req.user.userId) });
 });
 
 router.post('/request', requireAuth, withdrawalValidation, validateRequest, async (req, res) => {
@@ -381,6 +396,14 @@ const platformApproveHandler = async (req, res) => {
     return res.status(409).json({ error: 'Platform already approved this withdrawal' });
   }
 
+  // Check whether the XDR time bounds have already elapsed before adding our signature.
+  // If expired, tell the creator to re-request so a fresh XDR is built.
+  if (isXdrExpired(requestRow.unsigned_xdr)) {
+    return res.status(410).json({
+      error: 'Withdrawal XDR has expired. The creator must cancel and submit a new withdrawal request.',
+    });
+  }
+
   const signedXdr = signTransactionXdr({
     xdr: requestRow.unsigned_xdr,
     signerSecret: process.env.PLATFORM_SECRET_KEY,
@@ -463,7 +486,7 @@ const platformApproveHandler = async (req, res) => {
 
     // Notify creator
     const { rows: cRows } = await db.query(
-      `SELECT u.email FROM users u JOIN campaigns c ON c.creator_id = u.id WHERE c.id = $1`,
+      `SELECT u.email, c.creator_id FROM users u JOIN campaigns c ON c.creator_id = u.id WHERE c.id = $1`,
       [requestRow.campaign_id]
     );
     if (cRows.length) {
@@ -472,6 +495,12 @@ const platformApproveHandler = async (req, res) => {
         subject: 'Withdrawal Approved',
         text: `Your withdrawal for ${requestRow.amount} has been approved by the platform. Transaction Hash: ${txHash}`
       });
+      createNotification(cRows[0].creator_id, {
+        type: 'withdrawal_approved',
+        title: 'Withdrawal approved',
+        body: `Your withdrawal of ${requestRow.amount} was approved and submitted on-chain.`,
+        link: `/campaigns/${requestRow.campaign_id}`,
+      }).catch(() => {});
     }
 
     const withdrawalRow = updated[0];
@@ -499,9 +528,9 @@ const platformApproveHandler = async (req, res) => {
   }
 };
 
-router.post('/:id/approve/platform', requireAuth, requireRole('admin'), platformApproveHandler);
+router.post('/:id/approve/platform', requireAuth, requirePlatformApprover, platformApproveHandler);
 // Alias for docs + issue acceptance criteria
-router.post('/:id/approve', requireAuth, requireRole('admin'), platformApproveHandler);
+router.post('/:id/approve', requireAuth, requirePlatformApprover, platformApproveHandler);
 
 router.post('/:id/cancel', requireAuth, async (req, res) => {
   const reason = (req.body && req.body.reason) || 'Cancelled by creator';
@@ -561,7 +590,7 @@ router.post('/:id/cancel', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/:id/reject', requireAuth, requireRole('admin'), async (req, res) => {
+router.post('/:id/reject', requireAuth, requirePlatformApprover, async (req, res) => {
   /**
    * @openapi
    * /api/withdrawals/{id}/reject:
@@ -634,7 +663,7 @@ router.post('/:id/reject', requireAuth, requireRole('admin'), async (req, res) =
     await client.query('COMMIT');
 
     const { rows: cRows } = await db.query(
-      `SELECT u.email FROM users u JOIN campaigns c ON c.creator_id = u.id WHERE c.id = $1`,
+      `SELECT u.email, c.creator_id FROM users u JOIN campaigns c ON c.creator_id = u.id WHERE c.id = $1`,
       [requestRow.campaign_id]
     );
     if (cRows.length) {
@@ -643,6 +672,12 @@ router.post('/:id/reject', requireAuth, requireRole('admin'), async (req, res) =
         subject: 'Withdrawal Rejected',
         text: `Your withdrawal request has been rejected by the platform. Reason: ${reason}`
       });
+      createNotification(cRows[0].creator_id, {
+        type: 'withdrawal_rejected',
+        title: 'Withdrawal rejected',
+        body: `Your withdrawal request was rejected. Reason: ${reason}`,
+        link: `/campaigns/${requestRow.campaign_id}`,
+      }).catch(() => {});
     }
 
     res.json(updated[0]);

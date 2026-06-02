@@ -27,11 +27,41 @@ const {
  *     description: User registration and login
  */
 
+const ACCESS_TOKEN_COOKIE_NAME = 'cp_token';
 const REFRESH_TOKEN_COOKIE_NAME = 'cp_refresh_token';
 const REFRESH_TOKEN_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
 const FORGOT_PASSWORD_MESSAGE =
   'If that email exists, a password reset link has been sent.';
+
+function parseJwtExpiresIn(value) {
+  const match = String(value).match(/^(\d+)([smhd])$/);
+  if (!match) return 15 * 60;
+  const num = parseInt(match[1], 10);
+  const unit = match[2];
+  if (unit === 's') return num;
+  if (unit === 'm') return num * 60;
+  if (unit === 'h') return num * 60 * 60;
+  if (unit === 'd') return num * 24 * 60 * 60;
+  return 15 * 60;
+}
+
+function setAccessTokenCookie(res, token) {
+  res.cookie(ACCESS_TOKEN_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: parseJwtExpiresIn(process.env.JWT_EXPIRES_IN || '15m') * 1000,
+  });
+}
+
+function clearAccessTokenCookie(res) {
+  res.clearCookie(ACCESS_TOKEN_COOKIE_NAME, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+  });
+}
 
 const isTest = process.env.NODE_ENV === 'test';
 const registerLimiter = rateLimit({
@@ -224,6 +254,7 @@ router.post('/register', registerLimiter, registerValidation, validateRequest, a
   // Support freighter (non-custodial) registration where frontend provides wallet_public_key
   let publicKey;
   let encryptedSecret = null;
+  let secret = null;
   let walletType = req.body.wallet_type || 'custodial';
 
   if (walletType === 'freighter') {
@@ -233,7 +264,7 @@ router.post('/register', registerLimiter, registerValidation, validateRequest, a
   } else {
     const keypair = Keypair.random();
     publicKey = keypair.publicKey();
-    const secret = keypair.secret();
+    secret = keypair.secret();
     encryptedSecret = await encryptWalletSecret(secret, { walletPublicKey: publicKey });
   }
 
@@ -252,15 +283,19 @@ router.post('/register', registerLimiter, registerValidation, validateRequest, a
   const { token: refreshToken, expiresAt } = await createRefreshToken(user.id);
 
   setRefreshTokenCookie(res, refreshToken, expiresAt);
+  setAccessTokenCookie(res, accessToken);
 
   const requestId = req.id;
   setImmediate(() => {
-    ensureCustodialAccountFundedAndTrusted({ publicKey, secret }).catch((err) => {
-      logger.error('Background Stellar funding/trustlines failed', {
-        request_id: requestId,
-        error: err.message,
+    // Only fund and setup trustlines for custodial wallets
+    if (walletType === 'custodial' && secret) {
+      ensureCustodialAccountFundedAndTrusted({ publicKey, secret }).catch((err) => {
+        logger.error('Background Stellar funding/trustlines failed', {
+          request_id: requestId,
+          error: err.message,
+        });
       });
-    });
+    }
 
     sendEmail({
       to: normalizedEmail,
@@ -349,6 +384,7 @@ router.post('/login', loginLimiter, loginValidation, validateRequest, async (req
   const { token: refreshToken, expiresAt } = await createRefreshToken(user.id);
 
   setRefreshTokenCookie(res, refreshToken, expiresAt);
+  setAccessTokenCookie(res, accessToken);
 
   res.json({
     token: accessToken,
@@ -381,9 +417,9 @@ router.post('/refresh', async (req, res) => {
   const { token: newRefreshToken, expiresAt } = await rotateRefreshToken(token, user.id);
 
   setRefreshTokenCookie(res, newRefreshToken, expiresAt);
+  setAccessTokenCookie(res, accessToken);
 
   res.json({
-    token: accessToken,
     user: {
       id: user.id,
       email: user.email,
@@ -398,13 +434,14 @@ router.post('/refresh', async (req, res) => {
   });
 });
 
-router.post('/logout', requireAuth, async (req, res) => {
+router.post('/logout', async (req, res) => {
   const token = req.cookies?.[REFRESH_TOKEN_COOKIE_NAME];
   if (token) {
     await revokeRefreshToken(token);
   }
   clearRefreshTokenCookie(res);
-  res.json({ message: 'Logged out successfully' });
+  clearAccessTokenCookie(res);
+  res.json({ ok: true });
 });
 
 router.post(

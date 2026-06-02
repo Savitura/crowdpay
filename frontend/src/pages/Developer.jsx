@@ -13,7 +13,7 @@ const EVENT_OPTIONS = [
 const SCOPE_OPTIONS = ['read', 'write', 'withdrawals', 'developer', 'full'];
 
 export default function Developer() {
-  const { token, user } = useAuth();
+  const { user } = useAuth();
   const [keys, setKeys] = useState([]);
   const [hooks, setHooks] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
@@ -27,13 +27,12 @@ export default function Developer() {
   const [loading, setLoading] = useState(true);
 
   async function refresh() {
-    if (!token) return;
     setError('');
     try {
       const [k, h, d] = await Promise.all([
-        api.listApiKeys(token),
-        api.listWebhooks(token),
-        api.listWebhookDeliveries(token, { limit: 80 }),
+        api.listApiKeys(),
+        api.listWebhooks(),
+        api.listWebhookDeliveries({ limit: 80 }),
       ]);
       setKeys(k);
       setHooks(h);
@@ -47,7 +46,7 @@ export default function Developer() {
 
   useEffect(() => {
     refresh();
-  }, [token]);
+  }, []);
 
   if (!user) {
     return (
@@ -62,7 +61,7 @@ export default function Developer() {
     setRevealedKey('');
     setError('');
     try {
-      const res = await api.createApiKey({ label: newKeyLabel, scopes: newKeyScopes }, token);
+      const res = await api.createApiKey({ label: newKeyLabel, scopes: newKeyScopes });
       setRevealedKey(res.api_key);
       await refresh();
     } catch (err) {
@@ -74,7 +73,7 @@ export default function Developer() {
     if (!confirm('Revoke this API key?')) return;
     setError('');
     try {
-      await api.deleteApiKey(id, token);
+      await api.deleteApiKey(id);
       await refresh();
     } catch (err) {
       setError(err.message);
@@ -86,7 +85,7 @@ export default function Developer() {
     setRevealedSecret('');
     setError('');
     try {
-      const res = await api.createWebhook({ url: hookUrl, events: hookEvents }, token);
+      const res = await api.createWebhook({ url: hookUrl, events: hookEvents });
       setRevealedSecret(res.secret);
       setHookUrl('');
       await refresh();
@@ -99,7 +98,7 @@ export default function Developer() {
     if (!confirm('Remove this webhook endpoint?')) return;
     setError('');
     try {
-      await api.deleteWebhook(id, token);
+      await api.deleteWebhook(id);
       await refresh();
     } catch (err) {
       setError(err.message);

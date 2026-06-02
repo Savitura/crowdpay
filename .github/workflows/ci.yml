@@ -39,9 +39,9 @@ jobs:
         working-directory: ./backend
         run: npm ci
 
-      - name: Run linter (ESLint)
+      - name: Run linter
         working-directory: ./backend
-        run: npx eslint .
+        run: npm run lint
 
       - name: Run test suite
         working-directory: ./backend
@@ -50,6 +50,7 @@ jobs:
           JWT_SECRET: testsecret
           PLATFORM_SECRET_KEY: SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR
           STELLAR_NETWORK: testnet
+          STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
           USDC_ISSUER: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
           ENABLE_CAMPAIGN_STATUS_CRON: 'false'
         run: npm test
@@ -74,7 +75,7 @@ jobs:
 
       - name: Run linter
         working-directory: ./frontend
-        run: npx eslint .
+        run: npm run lint
 
       - name: Run unit tests
         working-directory: ./frontend
@@ -130,4 +131,8 @@ jobs:
         env:
           CI: true
           DATABASE_URL: postgresql://postgres:password@localhost:5433/crowdpay
+          JWT_SECRET: testsecret
+          PLATFORM_SECRET_KEY: SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR
+          STELLAR_NETWORK: testnet
+          STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
         run: npm run test:e2e

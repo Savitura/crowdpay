@@ -28,7 +28,7 @@ function formatConversionRate(row) {
 }
 
 export default function Dashboard() {
-  const { token, user, ready, updateUser } = useAuth();
+  const { user, ready, updateUser } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
   const activeTab = tabParam === 'contributions' ? 'contributions' : 'campaigns';
@@ -46,12 +46,12 @@ export default function Dashboard() {
     String(import.meta.env.VITE_KYC_REQUIRED_FOR_CAMPAIGNS ?? 'true').toLowerCase() !== 'false';
 
   useEffect(() => {
-    if (!token) return;
+    if (!user) return;
     setLoadingCampaigns(true);
     setError('');
-    const requests = [api.getMyContributions(token)];
+    const requests = [api.getMyContributions()];
     if (isCreator) {
-      requests.unshift(api.getMe(token), api.getMyStats(token), api.getMyCampaigns(token));
+      requests.unshift(api.getMe(), api.getMyStats(), api.getMyCampaigns());
     }
 
     Promise.all(requests)
@@ -88,7 +88,7 @@ export default function Dashboard() {
       </main>
     );
   }
-  if (!token) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to="/login" replace />;
 
   const loading = activeTab === 'campaigns' ? loadingCampaigns : loadingContributions;
 

@@ -1,45 +1,44 @@
-version: '3.8'
+version: '3.9'
 
 services:
   db:
-    image: postgres:15-alpine
+    image: postgres:14-alpine
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
       POSTGRES_DB: crowdpay
-    ports:
-      - "5433:5432"
+      POSTGRES_USER: crowdpay
+      POSTGRES_PASSWORD: crowdpay
     volumes:
+      - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
       - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crowdpay"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: ./backend/.env
     ports:
       - "3001:3001"
-    environment:
-      - DATABASE_URL=postgresql://postgres:password@db:5432/crowdpay
-      - PORT=3001
-      - STELLAR_NETWORK=testnet
-      - JWT_SECRET=testsecret
-      - USDC_ISSUER=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
-      - PLATFORM_SECRET_KEY=SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR
-    depends_on:
-      - db
-    command: npm run dev
     volumes:
       - ./backend:/app
       - /app/node_modules
+    command: npm run dev
 
   frontend:
-    image: node:20-alpine
-    working_dir: /app
-    volumes:
-      - ./frontend:/app
+    build: ./frontend
     ports:
       - "5173:5173"
-    command: sh -c "npm install && npm run dev -- --host"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host
 
 volumes:
   pgdata:

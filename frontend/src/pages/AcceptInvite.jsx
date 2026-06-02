@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 
 export default function AcceptInvite() {
   const { id, token } = useParams();
-  const { user, token: authToken, ready } = useAuth();
+  const { user, ready } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -15,7 +15,7 @@ export default function AcceptInvite() {
     setLoading(true);
     setError('');
     try {
-      await api.acceptCampaignInvitation(id, { token }, authToken);
+      await api.acceptCampaignInvitation(id, { token });
       setSuccess(true);
       setLoading(false);
       setTimeout(() => {
@@ -35,7 +35,7 @@ export default function AcceptInvite() {
     );
   }
 
-  if (!authToken) {
+  if (!user) {
     return (
       <main className="container page-narrow" style={{ paddingTop: '3rem' }}>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '1rem' }}>Join Campaign Team</h1>

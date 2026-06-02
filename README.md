@@ -1,6 +1,29 @@
 # CrowdPay
 
+[![CI](https://github.com/Savitura/crowdpay/actions/workflows/ci.yml/badge.svg)](https://github.com/Savitura/crowdpay/actions/workflows/ci.yml)
+
 **Global funding infrastructure built on Stellar.**
+
+---
+
+## Quick start with Docker
+
+The fastest way to run the full stack locally (requires [Docker](https://docs.docker.com/get-docker/)):
+
+```bash
+cp backend/.env.example backend/.env
+docker compose up
+```
+
+| Service  | URL                        |
+|----------|----------------------------|
+| Frontend | http://localhost:5173       |
+| Backend  | http://localhost:3001       |
+| Postgres | localhost:5432             |
+
+The database schema is applied automatically on first start. Backend supports hot-reload via nodemon; frontend supports HMR via Vite.
+
+---
 
 CrowdPay is not a crowdfunding website — it is a payments protocol with a product layer on top. Contributors anywhere in the world can fund campaigns in any currency. Stellar handles the conversion, settlement, and custody automatically.
 
@@ -181,10 +204,20 @@ Creator identity verification is enforced by default before campaign launch. For
 ### 3. Set up the database
 
 ```bash
-psql -U postgres -c "CREATE DATABASE crowdpay;"
-psql -U postgres -d crowdpay -f db/schema.sql
-# For existing deployments, apply migration files in backend/db/migrations in order.
+cd backend
+
+# First-time setup: create DB and apply all migrations
+npm run migrate:fresh
+
+# After pulling new migrations from main branch
+npm run migrate
 ```
+
+The migration runner automatically:
+- Creates the database schema from `db/schema.sql`
+- Applies migration files in `db/migrations` in chronological order
+- Tracks applied migrations to prevent duplicates
+- Rolls back cleanly on error
 
 ### 4. Fund your platform account on testnet
 
@@ -237,6 +270,12 @@ Before a campaign wallet can receive USDC, it must establish a trustline to the 
 ### Path payments
 Contributions use `pathPaymentStrictReceive` so the campaign always receives the exact asset it expects, regardless of what the contributor sends.
 
+
+---
+
+## Contributing
+
+Want to contribute? Read the **[CONTRIBUTING.md](CONTRIBUTING.md)** for setup instructions, branch naming conventions, commit message format, and the PR checklist.
 
 ---
 

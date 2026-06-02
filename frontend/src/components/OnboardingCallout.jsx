@@ -1,6 +1,8 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 
 export default function OnboardingCallout({ title, children, onDismiss, className = '' }) {
+  const { t } = useTranslation();
   return (
     <aside className={`onboarding-callout ${className}`.trim()} role="note">
       <div className="onboarding-callout__inner">
@@ -10,7 +12,7 @@ export default function OnboardingCallout({ title, children, onDismiss, classNam
         </div>
         {onDismiss && (
           <button type="button" className="onboarding-callout__dismiss" onClick={onDismiss}>
-            Got it
+            {t('common.gotIt')}
           </button>
         )}
       </div>

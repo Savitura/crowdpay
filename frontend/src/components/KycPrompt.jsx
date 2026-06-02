@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 
 export default function KycPrompt({ token, onUserUpdate, title = 'Verify your identity to create campaigns' }) {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -15,9 +17,9 @@ export default function KycPrompt({ token, onUserUpdate, title = 'Verify your id
         window.location.assign(result.redirect_url);
         return;
       }
-      setError('Verification session started, but no redirect URL was returned.');
+      setError(t('kyc.sessionStarted'));
     } catch (err) {
-      setError(err.message || 'Could not start identity verification.');
+      setError(err.message || t('kyc.error'));
     } finally {
       setBusy(false);
     }
@@ -25,9 +27,9 @@ export default function KycPrompt({ token, onUserUpdate, title = 'Verify your id
 
   return (
     <div className="alert alert--warning" role="status">
-      <strong>{title}</strong>
+      <strong>{title || t('kyc.title')}</strong>
       <p style={{ marginTop: '0.35rem' }}>
-        CrowdPay requires verified creator identity before launch so backers can trust who receives funds.
+        {t('kyc.body')}
       </p>
       {error && (
         <p className="alert alert--error" style={{ marginTop: '0.75rem' }} role="alert">
@@ -41,7 +43,7 @@ export default function KycPrompt({ token, onUserUpdate, title = 'Verify your id
         disabled={busy}
         onClick={startKyc}
       >
-        {busy ? 'Starting verification...' : 'Verify your identity'}
+        {busy ? t('kyc.start') : t('kyc.button')}
       </button>
     </div>
   );

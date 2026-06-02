@@ -4,7 +4,12 @@ const express = require('express');
 const request = require('supertest');
 const proxyquire = require('proxyquire').noCallThru();
 
-function buildApp({ queryImpl, stellarImpl, userId = 'creator-1', role = 'creator' }) {
+function buildApp({ queryImpl, stellarImpl, userId = 'creator-1', role = 'creator', platformApproverUserId } = {}) {
+  const prevApprover = process.env.PLATFORM_APPROVER_USER_ID;
+  if (platformApproverUserId !== false) {
+    process.env.PLATFORM_APPROVER_USER_ID = platformApproverUserId ?? userId;
+  }
+
   const stellarStub = {
     buildWithdrawalTransaction: async () => 'xdr-base',
     getAccountMultisigConfig: async () => ({
@@ -14,6 +19,8 @@ function buildApp({ queryImpl, stellarImpl, userId = 'creator-1', role = 'creato
     signTransactionXdr: () => 'xdr-signed',
     signatureCountFromXdr: () => 2,
     submitSignedWithdrawal: async () => 'tx-hash',
+    // Default: XDR is not expired. Override in specific tests via stellarImpl.
+    isXdrExpired: () => false,
     PLATFORM_PUBLIC_KEY: 'GPLATFORM',
     ...stellarImpl,
   };
@@ -48,7 +55,10 @@ function buildApp({ queryImpl, stellarImpl, userId = 'creator-1', role = 'creato
   app.use(express.json());
   app.use('/api/withdrawals', router);
 
-  return { app, cleanup: () => {} };
+  return { app, cleanup: () => {
+    if (prevApprover === undefined) delete process.env.PLATFORM_APPROVER_USER_ID;
+    else process.env.PLATFORM_APPROVER_USER_ID = prevApprover;
+  } };
 }
 
 const VALID_DESTINATION = 'GASXEYHSSVN3WSHD4WSZ4O37HC2AG4JH2EB6UPHM6IXDXDRJRDJD4RZK';
@@ -64,16 +74,30 @@ function campaignRow(overrides = {}) {
   };
 }
 
-test('GET /api/withdrawals/capabilities reflects admin role', async () => {
+test('GET /api/withdrawals/capabilities reflects platform approver status', async () => {
   const { app, cleanup } = buildApp({
     queryImpl: async () => ({ rows: [] }),
     userId: 'platform-1',
     role: 'admin',
+    platformApproverUserId: 'platform-1',
   });
   const res = await request(app).get('/api/withdrawals/capabilities').set('Authorization', 'Bearer t');
   cleanup();
   assert.equal(res.status, 200);
   assert.equal(res.body.can_approve_platform, true);
+});
+
+test('GET /api/withdrawals/capabilities denies when user is not platform approver', async () => {
+  const { app, cleanup } = buildApp({
+    queryImpl: async () => ({ rows: [] }),
+    userId: 'other-user',
+    role: 'admin',
+    platformApproverUserId: 'platform-1',
+  });
+  const res = await request(app).get('/api/withdrawals/capabilities').set('Authorization', 'Bearer t');
+  cleanup();
+  assert.equal(res.status, 200);
+  assert.equal(res.body.can_approve_platform, false);
 });
 
 test('POST /api/withdrawals/request creates pending request and logs event', async () => {
@@ -185,6 +209,23 @@ test('POST /api/withdrawals/request denies invalid multisig config', async () =>
 
   cleanup();
   assert.equal(response.status, 422);
+});
+
+test('POST /api/withdrawals/:id/approve/platform denies non-platform user when approver is configured', async () => {
+  const { app, cleanup } = buildApp({
+    userId: 'other-user',
+    role: 'admin',
+    platformApproverUserId: 'platform-user',
+    queryImpl: async () => ({ rows: [] }),
+  });
+
+  const response = await request(app)
+    .post('/api/withdrawals/w-1/approve/platform')
+    .set('Authorization', 'Bearer token')
+    .send({});
+
+  cleanup();
+  assert.equal(response.status, 403);
 });
 
 test('POST /api/withdrawals/:id/approve/platform denies before creator approval', async () => {
@@ -455,4 +496,38 @@ test('POST /api/withdrawals/:id/approve/platform logs failure when Stellar rejec
 
   cleanup();
   assert.equal(response.status, 502);
+});
+
+test('POST /api/withdrawals/:id/approve/platform returns 410 when XDR time bounds are expired', async () => {
+  const { app, cleanup } = buildApp({
+    role: 'admin',
+    queryImpl: async (text) => {
+      if (text.includes('SELECT wr.*, c.status')) {
+        return {
+          rows: [{
+            id: 'w-expired',
+            status: 'pending',
+            creator_signed: true,
+            platform_signed: false,
+            unsigned_xdr: 'xdr-expired',
+            campaign_status: 'active',
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+    stellarImpl: {
+      // Simulate an expired XDR — isXdrExpired returns true
+      isXdrExpired: () => true,
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/withdrawals/w-expired/approve/platform')
+    .set('Authorization', 'Bearer token')
+    .send({});
+
+  cleanup();
+  assert.equal(response.status, 410);
+  assert.match(response.body.error, /expired/i);
 });

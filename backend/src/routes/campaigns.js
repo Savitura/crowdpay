@@ -1,14 +1,18 @@
-const router = require('express').Router();
-const multer = require('multer');
-const db = require('../config/database');
-const logger = require('../config/logger');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const router = require("express").Router();
+const multer = require("multer");
+const db = require("../config/database");
+const logger = require("../config/logger");
+const { requireAuth, requireRole } = require("../middleware/auth");
 const {
   createCampaignWallet,
   getCampaignBalance,
   getSupportedAssetCodes,
   buildWithdrawalTransaction,
+  buildBatchRefundTransaction,
+  signTransactionXdr,
+  submitPreparedTransaction,
 } = require('../services/stellarService');
+const { withDecryptedWalletSecret } = require('../services/walletSecrets');
 const { encryptSecret } = require('../services/walletService');
 const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../services/ledgerMonitor');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
@@ -19,17 +23,48 @@ const { sendEmail } = require('../services/emailService');
 const { uploadCampaignCoverImage } = require('../services/storage');
 const { isKycRequiredForCampaigns } = require('../services/kycProvider');
 const { listCreatorCampaigns } = require('../services/userDashboardService');
+} = require("../services/stellarService");
+const { encryptSecret } = require("../services/walletService");
+const {
+  watchCampaignWallet,
+  addSSEClient,
+  removeSSEClient,
+} = require("../services/ledgerMonitor");
+const {
+  emitWebhookEventForUser,
+  WEBHOOK_EVENTS,
+} = require("../services/webhookDispatcher");
+const {
+  refreshCampaignStatus,
+  refreshActiveCampaignStatuses,
+} = require("../services/campaignStatusService");
+const {
+  invokeContract,
+  encodeMilestone,
+  nativeToScVal,
+} = require("../services/sorobanService");
+const {
+  insertWithdrawalPendingSignatures,
+} = require("../services/stellarTransactionService");
+const { sendEmail } = require("../services/emailService");
+const { uploadCampaignCoverImage } = require("../services/storage");
+const { isKycRequiredForCampaigns } = require("../services/kycProvider");
+const { listCreatorCampaigns } = require("../services/userDashboardService");
 const {
   createCampaignValidation,
   createCampaignUpdateValidation,
   getCampaignsValidation,
   validateRequest,
 } = require('../middleware/validation');
+const asyncHandler = require('../utils/asyncHandler');
+const cache = require('../utils/cache');
 
-const crypto = require('crypto');
+const crypto = require("crypto");
 
-function stripHtml(value = '') {
-  return String(value).replace(/<[^>]*>/g, '').trim();
+function stripHtml(value = "") {
+  return String(value)
+    .replace(/<[^>]*>/g, "")
+    .trim();
 }
 
 /**
@@ -40,56 +75,62 @@ function stripHtml(value = '') {
  */
 
 const requireCampaignMember = (...allowedRoles) => {
-  return async (req, res, next) => {
-    const campaignId = req.params.id || req.params.campaign_id || req.body.campaign_id;
-    if (!campaignId) return res.status(400).json({ error: 'Campaign ID is required' });
+  return asyncHandler(async (req, res, next) => {
+    const campaignId =
+      req.params.id || req.params.campaign_id || req.body.campaign_id;
+    if (!campaignId)
+      return res.status(400).json({ error: "Campaign ID is required" });
 
     if (!req.user || !req.user.userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
+      return res.status(401).json({ error: "Unauthorized" });
     }
 
     const { rows: campaignRows } = await db.query(
-      'SELECT creator_id FROM campaigns WHERE id = $1',
-      [campaignId]
+      "SELECT creator_id FROM campaigns WHERE id = $1 AND deleted_at IS NULL",
+      [campaignId],
     );
     if (!campaignRows.length) {
-      return res.status(404).json({ error: 'Campaign not found' });
+      return res.status(404).json({ error: "Campaign not found" });
     }
     const campaign = campaignRows[0];
 
-    if (req.user.role === 'admin') {
-      req.campaignRole = 'owner';
+    if (req.user.role === "admin") {
+      req.campaignRole = "owner";
       return next();
     }
 
     const { rows: memberRows } = await db.query(
-      'SELECT role, accepted_at FROM campaign_members WHERE campaign_id = $1 AND user_id = $2',
-      [campaignId, req.user.userId]
+      "SELECT role, accepted_at FROM campaign_members WHERE campaign_id = $1 AND user_id = $2",
+      [campaignId, req.user.userId],
     );
 
     let role = null;
     if (memberRows.length && memberRows[0].accepted_at) {
       role = memberRows[0].role;
     } else if (campaign.creator_id === req.user.userId) {
-      role = 'owner';
+      role = "owner";
     }
 
     if (!role || (allowedRoles.length && !allowedRoles.includes(role))) {
-      return res.status(403).json({ error: 'Insufficient permissions for this campaign' });
+      return res
+        .status(403)
+        .json({ error: "Insufficient permissions for this campaign" });
     }
 
     req.campaignRole = role;
     next();
-  };
+  });
 };
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    const allowed = ["image/jpeg", "image/png", "image/webp"];
     if (!allowed.includes(file.mimetype)) {
-      return cb(new Error('Invalid image type. Only JPG, PNG and WEBP are allowed.'));
+      return cb(
+        new Error("Invalid image type. Only JPG, PNG and WEBP are allowed."),
+      );
     }
     cb(null, true);
   },
@@ -102,16 +143,18 @@ const MILESTONE_LIMIT = 5;
 function normalizeMilestonesInput(input) {
   if (input == null) return [];
   if (!Array.isArray(input)) {
-    throw new Error('milestones must be an array');
+    throw new Error("milestones must be an array");
   }
   if (input.length === 0) return [];
   if (input.length > MILESTONE_LIMIT) {
-    throw new Error(`Campaigns can define at most ${MILESTONE_LIMIT} milestones`);
+    throw new Error(
+      `Campaigns can define at most ${MILESTONE_LIMIT} milestones`,
+    );
   }
 
   const normalized = input.map((milestone, index) => {
-    const title = String(milestone?.title || '').trim();
-    const description = String(milestone?.description || '').trim();
+    const title = String(milestone?.title || "").trim();
+    const description = String(milestone?.description || "").trim();
     if (!title) {
       throw new Error(`Milestone ${index + 1} title is required`);
     }
@@ -121,78 +164,54 @@ function normalizeMilestonesInput(input) {
 
     const releasePercentage = Number(milestone?.release_percentage);
     if (!Number.isFinite(releasePercentage) || releasePercentage <= 0) {
-      throw new Error(`Milestone ${index + 1} release_percentage must be greater than zero`);
+      throw new Error(
+        `Milestone ${index + 1} release_percentage must be greater than zero`,
+      );
     }
 
     return {
       title,
       description,
       release_percentage: releasePercentage.toFixed(4),
-      release_percentage_units: Math.round(releasePercentage * MILESTONE_PERCENT_SCALE),
+      release_percentage_units: Math.round(
+        releasePercentage * MILESTONE_PERCENT_SCALE,
+      ),
       sort_order: index,
     };
   });
 
-  const totalUnits = normalized.reduce((sum, milestone) => sum + milestone.release_percentage_units, 0);
+  const totalUnits = normalized.reduce(
+    (sum, milestone) => sum + milestone.release_percentage_units,
+    0,
+  );
   if (totalUnits !== 100 * MILESTONE_PERCENT_SCALE) {
-    throw new Error('Milestone release percentages must sum to exactly 100%');
+    throw new Error("Milestone release percentages must sum to exactly 100%");
   }
 
   return normalized;
 }
 
-function normalizeRewardTiersInput(input, assetType) {
-  if (input == null) return [];
-  if (!Array.isArray(input)) {
-    throw new Error('reward_tiers must be an array');
-  }
-  if (input.length === 0) return [];
-  if (input.length > 10) {
-    throw new Error('Campaigns can define at most 10 reward tiers');
-  }
-
-  return input.map((tier, index) => {
-    const title = String(tier?.title || '').trim();
-    if (!title) {
-      throw new Error(`Tier ${index + 1} title is required`);
-    }
-
-    const minAmount = Number(tier?.min_amount);
-    if (!Number.isFinite(minAmount) || minAmount <= 0) {
-      throw new Error(`Tier ${index + 1} min_amount must be greater than zero`);
-    }
-
-    let limit = null;
-    if (tier.limit !== undefined && tier.limit !== null) {
-      limit = parseInt(tier.limit, 10);
-      if (isNaN(limit) || limit < 1) {
-        throw new Error(`Tier ${index + 1} limit must be a positive integer`);
-      }
-    }
-
-    return {
-      title,
-      description: String(tier?.description || '').trim() || null,
-      min_amount: minAmount.toFixed(7),
-      asset_type: assetType,
-      limit,
-      estimated_delivery: tier.estimated_delivery || null,
-    };
-  });
-}
-
-async function logWithdrawalEvent(client, { withdrawalRequestId, actorUserId, action, note, metadata }) {
+async function logWithdrawalEvent(
+  client,
+  { withdrawalRequestId, actorUserId, action, note, metadata },
+) {
   const runner = client || db;
   await runner.query(
     `INSERT INTO withdrawal_approval_events
        (withdrawal_request_id, actor_user_id, action, note, metadata)
      VALUES ($1, $2, $3, $4, $5::jsonb)`,
-    [withdrawalRequestId, actorUserId || null, action, note || null, metadata ? JSON.stringify(metadata) : null]
+    [
+      withdrawalRequestId,
+      actorUserId || null,
+      action,
+      note || null,
+      metadata ? JSON.stringify(metadata) : null,
+    ],
   );
 }
 
 // List campaigns with optional search, filtering, sorting, and pagination
-router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
+router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req, res) => {
   /**
    * @openapi
    * /api/campaigns:
@@ -235,10 +254,18 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
    *                     type: object
    */
   const { search, status, asset, sort = 'newest' } = req.query;
-  const limit = Number(req.query.limit || 20);
-  const offset = Number(req.query.offset || 0);
+  const searchTerm = typeof search === 'string' ? search.trim() : '';
+  const { search, status, asset, category, sort = 'newest' } = req.query;
+  const limit = Math.min(Number(req.query.limit || 20), 100);
+  const offset = Math.max(Number(req.query.offset || 0), 0);
+
+  const cacheKey = `campaigns:list:${JSON.stringify(req.query)}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return res.json(cached);
+
   const filters = [];
   const params = [];
+  let searchParamRef = null;
 
   // Exclude deleted campaigns from public listing
   filters.push(`c.deleted_at IS NULL`);
@@ -253,13 +280,103 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
     params.push(asset);
     filters.push(`c.asset_type = $${params.length}`);
   }
-  if (search) {
-    const escaped = String(search).replace(/[%_\\]/g, '\\$&');
-    params.push(`%${escaped}%`);
-    filters.push(
-      `(c.title ILIKE $${params.length} OR COALESCE(c.description, '') ILIKE $${params.length})`
-    );
+  if (searchTerm) {
+    params.push(searchTerm);
+    searchParamRef = `$${params.length}`;
+    filters.push(`c.search_vector @@ plainto_tsquery('english', ${searchParamRef})`);
   }
+  if (category) {
+    params.push(category);
+    filters.push(`c.category = $${params.length}`);
+  }
+router.get(
+  "/",
+  getCampaignsValidation,
+  validateRequest,
+  asyncHandler(async (req, res) => {
+    /**
+     * @openapi
+     * /api/campaigns:
+     *   get:
+     *     tags: [Campaigns]
+     *     summary: List campaigns
+     *     parameters:
+     *       - in: query
+     *         name: status
+     *         schema: { type: string }
+     *       - in: query
+     *         name: asset
+     *         schema: { type: string }
+     *       - in: query
+     *         name: search
+     *         schema: { type: string }
+     *       - in: query
+     *         name: sort
+     *         schema: { type: string }
+     *       - in: query
+     *         name: limit
+     *         schema: { type: integer, minimum: 1, maximum: 50 }
+     *       - in: query
+     *         name: offset
+     *         schema: { type: integer, minimum: 0 }
+     *     responses:
+     *       200:
+     *         description: OK
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total: { type: integer }
+     *                 limit: { type: integer }
+     *                 offset: { type: integer }
+     *                 campaigns:
+     *                   type: array
+     *                   items:
+     *                     type: object
+     */
+    const { search, status, asset, sort = "newest" } = req.query;
+    const limit = Math.min(Number(req.query.limit || 20), 100);
+    const offset = Math.max(Number(req.query.offset || 0), 0);
+    const filters = [];
+    const params = [];
+
+    // Exclude deleted campaigns from public listing
+    filters.push(`c.deleted_at IS NULL`);
+
+    if (status) {
+      params.push(status);
+      filters.push(`c.status = $${params.length}`);
+    } else {
+      filters.push(`c.status = 'active'`);
+    }
+    if (asset) {
+      params.push(asset);
+      filters.push(`c.asset_type = $${params.length}`);
+    }
+    if (search) {
+      const escaped = String(search).replace(/[%_\\]/g, "\\$&");
+      params.push(`%${escaped}%`);
+      filters.push(
+        `(c.title ILIKE $${params.length} OR COALESCE(c.description, '') ILIKE $${params.length})`,
+      );
+    }
+
+    const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+    const countQuery = `SELECT COUNT(*)::int AS total FROM campaigns c ${whereClause}`;
+    const countResult = await db.query(countQuery, params);
+    const total = countResult.rows[0]?.total || 0;
+
+    const sortExpressions = {
+      newest: "c.created_at DESC",
+      ending_soon: "c.deadline ASC NULLS LAST",
+      most_funded: "c.raised_amount DESC",
+      most_backed:
+        "(SELECT COUNT(*) FROM contributions ctr WHERE ctr.campaign_id = c.id) DESC",
+      closest_to_goal:
+        "(c.raised_amount / NULLIF(c.target_amount, 0)) DESC NULLS LAST, c.raised_amount DESC",
+    };
+    const orderBy = sortExpressions[sort] || sortExpressions.newest;
 
   const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
   const countQuery = `SELECT COUNT(*)::int AS total FROM campaigns c ${whereClause}`;
@@ -270,16 +387,66 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
     newest: 'c.created_at DESC',
     ending_soon: 'c.deadline ASC NULLS LAST',
     most_funded: 'c.raised_amount DESC',
+    funded: 'c.raised_amount DESC',
     most_backed: '(SELECT COUNT(*) FROM contributions ctr WHERE ctr.campaign_id = c.id) DESC',
     closest_to_goal: '(c.raised_amount / NULLIF(c.target_amount, 0)) DESC NULLS LAST, c.raised_amount DESC',
   };
-  const orderBy = sortExpressions[sort] || sortExpressions.newest;
+  const orderBy = searchParamRef
+    ? `ts_rank(c.search_vector, plainto_tsquery('english', ${searchParamRef})) DESC, c.created_at DESC`
+    : (sortExpressions[sort] || sortExpressions.newest);
 
-  const query = `
+  let query;
+  if (sort === 'trending') {
+    query = `
+      WITH recent AS (
+        SELECT
+          campaign_id,
+          COUNT(*)::int AS recent_count,
+          COALESCE(SUM(amount), 0) AS recent_volume
+        FROM contributions
+        WHERE created_at >= NOW() - INTERVAL '48 hours'
+        GROUP BY campaign_id
+      )
+      SELECT c.*,
+             u.name AS creator_name,
+             u.kyc_status AS creator_kyc_status,
+             (SELECT COUNT(*)::int FROM campaign_updates cu WHERE cu.campaign_id = c.id) AS updates_count,
+             (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions con WHERE con.campaign_id = c.id) AS contributor_count,
+             COALESCE(r.recent_count, 0) AS recent_contributions,
+             COALESCE(r.recent_count, 0) AS "recentContributions",
+             COALESCE(r.recent_volume, 0) AS recent_volume,
+             (COALESCE(r.recent_volume, 0) * 2 + (c.raised_amount / NULLIF(c.target_amount, 0) * 100)) AS trending_score
+      FROM campaigns c
+      JOIN users u ON u.id = c.creator_id
+      LEFT JOIN recent r ON r.campaign_id = c.id
+      ${whereClause}
+      ORDER BY trending_score DESC, c.created_at DESC
+      LIMIT $${params.length + 1}
+      OFFSET $${params.length + 2}
+    `;
+  } else {
+    const orderBy = sortExpressions[sort] || sortExpressions.newest;
+    query = `
+      SELECT c.*,
+             u.name AS creator_name,
+             u.kyc_status AS creator_kyc_status,
+             (SELECT COUNT(*)::int FROM campaign_updates cu WHERE cu.campaign_id = c.id) AS updates_count,
+             (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions con WHERE con.campaign_id = c.id) AS contributor_count
+      FROM campaigns c
+      JOIN users u ON u.id = c.creator_id
+      ${whereClause}
+      ORDER BY ${orderBy}
+      LIMIT $${params.length + 1}
+      OFFSET $${params.length + 2}
+    `;
+  }
+  const result = await db.query(query, [...params, limit, offset]);
+    const query = `
     SELECT c.*,
            u.name AS creator_name,
            u.kyc_status AS creator_kyc_status,
-           (SELECT COUNT(*)::int FROM campaign_updates cu WHERE cu.campaign_id = c.id) AS updates_count,
+           (SELECT MAX(cu.created_at) FROM campaign_updates cu WHERE cu.campaign_id = c.id) AS latest_update_at,
+           (SELECT COUNT(*)::int FROM campaign_updates cu WHERE cu.campaign_id = c.id) AS update_count,
            (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions con WHERE con.campaign_id = c.id) AS contributor_count
     FROM campaigns c
     JOIN users u ON u.id = c.creator_id
@@ -288,101 +455,184 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
     LIMIT $${params.length + 1}
     OFFSET $${params.length + 2}
   `;
-  const result = await db.query(query, [...params, limit, offset]);
+    const result = await db.query(query, [...params, limit, offset]);
 
-  res.json({ total, limit, offset, campaigns: result.rows });
-});
+  const payload = { total, limit, offset, campaigns: result.rows };
+  cache.set(cacheKey, payload, 30_000); // 30 s TTL
+  res.json(payload);
+}));
+    res.json({ total, limit, offset, campaigns: result.rows });
+  }),
+);
 
-router.get('/mine', requireAuth, async (req, res) => {
-  const campaigns = await listCreatorCampaigns(req.user.userId);
-  res.json(campaigns);
-});
+router.get(
+  "/mine",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const campaigns = await listCreatorCampaigns(req.user.userId);
+    res.json(campaigns);
+  }),
+);
 
-router.get('/:id/milestones', async (req, res) => {
+// Category counts for active campaigns
+router.get('/categories', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT category, COUNT(*)::int AS count
+     FROM campaigns
+     WHERE status = 'active' AND category IS NOT NULL AND deleted_at IS NULL
+     GROUP BY category
+     ORDER BY count DESC`
+  );
+  res.json(rows);
+}));
+
+router.get('/:id/milestones', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `SELECT m.*, (c.milestones_contract_id IS NOT NULL) AS on_chain
+router.get(
+  "/:id/milestones",
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT m.*, (c.milestones_contract_id IS NOT NULL) AS on_chain
      FROM milestones m
      JOIN campaigns c ON c.id = m.campaign_id
      WHERE m.campaign_id = $1
      ORDER BY m.sort_order ASC, m.created_at ASC`,
-    [req.params.id]
-  );
-  res.json(rows);
-});
-
-router.post('/:id/milestones', requireAuth, requireCampaignMember('owner'), async (req, res) => {
-  let normalizedMilestones;
-  try {
-    normalizedMilestones = normalizeMilestonesInput(req.body?.milestones);
-  } catch (err) {
-    return res.status(400).json({ error: err.message });
-  }
-
-  if (!normalizedMilestones.length) {
-    return res.status(400).json({ error: 'At least one milestone is required' });
-  }
-
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    const { rows: campaignRows } = await client.query(
-      'SELECT id, creator_id, status FROM campaigns WHERE id = $1 FOR UPDATE',
-      [req.params.id]
+      [req.params.id],
     );
-    if (!campaignRows.length) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Campaign not found' });
-    }
-    const campaign = campaignRows[0];
-    if (campaign.creator_id !== req.user.userId) {
-      await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'Only the campaign creator can define milestones' });
-    }
-    if (!['active', 'funded', 'in_progress'].includes(campaign.status)) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: `Milestones cannot be edited while campaign status is "${campaign.status}".` });
+    res.json(rows);
+  }),
+);
+
+router.post(
+  "/:id/milestones",
+  requireAuth,
+  requireCampaignMember("owner"),
+  asyncHandler(async (req, res) => {
+    let normalizedMilestones;
+    try {
+      normalizedMilestones = normalizeMilestonesInput(req.body?.milestones);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
     }
 
-    const { rows: existingRows } = await client.query(
-      'SELECT status FROM milestones WHERE campaign_id = $1',
-      [campaign.id]
-    );
-    if (existingRows.some((row) => row.status !== 'pending')) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'Milestone plan cannot be changed after approvals or releases begin' });
+    if (!normalizedMilestones.length) {
+      return res
+        .status(400)
+        .json({ error: "At least one milestone is required" });
     }
 
-    await client.query('DELETE FROM milestones WHERE campaign_id = $1', [campaign.id]);
-    const inserted = [];
-    for (const milestone of normalizedMilestones) {
-      const { rows } = await client.query(
-        `INSERT INTO milestones
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows: campaignRows } = await client.query(
+        "SELECT id, creator_id, status FROM campaigns WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+        [req.params.id],
+      );
+      if (!campaignRows.length) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Campaign not found" });
+      }
+      const campaign = campaignRows[0];
+      if (campaign.creator_id !== req.user.userId) {
+        await client.query("ROLLBACK");
+        return res
+          .status(403)
+          .json({ error: "Only the campaign creator can define milestones" });
+      }
+      if (!["active", "funded", "in_progress"].includes(campaign.status)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error: `Milestones cannot be edited while campaign status is "${campaign.status}".`,
+        });
+      }
+
+      const { rows: existingRows } = await client.query(
+        "SELECT status FROM milestones WHERE campaign_id = $1",
+        [campaign.id],
+      );
+      if (existingRows.some((row) => row.status !== "pending")) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error:
+            "Milestone plan cannot be changed after approvals or releases begin",
+        });
+      }
+
+      await client.query("DELETE FROM milestones WHERE campaign_id = $1", [
+        campaign.id,
+      ]);
+      const inserted = [];
+      for (const milestone of normalizedMilestones) {
+        const { rows } = await client.query(
+          `INSERT INTO milestones
            (campaign_id, title, description, release_percentage, sort_order)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING *`,
-        [
-          campaign.id,
-          milestone.title,
-          milestone.description,
-          milestone.release_percentage,
-          milestone.sort_order,
-        ]
-      );
-      inserted.push(rows[0]);
+          [
+            campaign.id,
+            milestone.title,
+            milestone.description,
+            milestone.release_percentage,
+            milestone.sort_order,
+          ],
+        );
+        inserted.push(rows[0]);
+      }
+      await client.query("COMMIT");
+      res.status(201).json(inserted);
+    } catch (err) {
+      await client.query("ROLLBACK");
+      logger.error("Campaign milestone plan update failed", {
+        campaign_id: req.params.id,
+        error: err.message,
+      });
+      res.status(500).json({ error: "Could not save campaign milestones" });
+    } finally {
+      client.release();
     }
-    await client.query('COMMIT');
-    res.status(201).json(inserted);
-  } catch (err) {
-    await client.query('ROLLBACK');
-    logger.error('Campaign milestone plan update failed', { campaign_id: req.params.id, error: err.message });
-    res.status(500).json({ error: 'Could not save campaign milestones' });
-  } finally {
-    client.release();
+  }),
+);
+
+// Public embeddable campaign widget data
+router.get('/:id/widget', asyncHandler(async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+
+  const { rows } = await db.query(
+    `SELECT c.title, c.raised_amount, c.target_amount, c.asset_type, c.status,
+            (SELECT COUNT(*)::int FROM contributions WHERE campaign_id = c.id) AS contributor_count
+     FROM campaigns c
+     WHERE c.id = $1
+       AND c.deleted_at IS NULL`,
+    [req.params.id]
+  );
+
+  if (!rows.length) return res.status(404).json({ error: 'Not found' });
+  res.json(rows[0]);
+// Get clone data for campaign
+router.get('/:id/clone-data', requireAuth, asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT title, description, target_amount, asset_type, min_contribution, max_contribution, show_backer_amounts, deleted_at
+     FROM campaigns WHERE id = $1`,
+    [req.params.id]
+  );
+  if (!rows.length || rows[0].deleted_at) {
+    return res.status(404).json({ error: 'Campaign not found' });
   }
-});
+
+  res.json({
+    title: `${rows[0].title} (copy)`,
+    description: rows[0].description,
+    target_amount: rows[0].target_amount,
+    asset_type: rows[0].asset_type,
+    min_contribution: rows[0].min_contribution,
+    max_contribution: rows[0].max_contribution,
+    show_backer_amounts: rows[0].show_backer_amounts,
+  });
+}));
 
 // Get single Campaign
-router.get('/:id', async (req, res) => {
+router.get('/:id', asyncHandler(async (req, res) => {
   /**
    * @openapi
    * /api/campaigns/{id}:
@@ -400,14 +650,47 @@ router.get('/:id', async (req, res) => {
    *       404:
    *         description: Not found
    */
+  const campaignId = req.params.id;
+  const isAuthenticated = !!req.headers.authorization?.startsWith('Bearer ');
+  const cacheKey = `campaigns:id:${campaignId}`;
+
+  // Only serve cached response for unauthenticated requests — authenticated
+  // requests need user_role which is caller-specific.
+  if (!isAuthenticated) {
+    const cached = cache.get(cacheKey);
+    if (cached) return res.json(cached);
+  }
+
   const query = `
-    SELECT *,
+router.get(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    /**
+     * @openapi
+     * /api/campaigns/{id}:
+     *   get:
+     *     tags: [Campaigns]
+     *     summary: Get campaign by id
+     *     parameters:
+     *       - in: path
+     *         name: id
+     *         required: true
+     *         schema: { type: string }
+     *     responses:
+     *       200:
+     *         description: OK
+     *       404:
+     *         description: Not found
+     */
+    const query = `
+    SELECT c.*, u.name AS creator_name,
            (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions WHERE campaign_id = $1) AS contributor_count
-    FROM campaigns
-    WHERE id = $1
+    FROM campaigns c
+    JOIN users u ON u.id = c.creator_id
+    WHERE c.id = $1 AND c.deleted_at IS NULL
   `;
-  await refreshCampaignStatus(req.params.id);
-  const { rows } = await db.query(query, [req.params.id]);
+  await refreshCampaignStatus(campaignId);
+  const { rows } = await db.query(query, [campaignId]);
   if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
   
   const campaign = rows[0];
@@ -419,129 +702,168 @@ router.get('/:id', async (req, res) => {
   
   let userRole = null;
 
-  const header = req.headers.authorization;
-  if (header && header.startsWith('Bearer ')) {
-    const token = header.slice(7).trim();
-    if (token) {
-      try {
-        const jwt = require('jsonwebtoken');
-        const payload = jwt.verify(token, process.env.JWT_SECRET);
-        if (payload && payload.userId) {
-          if (payload.is_admin) {
-            userRole = 'owner';
-          } else if (campaign.creator_id === payload.userId) {
-            userRole = 'owner';
-          } else {
-            const { rows: memberRows } = await db.query(
-              'SELECT role, accepted_at FROM campaign_members WHERE campaign_id = $1 AND user_id = $2',
-              [campaign.id, payload.userId]
-            );
-            if (memberRows.length && memberRows[0].accepted_at) {
-              userRole = memberRows[0].role;
+    const campaign = rows[0];
+
+    // Allow viewing suspended campaigns with a notice, but deleted campaigns are not accessible
+    if (campaign.deleted_at) {
+      return res.status(404).json({ error: "Campaign not found" });
+    }
+
+    let userRole = null;
+
+    const header = req.headers.authorization;
+    if (header && header.startsWith("Bearer ")) {
+      const token = header.slice(7).trim();
+      if (token) {
+        try {
+          const jwt = require("jsonwebtoken");
+          const payload = jwt.verify(token, process.env.JWT_SECRET);
+          if (payload && payload.userId) {
+            if (payload.is_admin) {
+              userRole = "owner";
+            } else if (campaign.creator_id === payload.userId) {
+              userRole = "owner";
+            } else {
+              const { rows: memberRows } = await db.query(
+                "SELECT role, accepted_at FROM campaign_members WHERE campaign_id = $1 AND user_id = $2",
+                [campaign.id, payload.userId],
+              );
+              if (memberRows.length && memberRows[0].accepted_at) {
+                userRole = memberRows[0].role;
+              }
             }
           }
+        } catch (err) {
+          // Ignore invalid token for public route
         }
-      } catch (err) {
-        // Ignore invalid token for public route
       }
     }
-  }
 
-  // Add notice if campaign is suspended
-  const response = { ...campaign, user_role: userRole };
-  if (campaign.status === 'suspended') {
-    response.suspended_notice = 'This campaign has been suspended and cannot receive new contributions';
+    // Add notice if campaign is suspended
+    const response = { ...campaign, user_role: userRole };
+    if (campaign.status === "suspended") {
+      response.suspended_notice =
+        "This campaign has been suspended and cannot receive new contributions";
+    }
+
+  // Cache the public view (no user_role) for unauthenticated visitors
+  if (!isAuthenticated) {
+    cache.set(cacheKey, response, 15_000); // 15 s TTL
   }
 
   res.json(response);
-});
+}));
 
 // Embeddable campaign widget data (public, with permissive CORS)
-router.get('/:id/embed', async (req, res) => {
-  // Allow this endpoint to be accessed from any origin for embedding
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+router.get(
+  "/:id/embed",
+  asyncHandler(async (req, res) => {
+    // Allow this endpoint to be accessed from any origin for embedding
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET");
+    res.header("Access-Control-Allow-Headers", "Content-Type");
 
-  const campaignId = parseInt(req.params.id, 10);
-  const { rows } = await db.query(
-    `SELECT id, title, description, target_amount, raised_amount, asset_type, status,
+    const campaignId = parseInt(req.params.id, 10);
+    const { rows } = await db.query(
+      `SELECT id, title, description, target_amount, raised_amount, asset_type, status,
             (SELECT COUNT(*)::int FROM contributions c WHERE c.campaign_id = campaigns.id) AS backer_count
-     FROM campaigns WHERE id = $1`,
-    [campaignId]
-  );
-  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+     FROM campaigns WHERE id = $1 AND deleted_at IS NULL`,
+      [campaignId],
+    );
+    if (!rows.length)
+      return res.status(404).json({ error: "Campaign not found" });
 
-  const campaign = rows[0];
-  const pct = campaign.target_amount
-    ? Math.min(100, (Number(campaign.raised_amount) / Number(campaign.target_amount)) * 100)
-    : 0;
+    const campaign = rows[0];
+    const pct = campaign.target_amount
+      ? Math.min(
+          100,
+          (Number(campaign.raised_amount) / Number(campaign.target_amount)) *
+            100,
+        )
+      : 0;
 
-  res.json({
-    id: campaign.id,
-    title: campaign.title,
-    description: campaign.description?.slice(0, 200) + (campaign.description?.length > 200 ? '...' : ''),
-    raised_amount: Number(campaign.raised_amount),
-    target_amount: Number(campaign.target_amount),
-    asset_type: campaign.asset_type,
-    status: campaign.status,
-    backer_count: campaign.backer_count,
-    progress_percentage: Math.round(pct * 10) / 10,
-    contribution_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/campaigns/${campaign.id}`,
-  });
-});
+    res.json({
+      id: campaign.id,
+      title: campaign.title,
+      description:
+        campaign.description?.slice(0, 200) +
+        (campaign.description?.length > 200 ? "..." : ""),
+      raised_amount: Number(campaign.raised_amount),
+      target_amount: Number(campaign.target_amount),
+      asset_type: campaign.asset_type,
+      status: campaign.status,
+      backer_count: campaign.backer_count,
+      progress_percentage: Math.round(pct * 10) / 10,
+      contribution_url: `${process.env.FRONTEND_URL || "http://localhost:5173"}/campaigns/${campaign.id}`,
+    });
+  }),
+);
 
 // Get backers for a campaign
-router.get('/:id/backers', async (req, res) => {
-  const campaignId = req.params.id;
-  const { rows: campaignRows } = await db.query('SELECT show_backer_amounts FROM campaigns WHERE id = $1', [campaignId]);
-  if (!campaignRows.length) return res.status(404).json({ error: 'Campaign not found' });
-  const { show_backer_amounts } = campaignRows[0];
+router.get(
+  "/:id/backers",
+  asyncHandler(async (req, res) => {
+    const campaignId = req.params.id;
+    const { rows: campaignRows } = await db.query(
+      "SELECT show_backer_amounts FROM campaigns WHERE id = $1 AND deleted_at IS NULL",
+      [campaignId],
+    );
+    if (!campaignRows.length)
+      return res.status(404).json({ error: "Campaign not found" });
+    const { show_backer_amounts } = campaignRows[0];
 
-  const query = `
+    const query = `
     SELECT 
       display_name,
       sender_public_key,
-      ${show_backer_amounts ? 'amount,' : ''}
+      ${show_backer_amounts ? "amount," : ""}
       asset,
       created_at
     FROM contributions
     WHERE campaign_id = $1
     ORDER BY created_at DESC
   `;
-  const { rows } = await db.query(query, [campaignId]);
-  res.json(rows);
-});
+    const { rows } = await db.query(query, [campaignId]);
+    res.json(rows);
+  }),
+);
 
 // SSE stream for real-time campaign funding updates
-router.get('/:id/stream', async (req, res) => {
-  const campaignId = parseInt(req.params.id, 10);
-  const { rows } = await db.query('SELECT id FROM campaigns WHERE id = $1', [campaignId]);
-  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+router.get(
+  "/:id/stream",
+  asyncHandler(async (req, res) => {
+    const campaignId = parseInt(req.params.id, 10);
+    const { rows } = await db.query(
+      "SELECT id FROM campaigns WHERE id = $1 AND deleted_at IS NULL",
+      [campaignId],
+    );
+    if (!rows.length)
+      return res.status(404).json({ error: "Campaign not found" });
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders();
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
 
-  res.write('data: {"type":"connected"}\n\n');
+    res.write('data: {"type":"connected"}\n\n');
 
-  addSSEClient(campaignId, res);
+    addSSEClient(campaignId, res);
 
-  const heartbeat = setInterval(() => {
-    try {
-      res.write(': heartbeat\n\n');
-    } catch {
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(": heartbeat\n\n");
+      } catch {
+        clearInterval(heartbeat);
+      }
+    }, 25000);
+
+    req.on("close", () => {
       clearInterval(heartbeat);
-    }
-  }, 25000);
-
-  req.on('close', () => {
-    clearInterval(heartbeat);
-    removeSSEClient(campaignId, res);
-  });
-});
+      removeSSEClient(campaignId, res);
+    });
+  }),
+);
 
 // GET /campaigns/:id/tiers — list tiers with availability
 router.get('/:id/tiers', async (req, res) => {
@@ -594,304 +916,402 @@ router.post('/:id/tiers', requireAuth, requireCampaignMember('owner'), async (re
 });
 
 // Get live on-chain balance for a campaign
-router.get('/:id/balance', async (req, res) => {
-  /**
-   * @openapi
-   * /api/campaigns/{id}/balance:
-   *   get:
-   *     tags: [Campaigns]
-   *     summary: Get live on-chain balance for a campaign wallet
-   *     parameters:
-   *       - in: path
-   *         name: id
-   *         required: true
-   *         schema: { type: string }
-   *     responses:
-   *       200:
-   *         description: OK
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: array
-   *               items:
-   *                 type: object
-   *                 properties:
-   *                   asset_type: { type: string }
-   *                   balance: { type: string }
-   *       404:
-   *         description: Campaign not found
-   */
-  const { rows } = await db.query(
-    'SELECT wallet_public_key FROM campaigns WHERE id = $1',
-    [req.params.id]
-  );
-  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
-  const balance = await getCampaignBalance(rows[0].wallet_public_key);
-  res.json(balance);
-});
+router.get(
+  "/:id/balance",
+  asyncHandler(async (req, res) => {
+    /**
+     * @openapi
+     * /api/campaigns/{id}/balance:
+     *   get:
+     *     tags: [Campaigns]
+     *     summary: Get live on-chain balance for a campaign wallet
+     *     parameters:
+     *       - in: path
+     *         name: id
+     *         required: true
+     *         schema: { type: string }
+     *     responses:
+     *       200:
+     *         description: OK
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: array
+     *               items:
+     *                 type: object
+     *                 properties:
+     *                   asset_type: { type: string }
+     *                   balance: { type: string }
+     *       404:
+     *         description: Campaign not found
+     */
+    const { rows } = await db.query(
+      "SELECT wallet_public_key FROM campaigns WHERE id = $1 AND deleted_at IS NULL",
+      [req.params.id],
+    );
+    if (!rows.length)
+      return res.status(404).json({ error: "Campaign not found" });
+    const balance = await getCampaignBalance(rows[0].wallet_public_key);
+    res.json(balance);
+  }),
+);
 
 // Scheduled endpoint to fail expired campaigns and prevent further contributions
-router.post('/cron/fail-expired', requireAuth, requireRole('admin'), async (req, res) => {
-  const { failed, funded } = await refreshActiveCampaignStatuses();
-  res.json({ failedCampaigns: failed, fundedCampaigns: funded });
-});
+router.post(
+  "/cron/fail-expired",
+  requireAuth,
+  requireRole("admin"),
+  asyncHandler(async (req, res) => {
+    const { failed, funded } = await refreshActiveCampaignStatuses();
+    res.json({ failedCampaigns: failed, fundedCampaigns: funded });
+  }),
+);
 
 // Scheduled endpoint to send 48h deadline reminders
-router.post('/cron/reminders', requireAuth, requireRole('admin'), async (req, res) => {
-  // Find campaigns ending in exactly 2 days that are still active
-  const { rows } = await db.query(
-    `SELECT c.id, c.title, c.deadline, u.email as creator_email
+router.post(
+  "/cron/reminders",
+  requireAuth,
+  requireRole("admin"),
+  asyncHandler(async (req, res) => {
+    // Find campaigns ending in exactly 2 days that are still active
+    const { rows } = await db.query(
+      `SELECT c.id, c.title, c.deadline, u.email as creator_email
      FROM campaigns c
      JOIN users u ON c.creator_id = u.id
      WHERE c.status = 'active'
-       AND c.deadline = CURRENT_DATE + INTERVAL '2 days'`
-  );
+       AND c.deadline = CURRENT_DATE + INTERVAL '2 days'`,
+    );
 
-  for (const campaign of rows) {
-    sendEmail({
-      to: campaign.creator_email,
-      subject: `Reminder: Campaign "${campaign.title}" ends in 48 hours`,
-      text: `Your campaign "${campaign.title}" is approaching its deadline on ${new Date(campaign.deadline).toDateString()}. 
-If your target is reached, you can request a withdrawal. Otherwise, contributions will be refunded.`
-    });
-  }
+    for (const campaign of rows) {
+      sendEmail({
+        to: campaign.creator_email,
+        subject: `Reminder: Campaign "${campaign.title}" ends in 48 hours`,
+        text: `Your campaign "${campaign.title}" is approaching its deadline on ${new Date(campaign.deadline).toDateString()}. 
+If your target is reached, you can request a withdrawal. Otherwise, contributions will be refunded.`,
+      });
+    }
 
-  res.json({ remindersSent: rows.length });
-});
+    res.json({ remindersSent: rows.length });
+  }),
+);
 
 // Trigger refund withdrawal requests for a failed campaign
-router.post('/:id/trigger-refunds', requireAuth, requireRole('admin'), async (req, res) => {
-  const campaignId = req.params.id;
-  const { rows: campaigns } = await db.query(
-    `SELECT id, wallet_public_key, status FROM campaigns WHERE id = $1`,
-    [campaignId]
-  );
-  if (!campaigns.length) return res.status(404).json({ error: 'Campaign not found' });
-  const campaign = campaigns[0];
-  if (campaign.status !== 'failed') {
-    return res.status(409).json({ error: 'Refunds may only be triggered for failed campaigns' });
-  }
+router.post(
+  "/:id/trigger-refunds",
+  requireAuth,
+  requireRole("admin"),
+  asyncHandler(async (req, res) => {
+    const campaignId = req.params.id;
+    const { rows: campaigns } = await db.query(
+      `SELECT id, wallet_public_key, status FROM campaigns WHERE id = $1`,
+      [campaignId],
+    );
+    if (!campaigns.length)
+      return res.status(404).json({ error: "Campaign not found" });
+    const campaign = campaigns[0];
+    if (campaign.status !== "failed") {
+      return res
+        .status(409)
+        .json({ error: "Refunds may only be triggered for failed campaigns" });
+    }
 
-  const { rows: contributions } = await db.query(
-    `SELECT c.*
+    const { rows: contributions } = await db.query(
+      `SELECT c.*
        FROM contributions c
        WHERE c.campaign_id = $1
          AND NOT EXISTS (
            SELECT 1 FROM withdrawal_requests wr WHERE wr.contribution_id = c.id
          )
        ORDER BY c.created_at ASC`,
-    [campaignId]
-  );
+      [campaignId],
+    );
 
-  if (!contributions.length) {
-    return res.json({ refundsCreated: 0 });
-  }
+    if (!contributions.length) {
+      return res.json({ refundsCreated: 0 });
+    }
 
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
 
-    const created = [];
-    for (const contribution of contributions) {
-      const unsignedXdr = await buildWithdrawalTransaction({
-        campaignWalletPublicKey: campaign.wallet_public_key,
-        destinationPublicKey: contribution.sender_public_key,
-        amount: contribution.amount,
-        asset: contribution.asset,
-      });
+      const created = [];
+      for (const contribution of contributions) {
+        const unsignedXdr = await buildWithdrawalTransaction({
+          campaignWalletPublicKey: campaign.wallet_public_key,
+          destinationPublicKey: contribution.sender_public_key,
+          amount: contribution.amount,
+          asset: contribution.asset,
+        });
 
-      const { rows: requestRows } = await client.query(
-        `INSERT INTO withdrawal_requests
+        const { rows: requestRows } = await client.query(
+          `INSERT INTO withdrawal_requests
            (campaign_id, requested_by, amount, destination_key, unsigned_xdr,
             creator_signed, platform_signed, contribution_id, is_refund)
          VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, $6, TRUE)
          RETURNING id`,
-        [campaignId, req.user.userId, contribution.amount, contribution.sender_public_key, unsignedXdr, contribution.id]
-      );
+          [
+            campaignId,
+            req.user.userId,
+            contribution.amount,
+            contribution.sender_public_key,
+            unsignedXdr,
+            contribution.id,
+          ],
+        );
 
-      const refundRequestId = requestRows[0].id;
-      await logWithdrawalEvent(client, {
-        withdrawalRequestId: refundRequestId,
-        actorUserId: req.user.userId,
-        action: 'requested',
-        note: 'Refund requested for failed campaign',
-        metadata: { contribution_id: contribution.id, amount: contribution.amount, asset: contribution.asset },
-      });
-      await insertWithdrawalPendingSignatures(client, {
-        campaignId,
-        withdrawalRequestId: refundRequestId,
-        userId: req.user.userId,
-        unsignedXdr,
-        metadata: { refund_for_contribution_id: contribution.id, amount: contribution.amount, asset: contribution.asset },
-      });
+        const refundRequestId = requestRows[0].id;
+        await logWithdrawalEvent(client, {
+          withdrawalRequestId: refundRequestId,
+          actorUserId: req.user.userId,
+          action: "requested",
+          note: "Refund requested for failed campaign",
+          metadata: {
+            contribution_id: contribution.id,
+            amount: contribution.amount,
+            asset: contribution.asset,
+          },
+        });
+        await insertWithdrawalPendingSignatures(client, {
+          campaignId,
+          withdrawalRequestId: refundRequestId,
+          userId: req.user.userId,
+          unsignedXdr,
+          metadata: {
+            refund_for_contribution_id: contribution.id,
+            amount: contribution.amount,
+            asset: contribution.asset,
+          },
+        });
 
-      created.push({ contribution_id: contribution.id, refund_request_id: refundRequestId });
+        created.push({
+          contribution_id: contribution.id,
+          refund_request_id: refundRequestId,
+        });
+      }
+
+      await client.query("COMMIT");
+      res
+        .status(201)
+        .json({ refundsCreated: created.length, refunds: created });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      logger.error("Refund trigger failed", {
+        campaign_id: campaignId,
+        error: err.message,
+      });
+      res.status(500).json({ error: "Could not trigger refunds for campaign" });
+    } finally {
+      client.release();
     }
-
-    await client.query('COMMIT');
-    res.status(201).json({ refundsCreated: created.length, refunds: created });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    logger.error('Refund trigger failed', { campaign_id: campaignId, error: err.message });
-    res.status(500).json({ error: 'Could not trigger refunds for campaign' });
-  } finally {
-    client.release();
-  }
-});
+  }),
+);
 
 // Create campaign (authenticated)
+router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignValidation, validateRequest, asyncHandler(async (req, res) => {
+  /**
+   * @openapi
+   * /api/campaigns:
+   *   post:
+   *     tags: [Campaigns]
+   *     summary: Create campaign
+   *     security:
+   *       - bearerAuth: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [title, target_amount, asset_type]
+   *             properties:
+   *               title: { type: string }
+   *               description: { type: string, nullable: true }
+   *               target_amount: { type: string }
+   *               asset_type: { type: string }
+   *               deadline: { type: string, nullable: true }
+   *               milestones: { type: array, items: { type: object }, nullable: true }
+   *               min_contribution: { type: string, nullable: true }
+   *               max_contribution: { type: string, nullable: true }
+   *     responses:
+   *       201:
+   *         description: Created
+   *       401:
+   *         description: Unauthorized
+   *       403:
+   *         description: Forbidden
+   */
+  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution, max_per_user } = req.body;
+
+  if (deadline) {
+    const [year, month, day] = String(deadline).split('-').map(Number);
+    const deadlineDate = new Date(year, month - 1, day);
+    const todayDate = new Date();
+    todayDate.setHours(0, 0, 0, 0);
+
+    if (
+      Number.isNaN(deadlineDate.getTime()) ||
+      deadlineDate.getFullYear() !== year ||
+      deadlineDate.getMonth() + 1 !== month ||
+      deadlineDate.getDate() !== day ||
+      deadlineDate < todayDate
+    ) {
+      return res.status(400).json({ error: 'deadline must be a future date' });
 router.post(
-	'/',
-	requireAuth,
-	requireRole('creator', 'admin'),
-	createCampaignValidation,
-	validateRequest,
-	async (req, res) => {
-		/**
-		 * @openapi
-		 * /api/campaigns:
-		 *   post:
-		 *     tags: [Campaigns]
-		 *     summary: Create campaign
-		 *     security:
-		 *       - bearerAuth: []
-		 *     requestBody:
-		 *       required: true
-		 *       content:
-		 *         application/json:
-		 *           schema:
-		 *             type: object
-		 *             required: [title, target_amount, asset_type]
-		 *             properties:
-		 *               title: { type: string }
-		 *               description: { type: string, nullable: true }
-		 *               target_amount: { type: string }
-		 *               asset_type: { type: string }
-		 *               deadline: { type: string, nullable: true }
-		 *               milestones: { type: array, items: { type: object }, nullable: true }
-		 *               reward_tiers: { type: array, items: { type: object }, nullable: true }
-		 *               min_contribution: { type: string, nullable: true }
-		 *               max_contribution: { type: string, nullable: true }
-		 *     responses:
-		 *       201:
-		 *         description: Created
-		 *       401:
-		 *         description: Unauthorized
-		 *       403:
-		 *         description: Forbidden
-		 */
+  "/",
+  requireAuth,
+  requireRole("creator", "admin"),
+  createCampaignValidation,
+  validateRequest,
+  asyncHandler(async (req, res) => {
+    /**
+     * @openapi
+     * /api/campaigns:
+     *   post:
+     *     tags: [Campaigns]
+     *     summary: Create campaign
+     *     security:
+     *       - bearerAuth: []
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required: [title, target_amount, asset_type]
+     *             properties:
+     *               title: { type: string }
+     *               description: { type: string, nullable: true }
+     *               target_amount: { type: string }
+     *               asset_type: { type: string }
+     *               deadline: { type: string, nullable: true }
+     *               milestones: { type: array, items: { type: object }, nullable: true }
+     *               min_contribution: { type: string, nullable: true }
+     *               max_contribution: { type: string, nullable: true }
+     *     responses:
+     *       201:
+     *         description: Created
+     *       401:
+     *         description: Unauthorized
+     *       403:
+     *         description: Forbidden
+     */
+    const {
+      title,
+      description,
+      target_amount,
+      asset_type,
+      deadline,
+      milestones,
+      min_contribution,
+      max_contribution,
+    } = req.body;
 
-		const {
-			title,
-			description,
-			target_amount,
-			asset_type,
-			deadline,
-			milestones,
-			reward_tiers,
-			min_contribution,
-			max_contribution,
-		} = req.body
+    if (deadline) {
+      const [year, month, day] = String(deadline).split("-").map(Number);
+      const deadlineDate = new Date(year, month - 1, day);
+      const todayDate = new Date();
+      todayDate.setHours(0, 0, 0, 0);
 
-		// ...rest of handler logic here
+      if (
+        Number.isNaN(deadlineDate.getTime()) ||
+        deadlineDate.getFullYear() !== year ||
+        deadlineDate.getMonth() + 1 !== month ||
+        deadlineDate.getDate() !== day ||
+        deadlineDate < todayDate
+      ) {
+        return res
+          .status(400)
+          .json({ error: "deadline must be a future date" });
+      }
+    }
 
-  let normalizedMilestones;
-  try {
-    normalizedMilestones = normalizeMilestonesInput(milestones);
-  } catch (err) {
-    return res.status(400).json({ error: err.message });
-  }
+    let normalizedMilestones;
+    try {
+      normalizedMilestones = normalizeMilestonesInput(milestones);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
 
-  let normalizedRewards;
-  try {
-    normalizedRewards = normalizeRewardTiersInput(reward_tiers, asset_type);
-  } catch (err) {
-    return res.status(400).json({ error: err.message });
-  }
-
-  // Get creator's info
-  const { rows: userRows } = await db.query(
-    'SELECT email, wallet_public_key, kyc_status FROM users WHERE id = $1',
-    [req.user.userId]
-  );
-  if (!userRows.length) return res.status(404).json({ error: 'User not found' });
-  
-  if (isKycRequiredForCampaigns() && userRows[0].kyc_status !== 'verified') {
-    return res.status(403).json({
-      error: 'Verify your identity before creating a campaign.',
-      code: 'KYC_REQUIRED',
-      kyc_status: userRows[0].kyc_status,
-    });
-  }
-
-  const creatorPublicKey = userRows[0].wallet_public_key;
-  const creatorEmail = userRows[0].email;
-
-  // 1. Create the on-chain campaign wallet
-  const wallet = await createCampaignWallet(creatorPublicKey);
-
-  // 2. Deploy/Instantiate Soroban Contracts (Mocking IDs for now, but preparing initialization)
-  const escrowContractId = "C" + crypto.randomBytes(24).toString('hex').toUpperCase();
-  const milestonesContractId = "C" + crypto.randomBytes(24).toString('hex').toUpperCase();
-
-  const client = await db.connect();
-  let campaign;
-  try {
-    await client.query('BEGIN');
-    const { rows } = await client.query(
-      `INSERT INTO campaigns
-         (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, 
-          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-       RETURNING *`,
-      [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline, 
-       min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId]
+    // Get creator's info
+    const { rows: userRows } = await db.query(
+      "SELECT email, wallet_public_key, kyc_status FROM users WHERE id = $1",
+      [req.user.userId],
     );
-    campaign = rows[0];
+    if (!userRows.length)
+      return res.status(404).json({ error: "User not found" });
 
-    await client.query(
-      `INSERT INTO campaign_members
+    if (isKycRequiredForCampaigns() && userRows[0].kyc_status !== "verified") {
+      return res.status(403).json({
+        error: "Verify your identity before creating a campaign.",
+        code: "KYC_REQUIRED",
+        kyc_status: userRows[0].kyc_status,
+      });
+    }
+
+    const creatorPublicKey = userRows[0].wallet_public_key;
+    const creatorEmail = userRows[0].email;
+
+    // 1. Create the on-chain campaign wallet
+    const wallet = await createCampaignWallet(creatorPublicKey);
+
+    // 2. Deploy/Instantiate Soroban Contracts (Mocking IDs for now, but preparing initialization)
+    const escrowContractId =
+      "C" + crypto.randomBytes(24).toString("hex").toUpperCase();
+    const milestonesContractId =
+      "C" + crypto.randomBytes(24).toString("hex").toUpperCase();
+
+    const client = await db.connect();
+    let campaign;
+    try {
+      await client.query("BEGIN");
+      const { rows } = await client.query(
+        `INSERT INTO campaigns
+         (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, 
+          min_contribution, max_contribution, max_per_user, escrow_contract_id, milestones_contract_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING *`,
+        [
+          title,
+          description,
+          target_amount,
+          asset_type,
+          wallet.publicKey,
+          req.user.userId,
+          deadline,
+          min_contribution || null,
+          max_contribution || null,
+          escrowContractId,
+          milestonesContractId,
+        ],
+      );
+      campaign = rows[0];
+
+      await client.query(
+        `INSERT INTO campaign_members
          (campaign_id, user_id, email, role, accepted_at)
        VALUES ($1, $2, $3, $4, NOW())`,
-      [campaign.id, req.user.userId, creatorEmail, 'owner']
-    );
+        [campaign.id, req.user.userId, creatorEmail, "owner"],
+      );
 
-    for (const milestone of normalizedMilestones) {
-      await client.query(
-        `INSERT INTO milestones
+      for (const milestone of normalizedMilestones) {
+        await client.query(
+          `INSERT INTO milestones
            (campaign_id, title, description, release_percentage, sort_order)
          VALUES ($1, $2, $3, $4, $5)`,
-        [
-          campaign.id,
-          milestone.title,
-          milestone.description,
-          milestone.release_percentage,
-          milestone.sort_order,
-        ]
-      );
-    }
+          [
+            campaign.id,
+            milestone.title,
+            milestone.description,
+            milestone.release_percentage,
+            milestone.sort_order,
+          ],
+        );
+      }
 
-    for (const tier of normalizedRewards) {
-      await client.query(
-        `INSERT INTO reward_tiers
-           (campaign_id, title, description, min_amount, asset_type, "limit", estimated_delivery)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          campaign.id,
-          tier.title,
-          tier.description,
-          tier.min_amount,
-          tier.asset_type,
-          tier.limit,
-          tier.estimated_delivery,
-        ]
-      );
-    }
-
-    // Soroban Initialization:
-    // In a real scenario, we would call the contracts here.
-    // milestones.initialize(creator, platform, escrow, milestones_vec)
-    /*
+      // Soroban Initialization:
+      // In a real scenario, we would call the contracts here.
+      // milestones.initialize(creator, platform, escrow, milestones_vec)
+      /*
     try {
       const milestoneScVals = normalizedMilestones.map(m => encodeMilestone(m));
       await invokeContract({
@@ -910,149 +1330,176 @@ router.post(
     }
     */
 
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    logger.error('Campaign creation failed', { error: err.message });
-    return res.status(500).json({ error: 'Could not create campaign' });
-  } finally {
-    client.release();
-  }
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      logger.error(
+        "[campaigns] DB insert failed after wallet creation. Orphaned wallet:",
+        {
+          publicKey: wallet.publicKey,
+          creatorUserId: req.user.userId,
+          error: err.message,
+        },
+      );
+      return res.status(500).json({
+        error:
+          "Campaign could not be saved. Wallet creation may have succeeded — contact support.",
+      });
+    } finally {
+      client.release();
+    }
 
-  watchCampaignWallet(campaign.id, wallet.publicKey);
+    watchCampaignWallet(campaign.id, wallet.publicKey);
+
+  // New campaign — bust the list cache so it appears immediately
+  cache.invalidatePrefix('campaigns:list:');
 
   res.status(201).json(campaign);
-});
+}));
 
 // PATCH /campaigns/:id - Update campaign (title, description, deadline)
-router.patch('/:id', requireAuth, async (req, res) => {
-  const campaignId = req.params.id;
-  const { title, description, deadline } = req.body;
+router.patch(
+  "/:id",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const campaignId = req.params.id;
+    const { title, description, deadline } = req.body;
 
-  // Check if campaign exists and belongs to user
-  const { rows: campaignRows } = await db.query(
-    'SELECT * FROM campaigns WHERE id = $1',
-    [campaignId]
-  );
-  if (!campaignRows.length) {
-    return res.status(404).json({ error: 'Campaign not found' });
-  }
-
-  const campaign = campaignRows[0];
-  if (campaign.creator_id !== req.user.userId) {
-    return res.status(403).json({ error: 'You do not have permission to edit this campaign' });
-  }
-
-  // Refresh campaign status to check current state
-  await refreshCampaignStatus(campaignId);
-
-  const { rows: updatedStatusRows } = await db.query(
-    'SELECT status FROM campaigns WHERE id = $1',
-    [campaignId]
-  );
-  const currentStatus = updatedStatusRows[0].status;
-
-  // Only allow editing active or funded campaigns
-  if (!['active', 'funded'].includes(currentStatus)) {
-    return res.status(422).json({
-      error: `Cannot edit a campaign with status: ${currentStatus}`
-    });
-  }
-
-  // Validate and prepare update object
-  const updates = {};
-  const updateParams = [];
-  let paramIndex = 1;
-
-  if (title !== undefined) {
-    const cleanTitle = stripHtml(title);
-    if (!cleanTitle) {
-      return res.status(422).json({ error: 'Title cannot be empty' });
-    }
-    if (cleanTitle.length > 100) {
-      return res.status(422).json({ error: 'Title must be at most 100 characters' });
-    }
-    updates.title = cleanTitle;
-    updateParams.push(['title', cleanTitle, `$${paramIndex++}`]);
-  }
-
-  if (description !== undefined) {
-    const cleanDesc = stripHtml(description);
-    if (cleanDesc.length > 1000) {
-      return res.status(422).json({ error: 'Description must be at most 1000 characters' });
-    }
-    updates.description = cleanDesc;
-    updateParams.push(['description', cleanDesc, `$${paramIndex++}`]);
-  }
-
-  if (deadline !== undefined && deadline !== null && deadline !== '') {
-    // Validate ISO8601 format
-    const deadlineDate = new Date(deadline);
-    if (isNaN(deadlineDate.getTime())) {
-      return res.status(422).json({ error: 'Deadline must be a valid date' });
+    // Check if campaign exists and belongs to user
+    const { rows: campaignRows } = await db.query(
+      "SELECT * FROM campaigns WHERE id = $1",
+      [campaignId],
+    );
+    if (!campaignRows.length) {
+      return res.status(404).json({ error: "Campaign not found" });
     }
 
-    // Check deadline is not in the past
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    deadlineDate.setHours(0, 0, 0, 0);
-
-    if (deadlineDate < today) {
-      return res.status(422).json({ error: 'Deadline cannot be in the past' });
+    const campaign = campaignRows[0];
+    if (campaign.creator_id !== req.user.userId) {
+      return res
+        .status(403)
+        .json({ error: "You do not have permission to edit this campaign" });
     }
 
-    updates.deadline = deadline;
-    updateParams.push(['deadline', deadline, `$${paramIndex++}`]);
-  }
+    // Refresh campaign status to check current state
+    await refreshCampaignStatus(campaignId);
 
-  // Check if any valid updates were provided
-  if (Object.keys(updates).length === 0) {
-    return res.status(400).json({ error: 'No valid fields to update' });
-  }
+    const { rows: updatedStatusRows } = await db.query(
+      "SELECT status FROM campaigns WHERE id = $1",
+      [campaignId],
+    );
+    const currentStatus = updatedStatusRows[0].status;
 
-  // Check for invalid fields in request body
-  const allowedFields = ['title', 'description', 'deadline'];
-  for (const field of Object.keys(req.body)) {
-    if (!allowedFields.includes(field)) {
+    // Only allow editing active or funded campaigns
+    if (!["active", "funded"].includes(currentStatus)) {
       return res.status(422).json({
-        error: `Cannot update field: ${field}`
+        error: `Cannot edit a campaign with status: ${currentStatus}`,
       });
     }
-  }
 
-  // Build and execute update query
-  const setClause = updateParams.map(([field, , placeholder]) => `${field} = ${placeholder}`).join(', ');
-  const values = updateParams.map(([, value]) => value);
-  values.push(campaignId);
-  values.push(req.user.userId);
+    // Validate and prepare update object
+    const updates = {};
+    const updateParams = [];
+    let paramIndex = 1;
 
-  const query = `
+    if (title !== undefined) {
+      const cleanTitle = stripHtml(title);
+      if (!cleanTitle) {
+        return res.status(422).json({ error: "Title cannot be empty" });
+      }
+      if (cleanTitle.length > 100) {
+        return res
+          .status(422)
+          .json({ error: "Title must be at most 100 characters" });
+      }
+      updates.title = cleanTitle;
+      updateParams.push(["title", cleanTitle, `$${paramIndex++}`]);
+    }
+
+    if (description !== undefined) {
+      const cleanDesc = stripHtml(description);
+      if (cleanDesc.length > 1000) {
+        return res
+          .status(422)
+          .json({ error: "Description must be at most 1000 characters" });
+      }
+      updates.description = cleanDesc;
+      updateParams.push(["description", cleanDesc, `$${paramIndex++}`]);
+    }
+
+    if (deadline !== undefined && deadline !== null && deadline !== "") {
+      // Validate ISO8601 format
+      const deadlineDate = new Date(deadline);
+      if (isNaN(deadlineDate.getTime())) {
+        return res.status(422).json({ error: "Deadline must be a valid date" });
+      }
+
+      // Check deadline is not in the past
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      deadlineDate.setHours(0, 0, 0, 0);
+
+      if (deadlineDate < today) {
+        return res
+          .status(422)
+          .json({ error: "Deadline cannot be in the past" });
+      }
+
+      updates.deadline = deadline;
+      updateParams.push(["deadline", deadline, `$${paramIndex++}`]);
+    }
+
+    // Check if any valid updates were provided
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+
+    // Check for invalid fields in request body
+    const allowedFields = ["title", "description", "deadline"];
+    for (const field of Object.keys(req.body)) {
+      if (!allowedFields.includes(field)) {
+        return res.status(422).json({
+          error: `Cannot update field: ${field}`,
+        });
+      }
+    }
+
+    // Build and execute update query
+    const setClause = updateParams
+      .map(([field, , placeholder]) => `${field} = ${placeholder}`)
+      .join(", ");
+    const values = updateParams.map(([, value]) => value);
+    values.push(campaignId);
+    values.push(req.user.userId);
+
+    const query = `
     UPDATE campaigns
     SET ${setClause}
     WHERE id = $${paramIndex} AND creator_id = $${paramIndex + 1}
     RETURNING *
   `;
 
-  const { rows: updatedRows } = await db.query(query, values);
-  if (!updatedRows.length) {
-    return res.status(404).json({ error: 'Campaign not found' });
-  }
+    const { rows: updatedRows } = await db.query(query, values);
+    if (!updatedRows.length) {
+      return res.status(404).json({ error: "Campaign not found" });
+    }
 
-  res.json(updatedRows[0]);
-});
+    res.json(updatedRows[0]);
+  }),
+);
 
 router.post(
-  '/:id/cover-image',
+  "/:id/cover-image",
   requireAuth,
-  requireCampaignMember('owner'),
+  requireCampaignMember("owner"),
   (req, res, next) => {
-    upload.single('cover_image')(req, res, (err) => {
+    upload.single("cover_image")(req, res, (err) => {
       if (err) {
         return res.status(422).json({
           error: {
-            code: 'VALIDATION_ERROR',
-            message: err.message || 'Invalid cover image upload',
-            fields: { cover_image: err.message || 'Invalid file' },
+            code: "VALIDATION_ERROR",
+            message: err.message || "Invalid cover image upload",
+            fields: { cover_image: err.message || "Invalid file" },
           },
         });
       }
@@ -1063,206 +1510,714 @@ router.post(
     if (!req.file) {
       return res.status(422).json({
         error: {
-          code: 'VALIDATION_ERROR',
-          message: 'cover_image is required',
-          fields: { cover_image: 'No image uploaded' },
+          code: "VALIDATION_ERROR",
+          message: "cover_image is required",
+          fields: { cover_image: "No image uploaded" },
         },
       });
     }
 
     try {
-      const coverImageUrl = await uploadCampaignCoverImage(req.params.id, req.file);
+      const coverImageUrl = await uploadCampaignCoverImage(
+        req.params.id,
+        req.file,
+      );
       const { rows: updatedRows } = await db.query(
-        'UPDATE campaigns SET cover_image_url = $1 WHERE id = $2 RETURNING *',
-        [coverImageUrl, req.params.id]
+        "UPDATE campaigns SET cover_image_url = $1 WHERE id = $2 RETURNING *",
+        [coverImageUrl, req.params.id],
       );
       res.json(updatedRows[0]);
     } catch (err) {
-      return res.status(500).json({ error: 'Could not upload campaign cover image' });
+      return res
+        .status(500)
+        .json({ error: "Could not upload campaign cover image" });
     }
-  }
+  },
 );
 
-router.get('/:id/updates', async (req, res) => {
-  const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
-  const offset = Math.max(0, Number(req.query.offset) || 0);
-  const { rows } = await db.query(
-    `SELECT cu.id, cu.campaign_id, cu.author_id, cu.title, cu.body, cu.created_at, u.name AS author_name
+router.get(
+  "/:id/updates",
+  asyncHandler(async (req, res) => {
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const { rows } = await db.query(
+      `SELECT cu.id, cu.campaign_id, cu.author_id, cu.title, cu.body, cu.created_at, u.name AS author_name
      FROM campaign_updates cu
      JOIN users u ON u.id = cu.author_id
      WHERE cu.campaign_id = $1
      ORDER BY cu.created_at DESC
      LIMIT $2 OFFSET $3`,
-    [req.params.id, limit, offset]
-  );
-  res.json(rows);
-});
+      [req.params.id, limit, offset],
+    );
+    res.json(rows);
+  }),
+);
 
-router.post('/:id/updates', requireAuth, requireCampaignMember('owner', 'manager'), createCampaignUpdateValidation, validateRequest, async (req, res) => {
-  const { title, body } = req.body;
+router.post(
+  "/:id/updates",
+  requireAuth,
+  requireCampaignMember("owner", "manager"),
+  createCampaignUpdateValidation,
+  validateRequest,
+  asyncHandler(async (req, res) => {
+    const { title, body } = req.body;
 
-  const { rows } = await db.query(
-    `INSERT INTO campaign_updates (campaign_id, author_id, title, body)
+    const { rows } = await db.query(
+      `INSERT INTO campaign_updates (campaign_id, author_id, title, body)
      VALUES ($1, $2, $3, $4)
      RETURNING id, campaign_id, author_id, title, body, created_at`,
-    [req.params.id, req.user.userId, title.trim(), body.trim()]
-  );
-  res.status(201).json(rows[0]);
-});
+      [req.params.id, req.user.userId, title.trim(), body.trim()],
+    );
+    res.status(201).json(rows[0]);
+  }),
+);
 
 // POST /campaigns/:id/members — owner invites a user by email
-router.post('/:id/members', requireAuth, requireCampaignMember('owner'), async (req, res) => {
-  const { email, role } = req.body;
-  if (!email || !role) return res.status(422).json({ error: 'Email and role are required' });
-  if (!['owner', 'manager', 'viewer'].includes(role)) {
-    return res.status(422).json({ error: 'Invalid role. Must be owner, manager, or viewer' });
-  }
-
-  const { rows: users } = await db.query('SELECT id FROM users WHERE email = $1', [email.trim()]);
-  const inviteeUserId = users.length ? users[0].id : null;
-
-  const { rows: existing } = await db.query(
-    'SELECT id, accepted_at FROM campaign_members WHERE campaign_id = $1 AND email = $2',
-    [req.params.id, email.trim()]
-  );
-  if (existing.length) {
-    if (existing[0].accepted_at) {
-      return res.status(409).json({ error: 'User is already a member of this campaign' });
-    } else {
-      return res.status(409).json({ error: 'Invitation already sent to this user' });
+router.post(
+  "/:id/members",
+  requireAuth,
+  requireCampaignMember("owner"),
+  asyncHandler(async (req, res) => {
+    const { email, role } = req.body;
+    if (!email || !role)
+      return res.status(422).json({ error: "Email and role are required" });
+    if (!["owner", "manager", "viewer"].includes(role)) {
+      return res
+        .status(422)
+        .json({ error: "Invalid role. Must be owner, manager, or viewer" });
     }
-  }
 
-  const inviteToken = crypto.randomBytes(32).toString('hex');
+    const { rows: users } = await db.query(
+      "SELECT id FROM users WHERE email = $1",
+      [email.trim()],
+    );
+    const inviteeUserId = users.length ? users[0].id : null;
 
-  const { rows: memberRows } = await db.query(
-    `INSERT INTO campaign_members (campaign_id, user_id, email, role, invited_by, invite_token)
+    const { rows: existing } = await db.query(
+      "SELECT id, accepted_at FROM campaign_members WHERE campaign_id = $1 AND email = $2",
+      [req.params.id, email.trim()],
+    );
+    if (existing.length) {
+      if (existing[0].accepted_at) {
+        return res
+          .status(409)
+          .json({ error: "User is already a member of this campaign" });
+      } else {
+        return res
+          .status(409)
+          .json({ error: "Invitation already sent to this user" });
+      }
+    }
+
+    const inviteToken = crypto.randomBytes(32).toString("hex");
+
+    const { rows: memberRows } = await db.query(
+      `INSERT INTO campaign_members (campaign_id, user_id, email, role, invited_by, invite_token)
      VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, campaign_id, email, role, created_at`,
-    [req.params.id, inviteeUserId, email.trim(), role, req.user.userId, inviteToken]
-  );
+      [
+        req.params.id,
+        inviteeUserId,
+        email.trim(),
+        role,
+        req.user.userId,
+        inviteToken,
+      ],
+    );
 
-  const campaignUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/campaigns/${req.params.id}/invite/${inviteToken}`;
-  try {
-    await sendEmail({
-      to: email.trim(),
-      subject: `Invitation to join campaign team`,
-      text: `You have been invited to join a campaign as a ${role}. Click here to accept: ${campaignUrl}`,
-    });
-  } catch (e) {
-    logger.error('Failed to send invite email', {
-      campaign_id: req.params.id,
-      error: e.message || String(e),
-    });
-  }
+    const campaignUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/campaigns/${req.params.id}/invite/${inviteToken}`;
+    try {
+      await sendEmail({
+        to: email.trim(),
+        subject: `Invitation to join campaign team`,
+        text: `You have been invited to join a campaign as a ${role}. Click here to accept: ${campaignUrl}`,
+      });
+    } catch (e) {
+      logger.error("Failed to send invite email", {
+        campaign_id: req.params.id,
+        error: e.message || String(e),
+      });
+    }
 
-  res.status(201).json(memberRows[0]);
-});
+    res.status(201).json(memberRows[0]);
+  }),
+);
 
 // GET /campaigns/:id/members — list current team (owner only)
-router.get('/:id/members', requireAuth, requireCampaignMember('owner'), async (req, res) => {
-  const { rows } = await db.query(
-    `SELECT cm.id, cm.user_id, cm.email, cm.role, cm.accepted_at, cm.created_at,
+router.get(
+  "/:id/members",
+  requireAuth,
+  requireCampaignMember("owner"),
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT cm.id, cm.user_id, cm.email, cm.role, cm.accepted_at, cm.created_at,
             u.name AS user_name
      FROM campaign_members cm
      LEFT JOIN users u ON u.id = cm.user_id
      WHERE cm.campaign_id = $1
      ORDER BY cm.created_at ASC`,
-    [req.params.id]
-  );
-  res.json(rows);
-});
+      [req.params.id],
+    );
+    res.json(rows);
+  }),
+);
 
 // PATCH /campaigns/:id/members/:userId — change role (owner only)
-router.patch('/:id/members/:userId', requireAuth, requireCampaignMember('owner'), async (req, res) => {
-  const { role } = req.body;
-  if (!role || !['owner', 'manager', 'viewer'].includes(role)) {
-    return res.status(422).json({ error: 'Invalid role. Must be owner, manager, or viewer' });
-  }
+router.patch(
+  "/:id/members/:userId",
+  requireAuth,
+  requireCampaignMember("owner"),
+  asyncHandler(async (req, res) => {
+    const { role } = req.body;
+    if (!role || !["owner", "manager", "viewer"].includes(role)) {
+      return res
+        .status(422)
+        .json({ error: "Invalid role. Must be owner, manager, or viewer" });
+    }
 
-  const { rows } = await db.query(
-    `UPDATE campaign_members
+    const { rows } = await db.query(
+      `UPDATE campaign_members
      SET role = $1
      WHERE campaign_id = $2 AND user_id = $3
      RETURNING id, campaign_id, user_id, role, accepted_at`,
-    [role, req.params.id, req.params.userId]
-  );
+      [role, req.params.id, req.params.userId],
+    );
 
-  if (!rows.length) {
-    return res.status(404).json({ error: 'Member not found' });
-  }
+    if (!rows.length) {
+      return res.status(404).json({ error: "Member not found" });
+    }
 
-  res.json(rows[0]);
-});
+    res.json(rows[0]);
+  }),
+);
 
 // DELETE /campaigns/:id/members/:userId — remove member or self-leave
-router.delete('/:id/members/:userId', requireAuth, async (req, res) => {
-  const memberUserId = req.params.userId;
-  const isSelf = String(memberUserId) === String(req.user.userId);
+router.delete(
+  "/:id/members/:userId",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const memberUserId = req.params.userId;
+    const isSelf = String(memberUserId) === String(req.user.userId);
 
-  let isOwner = false;
-  if (req.user.role === 'admin') {
-    isOwner = true;
-  } else {
-    const { rows: ownerRows } = await db.query(
-      `SELECT role, accepted_at FROM campaign_members
+    let isOwner = false;
+    if (req.user.role === "admin") {
+      isOwner = true;
+    } else {
+      const { rows: ownerRows } = await db.query(
+        `SELECT role, accepted_at FROM campaign_members
        WHERE campaign_id = $1 AND user_id = $2 AND role = 'owner'`,
-      [req.params.id, req.user.userId]
-    );
-    if (ownerRows.length && ownerRows[0].accepted_at) isOwner = true;
+        [req.params.id, req.user.userId],
+      );
+      if (ownerRows.length && ownerRows[0].accepted_at) isOwner = true;
 
-    const { rows: creatorRows } = await db.query(
-      `SELECT creator_id FROM campaigns WHERE id = $1`,
-      [req.params.id]
-    );
-    if (creatorRows.length && creatorRows[0].creator_id === req.user.userId) isOwner = true;
-  }
+      const { rows: creatorRows } = await db.query(
+        `SELECT creator_id FROM campaigns WHERE id = $1`,
+        [req.params.id],
+      );
+      if (creatorRows.length && creatorRows[0].creator_id === req.user.userId)
+        isOwner = true;
+    }
 
-  if (!isSelf && !isOwner) {
-    return res.status(403).json({ error: 'Insufficient permissions' });
-  }
+    if (!isSelf && !isOwner) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
 
-  const { rows } = await db.query(
-    `DELETE FROM campaign_members
+    const { rows } = await db.query(
+      `DELETE FROM campaign_members
      WHERE campaign_id = $1 AND user_id = $2
      RETURNING id`,
-    [req.params.id, memberUserId]
-  );
+      [req.params.id, memberUserId],
+    );
 
-  if (!rows.length) {
-    return res.status(404).json({ error: 'Member not found' });
-  }
+    if (!rows.length) {
+      return res.status(404).json({ error: "Member not found" });
+    }
 
-  res.json({ message: 'Member removed successfully' });
-});
+    res.json({ message: "Member removed successfully" });
+  }),
+);
 
 // POST /campaigns/:id/members/accept — accept invitation (token-based)
-router.post('/:id/members/accept', requireAuth, async (req, res) => {
-  const { token: inviteToken } = req.body;
-  if (!inviteToken) return res.status(422).json({ error: 'Invitation token is required' });
+router.post(
+  "/:id/members/accept",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { token: inviteToken } = req.body;
+    if (!inviteToken)
+      return res.status(422).json({ error: "Invitation token is required" });
 
-  const { rows: invites } = await db.query(
-    `SELECT id, accepted_at, email FROM campaign_members
+    const { rows: invites } = await db.query(
+      `SELECT id, accepted_at, email FROM campaign_members
      WHERE campaign_id = $1 AND invite_token = $2`,
-    [req.params.id, inviteToken]
-  );
+      [req.params.id, inviteToken],
+    );
 
-  if (!invites.length) {
-    return res.status(404).json({ error: 'Invalid invitation token' });
-  }
-  if (invites[0].accepted_at) {
-    return res.status(409).json({ error: 'Invitation already accepted' });
-  }
+    if (!invites.length) {
+      return res.status(404).json({ error: "Invalid invitation token" });
+    }
+    if (invites[0].accepted_at) {
+      return res.status(409).json({ error: "Invitation already accepted" });
+    }
 
-  const { rows } = await db.query(
-    `UPDATE campaign_members
+    const { rows } = await db.query(
+      `UPDATE campaign_members
      SET user_id = $1, accepted_at = NOW(), invite_token = NULL
      WHERE id = $2
      RETURNING id, campaign_id, user_id, role, accepted_at`,
-    [req.user.userId, invites[0].id]
+      [req.user.userId, invites[0].id],
+    );
+
+    res.json(rows[0]);
+  }),
+);
+
+// GET /campaigns/:id/analytics — campaign analytics
+router.get(
+  "/:id/analytics",
+  asyncHandler(async (req, res) => {
+    const { rows: dailyTotals } = await db.query(
+      `
+    SELECT
+      DATE(created_at) AS day,
+      COUNT(*)          AS contribution_count,
+      SUM(amount)       AS total_amount,
+      asset
+    FROM contributions
+    WHERE campaign_id = $1
+      AND created_at >= NOW() - INTERVAL '30 days'
+    GROUP BY DATE(created_at), asset
+    ORDER BY day ASC
+  `,
+      [req.params.id],
+    );
+
+    const { rows: assetBreakdown } = await db.query(
+      `
+    SELECT
+      COALESCE(source_asset, asset) AS paid_with,
+      COUNT(*)      AS count,
+      SUM(COALESCE(source_amount, amount)) AS total_sent
+    FROM contributions
+    WHERE campaign_id = $1
+    GROUP BY paid_with
+  `,
+      [req.params.id],
+    );
+
+    const { rows: topContributors } = await db.query(
+      `
+    SELECT sender_public_key, SUM(amount) AS total, COUNT(*) AS times
+    FROM contributions
+    WHERE campaign_id = $1
+    GROUP BY sender_public_key
+    ORDER BY total DESC
+    LIMIT 5
+  `,
+      [req.params.id],
+    );
+
+    res.json({ dailyTotals, assetBreakdown, topContributors });
+  }),
+);
+
+// DELETE /api/campaigns/:id - Soft delete a campaign (creator or admin only)
+router.delete(
+  "/:id",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const campaignId = req.params.id;
+
+    // Check for pending withdrawals
+    const { rows: pending } = await db.query(
+      `SELECT id FROM withdrawal_requests WHERE campaign_id = $1 AND status = 'pending'`,
+      [campaignId],
+    );
+    if (pending.length) {
+      return res.status(409).json({
+        error: "Cannot delete a campaign with a pending withdrawal",
+      });
+    }
+
+    // Soft delete the campaign
+    const { rows } = await db.query(
+      `UPDATE campaigns
+       SET deleted_at = NOW()
+       WHERE id = $1 AND creator_id = $2 AND deleted_at IS NULL
+       RETURNING id`,
+      [campaignId, req.user.userId],
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        error: "Campaign not found or already deleted",
+      });
+    }
+
+    res.json({ deleted: true });
+  }),
+);
+
+// POST /api/admin/campaigns/:id/restore - Restore a soft-deleted campaign (admin only)
+router.post(
+  "/admin/campaigns/:id/restore",
+  requireAuth,
+  requireRole("admin"),
+  asyncHandler(async (req, res) => {
+    const campaignId = req.params.id;
+
+    await db.query(`UPDATE campaigns SET deleted_at = NULL WHERE id = $1`, [
+      campaignId,
+    ]);
+
+    res.json({ restored: true });
+  }),
+);
+
+// Webhook management for campaigns
+function isValidWebhookUrl(urlString) {
+  try {
+    const u = new URL(urlString);
+    if (u.protocol === 'https:') return true;
+    if (u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1')) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// Register a webhook for a campaign
+router.post('/:id/webhooks', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const { url, events } = req.body || {};
+  const campaignId = req.params.id;
+
+  if (!url) {
+    return res.status(400).json({ error: 'url is required' });
+  }
+
+  if (!isValidWebhookUrl(url)) {
+    return res.status(400).json({ error: 'url must be https, or http://localhost for development' });
+  }
+
+  // Check if campaign exists
+  const { rows: campaignRows } = await db.query(
+    'SELECT id FROM campaigns WHERE id = $1',
+// POST /campaigns/:id/refund/initiate - Creator requests a batch refund XDR
+router.post('/:id/refund/initiate', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+  const { rows: campaignRows } = await db.query(
+    'SELECT id, wallet_public_key, status, refund_initiated_at FROM campaigns WHERE id = $1',
+    [campaignId]
+  );
+  if (!campaignRows.length) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+
+  // Check webhook limit (5 per campaign)
+  const { rows: countRows } = await db.query(
+    'SELECT COUNT(*)::int as count FROM campaign_webhooks WHERE campaign_id = $1 AND active = TRUE',
+    [campaignId]
+  );
+  if (countRows[0].count >= 5) {
+    return res.status(429).json({ error: 'Webhooks limited to 5 per campaign' });
+  }
+
+  // Default to contribution.indexed event if not specified
+  let eventList = events ? [events].flat() : ['contribution.indexed'];
+  eventList = [...new Set(eventList.filter(e => typeof e === 'string'))];
+
+  // Generate secret (creator will store this for verification)
+  const secret = crypto.randomBytes(32).toString('hex');
+
+  const { rows } = await db.query(
+    `INSERT INTO campaign_webhooks (campaign_id, url, secret, events, active)
+     VALUES ($1, $2, $3, $4, TRUE)
+     RETURNING id, campaign_id, url, events, created_at`,
+    [campaignId, url, secret, eventList]
   );
 
-  res.json(rows[0]);
-});
+  res.status(201).json({
+    ...rows[0],
+    secret,
+    message: 'Store the signing secret; it is only shown once.',
+  });
+}));
+
+// List webhooks for a campaign
+router.get('/:id/webhooks', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+
+  const { rows: campaignRows } = await db.query(
+    'SELECT id FROM campaigns WHERE id = $1',
+  const campaign = campaignRows[0];
+
+  if (campaign.status !== 'failed') {
+    return res.status(409).json({ error: 'Refunds may only be initiated for failed campaigns' });
+  }
+  if (campaign.refund_initiated_at) {
+    return res.status(409).json({ error: 'Refund has already been initiated' });
+  }
+
+  const { rows: contributions } = await db.query(
+    `SELECT id, sender_public_key, amount, asset 
+     FROM contributions 
+     WHERE campaign_id = $1 AND refunded = FALSE 
+     ORDER BY created_at ASC`,
+    [campaignId]
+  );
+
+  if (!contributions.length) {
+    return res.status(400).json({ error: 'No contributions to refund' });
+  }
+
+  const refunds = contributions.map(c => ({
+    destinationPublicKey: c.sender_public_key,
+    amount: c.amount,
+    asset: c.asset,
+  }));
+
+  let unsignedXdr;
+  try {
+    unsignedXdr = await buildBatchRefundTransaction({
+      campaignWalletPublicKey: campaign.wallet_public_key,
+      refunds,
+    });
+  } catch (err) {
+    logger.error('Failed to build batch refund transaction', { campaign_id: campaignId, error: err.message });
+    return res.status(500).json({ error: 'Could not construct Stellar transaction' });
+  }
+
+  await db.query(
+    `UPDATE campaigns 
+     SET refund_xdr = $1, refund_initiated_at = NOW() 
+     WHERE id = $2`,
+    [unsignedXdr, campaignId]
+  );
+
+  res.status(200).json({ unsigned_xdr: unsignedXdr });
+}));
+
+// POST /campaigns/:id/refund/approve/creator - Creator signs the batch refund XDR
+router.post('/:id/refund/approve/creator', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+  const { rows: campaignRows } = await db.query(
+    'SELECT id, refund_xdr, status FROM campaigns WHERE id = $1',
+    [campaignId]
+  );
+  if (!campaignRows.length) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+
+  const { rows } = await db.query(
+    `SELECT id, url, events, active, created_at,
+            CONCAT(LEFT(secret, 10), '…', RIGHT(secret, 4)) AS secret_hint
+     FROM campaign_webhooks
+     WHERE campaign_id = $1
+     ORDER BY created_at DESC`,
+    [campaignId]
+  );
+
+  res.json(rows);
+}));
+
+// Delete a webhook
+router.delete('/:id/webhooks/:wid', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const { id: campaignId, wid: webhookId } = req.params;
+
+  const { rows } = await db.query(
+    `UPDATE campaign_webhooks
+     SET active = FALSE
+     WHERE id = $1 AND campaign_id = $2
+     RETURNING id`,
+    [webhookId, campaignId]
+  );
+
+  if (!rows.length) {
+    return res.status(404).json({ error: 'Webhook not found' });
+  }
+
+  res.json({ revoked: true, id: rows[0].id });
+}));
+
+// Get delivery history for a campaign's webhooks
+router.get('/:id/webhooks/:wid/deliveries', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const { id: campaignId, wid: webhookId } = req.params;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+  // Verify webhook belongs to this campaign
+  const { rows: webhookRows } = await db.query(
+    'SELECT id FROM campaign_webhooks WHERE id = $1 AND campaign_id = $2',
+    [webhookId, campaignId]
+  );
+  if (!webhookRows.length) {
+    return res.status(404).json({ error: 'Webhook not found' });
+  }
+
+  const { rows: countRows } = await db.query(
+    `SELECT COUNT(*)::int as total FROM campaign_webhook_deliveries WHERE webhook_id = $1`,
+    [webhookId]
+  );
+
+  const { rows } = await db.query(
+    `SELECT id, event, status, response_status, attempt_count, last_error,
+            delivered_at, failed_at, created_at, updated_at
+     FROM campaign_webhook_deliveries
+     WHERE webhook_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2
+     OFFSET $3`,
+    [webhookId, limit, offset]
+  );
+
+  res.json({
+    total: countRows[0]?.total || 0,
+    limit,
+    offset,
+    deliveries: rows
+  });
+  const campaign = campaignRows[0];
+
+  if (campaign.status !== 'failed') {
+    return res.status(409).json({ error: 'Campaign status is not failed' });
+  }
+  if (!campaign.refund_xdr) {
+    return res.status(409).json({ error: 'Refund has not been initiated' });
+  }
+
+  const { rows: users } = await db.query(
+    'SELECT wallet_secret_encrypted, wallet_public_key, wallet_type FROM users WHERE id = $1',
+    [req.user.userId]
+  );
+  if (!users.length) {
+    return res.status(404).json({ error: 'Creator not found' });
+  }
+  const userRow = users[0];
+
+  let signedXdr;
+  try {
+    if (userRow.wallet_type === 'freighter') {
+      const { signed_xdr } = req.body || {};
+      if (!signed_xdr) {
+        return res.status(400).json({ error: 'signed_xdr is required for freighter users' });
+      }
+
+      try {
+        const tx = require('@stellar/stellar-sdk').TransactionBuilder.fromXDR(
+          signed_xdr,
+          require('../config/stellar').networkPassphrase
+        );
+        const signer = require('@stellar/stellar-sdk').Keypair.fromPublicKey(userRow.wallet_public_key);
+        const signatureValid = tx.signatures.some((decorated) => {
+          try {
+            return signer.verify(tx.hash(), decorated.signature());
+          } catch (_err) {
+            return false;
+          }
+        });
+        if (!signatureValid) {
+          return res.status(422).json({ error: 'Signed transaction does not include a valid signature by the creator' });
+        }
+      } catch (err) {
+        return res.status(422).json({ error: 'Invalid signed_xdr' });
+      }
+      signedXdr = signed_xdr;
+    } else {
+      signedXdr = await withDecryptedWalletSecret(
+        userRow.wallet_secret_encrypted,
+        {
+          userId: req.user.userId,
+          walletPublicKey: userRow.wallet_public_key,
+        },
+        async (creatorSecret) =>
+          signTransactionXdr({
+            xdr: campaign.refund_xdr,
+            signerSecret: creatorSecret,
+          })
+      );
+    }
+  } catch (err) {
+    logger.error('Creator refund signing failed', { campaign_id: campaignId, error: err.message });
+    return res.status(503).json({ error: 'Signing failed' });
+  }
+
+  await db.query(
+    'UPDATE campaigns SET refund_xdr = $1 WHERE id = $2',
+    [signedXdr, campaignId]
+  );
+
+  res.status(200).json({ signed_xdr: signedXdr });
+}));
+
+// POST /campaigns/:id/refund/approve/platform - Platform signs and submits
+router.post('/:id/refund/approve/platform', requireAuth, asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+
+  if (!process.env.PLATFORM_APPROVER_USER_ID || req.user.userId !== process.env.PLATFORM_APPROVER_USER_ID) {
+    return res.status(403).json({ error: 'Only the designated platform approver can perform this action' });
+  }
+
+  const { rows: campaignRows } = await db.query(
+    'SELECT id, wallet_public_key, refund_xdr, status FROM campaigns WHERE id = $1',
+    [campaignId]
+  );
+  if (!campaignRows.length) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+  const campaign = campaignRows[0];
+
+  if (campaign.status !== 'failed') {
+    return res.status(409).json({ error: 'Campaign status is not failed' });
+  }
+  if (!campaign.refund_xdr) {
+    return res.status(409).json({ error: 'Refund has not been approved by the creator yet' });
+  }
+
+  let signedXdr;
+  try {
+    signedXdr = signTransactionXdr({
+      xdr: campaign.refund_xdr,
+      signerSecret: process.env.PLATFORM_SECRET_KEY,
+    });
+  } catch (err) {
+    logger.error('Platform refund signing failed', { campaign_id: campaignId, error: err.message });
+    return res.status(500).json({ error: 'Platform signing failed' });
+  }
+
+  let txHash;
+  try {
+    txHash = await submitPreparedTransaction(signedXdr);
+  } catch (err) {
+    logger.error('Platform refund submission failed', { campaign_id: campaignId, error: err.message });
+    return res.status(502).json({ error: `Stellar submission failed: ${err.message}` });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE campaigns 
+       SET status = 'refunded', refund_tx_hash = $1, refund_xdr = $2 
+       WHERE id = $3`,
+      [txHash, signedXdr, campaignId]
+    );
+    await client.query(
+      `UPDATE contributions 
+       SET refunded = TRUE 
+       WHERE campaign_id = $1 AND refunded = FALSE`,
+      [campaignId]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    logger.error('Failed to update database after batch refund submission', { campaign_id: campaignId, error: err.message });
+    return res.status(500).json({ error: 'Stellar transaction submitted but failed to update database' });
+  } finally {
+    client.release();
+  }
+
+  res.status(200).json({ success: true, tx_hash: txHash });
+}));
 
 module.exports = router;
