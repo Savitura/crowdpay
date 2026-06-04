@@ -520,6 +520,56 @@ router.get('/:id/stream', asyncHandler(async (req, res) => {
   });
 }));
 
+// GET /campaigns/:id/tiers — list tiers with availability
+router.get('/:id/tiers', async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT id, campaign_id, title, description, min_amount, asset_type, "limit", claimed_count, estimated_delivery, created_at
+     FROM reward_tiers
+     WHERE campaign_id = $1
+     ORDER BY min_amount ASC`,
+    [req.params.id]
+  );
+  res.json(rows);
+});
+
+// POST /campaigns/:id/tiers — creator adds a tier post-creation
+router.post('/:id/tiers', requireAuth, requireCampaignMember('owner'), async (req, res) => {
+  const { rows: campaignRows } = await db.query('SELECT asset_type FROM campaigns WHERE id = $1', [req.params.id]);
+  if (!campaignRows.length) return res.status(404).json({ error: 'Campaign not found' });
+
+  let normalized;
+  try {
+    // Normalize a single tier (passed as body) or an array
+    const input = Array.isArray(req.body) ? req.body : [req.body];
+    normalized = normalizeRewardTiersInput(input, campaignRows[0].asset_type);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const created = [];
+    for (const tier of normalized) {
+      const { rows } = await client.query(
+        `INSERT INTO reward_tiers
+           (campaign_id, title, description, min_amount, asset_type, "limit", estimated_delivery)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [req.params.id, tier.title, tier.description, tier.min_amount, tier.asset_type, tier.limit, tier.estimated_delivery]
+      );
+      created.push(rows[0]);
+    }
+    await client.query('COMMIT');
+    res.status(201).json(Array.isArray(req.body) ? created : created[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'Could not add reward tier' });
+  } finally {
+    client.release();
+  }
+});
+
 // Get live on-chain balance for a campaign
 router.get('/:id/balance', asyncHandler(async (req, res) => {
   /**

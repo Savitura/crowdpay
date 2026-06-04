@@ -169,10 +169,13 @@ router.get('/finalization/:txHash', requireAuth, asyncHandler(async (req, res) =
             st.initiated_by_user_id, st.metadata, st.created_at, st.updated_at,
             c.creator_id,
             ct.id AS contribution_row_id, ct.sender_public_key, ct.amount,
-            ct.asset, ct.created_at AS contribution_created_at
+            ct.asset, ct.created_at AS contribution_created_at,
+            rt.id AS reward_id, rt.title AS reward_title, rt.description AS reward_description
      FROM stellar_transactions st
      JOIN campaigns c ON c.id = st.campaign_id
      LEFT JOIN contributions ct ON ct.id = st.contribution_id
+     LEFT JOIN contribution_rewards cr ON cr.contribution_id = ct.id
+     LEFT JOIN reward_tiers rt ON rt.id = cr.reward_tier_id
      WHERE st.tx_hash = $1 AND st.kind = 'contribution'`,
     [txHash]
   );

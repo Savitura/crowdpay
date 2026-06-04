@@ -191,6 +191,16 @@ export default function Campaign() {
     };
   }, []);
 
+const [linkCopied, setLinkCopied] = useState(false)
+const [isEditingCampaign, setIsEditingCampaign] = useState(false)
+const [editFormData, setEditFormData] = useState({
+	title: "",
+	description: "",
+	deadline: "",
+})
+const [editError, setEditError] = useState("")
+const [editSuccess, setEditSuccess] = useState("")
+const [editLoading, setEditLoading] = useState(false)
   useEffect(() => {
     setLoadError("");
     api

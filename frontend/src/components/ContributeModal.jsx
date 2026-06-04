@@ -68,6 +68,10 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
   const [freighterChecked, setFreighterChecked] = useState(false);
   const [existingContributions, setExistingContributions] = useState([]);
   const [displayName, setDisplayName] = useState('');
+  const [tiers, setTiers] = useState([]);
+  const [unlockedTier, setUnlockedTier] = useState(null);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizedData, setFinalizedData] = useState(null);
   const anchorPopupRef = useRef(null);
 
   const modalRef = useRef(null);
@@ -448,6 +452,49 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
     }
   }
 
+  async function startFinalizationPolling(txHash) {
+    setFinalizing(true);
+    let attempts = 0;
+    const maxAttempts = 15;
+    const interval = 2000;
+
+    const poll = async () => {
+      try {
+        const data = await api.getContributionFinalization(txHash, token);
+        if (data.finalization_status === 'finalized') {
+          setFinalizedData(data);
+          setFinalizing(false);
+          setPhase('success');
+          onSuccess();
+          return;
+        }
+        if (data.finalization_status === 'failed') {
+          setFinalizing(false);
+          setPhase('success'); // Still show success for submission, but maybe a note
+          onSuccess();
+          return;
+        }
+      } catch (err) {
+        console.error('Finalization poll error', err);
+      }
+
+      attempts += 1;
+      if (attempts < maxAttempts) {
+        setTimeout(poll, interval);
+      } else {
+        setFinalizing(false);
+        setPhase('success');
+        onSuccess();
+      }
+    };
+
+    setTimeout(poll, interval);
+  }
+
+  const qualifyingTier = [...tiers]
+    .sort((a, b) => Number(b.min_amount) - Number(a.min_amount))
+    .find((t) => Number(amount) >= Number(t.min_amount) && (t.limit === null || t.claimed_count < t.limit));
+
   function handleClose() {
     if (anchorPopupRef.current && !anchorPopupRef.current.closed) {
       anchorPopupRef.current.close();
@@ -709,18 +756,68 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
                 </div>
               )}
 
-              {feeBps > 0 && destAmount && Number(destAmount) > 0 && (
-                <div className="alert alert--info" style={{ marginTop: '0.85rem', fontSize: '0.875rem' }} role="status">
-                  {(() => {
-                    const feeAmt = (Number(destAmount) * feeBps / 10000).toFixed(7);
-                    const netAmt = (Number(destAmount) - Number(feeAmt)).toFixed(7);
-                    return (
-                      <>
-                        <strong>Platform fee:</strong> {feeBps / 100}% = {feeAmt} {campaign.asset_type}
-                        {' '}— campaign receives <strong>{netAmt} {campaign.asset_type}</strong>
-                      </>
-                    );
-                  })()}
+{qualifyingTier && (
+  <div style={{ marginTop: "0.85rem" }}>
+    <div
+      style={{
+        background: "#f5f3ff",
+        border: "1px solid #ddd6fe",
+        borderRadius: "8px",
+        padding: "0.75rem",
+        display: "flex",
+        alignItems: "center",
+        gap: "0.75rem",
+      }}
+    >
+      <div style={{ fontSize: "1.25rem" }}>🎁</div>
+      <div>
+        <div
+          style={{
+            fontSize: "0.75rem",
+            fontWeight: 700,
+            color: "#7c3aed",
+            textTransform: "uppercase",
+            letterSpacing: "0.025em",
+          }}
+        >
+          Unlocked Reward
+        </div>
+        <div
+          style={{
+            fontWeight: 700,
+            fontSize: "0.95rem",
+            color: "#1e1b4b",
+          }}
+        >
+          {qualifyingTier.title}
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
+{feeBps > 0 && destAmount && Number(destAmount) > 0 && (
+  <div
+    className="alert alert--info"
+    style={{ marginTop: "0.85rem", fontSize: "0.875rem" }}
+    role="status"
+  >
+    {(() => {
+      const feeAmt = (Number(destAmount) * feeBps / 10000).toFixed(7);
+      const netAmt = (Number(destAmount) - Number(feeAmt)).toFixed(7);
+
+      return (
+        <>
+          <strong>Platform fee:</strong> {feeBps / 100}% = {feeAmt}{" "}
+          {campaign.asset_type} — campaign receives{" "}
+          <strong>
+            {netAmt} {campaign.asset_type}
+          </strong>
+        </>
+      );
+    })()}
+  </div>
+)}
                 </div>
               )}
 
@@ -825,11 +922,22 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
         ) : (
           <div>
             <h2 id="contribute-title" style={styles.title}>
-              Payment submitted
+              Support Confirmed!
             </h2>
             <p className="alert alert--success" style={{ marginBottom: '1rem' }} role="status">
-              Your contribution is on its way. It usually confirms in a few seconds on Stellar.
+              Your contribution of <strong>{amount} {campaign.asset_type}</strong> has been successfully processed.
             </p>
+
+            {finalizedData?.contribution?.reward && (
+              <div style={{ marginBottom: '1.25rem', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '12px', padding: '1.25rem', textAlign: 'center' }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🎉</div>
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Reward Unlocked</div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#14532d' }}>{finalizedData.contribution.reward.title}</div>
+                <p style={{ fontSize: '0.9rem', color: '#166534', marginTop: '0.5rem', lineHeight: 1.4 }}>
+                  {finalizedData.contribution.reward.description}
+                </p>
+              </div>
+            )}
             {result?.tx_hash && (
               <p style={{ fontSize: '0.875rem', marginBottom: '0.75rem', wordBreak: 'break-all' }}>
                 <strong>Transaction</strong>{' '}
