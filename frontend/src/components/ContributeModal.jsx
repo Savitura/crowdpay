@@ -8,7 +8,6 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { stellarExpertTxUrl } from '../config/stellar';
-import { isConnected, getPublicKey, signTransaction } from '@stellar/freighter-api';
 
 const SEND_OPTIONS = [
   { value: 'XLM', label: 'XLM', hint: 'Native Stellar' },
@@ -45,7 +44,7 @@ function friendlyFreighterError(err, fallback) {
 }
 
 export default function ContributeModal({ campaign, onClose, onSuccess, guestFreighterMode = false }) {
-  const { token } = useAuth();
+  const { user, token } = useAuth();
   const [amount, setAmount] = useState('');
   const [sendAsset, setSendAsset] = useState(campaign.asset_type);
   const [paymentMethod, setPaymentMethod] = useState(guestFreighterMode ? 'freighter' : 'custodial');
@@ -77,27 +76,13 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
 
   const modalRef = useRef(null);
 
-  useEffect(() => {
-    if (campaign?.id) {
-      api.getContributions(campaign.id)
-        .then((data) => setExistingContributions(data?.contributions || []))
-        .catch(() => setExistingContributions([]));
-      api.getCampaignTiers(campaign.id)
-        .then(setTiers)
-        .catch(() => setTiers([]));
-    }
-  }, [campaign?.id]);
 
   const selectedAnchor = anchorInfo.anchors.find((anchor) => anchor.id === selectedAnchorId) || null;
   const effectiveSendAsset =
     paymentMethod === 'anchor' ? selectedAnchor?.asset?.code || campaign.asset_type : sendAsset;
   const isPathPayment = effectiveSendAsset !== campaign.asset_type;
   const destAmount = amount.trim();
-  const effectiveSendAsset = paymentMethod === 'anchor' ? selectedAnchorId
-    ? anchorInfo.anchors.find((a) => a.id === selectedAnchorId)?.asset?.code
-    : undefined
-    : sendAsset;
-  const selectedAnchor = anchorInfo.anchors.find((a) => a.id === selectedAnchorId) || null;
+
 
   // Fetch anchor info and existing contributions on mount
   useEffect(() => {
@@ -107,7 +92,7 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
 
   // Check Freighter availability
   useEffect(() => {
-    isConnected().then((res) => {
+    isFreighterConnected().then((res) => {
       const connected = res?.isConnected ?? res;
       setFreighterAvailable(!!connected);
       setFreighterChecked(true);
@@ -379,49 +364,6 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
     });
   }
 
-  async function submitWithFreighter() {
-    const connected = await isConnected().then((r) => r?.isConnected ?? r).catch(() => false);
-    if (!connected) throw new Error('Freighter is not installed or not connected.');
-
-    const pkResult = await getPublicKey();
-    const senderPublicKey = pkResult?.publicKey ?? pkResult;
-    if (!senderPublicKey) throw new Error('Could not get public key from Freighter.');
-
-    setLoadingLabel('Building transaction…');
-    const { unsigned_xdr, network_name } = await api.buildContributionXdr({
-      campaign_id: campaign.id,
-      amount: destAmount,
-      send_asset: effectiveSendAsset,
-      sender_public_key: senderPublicKey,
-    });
-
-    setLoadingLabel('Waiting for Freighter signature…');
-    const signResult = await signTransaction(unsigned_xdr, { network: network_name });
-    const signedXdr = signResult?.signedTransaction ?? signResult;
-    if (!signedXdr) throw new Error('Freighter did not return a signed transaction.');
-
-    setLoadingLabel('Submitting…');
-    return api.guestContribute({
-      campaign_id: campaign.id,
-      sender_public_key: senderPublicKey,
-      signed_xdr: signedXdr,
-      unsigned_xdr,
-    });
-  }
-
-  async function submitWithAnchor() {
-    if (!selectedAnchorId) throw new Error('Please select a deposit partner.');
-    const session = await api.startAnchorDeposit({
-      campaign_id: campaign.id,
-      amount: destAmount,
-      anchor_id: selectedAnchorId,
-    });
-    setAnchorSession(session);
-    setPhase('anchor');
-    if (session.interactive_url) {
-      anchorPopupRef.current = window.open(session.interactive_url, '_blank', 'noopener,noreferrer,width=600,height=700');
-    }
-  }
 
   async function handleSubmit(e) {
     e.preventDefault();

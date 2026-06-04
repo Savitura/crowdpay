@@ -207,6 +207,81 @@ router.delete('/campaigns/:id', async (req, res) => {
 });
 
 /**
+ * PATCH /api/admin/campaigns/:id/feature
+ * Mark a campaign as featured
+ */
+router.patch('/campaigns/:id/feature', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { note } = req.body;
+
+    const { rows: campaignRows } = await db.query(
+      'SELECT id, status FROM campaigns WHERE id = $1 AND deleted_at IS NULL',
+      [id]
+    );
+
+    if (!campaignRows.length) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const { rows: updated } = await db.query(
+      `UPDATE campaigns 
+       SET featured = true, featured_at = NOW(), featured_note = $1 
+       WHERE id = $2 RETURNING id, title, featured, featured_at, featured_note`,
+      [note || null, id]
+    );
+
+    await logAdminAction(req.user.userId, 'feature', 'campaign', id, { note });
+
+    logger.info('Campaign featured', { campaignId: id, adminId: req.user.userId });
+    cache.invalidate(`campaigns:id:${id}`);
+    cache.invalidatePrefix('campaigns:list:');
+    cache.invalidate('campaigns:featured');
+    res.json({ message: 'Campaign featured', campaign: updated[0] });
+  } catch (err) {
+    logger.error('Error featuring campaign', { error: err.message, campaignId: req.params.id });
+    res.status(500).json({ error: 'Failed to feature campaign' });
+  }
+});
+
+/**
+ * PATCH /api/admin/campaigns/:id/unfeature
+ * Remove featured status from a campaign
+ */
+router.patch('/campaigns/:id/unfeature', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { rows: campaignRows } = await db.query(
+      'SELECT id FROM campaigns WHERE id = $1 AND deleted_at IS NULL',
+      [id]
+    );
+
+    if (!campaignRows.length) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const { rows: updated } = await db.query(
+      `UPDATE campaigns 
+       SET featured = false, featured_at = NULL, featured_note = NULL 
+       WHERE id = $1 RETURNING id, title, featured`,
+      [id]
+    );
+
+    await logAdminAction(req.user.userId, 'unfeature', 'campaign', id, {});
+
+    logger.info('Campaign unfeatured', { campaignId: id, adminId: req.user.userId });
+    cache.invalidate(`campaigns:id:${id}`);
+    cache.invalidatePrefix('campaigns:list:');
+    cache.invalidate('campaigns:featured');
+    res.json({ message: 'Campaign unfeatured', campaign: updated[0] });
+  } catch (err) {
+    logger.error('Error unfeaturing campaign', { error: err.message, campaignId: req.params.id });
+    res.status(500).json({ error: 'Failed to unfeature campaign' });
+  }
+});
+
+/**
  * GET /api/admin/users
  * List all users with optional filtering
  */

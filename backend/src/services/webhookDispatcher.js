@@ -169,12 +169,6 @@ async function processDueRetries() {
   }
 }
 
-function startWebhookRetryPoller() {
-  setInterval(() => {
-    processDueRetries().catch((e) => console.error('[webhooks] poller:', e.message));
-  }, 5000);
-}
-
 /** Queue outbound webhook deliveries for campaign webhooks */
 async function emitWebhookEventForCampaign(campaignId, eventType, payload) {
   if (!campaignId) return;

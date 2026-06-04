@@ -7,6 +7,7 @@ Sentry.init({
   environment: process.env.NODE_ENV || 'development',
   tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
   enabled: !!process.env.SENTRY_DSN,
+  integrations: [Sentry.expressIntegration()],
 });
 
 const path = require('path');
@@ -22,9 +23,11 @@ const { startLedgerMonitor, getLedgerStreamHealth } = require('./services/ledger
 const { refreshActiveCampaignStatuses } = require('./services/campaignStatusService');
 const { sendAlert } = require('./services/alerting');
 const { assertNoLegacyPlaintextUserWalletSecrets } = require('./services/walletSecrets');
+const db = require('./config/database');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsdoc = require('swagger-jsdoc');
 const rateLimit = require('express-rate-limit');
+const db = require('./config/database');
 
 const app = express();
 
@@ -37,8 +40,7 @@ app.use(
 );
 app.use(express.json({ limit: '50kb' }));
 app.use(cookieParser());
-app.use(Sentry.Handlers.requestHandler());
-app.use(Sentry.Handlers.tracingHandler());
+app.use(Sentry.sentryRequestMiddleware ? Sentry.sentryRequestMiddleware() : (req, res, next) => next());
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(normalizeErrorResponse);
@@ -104,7 +106,21 @@ app.use('/api/milestones', require('./routes/milestones'));
 app.use('/api', require('./routes/disputes'));
 app.use('/api/notifications', require('./routes/notifications'));
 
-app.get('/health', (_, res) => res.json({ status: 'ok' }));
+app.get('/health', async (_, res) => {
+  try {
+    await db.query('SELECT 1');
+    res.json({
+      status: 'ok',
+      db: {
+        total: db.totalCount,
+        idle: db.idleCount,
+        waiting: db.waitingCount,
+      },
+    });
+  } catch (err) {
+    res.status(503).json({ status: 'error', error: err.message });
+  }
+});
 app.get('/api/config', (_, res) =>
   res.json({ platform_fee_bps: parseInt(process.env.PLATFORM_FEE_BPS || '0', 10) })
 );
@@ -161,7 +177,7 @@ if (process.env.SERVE_FRONTEND === 'true') {
   });
 }
 
-app.use(Sentry.Handlers.errorHandler());
+app.use(Sentry.expressErrorHandler());
 app.use(errorHandler);
 
 const { startWebhookRetryPoller } = require('./services/webhookDispatcher');
@@ -210,3 +226,5 @@ bootstrap().catch((err) => {
   sendAlert('Backend bootstrap failed', { error: err.message });
   process.exit(1);
 });
+
+module.exports = app;

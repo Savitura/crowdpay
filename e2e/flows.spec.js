@@ -11,7 +11,7 @@ test.describe('Contributor journey', () => {
     await page.getByPlaceholder('Full name').fill('E2E Contributor');
     await page.getByPlaceholder('Email').fill(email);
     await page.getByPlaceholder('Password').fill('Password1');
-    await page.getByRole('button', { name: /sign up/i }).click();
+    await page.getByTestId('register-submit').click();
 
     await expect(page).toHaveURL(/\/($|\?)/);
     await expect(page.getByText(/campaign/i).first()).toBeVisible({ timeout: 15_000 });

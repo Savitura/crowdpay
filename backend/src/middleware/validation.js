@@ -153,7 +153,7 @@ const createCampaignValidation = [
   body('milestones')
     .optional({ nullable: true })
     .custom((value) => {
-      if (value == null) return true;
+      if (value == null) return true; // eslint-disable-line eqeqeq
       if (!Array.isArray(value)) throw new Error('Milestones must be an array');
       if (value.length > 10) throw new Error('Campaigns can define at most 10 milestones');
       for (const [index, milestone] of value.entries()) {

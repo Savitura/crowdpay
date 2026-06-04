@@ -95,7 +95,7 @@ router.post('/', requireAuth, async (req, res) => {
     sort_order: sortOrder,
   } = req.body || {};
 
-  if (!campaignId || !title || releasePercentage == null) {
+  if (!campaignId || !title || releasePercentage == null) { // eslint-disable-line eqeqeq
     return res.status(400).json({ error: 'campaign_id, title and release_percentage are required' });
   }
 

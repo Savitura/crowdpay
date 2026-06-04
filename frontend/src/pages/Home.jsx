@@ -52,6 +52,7 @@ export default function Home() {
   const [searchInput, setSearchInput] = useState(() => searchParams.get('search') || '');
   const [sort, setSort] = useState(() => searchParams.get('sort') || 'newest');
   const [categoryCounts, setCategoryCounts] = useState([]);
+  const [featured, setFeatured] = useState([]);
 
   const search = searchParams.get('search') || '';
   const status = searchParams.get('status') || '';
@@ -69,7 +70,6 @@ export default function Home() {
     setFilters({ sort: newSort });
   };
   const category = searchParams.get('category') || '';
-  const sort = searchParams.get('sort') || 'newest';
 
   const hasActiveFilters =
     Boolean(search.trim()) || Boolean(asset) || Boolean(status) || Boolean(category) || sort !== 'newest';
@@ -79,6 +79,7 @@ export default function Home() {
       setWelcomeNewUser(true);
     }
     api.getCampaignCategories().then(setCategoryCounts).catch(() => {});
+    api.getFeaturedCampaigns().then(setFeatured).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -218,6 +219,17 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {featured.length > 0 && (
+        <section style={{ marginBottom: '2.5rem' }}>
+          <h2 style={styles.sectionTitle}>⭐️ Featured campaigns</h2>
+          <div style={{ ...styles.grid, gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))' }}>
+            {featured.map((c) => (
+              <CampaignCard key={c.id} campaign={c} featured />
+            ))}
+          </div>
+        </section>
+      )}
 
       <div style={styles.filterBar}>
         <label style={styles.filterItem}>

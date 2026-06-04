@@ -37,7 +37,7 @@ const CATEGORY_LABELS = {
   other: 'Other',
 };
 
-export default function CampaignCard({ campaign }) {
+export default function CampaignCard({ campaign, featured }) {
   const { t } = useTranslation();
   const pct = Math.min(100, (campaign.raised_amount / campaign.target_amount) * 100).toFixed(1);
   const fillColor = progressColor(parseFloat(pct), campaign.status);
@@ -74,10 +74,17 @@ export default function CampaignCard({ campaign }) {
             }}
           >
             <span style={styles.asset}>{campaign.asset_type}</span>
+            {featured && (
+              <span style={{ ...styles.asset, background: '#fef08a', color: '#854d0e', border: '1px solid #fde047' }}>
+                ⭐️ Featured
+              </span>
+            )}
             <CampaignStatusBadge status={campaign.status} />
             {campaign.recentContributions > 0 && (
               <span style={styles.trending}>
                 {campaign.recentContributions} contribution{campaign.recentContributions > 1 ? 's' : ''} in 48h
+              </span>
+            )}
             {campaign.category && (
               <span style={styles.categoryBadge}>
                 {CATEGORY_LABELS[campaign.category] || campaign.category}
@@ -95,6 +102,11 @@ export default function CampaignCard({ campaign }) {
           {campaign.description?.slice(0, 100)}
           {campaign.description?.length > 100 ? '...' : ''}
         </p>
+        {featured && campaign.featured_note && (
+          <p style={{ ...styles.desc, fontStyle: 'italic', color: '#854d0e', background: '#fef9c3', padding: '0.5rem', borderRadius: '4px', borderLeft: '4px solid #fde047' }}>
+            "{campaign.featured_note}"
+          </p>
+        )}
         <div
           role="progressbar"
           aria-valuenow={Number(pct)}

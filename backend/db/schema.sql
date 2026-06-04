@@ -45,6 +45,9 @@ CREATE TABLE campaigns (
   min_contribution    NUMERIC(20, 7),
   max_contribution    NUMERIC(20, 7),
   max_per_user        NUMERIC(20, 7),
+  featured            BOOLEAN DEFAULT FALSE,
+  featured_at         TIMESTAMPTZ,
+  featured_note       TEXT,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE TABLE IF NOT EXISTS campaign_updates (
@@ -124,6 +127,7 @@ CREATE UNIQUE INDEX contributions_anchor_transaction_idx
 CREATE INDEX ON campaigns (status);
 CREATE INDEX ON campaigns (creator_id);
 CREATE INDEX ON campaigns (category);
+CREATE INDEX ON campaigns (featured) WHERE featured = TRUE;
 CREATE UNIQUE INDEX users_kyc_provider_reference_idx
   ON users (kyc_provider_reference)
   WHERE kyc_provider_reference IS NOT NULL;

@@ -59,6 +59,7 @@ describe('Register', () => {
     await user.type(screen.getByPlaceholderText('Full name'), 'Test');
     await user.type(screen.getByPlaceholderText('Email'), 'bad');
     await user.type(screen.getByPlaceholderText('Password'), 'Password1');
+    await user.type(screen.getByLabelText(/Confirm password/i), 'Password1');
     await user.click(screen.getByRole('button', { name: /sign up/i }));
     expect(screen.getByText(/valid email/i)).toBeInTheDocument();
   });
@@ -77,6 +78,7 @@ describe('Register', () => {
     await user.type(screen.getByPlaceholderText('Full name'), 'New User');
     await user.type(screen.getByPlaceholderText('Email'), 'new@example.com');
     await user.type(screen.getByPlaceholderText('Password'), 'Password1');
+    await user.type(screen.getByLabelText(/Confirm password/i), 'Password1');
     await user.click(screen.getByRole('button', { name: /sign up/i }));
     await waitFor(() => {
       expect(api.register).toHaveBeenCalledWith(

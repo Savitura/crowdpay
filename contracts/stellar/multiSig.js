@@ -29,6 +29,9 @@ const {
   Horizon,
 } = require('@stellar/stellar-sdk');
 
+// Authoritative values live in backend/src/config/constants.js
+const TX_TIMEOUT_WITHDRAWAL_S = 300; // 5 minutes for standalone CLI script; backend uses 7-day TX_TIMEOUT_WITHDRAWAL_S
+
 const server = new Horizon.Server(
   process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org'
 );
@@ -43,7 +46,7 @@ async function buildWithdrawal(walletPublicKey, destPublicKey, amount, assetCode
     .addOperation(
       Operation.payment({ destination: destPublicKey, asset, amount: String(amount) })
     )
-    .setTimeout(300)
+    .setTimeout(TX_TIMEOUT_WITHDRAWAL_S)
     .build();
 
   const xdr = tx.toXDR();

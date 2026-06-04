@@ -210,6 +210,7 @@ export const api = {
   startKyc: () => request("POST", "/users/me/kyc/start"),
 
   getMyCampaigns: () => request("GET", "/campaigns/mine"),
+  getFeaturedCampaigns: () => request("GET", "/campaigns/featured"),
   getCampaigns: (options = {}) =>
     request("GET", "/campaigns", null, { query: options }),
   getCampaign: (id) => request("GET", `/campaigns/${id}`),
@@ -280,26 +281,6 @@ export const api = {
   initiateRefund: (id) => request('POST', `/campaigns/${id}/refund/initiate`, {}),
   approveRefundCreator: (id, body) => request('POST', `/campaigns/${id}/refund/approve/creator`, body || {}),
   approveRefundPlatform: (id) => request('POST', `/campaigns/${id}/refund/approve/platform`, {}),
-    request("GET", `/contributions/finalization/${txHash}`),
-
-  getMilestones: (campaignId) =>
-    request("GET", `/campaigns/${campaignId}/milestones`),
-  setCampaignMilestones: (campaignId, milestones) =>
-    request("POST", `/campaigns/${campaignId}/milestones`, { milestones }),
-  submitMilestoneEvidence: (id, body) =>
-    request("POST", `/milestones/${id}/submit`, body),
-  approveMilestone: (id, body) =>
-    request("POST", `/milestones/${id}/release`, body || {}),
-  rejectMilestone: (id, body) =>
-    request("POST", `/milestones/${id}/reject`, body || {}),
-
-  getAnchorInfo: () => request("GET", "/anchor/info"),
-  startAnchorDeposit: (body) => request("POST", "/anchor/deposits/start", body),
-  getAnchorDepositStatus: (id) => request("GET", `/anchor/deposits/${id}`),
-
-  failExpiredCampaigns: () => request("POST", "/campaigns/cron/fail-expired"),
-  triggerCampaignRefunds: (campaignId) =>
-    request("POST", `/campaigns/${campaignId}/trigger-refunds`),
 
   getWithdrawalCapabilities: () => request("GET", "/withdrawals/capabilities"),
   listWithdrawals: (campaignId) =>
@@ -331,6 +312,8 @@ export const api = {
   updateCampaignStatus: (id, status) => request('PATCH', `/admin/campaigns/${id}/status`, { status }),
   adminSuspendCampaign: (id, body) => request('PATCH', `/admin/campaigns/${id}/suspend`, body),
   adminRestoreCampaign: (id) => request('PATCH', `/admin/campaigns/${id}/restore`, {}),
+  adminFeatureCampaign: (id, body) => request('PATCH', `/admin/campaigns/${id}/feature`, body),
+  adminUnfeatureCampaign: (id) => request('PATCH', `/admin/campaigns/${id}/unfeature`, {}),
   adminDeleteCampaign: (id, body) => request('DELETE', `/admin/campaigns/${id}`, body),
   adminBanUser: (id, body) => request('PATCH', `/admin/users/${id}/ban`, body),
   adminUnbanUser: (id) => request('PATCH', `/admin/users/${id}/unban`, {}),

@@ -103,6 +103,90 @@ function DisputeQueue() {
   );
 }
 
+function CampaignsQueue() {
+  const [campaigns, setCampaigns] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  function load() {
+    api.getAdminCampaigns()
+      .then(setCampaigns)
+      .finally(() => setLoading(false));
+  }
+
+  async function feature(id) {
+    const note = window.prompt('Featured note (optional):', '');
+    if (note === null) return;
+    try {
+      await api.adminFeatureCampaign(id, { note });
+      load();
+    } catch (err) {
+      alert(err.message || 'Could not feature campaign');
+    }
+  }
+
+  async function unfeature(id) {
+    if (!window.confirm('Remove from featured?')) return;
+    try {
+      await api.adminUnfeatureCampaign(id);
+      load();
+    } catch (err) {
+      alert(err.message || 'Could not unfeature campaign');
+    }
+  }
+
+  if (loading) return <p style={{ color: 'var(--color-text-hint)' }}>Loading campaigns…</p>;
+
+  return (
+    <div style={{ display: 'grid', gap: '0.9rem', marginBottom: '2.5rem' }}>
+      {campaigns.map((c) => (
+        <div
+          key={c.id}
+          style={{
+            border: '1px solid var(--color-border-light)',
+            borderRadius: '12px',
+            padding: '1rem',
+            background: 'var(--color-bg)',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <strong>{c.title}</strong>
+              <span style={{ marginLeft: '0.5rem', fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>
+                #{c.id}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                onClick={() => feature(c.id)}
+                style={{
+                  fontSize: '0.75rem', padding: '0.25rem 0.7rem', borderRadius: '6px',
+                  border: '1px solid #fde047', background: '#fef9c3', color: '#854d0e', cursor: 'pointer'
+                }}
+              >
+                ⭐️ Feature
+              </button>
+              <button
+                onClick={() => unfeature(c.id)}
+                style={{
+                  fontSize: '0.75rem', padding: '0.25rem 0.7rem', borderRadius: '6px',
+                  border: '1px solid var(--color-border-light)', background: 'var(--color-bg-secondary)', cursor: 'pointer'
+                }}
+              >
+                Unfeature
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
 export default function AdminDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -116,7 +200,11 @@ export default function AdminDashboard() {
   return (
     <div style={{ maxWidth: '860px', margin: '2rem auto', padding: '0 1rem' }}>
       <h1 style={{ marginBottom: '1.5rem' }}>Admin Dashboard</h1>
-      <h2 style={{ marginBottom: '1rem' }}>Dispute Queue</h2>
+      
+      <h2 style={{ marginBottom: '1rem' }}>Campaigns</h2>
+      <CampaignsQueue />
+
+      <h2 style={{ marginBottom: '1rem', marginTop: '2rem' }}>Dispute Queue</h2>
       <DisputeQueue />
     </div>
   );

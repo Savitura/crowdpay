@@ -62,6 +62,7 @@ describe('CampaignCard', () => {
   it('does not render trending badge when recentContributions is 0 or missing', () => {
     renderCard({ ...baseCampaign });
     expect(screen.queryByText(/in 48h/)).toBeNull();
+  });
   it('shows category chip when category is present', () => {
     renderCard({ ...baseCampaign, category: 'technology' });
     expect(screen.getByText('Technology')).toBeInTheDocument();

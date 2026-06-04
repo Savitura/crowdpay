@@ -206,7 +206,7 @@ export default function Register() {
           </div>
         )}
         {error && <p style={{ color: 'var(--color-status-error)', fontSize: '0.875rem' }}>{error}</p>}
-        <button type="submit" className="btn-primary" disabled={loading} style={{ padding: '0.8rem' }}>
+        <button type="submit" className="btn-primary" data-testid="register-submit" disabled={loading} style={{ padding: '0.8rem' }}>
           {loading ? t('register.loading') : t('common.signUp')}
         </button>
       </form>
