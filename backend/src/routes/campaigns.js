@@ -8,12 +8,19 @@ const {
   getCampaignBalance,
   getSupportedAssetCodes,
 } = require('../services/stellarService');
+const { Keypair } = require('@stellar/stellar-sdk');
 const { encryptSecret } = require('../services/walletService');
 const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../services/ledgerMonitor');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
 const { refreshCampaignStatus, refreshActiveCampaignStatuses } = require('../services/campaignStatusService');
 const { queueFailedCampaignRefunds } = require('../services/campaignStatusActions');
-const { invokeContract, encodeMilestone, nativeToScVal } = require('../services/sorobanService');
+const {
+  deployCampaignContracts,
+  invokeContract,
+  encodeMilestone,
+  nativeToScVal,
+  scvAddressFromString,
+} = require('../services/sorobanService');
 const { sendEmail } = require('../services/emailService');
 const { uploadCampaignCoverImage } = require('../services/storage');
 const { isKycRequiredForCampaigns } = require('../services/kycProvider');
@@ -664,9 +671,28 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
   // 1. Create the on-chain campaign wallet
   const wallet = await createCampaignWallet(creatorPublicKey);
 
-  // 2. Deploy/Instantiate Soroban Contracts (Mocking IDs for now, but preparing initialization)
-  const escrowContractId = "C" + crypto.randomBytes(24).toString('hex').toUpperCase();
-  const milestonesContractId = "C" + crypto.randomBytes(24).toString('hex').toUpperCase();
+  // 2. Deploy Soroban contract instances
+  const platformPublicKey = Keypair.fromSecret(process.env.PLATFORM_SECRET_KEY).publicKey();
+  const platformFeeBps = parseInt(process.env.PLATFORM_FEE_BPS || '0', 10);
+  const deadlineUnix = deadline ? Math.floor(new Date(deadline).getTime() / 1000) : 0;
+
+  // Use a default asset contract address based on asset type. On testnet, the
+  // USDC token contract address may differ from the issuer. We use the issuer
+  // as a reasonable default for v1; production deployments should set
+  // ASSET_CONTRACT_ADDRESS in env and populate it from the Stellar asset contract.
+  const assetContractAddress = process.env.USDC_CONTRACT_ADDRESS || process.env.USDC_ISSUER;
+
+  const { escrowContractId, milestonesContractId } = await deployCampaignContracts({
+    creatorPublicKey,
+    platformPublicKey,
+    campaignId: req.body.title + Date.now(),
+    targetAmount: Math.floor(parseFloat(target_amount) * 10_000_000),
+    deadlineUnix,
+    assetContractAddress,
+    platformFeeBps,
+    milestones: normalizedMilestones,
+    signerSecret: process.env.PLATFORM_SECRET_KEY,
+  });
 
   const client = await db.connect();
   let campaign;
@@ -675,11 +701,11 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
     const { rows } = await client.query(
       `INSERT INTO campaigns
          (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, 
-          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id, platform_fee_bps)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
       [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline, 
-       min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId]
+       min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId, platformFeeBps]
     );
     campaign = rows[0];
 
@@ -704,28 +730,6 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
         ]
       );
     }
-
-    // Soroban Initialization:
-    // In a real scenario, we would call the contracts here.
-    // milestones.initialize(creator, platform, escrow, milestones_vec)
-    /*
-    try {
-      const milestoneScVals = normalizedMilestones.map(m => encodeMilestone(m));
-      await invokeContract({
-        contractId: milestonesContractId,
-        method: 'initialize',
-        args: [
-          nativeToScVal(Address.fromString(creatorPublicKey)),
-          nativeToScVal(Address.fromString(process.env.PLATFORM_PUBLIC_KEY)),
-          nativeToScVal(Address.fromString(escrowContractId)),
-          nativeToScVal(milestoneScVals)
-        ],
-        signerSecret: process.env.PLATFORM_SECRET_KEY
-      });
-    } catch (err) {
-      logger.error('Soroban contract initialization failed', { error: err.message });
-    }
-    */
 
     await client.query('COMMIT');
   } catch (err) {

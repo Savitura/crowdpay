@@ -9,7 +9,7 @@ const {
 } = require('./webhookDispatcher');
 const { buildWithdrawalTransaction } = require('./stellarService');
 const { insertWithdrawalPendingSignatures } = require('./stellarTransactionService');
-const { invokeContract } = require('./sorobanService');
+const { invokeContract, requestRefund: contractRequestRefund } = require('./sorobanService');
 
 function frontendBaseUrl() {
   return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
@@ -271,13 +271,51 @@ async function createFailedNotifications(campaign, contributors) {
  */
 async function queueFailedCampaignRefunds(campaignId, actorUserId) {
   const { rows: campaigns } = await db.query(
-    `SELECT id, wallet_public_key, status, creator_id FROM campaigns WHERE id = $1`,
+    `SELECT id, wallet_public_key, status, creator_id, escrow_contract_id FROM campaigns WHERE id = $1`,
     [campaignId]
   );
   if (!campaigns.length || campaigns[0].status !== 'failed') {
     return { refundsCreated: 0, refunds: [] };
   }
   const campaign = campaigns[0];
+
+  // If an escrow contract is deployed, trigger on-chain refunds first
+  if (campaign.escrow_contract_id && process.env.PLATFORM_SECRET_KEY) {
+    try {
+      const { rows: contributions } = await db.query(
+        `SELECT id, sender_public_key FROM contributions WHERE campaign_id = $1 ORDER BY created_at ASC`,
+        [campaignId]
+      );
+      for (const contribution of contributions) {
+        try {
+          await contractRequestRefund({
+            contractId: campaign.escrow_contract_id,
+            contributorAddress: contribution.sender_public_key,
+            signerSecret: process.env.PLATFORM_SECRET_KEY,
+          });
+          await db.query(
+            `UPDATE contributions SET contract_refunded_at = NOW() WHERE id = $1`,
+            [contribution.id]
+          );
+          logger.info('On-chain refund processed for failed campaign', {
+            campaign_id: campaignId,
+            contribution_id: contribution.id,
+          });
+        } catch (err) {
+          logger.warn('On-chain refund failed for contribution, falling back to Stellar withdrawal', {
+            campaign_id: campaignId,
+            contribution_id: contribution.id,
+            error: err.message,
+          });
+        }
+      }
+    } catch (err) {
+      logger.error('On-chain refund batch failed, falling back to Stellar withdrawals', {
+        campaign_id: campaignId,
+        error: err.message,
+      });
+    }
+  }
 
   const { rows: contributions } = await db.query(
     `SELECT c.*

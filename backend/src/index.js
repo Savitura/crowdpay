@@ -27,7 +27,6 @@ const db = require('./config/database');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsdoc = require('swagger-jsdoc');
 const rateLimit = require('express-rate-limit');
-const db = require('./config/database');
 
 const app = express();
 
