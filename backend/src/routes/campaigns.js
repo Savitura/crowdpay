@@ -31,6 +31,7 @@ const {
   getCampaignsValidation,
   validateRequest,
 } = require('../middleware/validation');
+const asyncHandler = require('../utils/asyncHandler');
 const {
   createCampaignInvite,
   resendCampaignInvite,

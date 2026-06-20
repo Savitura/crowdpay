@@ -333,8 +333,8 @@ test('GET /api/campaigns supports search, asset filter, and sort', async () => {
   assert.equal(response.body.campaigns.length, 1);
   const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
   assert.ok(listQuery);
-  assert.match(listQuery.text, /ILIKE/i);
+  assert.match(listQuery.text, /websearch_to_tsquery/i);
   assert.match(listQuery.text, /raised_amount \/ NULLIF/i);
-  assert.ok(listQuery.params.includes('%solar%'));
+  assert.ok(listQuery.params.includes('solar'));
   assert.ok(listQuery.params.includes('USDC'));
 });

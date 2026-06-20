@@ -559,24 +559,20 @@ router.post('/:id/refund', requireAuth, asyncHandler(async (req, res) => {
     return res.status(403).json({ error: 'You can only refund your own contributions' });
   }
 
-  const stellarTransactionId = await insertContributionSubmitted(null, {
-    txHash,
-    campaignId: prepared.campaign_id,
-    userId: req.user.userId,
-    unsignedXdr: prepared.unsigned_xdr,
-    signedXdr: signed_xdr,
-    metadata: prepared.flow_metadata,
-  });
+  if (contribution.campaign_status !== 'failed') {
+    return res.status(409).json({ error: 'Refunds are only available for failed campaigns' });
+  }
 
-  setImmediate(() => attributeContributionToReferrer(prepared.campaign_id, req).catch(() => {}));
+  if (!contribution.escrow_contract_id) {
+    return res.status(400).json({ error: 'Campaign does not have an escrow contract deployed' });
+  }
 
-  res.status(202).json({
-    tx_hash: txHash,
-    stellar_transaction_id: stellarTransactionId,
-    message: 'Transaction submitted',
-    conversion_quote: prepared.conversion_quote || null,
-  });
-}));
+  try {
+    const result = await contractRequestRefund({
+      contractId: contribution.escrow_contract_id,
+      contributorAddress: contribution.sender_public_key,
+      signerSecret,
+    });
 
     await db.query(
       `UPDATE contributions
@@ -585,92 +581,27 @@ router.post('/:id/refund', requireAuth, asyncHandler(async (req, res) => {
       [result?.toString() || null, contributionId]
     );
 
-    if (
-      campaign.min_contribution &&
-      parseFloat(amount) < parseFloat(campaign.min_contribution)
-    ) {
-      return res.status(400).json({
-        error: `Minimum contribution is ${campaign.min_contribution} ${campaign.asset_type}`,
-      });
-    }
+    logger.info('Contract refund processed', {
+      contributionId,
+      escrowContractId: contribution.escrow_contract_id,
+      result,
+    });
 
-    if (campaign.max_contribution && parseFloat(amount) > parseFloat(campaign.max_contribution)) {
-      return res.status(400).json({
-        error: `Maximum contribution is ${campaign.max_contribution} ${campaign.asset_type}`,
-      });
-    }
-
-    if (campaign.max_per_user) {
-      const { rows: userCapRows } = await db.query(
-        'SELECT COALESCE(SUM(amount), 0) AS total FROM contributions WHERE campaign_id = $1 AND sender_public_key = $2',
-        [campaign_id, contributorPublicKey],
-      );
-      const alreadyContributed = parseFloat(userCapRows[0].total);
-      if (alreadyContributed + parseFloat(amount) > parseFloat(campaign.max_per_user)) {
-        return res.status(400).json({
-          error: `You have already contributed ${alreadyContributed} ${campaign.asset_type}. The per-contributor limit is ${campaign.max_per_user}.`,
-        });
-      }
-    }
-
-    try {
-      const result = await submitCustodialContribution({
-        campaign,
-        campaignId: campaign_id,
-        userId: req.user.userId,
-        walletPublicKey: contributorPublicKey,
-        walletSecretEncrypted: users[0].wallet_secret_encrypted,
-        amount,
-        sendAsset: send_asset,
-        displayName: display_name,
-      });
-      setImmediate(() => attributeContributionToReferrer(campaign_id, req).catch(() => {}));
-      res.status(202).json({
-        tx_hash: result.txHash,
-        stellar_transaction_id: result.stellarTransactionId,
-        message: "Transaction submitted",
-        conversion_quote: result.conversionQuote,
-        ...(result.platform_fee_amount != null
-          ? { platform_fee_amount: result.platform_fee_amount }
-          : {}),
-      });
-    } catch (err) {
-      if (err.statusCode === 422) {
-        return res.status(422).json({ error: err.message });
-      }
-      if (err.statusCode === 502) {
-        logger.error("Stellar transaction submission failed", {
-          campaign_id,
-          error: err.message,
-        });
-        sendAlert("Stellar transaction submission failed", {
-          campaign_id,
-          error: err.message,
-        });
-        return res.status(502).json({
-          error: "Stellar network rejected the transaction",
-          detail: err.message || String(err),
-        });
-      }
-
-      logger.error("Custodial contribution signing failed", {
-        campaign_id,
-        error: err.message,
-      });
-      return res.status(503).json({
-        error:
-          "Wallet setup is still completing; please retry in a few seconds.",
-      });
-    }
-
-    if (Number(campaign.raised_amount) + Number(amount) >= Number(campaign.target_amount)) {
-      sendEmail({
-        to: campaign.creator_email,
-        subject: `Target Reached for ${campaign.title}!`,
-        text: `Congratulations! Your campaign "${campaign.title}" has reached its target of ${campaign.target_amount} ${campaign.asset_type}. You can now start the withdrawal process.`
-      });
-    }
-  }),
-);
+    res.json({
+      message: 'Refund processed via escrow contract',
+      tx_hash: result?.toString() || null,
+    });
+  } catch (err) {
+    logger.error('Contract refund failed', {
+      contributionId,
+      escrowContractId: contribution.escrow_contract_id,
+      error: err.message,
+    });
+    res.status(502).json({
+      error: 'Escrow contract refund failed',
+      detail: err.message,
+    });
+  }
+}));
 
 module.exports = router;
