@@ -88,10 +88,41 @@ const openApiSpec = swaggerJsdoc({
 });
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openApiSpec));
 
+const v1OpenApiSpec = swaggerJsdoc({
+  definition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'CrowdPay Public API',
+      version: '1.0.0',
+      description: 'Versioned public API for third-party integrations',
+    },
+    servers: [{ url: '/api/v1' }, { url: '/v1' }],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'cp_live_…',
+        },
+      },
+    },
+  },
+  apis: ['./src/routes/v1.js'],
+});
+
+const v1Router = require('./routes/v1');
+app.use('/api/v1', v1Router);
+app.use('/v1', v1Router);
+app.get('/api/v1/docs/openapi.json', (_req, res) => res.json(v1OpenApiSpec));
+app.get('/v1/docs/openapi.json', (_req, res) => res.json(v1OpenApiSpec));
+app.use('/api/v1/docs', swaggerUi.serve, swaggerUi.setup(v1OpenApiSpec));
+app.use('/v1/docs', swaggerUi.serve, swaggerUi.setup(v1OpenApiSpec));
+
 app.use('/api/auth', require('./routes/auth'));
 // Backwards/alternate compatibility for docs + clients expecting /api/users/register|login.
 app.use('/api/users', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
+app.use('/api/invites', require('./routes/invites'));
 app.use("/api/campaigns", require("./routes/campaignUpdates"));
 app.use("/api/campaigns", require("./routes/campaigns"));
 app.use('/api/anchor', require('./routes/anchor'));
@@ -99,7 +130,9 @@ app.use('/api/contributions', require('./routes/contributions'));
 app.use('/api/withdrawals', require('./routes/withdrawals'));
 app.use('/api/stellar/transactions', require('./routes/stellarTransactions'));
 app.use('/api/admin', require('./routes/admin'));
-app.use('/api/api-keys', require('./routes/apiKeys'));
+const apiKeysRouter = require('./routes/apiKeys');
+app.use('/api/api-keys', apiKeysRouter);
+app.use('/api/auth/api-keys', apiKeysRouter);
 app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/milestones', require('./routes/milestones'));
 app.use('/api', require('./routes/disputes'));

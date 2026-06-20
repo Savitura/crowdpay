@@ -15,6 +15,8 @@ const {
   finalizeWithdrawalSubmitted,
 } = require('../services/stellarTransactionService');
 const { withDecryptedWalletSecret } = require('../services/walletSecrets');
+const { resolveUserCampaignRole } = require('../services/campaignInviteService');
+const { canSubmitMilestones } = require('../lib/campaignPermissions');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
 const { invokeContract, nativeToScVal } = require('../services/sorobanService');
 const crypto = require('crypto');
@@ -175,7 +177,14 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
   const milestone = milestones[0];
 
   if (milestone.creator_id !== req.user.userId) {
-    return res.status(403).json({ error: 'Only the campaign creator can submit milestone evidence' });
+    const memberRole = await resolveUserCampaignRole(
+      milestone.campaign_id,
+      req.user.userId,
+      req.user.role === 'admin'
+    );
+    if (!canSubmitMilestones(memberRole)) {
+      return res.status(403).json({ error: 'Only campaign owners or managers can submit milestone evidence' });
+    }
   }
   if (!['funded', 'in_progress'].includes(milestone.campaign_status)) {
     return res.status(409).json({ error: `Milestone submission is not available while campaign status is "${milestone.campaign_status}".` });

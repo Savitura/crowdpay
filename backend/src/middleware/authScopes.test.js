@@ -73,3 +73,34 @@ test('full scope allows developer routes', () => {
   const res = mockRes();
   assert.equal(assertApiKeyScopes(req, res), true);
 });
+
+test('read scope allows GET on v1 API', () => {
+  const req = {
+    originalUrl: '/api/v1/campaigns',
+    method: 'GET',
+    auth: { kind: 'api_key', scopes: ['read'] },
+  };
+  const res = mockRes();
+  assert.equal(assertApiKeyScopes(req, res), true);
+});
+
+test('read-only API key cannot POST v1 contributions', () => {
+  const req = {
+    originalUrl: '/api/v1/campaigns/x/contributions',
+    method: 'POST',
+    auth: { kind: 'api_key', scopes: ['read'] },
+  };
+  const res = mockRes();
+  assert.equal(assertApiKeyScopes(req, res), false);
+  assert.equal(res.statusCode, 403);
+});
+
+test('write scope allows POST on v1 API', () => {
+  const req = {
+    originalUrl: '/v1/campaigns/x/contributions',
+    method: 'POST',
+    auth: { kind: 'api_key', scopes: ['read', 'write'] },
+  };
+  const res = mockRes();
+  assert.equal(assertApiKeyScopes(req, res), true);
+});

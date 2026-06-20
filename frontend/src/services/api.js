@@ -213,8 +213,10 @@ export const api = {
   getFeaturedCampaigns: () => request("GET", "/campaigns/featured"),
   getCampaigns: (options = {}) =>
     request("GET", "/campaigns", null, { query: options }),
-  getCampaign: (id) => request("GET", `/campaigns/${id}`),
+  getCampaign: (id, options = {}) => request("GET", `/campaigns/${id}`, null, { query: options }),
   getCampaignAnalytics: (id) => request("GET", `/campaigns/${id}/analytics`),
+  getCampaignAnalyticsContributors: (id) => request("GET", `/campaigns/${id}/analytics/contributors`),
+  getUserDashboardAnalytics: () => request("GET", "/users/me/dashboard/analytics"),
   getCampaignEmbed: (id) => request("GET", `/campaigns/${id}/embed`),
   getCampaignBackers: (id) => request("GET", `/campaigns/${id}/backers`),
   getCampaignBalance: (id) => request("GET", `/campaigns/${id}/balance`),
@@ -233,7 +235,14 @@ export const api = {
   getCampaignMembers: (campaignId) =>
     request("GET", `/campaigns/${campaignId}/members`),
   inviteCampaignMember: (campaignId, body) =>
-    request("POST", `/campaigns/${campaignId}/members`, body),
+    request("POST", `/campaigns/${campaignId}/members/invite`, body),
+  resendCampaignInvite: (campaignId, memberId) =>
+    request("POST", `/campaigns/${campaignId}/members/${memberId}/resend`),
+  cancelCampaignInvite: (campaignId, memberId) =>
+    request("DELETE", `/campaigns/${campaignId}/members/invites/${memberId}`),
+  getInvitePreview: (token) => request("GET", `/invites/${token}`),
+  acceptInviteByToken: (token) =>
+    request("POST", `/invites/${token}/accept`, {}),
   updateCampaignMemberRole: (campaignId, userId, body) =>
     request("PATCH", `/campaigns/${campaignId}/members/${userId}`, body),
   removeCampaignMember: (campaignId, userId) =>
@@ -332,4 +341,7 @@ export const api = {
   getNotifications: () => request('GET', '/notifications'),
   markNotificationRead: (id) => request('PATCH', `/notifications/${id}/read`, {}),
   markAllNotificationsRead: () => request('PATCH', '/notifications/read-all', {}),
+
+  getReferralCode: (campaignId) => request('GET', `/campaigns/${campaignId}/referral`),
+  getReferralLeaderboard: (campaignId) => request('GET', `/campaigns/${campaignId}/referrals`),
 };

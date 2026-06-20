@@ -24,7 +24,16 @@ async function authenticate(req) {
     );
     if (!rows.length) throw new Error('Invalid API key');
     await db.query(`UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`, [rows[0].id]);
-    req.user = { userId: rows[0].user_id };
+    const { rows: userRows } = await db.query(
+      'SELECT id, role, is_admin FROM users WHERE id = $1',
+      [rows[0].user_id]
+    );
+    const user = userRows[0] || {};
+    req.user = {
+      userId: rows[0].user_id,
+      role: user.is_admin ? 'admin' : user.role || 'contributor',
+      is_admin: user.is_admin,
+    };
     req.auth = { kind: 'api_key', apiKeyId: rows[0].id, scopes: rows[0].scopes || [] };
     return;
   }
@@ -81,6 +90,18 @@ function assertApiKeyScopes(req, res) {
 
   const path = req.originalUrl.split('?')[0];
   const method = req.method;
+
+  if (path.startsWith('/api/v1') || path.startsWith('/v1/')) {
+    if (!scopes.includes('read')) {
+      res.status(403).json({ error: 'API key requires read scope' });
+      return false;
+    }
+    if (method !== 'GET' && method !== 'HEAD' && !scopes.includes('write')) {
+      res.status(403).json({ error: 'API key requires write scope' });
+      return false;
+    }
+    return true;
+  }
 
   if (path.startsWith('/api/api-keys') || path.startsWith('/api/webhooks')) {
     if (!scopes.includes('developer')) {

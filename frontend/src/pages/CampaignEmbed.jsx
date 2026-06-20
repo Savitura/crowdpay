@@ -82,7 +82,18 @@ export default function CampaignEmbed() {
     const interval = setInterval(notifyHeight, 500);
 
     return () => clearInterval(interval);
-  }, [campaign]);
+  }, [campaign, loading, error]);
+
+  // Listen for open message from parent
+  useEffect(() => {
+    const handler = (event) => {
+      if (event.data && event.data.type === 'open') {
+        if (onOpenRef) onOpenRef();
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
 
   if (loading) {
     return (

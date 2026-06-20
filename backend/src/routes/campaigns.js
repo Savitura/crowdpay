@@ -31,12 +31,31 @@ const {
   getCampaignsValidation,
   validateRequest,
 } = require('../middleware/validation');
-const asyncHandler = require('../utils/asyncHandler');
+const {
+  createCampaignInvite,
+  resendCampaignInvite,
+  cancelCampaignInvite,
+  acceptCampaignInvite,
+  countAcceptedOwners,
+  resolveUserCampaignRole,
+} = require('../services/campaignInviteService');
+const {
+  isValidRole,
+  canEditCampaignContent,
+  canViewAnalytics,
+  canInviteMembers,
+  canManageMembers,
+  canChangeRoles,
+} = require('../lib/campaignPermissions');
 
 const crypto = require('crypto');
 
 function stripHtml(value = '') {
   return String(value).replace(/<[^>]*>/g, '').trim();
+}
+
+function generateReferralCode() {
+  return crypto.randomBytes(6).toString('base64url').slice(0, 8);
 }
 
 /**
@@ -191,7 +210,7 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
    *                   items:
    *                     type: object
    */
-  const { search, status, asset, sort = 'newest' } = req.query;
+  const { search, status, asset, category, sort = 'newest' } = req.query;
   const limit = Math.min(Number(req.query.limit || 20), 100);
   const offset = Math.max(Number(req.query.offset || 0), 0);
   const filters = [];
@@ -210,12 +229,13 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
     params.push(asset);
     filters.push(`c.asset_type = $${params.length}`);
   }
+  if (category) {
+    params.push(category);
+    filters.push(`c.category = $${params.length}`);
+  }
   if (search) {
-    const escaped = String(search).replace(/[%_\\]/g, '\\$&');
-    params.push(`%${escaped}%`);
-    filters.push(
-      `(c.title ILIKE $${params.length} OR COALESCE(c.description, '') ILIKE $${params.length})`
-    );
+    params.push(search);
+    filters.push(`c.search_vector @@ websearch_to_tsquery('english', $${params.length})`);
   }
 
   const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
@@ -225,6 +245,7 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
 
   const sortExpressions = {
     newest: 'c.created_at DESC',
+    trending: `(SELECT COUNT(*) FROM contributions ctr WHERE ctr.campaign_id = c.id AND ctr.created_at >= NOW() - INTERVAL '48 hours') DESC`,
     ending_soon: 'c.deadline ASC NULLS LAST',
     most_funded: 'c.raised_amount DESC',
     most_backed: '(SELECT COUNT(*) FROM contributions ctr WHERE ctr.campaign_id = c.id) DESC',
@@ -373,6 +394,30 @@ router.get('/:id', asyncHandler(async (req, res) => {
    *       404:
    *         description: Not found
    */
+  const refCode = req.query.ref;
+  if (refCode) {
+    try {
+      const { rows: referralRows } = await db.query(
+        'SELECT id, campaign_id FROM campaign_referrals WHERE referral_code = $1 AND campaign_id = $2',
+        [refCode, req.params.id]
+      );
+      if (referralRows.length) {
+        await db.query(
+          'UPDATE campaign_referrals SET click_count = click_count + 1 WHERE id = $1',
+          [referralRows[0].id]
+        );
+        res.cookie(`cp_ref_${req.params.id}`, refCode, {
+          httpOnly: true,
+          sameSite: 'lax',
+          maxAge: 30 * 24 * 60 * 60 * 1000,
+          path: '/',
+        });
+      }
+    } catch (err) {
+      logger.warn('Referral click tracking failed', { campaign_id: req.params.id, ref: refCode, error: err.message });
+    }
+  }
+
   const query = `
     SELECT *,
            (SELECT COUNT(DISTINCT sender_public_key)::int FROM contributions WHERE campaign_id = $1) AS contributor_count
@@ -393,30 +438,28 @@ router.get('/:id', asyncHandler(async (req, res) => {
   let userRole = null;
 
   const header = req.headers.authorization;
-  if (header && header.startsWith('Bearer ')) {
-    const token = header.slice(7).trim();
-    if (token) {
-      try {
-        const jwt = require('jsonwebtoken');
-        const payload = jwt.verify(token, process.env.JWT_SECRET);
-        if (payload && payload.userId) {
-          if (payload.is_admin) {
-            userRole = 'owner';
-          } else if (campaign.creator_id === payload.userId) {
-            userRole = 'owner';
-          } else {
-            const { rows: memberRows } = await db.query(
-              'SELECT role, accepted_at FROM campaign_members WHERE campaign_id = $1 AND user_id = $2',
-              [campaign.id, payload.userId]
-            );
-            if (memberRows.length && memberRows[0].accepted_at) {
-              userRole = memberRows[0].role;
-            }
-          }
+  const token =
+    req.cookies?.cp_token ||
+    (header && header.startsWith('Bearer ') ? header.slice(7).trim() : null);
+  if (token && !token.startsWith('cp_live_')) {
+    try {
+      const jwt = require('jsonwebtoken');
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      if (payload && payload.userId) {
+        if (payload.is_admin) {
+          userRole = 'owner';
+        } else if (campaign.creator_id === payload.userId) {
+          userRole = 'owner';
+        } else {
+          userRole = await resolveUserCampaignRole(
+            campaign.id,
+            payload.userId,
+            payload.role === 'admin'
+          );
         }
-      } catch (err) {
-        // Ignore invalid token for public route
       }
+    } catch (err) {
+      // Ignore invalid token for public route
     }
   }
 
@@ -766,7 +809,8 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   }
 
   const campaign = campaignRows[0];
-  if (campaign.creator_id !== req.user.userId) {
+  const userRole = await resolveUserCampaignRole(campaignId, req.user.userId, req.user.role === 'admin');
+  if (!canEditCampaignContent(userRole)) {
     return res.status(403).json({ error: 'You do not have permission to edit this campaign' });
   }
 
@@ -851,12 +895,11 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   const setClause = updateParams.map(([field, , placeholder]) => `${field} = ${placeholder}`).join(', ');
   const values = updateParams.map(([, value]) => value);
   values.push(campaignId);
-  values.push(req.user.userId);
 
   const query = `
     UPDATE campaigns
     SET ${setClause}
-    WHERE id = $${paramIndex} AND creator_id = $${paramIndex + 1}
+    WHERE id = $${paramIndex}
     RETURNING *
   `;
 
@@ -871,7 +914,7 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
 router.post(
   '/:id/cover-image',
   requireAuth,
-  requireCampaignMember('owner'),
+  requireCampaignMember('owner', 'editor'),
   (req, res, next) => {
     upload.single('cover_image')(req, res, (err) => {
       if (err) {
@@ -937,59 +980,49 @@ router.post('/:id/updates', requireAuth, requireCampaignMember('owner', 'manager
   res.status(201).json(rows[0]);
 }));
 
-// POST /campaigns/:id/members — owner invites a user by email
-router.post('/:id/members', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+// POST /campaigns/:id/members/invite — owner/manager invites by email (7-day token)
+router.post('/:id/members/invite', requireAuth, requireCampaignMember('owner', 'manager'), asyncHandler(async (req, res) => {
   const { email, role } = req.body;
   if (!email || !role) return res.status(422).json({ error: 'Email and role are required' });
-  if (!['owner', 'manager', 'viewer'].includes(role)) {
-    return res.status(422).json({ error: 'Invalid role. Must be owner, manager, or viewer' });
+  if (!isValidRole(role)) {
+    return res.status(422).json({ error: 'Invalid role. Must be owner, manager, editor, or viewer' });
   }
 
-  const { rows: users } = await db.query('SELECT id FROM users WHERE email = $1', [email.trim()]);
-  const inviteeUserId = users.length ? users[0].id : null;
-
-  const { rows: existing } = await db.query(
-    'SELECT id, accepted_at FROM campaign_members WHERE campaign_id = $1 AND email = $2',
-    [req.params.id, email.trim()]
-  );
-  if (existing.length) {
-    if (existing[0].accepted_at) {
-      return res.status(409).json({ error: 'User is already a member of this campaign' });
-    } else {
-      return res.status(409).json({ error: 'Invitation already sent to this user' });
-    }
-  }
-
-  const inviteToken = crypto.randomBytes(32).toString('hex');
-
-  const { rows: memberRows } = await db.query(
-    `INSERT INTO campaign_members (campaign_id, user_id, email, role, invited_by, invite_token)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, campaign_id, email, role, created_at`,
-    [req.params.id, inviteeUserId, email.trim(), role, req.user.userId, inviteToken]
-  );
-
-  const campaignUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/campaigns/${req.params.id}/invite/${inviteToken}`;
-  try {
-    await sendEmail({
-      to: email.trim(),
-      subject: `Invitation to join campaign team`,
-      text: `You have been invited to join a campaign as a ${role}. Click here to accept: ${campaignUrl}`,
-    });
-  } catch (e) {
-    logger.error('Failed to send invite email', {
-      campaign_id: req.params.id,
-      error: e.message || String(e),
-    });
-  }
-
-  res.status(201).json(memberRows[0]);
+  const { rows: campaignRows } = await db.query('SELECT title FROM campaigns WHERE id = $1', [req.params.id]);
+  const { member } = await createCampaignInvite({
+    campaignId: req.params.id,
+    email,
+    role,
+    invitedByUserId: req.user.userId,
+    campaignTitle: campaignRows[0]?.title,
+  });
+  res.status(201).json(member);
 }));
 
-// GET /campaigns/:id/members — list current team (owner only)
-router.get('/:id/members', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+// POST /campaigns/:id/members — legacy alias for invite
+router.post('/:id/members', requireAuth, requireCampaignMember('owner', 'manager'), asyncHandler(async (req, res) => {
+  const { email, role } = req.body;
+  if (!email || !role) return res.status(422).json({ error: 'Email and role are required' });
+  if (!isValidRole(role)) {
+    return res.status(422).json({ error: 'Invalid role. Must be owner, manager, editor, or viewer' });
+  }
+
+  const { rows: campaignRows } = await db.query('SELECT title FROM campaigns WHERE id = $1', [req.params.id]);
+  const { member } = await createCampaignInvite({
+    campaignId: req.params.id,
+    email,
+    role,
+    invitedByUserId: req.user.userId,
+    campaignTitle: campaignRows[0]?.title,
+  });
+  res.status(201).json(member);
+}));
+
+// GET /campaigns/:id/members — team list (owner/manager)
+router.get('/:id/members', requireAuth, requireCampaignMember('owner', 'manager'), asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `SELECT cm.id, cm.user_id, cm.email, cm.role, cm.accepted_at, cm.created_at,
+            cm.invite_expires_at,
             u.name AS user_name
      FROM campaign_members cm
      LEFT JOIN users u ON u.id = cm.user_id
@@ -1003,14 +1036,14 @@ router.get('/:id/members', requireAuth, requireCampaignMember('owner'), asyncHan
 // PATCH /campaigns/:id/members/:userId — change role (owner only)
 router.patch('/:id/members/:userId', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
   const { role } = req.body;
-  if (!role || !['owner', 'manager', 'viewer'].includes(role)) {
-    return res.status(422).json({ error: 'Invalid role. Must be owner, manager, or viewer' });
+  if (!role || !isValidRole(role)) {
+    return res.status(422).json({ error: 'Invalid role. Must be owner, manager, editor, or viewer' });
   }
 
   const { rows } = await db.query(
     `UPDATE campaign_members
      SET role = $1
-     WHERE campaign_id = $2 AND user_id = $3
+     WHERE campaign_id = $2 AND user_id = $3 AND accepted_at IS NOT NULL
      RETURNING id, campaign_id, user_id, role, accepted_at`,
     [role, req.params.id, req.params.userId]
   );
@@ -1022,31 +1055,56 @@ router.patch('/:id/members/:userId', requireAuth, requireCampaignMember('owner')
   res.json(rows[0]);
 }));
 
-// DELETE /campaigns/:id/members/:userId — remove member or self-leave
+// POST /campaigns/:id/members/:memberId/resend — resend pending invite
+router.post('/:id/members/:memberId/resend', requireAuth, requireCampaignMember('owner', 'manager'), asyncHandler(async (req, res) => {
+  const { rows: campaignRows } = await db.query('SELECT title FROM campaigns WHERE id = $1', [req.params.id]);
+  const { member } = await resendCampaignInvite({
+    memberId: req.params.memberId,
+    campaignId: req.params.id,
+    campaignTitle: campaignRows[0]?.title,
+  });
+  res.json(member);
+}));
+
+// DELETE /campaigns/:id/members/invites/:memberId — cancel pending invite
+router.delete('/:id/members/invites/:memberId', requireAuth, requireCampaignMember('owner', 'manager'), asyncHandler(async (req, res) => {
+  await cancelCampaignInvite({
+    memberId: req.params.memberId,
+    campaignId: req.params.id,
+  });
+  res.json({ cancelled: true });
+}));
+
+// DELETE /campaigns/:id/members/:userId — remove member (owner) or leave team
 router.delete('/:id/members/:userId', requireAuth, asyncHandler(async (req, res) => {
   const memberUserId = req.params.userId;
   const isSelf = String(memberUserId) === String(req.user.userId);
 
-  let isOwner = false;
-  if (req.user.role === 'admin') {
-    isOwner = true;
-  } else {
-    const { rows: ownerRows } = await db.query(
-      `SELECT role, accepted_at FROM campaign_members
-       WHERE campaign_id = $1 AND user_id = $2 AND role = 'owner'`,
-      [req.params.id, req.user.userId]
-    );
-    if (ownerRows.length && ownerRows[0].accepted_at) isOwner = true;
+  const actorRole = await resolveUserCampaignRole(
+    req.params.id,
+    req.user.userId,
+    req.user.role === 'admin'
+  );
 
-    const { rows: creatorRows } = await db.query(
-      `SELECT creator_id FROM campaigns WHERE id = $1`,
-      [req.params.id]
-    );
-    if (creatorRows.length && creatorRows[0].creator_id === req.user.userId) isOwner = true;
+  if (!isSelf && !canManageMembers(actorRole)) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
   }
 
-  if (!isSelf && !isOwner) {
-    return res.status(403).json({ error: 'Insufficient permissions' });
+  const { rows: targetRows } = await db.query(
+    `SELECT role, accepted_at FROM campaign_members
+     WHERE campaign_id = $1 AND user_id = $2`,
+    [req.params.id, memberUserId]
+  );
+
+  if (!targetRows.length) {
+    return res.status(404).json({ error: 'Member not found' });
+  }
+
+  if (targetRows[0].role === 'owner' && targetRows[0].accepted_at) {
+    const ownerCount = await countAcceptedOwners(req.params.id);
+    if (ownerCount <= 1) {
+      return res.status(409).json({ error: 'Cannot remove the last owner from the campaign team' });
+    }
   }
 
   const { rows } = await db.query(
@@ -1056,77 +1114,91 @@ router.delete('/:id/members/:userId', requireAuth, asyncHandler(async (req, res)
     [req.params.id, memberUserId]
   );
 
-  if (!rows.length) {
-    return res.status(404).json({ error: 'Member not found' });
-  }
-
-  res.json({ message: 'Member removed successfully' });
+  res.json({ message: 'Member removed successfully', id: rows[0].id });
 }));
 
-// POST /campaigns/:id/members/accept — accept invitation (token-based)
+// POST /campaigns/:id/members/accept — accept invitation (token in body, legacy)
 router.post('/:id/members/accept', requireAuth, asyncHandler(async (req, res) => {
   const { token: inviteToken } = req.body;
   if (!inviteToken) return res.status(422).json({ error: 'Invitation token is required' });
 
-  const { rows: invites } = await db.query(
-    `SELECT id, accepted_at, email FROM campaign_members
-     WHERE campaign_id = $1 AND invite_token = $2`,
-    [req.params.id, inviteToken]
-  );
-
-  if (!invites.length) {
-    return res.status(404).json({ error: 'Invalid invitation token' });
-  }
-  if (invites[0].accepted_at) {
-    return res.status(409).json({ error: 'Invitation already accepted' });
-  }
-
-  const { rows } = await db.query(
-    `UPDATE campaign_members
-     SET user_id = $1, accepted_at = NOW(), invite_token = NULL
-     WHERE id = $2
-     RETURNING id, campaign_id, user_id, role, accepted_at`,
-    [req.user.userId, invites[0].id]
-  );
-
-  res.json(rows[0]);
+  const { rows: userRows } = await db.query('SELECT email FROM users WHERE id = $1', [req.user.userId]);
+  const member = await acceptCampaignInvite({
+    inviteToken,
+    userId: req.user.userId,
+    userEmail: userRows[0]?.email,
+  });
+  res.json(member);
 }));
 
-// GET /campaigns/:id/analytics — campaign analytics
+const { getCampaignAnalytics, getCampaignContributors } = require('../services/analyticsService');
+
+// GET /campaigns/:id/analytics — full contribution analytics
 router.get('/:id/analytics', asyncHandler(async (req, res) => {
-  const { rows: dailyTotals } = await db.query(`
-    SELECT
-      DATE(created_at) AS day,
-      COUNT(*)          AS contribution_count,
-      SUM(amount)       AS total_amount,
-      asset
-    FROM contributions
-    WHERE campaign_id = $1
-      AND created_at >= NOW() - INTERVAL '30 days'
-    GROUP BY DATE(created_at), asset
-    ORDER BY day ASC
-  `, [req.params.id]);
+  const data = await getCampaignAnalytics(req.params.id);
+  if (!data) return res.status(404).json({ error: 'Campaign not found' });
+  res.json(data);
+}));
 
-  const { rows: assetBreakdown } = await db.query(`
-    SELECT
-      COALESCE(source_asset, asset) AS paid_with,
-      COUNT(*)      AS count,
-      SUM(COALESCE(source_amount, amount)) AS total_sent
-    FROM contributions
-    WHERE campaign_id = $1
-    GROUP BY paid_with
-  `, [req.params.id]);
+// GET /campaigns/:id/analytics/contributors — country breakdown, repeat vs first-time
+router.get('/:id/analytics/contributors', requireAuth, asyncHandler(async (req, res) => {
+  // verify campaign exists and requester is owner or admin
+  const { rows } = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+  if (req.user.role !== 'admin' && rows[0].creator_id !== req.user.userId) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const data = await getCampaignContributors(req.params.id);
+  res.json(data);
+}));
 
-  const { rows: topContributors } = await db.query(`
-    SELECT sender_public_key, SUM(amount) AS total, COUNT(*) AS times
-    FROM contributions
-    WHERE campaign_id = $1
-    GROUP BY sender_public_key
-    ORDER BY total DESC
-    LIMIT 5
-  `, [req.params.id]);
+// GET /campaigns/:id/referral — get or create a referral code for the authenticated user
+router.get('/:id/referral', requireAuth, asyncHandler(async (req, res) => {
+  const { rows: existing } = await db.query(
+    `SELECT cr.id, cr.referral_code, cr.click_count, cr.contribution_count
+     FROM campaign_referrals cr
+     WHERE cr.campaign_id = $1 AND cr.referrer_user_id = $2`,
+    [req.params.id, req.user.userId]
+  );
 
-  res.json({ dailyTotals, assetBreakdown, topContributors });
+  if (existing.length) {
+    const row = existing[0];
+    return res.json({
+      referral_code: row.referral_code,
+      referral_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/campaigns/${req.params.id}?ref=${row.referral_code}`,
+      click_count: row.click_count,
+      contribution_count: row.contribution_count,
+    });
+  }
+
+  const code = generateReferralCode();
+  const { rows: inserted } = await db.query(
+    `INSERT INTO campaign_referrals (campaign_id, referrer_user_id, referral_code)
+     VALUES ($1, $2, $3)
+     RETURNING referral_code, click_count, contribution_count`,
+    [req.params.id, req.user.userId, code]
+  );
+  const row = inserted[0];
+  res.status(201).json({
+    referral_code: row.referral_code,
+    referral_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/campaigns/${req.params.id}?ref=${row.referral_code}`,
+    click_count: row.click_count,
+    contribution_count: row.contribution_count,
+  });
+}));
+
+// GET /campaigns/:id/referrals — creator only; list top referrers
+router.get('/:id/referrals', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT cr.referral_code, cr.click_count, cr.contribution_count, cr.created_at,
+            u.name AS referrer_name, u.id AS referrer_id
+     FROM campaign_referrals cr
+     JOIN users u ON u.id = cr.referrer_user_id
+     WHERE cr.campaign_id = $1
+     ORDER BY cr.contribution_count DESC, cr.click_count DESC`,
+    [req.params.id]
+  );
+  res.json(rows);
 }));
 
 module.exports = router;
