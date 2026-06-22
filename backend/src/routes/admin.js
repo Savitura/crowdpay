@@ -2,8 +2,12 @@ const router = require('express').Router();
 const db = require('../config/database');
 const logger = require('../config/logger');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
-const { reconcileSingleCampaign } = require('../services/reconciliation');
+const { reconcileSingleCampaign, getRecentReconciliationRuns } = require('../services/reconciliation');
+const { server: horizonServer } = require('../config/stellar');
+const { processDelivery, processCampaignWebhookDelivery } = require('../services/webhookDispatcher');
 const cache = require('../utils/cache');
+
+const VALID_KYC_STATUSES = ['unverified', 'pending', 'verified', 'rejected'];
 
 router.use(requireAuth);
 router.use(requireAdmin);
@@ -548,6 +552,260 @@ router.post('/campaigns/:id/reconcile', async (req, res) => {
     }
     logger.error('Error during manual reconciliation', { error: err.message, campaignId: req.params.id });
     res.status(500).json({ error: 'Failed to reconcile campaign' });
+  }
+});
+
+/**
+ * GET /api/admin/withdrawals
+ * List withdrawal requests across all campaigns for the approval queue.
+ */
+router.get('/withdrawals', async (req, res) => {
+  try {
+    const status = req.query.status || 'pending';
+    const params = [status];
+
+    const { rows } = await db.query(
+      `SELECT wr.id, wr.campaign_id, wr.amount, wr.destination_key, wr.status,
+              wr.creator_signed, wr.platform_signed, wr.denial_reason, wr.created_at,
+              c.title AS campaign_title, c.asset_type,
+              u.id AS requested_by_id, u.name AS requested_by_name, u.email AS requested_by_email
+       FROM withdrawal_requests wr
+       JOIN campaigns c ON c.id = wr.campaign_id
+       JOIN users u ON u.id = wr.requested_by
+       WHERE wr.status = $1
+       ORDER BY wr.created_at ASC`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    logger.error('Error fetching admin withdrawal queue', { error: err.message });
+    res.status(500).json({ error: 'Failed to fetch withdrawal queue' });
+  }
+});
+
+/**
+ * GET /api/admin/users/kyc
+ * List users by KYC status for admin oversight.
+ */
+router.get('/users/kyc', async (req, res) => {
+  try {
+    const { status } = req.query;
+    const params = [];
+    let where = 'WHERE 1=1';
+    if (status) {
+      if (!VALID_KYC_STATUSES.includes(status)) {
+        return res.status(400).json({ error: `status must be one of: ${VALID_KYC_STATUSES.join(', ')}` });
+      }
+      params.push(status);
+      where += ` AND kyc_status = $${params.length}`;
+    }
+
+    const { rows } = await db.query(
+      `SELECT id, name, email, kyc_status, kyc_provider_reference, kyc_completed_at, created_at
+       FROM users
+       ${where}
+       ORDER BY created_at DESC`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    logger.error('Error fetching users for KYC oversight', { error: err.message });
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+/**
+ * PATCH /api/admin/users/:id/kyc
+ * Manually override a user's KYC status (e.g. verify, or force re-verification).
+ */
+router.patch('/users/:id/kyc', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { kyc_status, note } = req.body;
+
+    if (!VALID_KYC_STATUSES.includes(kyc_status)) {
+      return res.status(400).json({ error: `kyc_status must be one of: ${VALID_KYC_STATUSES.join(', ')}` });
+    }
+
+    const { rows: userRows } = await db.query('SELECT id, kyc_status FROM users WHERE id = $1', [id]);
+    if (!userRows.length) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const previousStatus = userRows[0].kyc_status;
+
+    const { rows: updated } = await db.query(
+      `UPDATE users
+       SET kyc_status = $1::kyc_status,
+           kyc_completed_at = CASE WHEN $1::kyc_status = 'verified' THEN NOW() ELSE NULL END
+       WHERE id = $2
+       RETURNING id, email, kyc_status, kyc_completed_at`,
+      [kyc_status, id]
+    );
+
+    await logAdminAction(req.user.userId, 'kyc_override', 'user', id, {
+      previous_status: previousStatus,
+      new_status: kyc_status,
+      note: note || null,
+    });
+
+    logger.info('KYC status overridden by admin', { userId: id, adminId: req.user.userId, kyc_status });
+    res.json({ message: 'KYC status updated', user: updated[0] });
+  } catch (err) {
+    logger.error('Error overriding KYC status', { error: err.message, userId: req.params.id });
+    res.status(500).json({ error: 'Failed to update KYC status' });
+  }
+});
+
+/**
+ * GET /api/admin/campaigns/:id/kyc-gaps
+ * List contributors on a campaign who are not KYC-verified.
+ */
+router.get('/campaigns/:id/kyc-gaps', async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT DISTINCT u.id, u.name, u.email, u.kyc_status
+       FROM contributions co
+       JOIN users u ON u.wallet_public_key = co.sender_public_key
+       WHERE co.campaign_id = $1 AND u.kyc_status != 'verified'`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    logger.error('Error fetching campaign KYC gaps', { error: err.message, campaignId: req.params.id });
+    res.status(500).json({ error: 'Failed to fetch KYC gaps' });
+  }
+});
+
+/**
+ * GET /api/admin/health-panel
+ * Aggregated platform health stats for the admin dashboard.
+ */
+router.get('/health-panel', async (req, res) => {
+  const withTimeout = (promise, ms, fallback) =>
+    Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(fallback), ms))]);
+
+  try {
+    const [
+      campaignStats,
+      pendingWithdrawals,
+      openDisputes,
+      reconciliationRuns,
+      failedWebhooks,
+      stellarStatus,
+    ] = await Promise.all([
+      db.query(
+        `SELECT COUNT(*) FILTER (WHERE status IN ('active', 'funded')) AS active_campaigns,
+                COALESCE(SUM(raised_amount), 0) AS total_raised
+         FROM campaigns WHERE deleted_at IS NULL`
+      ),
+      db.query(
+        `SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total_value
+         FROM withdrawal_requests WHERE status = 'pending'`
+      ),
+      db.query(`SELECT COUNT(*) AS count FROM disputes WHERE status IN ('open', 'under_review')`),
+      getRecentReconciliationRuns(10),
+      db.query(
+        `SELECT
+           (SELECT COUNT(*) FROM webhook_deliveries WHERE status = 'failed') +
+           (SELECT COUNT(*) FROM campaign_webhook_deliveries WHERE status = 'failed') AS count`
+      ),
+      withTimeout(
+        (async () => {
+          const start = Date.now();
+          const ledgers = await horizonServer.ledgers().order('desc').limit(1).call();
+          const latencyMs = Date.now() - start;
+          const baseFee = await horizonServer.fetchBaseFee();
+          return {
+            current_ledger: ledgers.records[0]?.sequence ?? null,
+            base_fee_stroops: baseFee,
+            horizon_latency_ms: latencyMs,
+          };
+        })(),
+        2000,
+        { current_ledger: null, base_fee_stroops: null, horizon_latency_ms: null, unavailable: true }
+      ),
+    ]);
+
+    res.json({
+      active_campaigns: parseInt(campaignStats.rows[0].active_campaigns, 10),
+      total_raised: parseFloat(campaignStats.rows[0].total_raised),
+      pending_withdrawals: {
+        count: parseInt(pendingWithdrawals.rows[0].count, 10),
+        total_value: parseFloat(pendingWithdrawals.rows[0].total_value),
+      },
+      open_disputes: parseInt(openDisputes.rows[0].count, 10),
+      stellar: stellarStatus,
+      recent_reconciliation_runs: reconciliationRuns,
+      failed_webhook_deliveries: parseInt(failedWebhooks.rows[0].count, 10),
+    });
+  } catch (err) {
+    logger.error('Error building platform health panel', { error: err.message });
+    res.status(500).json({ error: 'Failed to load platform health panel' });
+  }
+});
+
+/**
+ * GET /api/admin/webhooks/deliveries
+ * List failed webhook deliveries across both user-level and campaign-level webhooks.
+ */
+router.get('/webhooks/deliveries', async (req, res) => {
+  try {
+    const status = req.query.status || 'failed';
+    const { rows: userDeliveries } = await db.query(
+      `SELECT d.id, 'user' AS kind, d.event_type AS event, d.status, d.attempt_count,
+              d.last_error, d.created_at, w.url AS webhook_url
+       FROM webhook_deliveries d
+       JOIN webhooks w ON w.id = d.webhook_id
+       WHERE d.status = $1
+       ORDER BY d.created_at DESC
+       LIMIT 100`,
+      [status]
+    );
+    const { rows: campaignDeliveries } = await db.query(
+      `SELECT d.id, 'campaign' AS kind, d.event, d.status, d.attempt_count,
+              d.last_error, d.created_at, w.url AS webhook_url
+       FROM campaign_webhook_deliveries d
+       JOIN campaign_webhooks w ON w.id = d.webhook_id
+       WHERE d.status = $1
+       ORDER BY d.created_at DESC
+       LIMIT 100`,
+      [status]
+    );
+
+    const combined = [...userDeliveries, ...campaignDeliveries].sort(
+      (a, b) => new Date(b.created_at) - new Date(a.created_at)
+    );
+    res.json(combined);
+  } catch (err) {
+    logger.error('Error fetching webhook deliveries', { error: err.message });
+    res.status(500).json({ error: 'Failed to fetch webhook deliveries' });
+  }
+});
+
+/**
+ * POST /api/admin/webhooks/deliveries/:kind/:id/retry
+ * Manually trigger a redelivery attempt for a failed webhook delivery.
+ */
+router.post('/webhooks/deliveries/:kind/:id/retry', async (req, res) => {
+  try {
+    const { kind, id } = req.params;
+    if (!['user', 'campaign'].includes(kind)) {
+      return res.status(400).json({ error: 'kind must be "user" or "campaign"' });
+    }
+
+    if (kind === 'user') {
+      await db.query(`UPDATE webhook_deliveries SET status = 'retrying' WHERE id = $1`, [id]);
+      await processDelivery(id);
+    } else {
+      await db.query(`UPDATE campaign_webhook_deliveries SET status = 'retrying' WHERE id = $1`, [id]);
+      await processCampaignWebhookDelivery(id);
+    }
+
+    await logAdminAction(req.user.userId, 'retry_webhook_delivery', 'webhook_delivery', id, { kind });
+    res.json({ message: 'Retry triggered' });
+  } catch (err) {
+    logger.error('Error retrying webhook delivery', { error: err.message, deliveryId: req.params.id });
+    res.status(500).json({ error: 'Failed to retry webhook delivery' });
   }
 });
 

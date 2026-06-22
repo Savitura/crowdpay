@@ -17,7 +17,7 @@ describe('Admin Moderation Features', async () => {
     // Setup: Create admin and regular user
     const adminRes = await pool.query(
       `INSERT INTO users (email, password_hash, name, wallet_public_key, wallet_secret_encrypted, is_admin)
-       VALUES ($1, 'hash', 'Admin User', 'G_ADMIN_PUB', 'enc_admin')
+       VALUES ($1, 'hash', 'Admin User', 'G_ADMIN_PUB', 'enc_admin', TRUE)
        RETURNING id`,
       ['admin@test.com']
     );
@@ -240,6 +240,189 @@ describe('Admin Moderation Features', async () => {
       assert.ok(typeof data.banned_users === 'number');
       assert.ok(typeof data.deleted_campaigns === 'number');
       assert.ok(Array.isArray(data.campaign_status));
+    });
+  });
+
+  describe('Admin Dashboard Tooling', () => {
+    let toolingCampaignId;
+    let toolingWithdrawalId;
+
+    before(async () => {
+      const campaignRes = await pool.query(
+        `INSERT INTO campaigns (creator_id, title, description, target_amount, asset_type, wallet_public_key, status)
+         VALUES ($1, 'Tooling Test Campaign', 'Test Description', 1000, 'XLM', 'G_TOOLING_CAMPAIGN_PUB', 'active')
+         RETURNING id`,
+        [testUserId]
+      );
+      toolingCampaignId = campaignRes.rows[0].id;
+
+      const withdrawalRes = await pool.query(
+        `INSERT INTO withdrawal_requests
+           (campaign_id, requested_by, amount, destination_key, unsigned_xdr, creator_signed, platform_signed, status)
+         VALUES ($1, $2, 50, 'G_DEST_PUB', 'unsigned-xdr', TRUE, FALSE, 'pending')
+         RETURNING id`,
+        [toolingCampaignId, testUserId]
+      );
+      toolingWithdrawalId = withdrawalRes.rows[0].id;
+    });
+
+    describe('Withdrawal Queue', () => {
+      it('lists pending withdrawals with campaign and requester info', async () => {
+        const res = await fetch('http://localhost:3000/api/admin/withdrawals', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        assert.strictEqual(res.status, 200);
+        const data = await res.json();
+        const row = data.find((w) => w.id === toolingWithdrawalId);
+        assert.ok(row, 'expected the seeded withdrawal to appear in the pending queue');
+        assert.strictEqual(row.campaign_title, 'Tooling Test Campaign');
+        assert.strictEqual(row.requested_by_email, 'user@test.com');
+        assert.strictEqual(row.creator_signed, true);
+      });
+
+      it('non-admin users receive 403', async () => {
+        const res = await fetch('http://localhost:3000/api/admin/withdrawals', {
+          headers: { Authorization: `Bearer ${regularUserToken}` }
+        });
+        assert.strictEqual(res.status, 403);
+      });
+    });
+
+    describe('KYC Oversight', () => {
+      it('lists users filtered by kyc_status', async () => {
+        const res = await fetch('http://localhost:3000/api/admin/users/kyc?status=unverified', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        assert.strictEqual(res.status, 200);
+        const data = await res.json();
+        assert.ok(Array.isArray(data));
+        assert.ok(data.every((u) => u.kyc_status === 'unverified'));
+      });
+
+      it('rejects an invalid kyc_status filter', async () => {
+        const res = await fetch('http://localhost:3000/api/admin/users/kyc?status=bogus', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        assert.strictEqual(res.status, 400);
+      });
+
+      it('admin can override a user kyc_status and the action is audited', async () => {
+        const res = await fetch(`http://localhost:3000/api/admin/users/${testUserId}/kyc`, {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${adminToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ kyc_status: 'verified', note: 'Manually verified for testing' }),
+        });
+        assert.strictEqual(res.status, 200);
+        const data = await res.json();
+        assert.strictEqual(data.user.kyc_status, 'verified');
+        assert.ok(data.user.kyc_completed_at);
+
+        const auditRes = await fetch('http://localhost:3000/api/admin/audit-log', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        const auditData = await auditRes.json();
+        const entry = auditData.actions.find(
+          (a) => a.action_type === 'kyc_override' && a.target_id === testUserId
+        );
+        assert.ok(entry, 'expected a kyc_override audit log entry for this user');
+      });
+
+      it('rejects an invalid kyc_status on override', async () => {
+        const res = await fetch(`http://localhost:3000/api/admin/users/${testUserId}/kyc`, {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${adminToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ kyc_status: 'bogus' }),
+        });
+        assert.strictEqual(res.status, 400);
+      });
+    });
+
+    describe('Platform Health Panel', () => {
+      it('returns an aggregated health snapshot', async () => {
+        const res = await fetch('http://localhost:3000/api/admin/health-panel', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        assert.strictEqual(res.status, 200);
+        const data = await res.json();
+        assert.ok(typeof data.active_campaigns === 'number');
+        assert.ok(typeof data.total_raised === 'number');
+        assert.ok(typeof data.pending_withdrawals.count === 'number');
+        assert.ok(typeof data.pending_withdrawals.total_value === 'number');
+        assert.ok(typeof data.open_disputes === 'number');
+        assert.ok(Array.isArray(data.recent_reconciliation_runs));
+        assert.ok(typeof data.failed_webhook_deliveries === 'number');
+        assert.ok(data.stellar);
+      });
+    });
+
+    describe('Webhook Delivery Retry', () => {
+      let campaignWebhookId;
+      let deliveryId;
+
+      before(async () => {
+        const webhookRes = await pool.query(
+          `INSERT INTO campaign_webhooks (campaign_id, url, secret, events)
+           VALUES ($1, 'https://example.invalid/webhook', 'whsec_test', ARRAY['contribution.indexed'])
+           RETURNING id`,
+          [toolingCampaignId]
+        );
+        campaignWebhookId = webhookRes.rows[0].id;
+
+        const deliveryRes = await pool.query(
+          `INSERT INTO campaign_webhook_deliveries (webhook_id, event, payload, status, attempt_count, last_error)
+           VALUES ($1, 'contribution.indexed', '{}'::jsonb, 'failed', 5, 'connection refused')
+           RETURNING id`,
+          [campaignWebhookId]
+        );
+        deliveryId = deliveryRes.rows[0].id;
+      });
+
+      it('lists failed deliveries across both webhook tables', async () => {
+        const res = await fetch('http://localhost:3000/api/admin/webhooks/deliveries?status=failed', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        assert.strictEqual(res.status, 200);
+        const data = await res.json();
+        const row = data.find((d) => d.id === deliveryId && d.kind === 'campaign');
+        assert.ok(row, 'expected seeded failed campaign webhook delivery to be listed');
+      });
+
+      it('admin can trigger a manual retry', async () => {
+        const res = await fetch(
+          `http://localhost:3000/api/admin/webhooks/deliveries/campaign/${deliveryId}/retry`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${adminToken}` },
+          }
+        );
+        assert.strictEqual(res.status, 200);
+
+        const auditRes = await fetch('http://localhost:3000/api/admin/audit-log', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        const auditData = await auditRes.json();
+        const entry = auditData.actions.find(
+          (a) => a.action_type === 'retry_webhook_delivery' && a.target_id === deliveryId
+        );
+        assert.ok(entry, 'expected a retry_webhook_delivery audit log entry');
+      });
+
+      it('rejects an invalid kind', async () => {
+        const res = await fetch(
+          `http://localhost:3000/api/admin/webhooks/deliveries/bogus/${deliveryId}/retry`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${adminToken}` },
+          }
+        );
+        assert.strictEqual(res.status, 400);
+      });
     });
   });
 });
