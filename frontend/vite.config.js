@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   test: {
     environment: 'jsdom',
@@ -30,11 +30,10 @@ export default defineConfig({
           });
         },
       },
-      // Proxy embed routes to the embed.html during development
       '/embed': {
         target: 'http://localhost:5173',
         rewrite: (path) => '/embed.html',
       },
     },
   },
-});
+}));

@@ -15,13 +15,10 @@ import {
 const STATUS_OPTIONS = ['', 'active', 'funded', 'closed', 'failed'];
 const ASSET_OPTIONS = ['', 'USDC', 'XLM'];
 const SORT_OPTIONS = [
-  { value: 'newest', key: 'home.newest' },
-  { value: 'most_funded', key: 'home.mostFunded' },
-  { value: 'closest_to_goal', key: 'home.closestToGoal' },
-  { value: 'newest', label: 'Newest' },
+  { value: 'newest', key: 'home.newest', label: 'Newest' },
   { value: 'trending', label: 'Trending' },
-  { value: 'funded', label: 'Most funded' },
-  { value: 'closest_to_goal', label: 'Closest to goal' },
+  { value: 'most_funded', key: 'home.mostFunded', label: 'Most funded' },
+  { value: 'closest_to_goal', key: 'home.closestToGoal', label: 'Closest to goal' },
 ];
 const CATEGORY_LABELS = {
   technology: 'Technology',
@@ -279,7 +276,7 @@ export default function Home() {
           >
             {SORT_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
-                {t(option.key)}
+                {option.key ? t(option.key) : option.label}
               </option>
             ))}
           </select>
@@ -287,10 +284,10 @@ export default function Home() {
       </div>
 
       <h2 style={styles.sectionTitle}>{t('home.activeCampaigns')}</h2>
-      <div style={styles.categoryBar}>
+      <div style={styles.sortBar}>
         <button
           type="button"
-          style={category === '' ? { ...styles.pill, ...styles.pillActive } : styles.pill}
+          className={category === '' ? 'pill-active' : 'pill'}
           onClick={() => setFilters({ category: '' })}
         >
           All
@@ -299,15 +296,13 @@ export default function Home() {
           <button
             key={cat.category}
             type="button"
-            style={category === cat.category ? { ...styles.pill, ...styles.pillActive } : styles.pill}
+            className={category === cat.category ? 'pill-active' : 'pill'}
             onClick={() => setFilters({ category: cat.category })}
           >
             {CATEGORY_LABELS[cat.category] || cat.category} ({cat.count})
           </button>
         ))}
       </div>
-
-      <h2 style={styles.sectionTitle}>Active campaigns</h2>
 
       <div style={styles.sortBar}>
         {[

@@ -203,6 +203,9 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
       withDecryptedWalletSecret: async (_ciphertext, _context, fn) => fn('SDECRYPTED'),
     },
     '../services/contributionService': contributionServiceStub,
+    '../services/sorobanService': {
+      requestRefund: async () => null,
+    },
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
         req.user = { userId: 'user-1' };

@@ -1,6 +1,11 @@
 const db = require('../config/database');
 const logger = require('../config/logger');
-const { sendEmail } = require('./emailService');
+const {
+  sendCampaignFundedCreatorEmail,
+  sendCampaignFundedContributorEmail,
+  sendCampaignFailedCreatorEmail,
+  sendCampaignFailedContributorEmail,
+} = require('./emailService');
 const { createNotification } = require('./notifications');
 const {
   emitWebhookEventForUser,
@@ -9,7 +14,7 @@ const {
 } = require('./webhookDispatcher');
 const { buildWithdrawalTransaction } = require('./stellarService');
 const { insertWithdrawalPendingSignatures } = require('./stellarTransactionService');
-const { invokeContract } = require('./sorobanService');
+const { invokeContract, requestRefund: contractRequestRefund } = require('./sorobanService');
 
 function frontendBaseUrl() {
   return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
@@ -112,36 +117,24 @@ async function sendFundedEmails(campaign, contributors) {
   const campaignUrl = `${frontendBaseUrl()}/campaigns/${campaign.id}`;
   const creatorName = campaign.creator_name || 'there';
 
-  await sendEmail({
+  await sendCampaignFundedCreatorEmail({
     to: campaign.creator_email,
-    subject: `Your campaign "${campaign.title}" has reached its goal`,
-    text: [
-      `Hi ${creatorName},`,
-      '',
-      `Congratulations! Your campaign "${campaign.title}" has reached its funding goal of ${campaign.target_amount}.`,
-      '',
-      `Total raised: ${campaign.raised_amount}`,
-      '',
-      `View your campaign: ${campaignUrl}`,
-      '',
-      'You can now request a withdrawal from your creator dashboard.',
-    ].join('\n'),
+    campaignId: campaign.id,
+    creatorName,
+    campaignTitle: campaign.title,
+    campaignUrl,
+    targetAmount: campaign.target_amount,
+    raisedAmount: campaign.raised_amount,
   });
 
   await Promise.all(
     contributors.map((contributor) =>
-      sendEmail({
+      sendCampaignFundedContributorEmail({
         to: contributor.email,
-        subject: `Campaign you backed has been fully funded: "${campaign.title}"`,
-        text: [
-          `Hi ${contributor.name || 'there'},`,
-          '',
-          `Great news — "${campaign.title}" has reached its funding goal.`,
-          '',
-          `View the campaign: ${campaignUrl}`,
-          '',
-          'Thank you for backing this campaign on CrowdPay.',
-        ].join('\n'),
+        campaignId: campaign.id,
+        contributorName: contributor.name,
+        campaignTitle: campaign.title,
+        campaignUrl,
       })
     )
   );
@@ -155,39 +148,26 @@ async function sendFailedEmails(campaign, contributors) {
     ? new Date(campaign.deadline).toDateString()
     : 'the deadline';
 
-  await sendEmail({
+  await sendCampaignFailedCreatorEmail({
     to: campaign.creator_email,
-    subject: `Your campaign "${campaign.title}" ended below its goal`,
-    text: [
-      `Hi ${creatorName},`,
-      '',
-      `Your campaign "${campaign.title}" ended on ${deadlineText} without reaching its goal of ${campaign.target_amount}.`,
-      '',
-      `Amount raised: ${campaign.raised_amount}`,
-      '',
-      'Contributors will receive refund instructions automatically.',
-      '',
-      `Campaign page: ${campaignUrl}`,
-    ].join('\n'),
+    campaignId: campaign.id,
+    creatorName,
+    campaignTitle: campaign.title,
+    campaignUrl,
+    targetAmount: campaign.target_amount,
+    raisedAmount: campaign.raised_amount,
+    deadlineText,
   });
 
   await Promise.all(
     contributors.map((contributor) =>
-      sendEmail({
+      sendCampaignFailedContributorEmail({
         to: contributor.email,
-        subject: `Campaign ended — your refund is available: "${campaign.title}"`,
-        text: [
-          `Hi ${contributor.name || 'there'},`,
-          '',
-          `"${campaign.title}" did not reach its funding goal and has ended.`,
-          '',
-          'Your contribution is eligible for a refund. Sign in to CrowdPay to claim your refund:',
-          refundsUrl,
-          '',
-          'Refunds are processed via the Stellar network back to the wallet you contributed from.',
-          '',
-          `Campaign page: ${campaignUrl}`,
-        ].join('\n'),
+        campaignId: campaign.id,
+        contributorName: contributor.name,
+        campaignTitle: campaign.title,
+        campaignUrl,
+        refundsUrl,
       })
     )
   );
@@ -271,13 +251,51 @@ async function createFailedNotifications(campaign, contributors) {
  */
 async function queueFailedCampaignRefunds(campaignId, actorUserId) {
   const { rows: campaigns } = await db.query(
-    `SELECT id, wallet_public_key, status, creator_id FROM campaigns WHERE id = $1`,
+    `SELECT id, wallet_public_key, status, creator_id, escrow_contract_id FROM campaigns WHERE id = $1`,
     [campaignId]
   );
   if (!campaigns.length || campaigns[0].status !== 'failed') {
     return { refundsCreated: 0, refunds: [] };
   }
   const campaign = campaigns[0];
+
+  // If an escrow contract is deployed, trigger on-chain refunds first
+  if (campaign.escrow_contract_id && process.env.PLATFORM_SECRET_KEY) {
+    try {
+      const { rows: contributions } = await db.query(
+        `SELECT id, sender_public_key FROM contributions WHERE campaign_id = $1 ORDER BY created_at ASC`,
+        [campaignId]
+      );
+      for (const contribution of contributions) {
+        try {
+          await contractRequestRefund({
+            contractId: campaign.escrow_contract_id,
+            contributorAddress: contribution.sender_public_key,
+            signerSecret: process.env.PLATFORM_SECRET_KEY,
+          });
+          await db.query(
+            `UPDATE contributions SET contract_refunded_at = NOW() WHERE id = $1`,
+            [contribution.id]
+          );
+          logger.info('On-chain refund processed for failed campaign', {
+            campaign_id: campaignId,
+            contribution_id: contribution.id,
+          });
+        } catch (err) {
+          logger.warn('On-chain refund failed for contribution, falling back to Stellar withdrawal', {
+            campaign_id: campaignId,
+            contribution_id: contribution.id,
+            error: err.message,
+          });
+        }
+      }
+    } catch (err) {
+      logger.error('On-chain refund batch failed, falling back to Stellar withdrawals', {
+        campaign_id: campaignId,
+        error: err.message,
+      });
+    }
+  }
 
   const { rows: contributions } = await db.query(
     `SELECT c.*

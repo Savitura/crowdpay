@@ -7,7 +7,7 @@ const { Keypair } = require('@stellar/stellar-sdk');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const { ensureCustodialAccountFundedAndTrusted } = require('../services/stellarService');
-const { sendEmail } = require('../services/emailService');
+const { sendEmail, sendWelcomeEmail } = require('../services/emailService');
 const { requireAuth } = require('../middleware/auth');
 const { encryptWalletSecret } = require('../services/walletSecrets');
 const { isKycRequiredForCampaigns } = require('../services/kycProvider');
@@ -297,10 +297,12 @@ router.post('/register', registerLimiter, registerValidation, validateRequest, a
       });
     }
 
-    sendEmail({
+    sendWelcomeEmail({
       to: normalizedEmail,
-      subject: 'Welcome to CrowdPay!',
-      text: `Welcome ${normalizedName}! Your custodial wallet public key is ${publicKey}.`
+      name: normalizedName,
+      walletPublicKey: publicKey,
+    }).catch((err) => {
+      logger.error('Welcome email failed', { request_id: requestId, error: err.message });
     });
   });
 

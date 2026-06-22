@@ -12,6 +12,52 @@ const EVENT_OPTIONS = [
 
 const SCOPE_OPTIONS = ['read', 'write', 'withdrawals', 'developer', 'full'];
 
+const V1_API_BASE = `${(import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')}/api/v1`;
+
+const V1_ENDPOINTS = [
+  {
+    id: 'list-campaigns',
+    label: 'GET /campaigns — list public campaigns',
+    method: 'GET',
+    path: '/campaigns',
+    auth: false,
+    queryFields: ['search', 'status', 'asset', 'sort', 'limit', 'offset'],
+  },
+  {
+    id: 'get-campaign',
+    label: 'GET /campaigns/:id — campaign detail',
+    method: 'GET',
+    path: '/campaigns/:id',
+    auth: false,
+    pathFields: ['id'],
+  },
+  {
+    id: 'list-contributions',
+    label: 'GET /campaigns/:id/contributions — list contributions',
+    method: 'GET',
+    path: '/campaigns/:id/contributions',
+    auth: true,
+    pathFields: ['id'],
+    queryFields: ['limit', 'offset'],
+  },
+  {
+    id: 'create-contribution',
+    label: 'POST /campaigns/:id/contributions — record from tx hash',
+    method: 'POST',
+    path: '/campaigns/:id/contributions',
+    auth: true,
+    pathFields: ['id'],
+    bodyTemplate: { tx_hash: '' },
+  },
+  {
+    id: 'users-me',
+    label: 'GET /users/me — authenticated profile',
+    method: 'GET',
+    path: '/users/me',
+    auth: true,
+  },
+];
+
 export default function Developer() {
   const { user } = useAuth();
   const [keys, setKeys] = useState([]);
@@ -25,6 +71,14 @@ export default function Developer() {
   const [hookEvents, setHookEvents] = useState(['contribution.received']);
   const [revealedSecret, setRevealedSecret] = useState('');
   const [loading, setLoading] = useState(true);
+  const [explorerEndpoint, setExplorerEndpoint] = useState(V1_ENDPOINTS[0].id);
+  const [explorerApiKey, setExplorerApiKey] = useState('');
+  const [explorerPathParams, setExplorerPathParams] = useState({ id: '' });
+  const [explorerQuery, setExplorerQuery] = useState({});
+  const [explorerBody, setExplorerBody] = useState('{\n  "tx_hash": ""\n}');
+  const [explorerResponse, setExplorerResponse] = useState('');
+  const [explorerBusy, setExplorerBusy] = useState(false);
+  const [explorerError, setExplorerError] = useState('');
 
   async function refresh() {
     setError('');
@@ -117,15 +171,146 @@ export default function Developer() {
     );
   }
 
+  const selectedEndpoint =
+    V1_ENDPOINTS.find((e) => e.id === explorerEndpoint) || V1_ENDPOINTS[0];
+
+  function buildExplorerUrl() {
+    let path = selectedEndpoint.path;
+    (selectedEndpoint.pathFields || []).forEach((field) => {
+      path = path.replace(`:${field}`, encodeURIComponent(explorerPathParams[field] || ''));
+    });
+    const params = new URLSearchParams();
+    (selectedEndpoint.queryFields || []).forEach((field) => {
+      const value = explorerQuery[field];
+      if (value !== undefined && value !== '') params.set(field, String(value));
+    });
+    const qs = params.toString();
+    return `${V1_API_BASE}${path}${qs ? `?${qs}` : ''}`;
+  }
+
+  async function runExplorerRequest(e) {
+    e.preventDefault();
+    setExplorerBusy(true);
+    setExplorerError('');
+    setExplorerResponse('');
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (selectedEndpoint.auth) {
+        if (!explorerApiKey) {
+          throw new Error('API key required for this endpoint');
+        }
+        headers.Authorization = `Bearer ${explorerApiKey}`;
+      }
+      const options = {
+        method: selectedEndpoint.method,
+        headers: selectedEndpoint.method === 'GET' ? (explorerApiKey && selectedEndpoint.auth ? { Authorization: headers.Authorization } : undefined) : headers,
+      };
+      if (selectedEndpoint.method !== 'GET' && selectedEndpoint.bodyTemplate) {
+        options.body = explorerBody;
+      }
+      const res = await fetch(buildExplorerUrl(), options);
+      const text = await res.text();
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = text;
+      }
+      setExplorerResponse(JSON.stringify({ status: res.status, body: parsed }, null, 2));
+    } catch (err) {
+      setExplorerError(err.message || 'Request failed');
+    } finally {
+      setExplorerBusy(false);
+    }
+  }
+
   return (
     <main className="container" style={{ paddingTop: '3rem', paddingBottom: '4rem', maxWidth: '900px' }}>
       <h1 style={{ fontSize: '1.75rem', fontWeight: 800, marginBottom: '0.35rem' }}>Developer</h1>
       <p style={{ color: 'var(--color-text-hint)', marginBottom: '2rem', fontSize: '0.95rem' }}>
-        API keys and webhooks for integrating CrowdPay as a funding backend. See{' '}
-        <code style={{ fontSize: '0.85rem' }}>backend/docs/webhooks-integration.md</code> for HMAC verification.
+        API keys and webhooks for integrating CrowdPay as a funding backend. Public API documentation:{' '}
+        <a href="/v1/docs" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
+          OpenAPI /v1/docs
+        </a>
+        . See <code style={{ fontSize: '0.85rem' }}>backend/docs/webhooks-integration.md</code> for HMAC verification.
       </p>
       {error && <p style={{ color: 'var(--color-status-error)', marginBottom: '1rem' }}>{error}</p>}
       {loading && <p style={{ color: 'var(--color-text-hint)' }}>Loading…</p>}
+
+      <section style={{ marginBottom: '2.5rem' }}>
+        <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.75rem' }}>API explorer</h2>
+        <p style={{ fontSize: '0.9rem', color: 'var(--color-text-hint)', marginBottom: '1rem' }}>
+          Try public API v1 endpoints with your API key. Rate limit: 100 requests/minute per key.
+        </p>
+        <form onSubmit={runExplorerRequest} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxWidth: '640px' }}>
+          <label style={{ fontSize: '0.85rem' }}>
+            Endpoint
+            <select
+              value={explorerEndpoint}
+              onChange={(e) => setExplorerEndpoint(e.target.value)}
+              style={{ display: 'block', width: '100%', marginTop: '0.35rem' }}
+            >
+              {V1_ENDPOINTS.map((ep) => (
+                <option key={ep.id} value={ep.id}>{ep.label}</option>
+              ))}
+            </select>
+          </label>
+          <label style={{ fontSize: '0.85rem' }}>
+            API key {selectedEndpoint.auth ? '(required)' : '(optional)'}
+            <input
+              type="password"
+              value={explorerApiKey}
+              onChange={(e) => setExplorerApiKey(e.target.value)}
+              placeholder="cp_live_…"
+              style={{ display: 'block', width: '100%', marginTop: '0.35rem' }}
+            />
+          </label>
+          {(selectedEndpoint.pathFields || []).map((field) => (
+            <label key={field} style={{ fontSize: '0.85rem' }}>
+              {field}
+              <input
+                value={explorerPathParams[field] || ''}
+                onChange={(e) =>
+                  setExplorerPathParams((cur) => ({ ...cur, [field]: e.target.value }))
+                }
+                style={{ display: 'block', width: '100%', marginTop: '0.35rem' }}
+              />
+            </label>
+          ))}
+          {(selectedEndpoint.queryFields || []).map((field) => (
+            <label key={field} style={{ fontSize: '0.85rem' }}>
+              Query: {field}
+              <input
+                value={explorerQuery[field] || ''}
+                onChange={(e) =>
+                  setExplorerQuery((cur) => ({ ...cur, [field]: e.target.value }))
+                }
+                style={{ display: 'block', width: '100%', marginTop: '0.35rem' }}
+              />
+            </label>
+          ))}
+          {selectedEndpoint.bodyTemplate && (
+            <label style={{ fontSize: '0.85rem' }}>
+              Request body (JSON)
+              <textarea
+                rows={5}
+                value={explorerBody}
+                onChange={(e) => setExplorerBody(e.target.value)}
+                style={{ display: 'block', width: '100%', marginTop: '0.35rem', fontFamily: 'monospace', fontSize: '0.85rem' }}
+              />
+            </label>
+          )}
+          <button type="submit" className="btn-primary" disabled={explorerBusy} style={{ alignSelf: 'flex-start', padding: '0.5rem 1rem' }}>
+            {explorerBusy ? 'Sending…' : 'Send request'}
+          </button>
+        </form>
+        {explorerError && <p style={{ color: 'var(--color-status-error)', marginTop: '0.75rem' }}>{explorerError}</p>}
+        {explorerResponse && (
+          <pre style={{ marginTop: '1rem', padding: '0.85rem', background: 'var(--color-border-lightest)', borderRadius: 8, overflow: 'auto', fontSize: '0.8rem' }}>
+            {explorerResponse}
+          </pre>
+        )}
+      </section>
 
       <section style={{ marginBottom: '2.5rem' }}>
         <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.75rem' }}>API keys</h2>

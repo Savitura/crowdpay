@@ -30,7 +30,7 @@ function buildApp({ queryImpl, stellarImpl, sendEmailImpl, bcryptImpl } = {}) {
     '../services/walletSecrets': {
       encryptWalletSecret: async (secret) => `cpws:v1:${secret.slice(0, 8)}`,
     },
-    '../services/emailService': { sendEmail },
+    '../services/emailService': { sendEmail, sendWelcomeEmail: async () => {} },
     '../middleware/auth': {
       requireAuth: (_req, _res, next) => next(),
     },

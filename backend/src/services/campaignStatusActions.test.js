@@ -61,8 +61,17 @@ function buildActions(overrides = {}) {
     },
     '../config/logger': { info: () => {}, error: () => {}, warn: () => {}, debug: () => {} },
     './emailService': {
-      sendEmail: async (payload) => {
-        calls.emails.push(payload);
+      sendCampaignFundedCreatorEmail: async (payload) => {
+        calls.emails.push({ to: payload.to, text: `Congratulations campaign ${payload.campaignTitle}` });
+      },
+      sendCampaignFundedContributorEmail: async (payload) => {
+        calls.emails.push({ to: payload.to, text: `Campaign ${payload.campaignTitle} funded` });
+      },
+      sendCampaignFailedCreatorEmail: async (payload) => {
+        calls.emails.push({ to: payload.to, text: `Campaign ${payload.campaignTitle} ended below goal` });
+      },
+      sendCampaignFailedContributorEmail: async (payload) => {
+        calls.emails.push({ to: payload.to, text: `refund available ${payload.refundsUrl}` });
       },
     },
     './notifications': {

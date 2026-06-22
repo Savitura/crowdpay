@@ -24,4 +24,4 @@ npm-debug.log*
 .kiro/
 
 # Docker
-.dockerignore
+.dockerignore.soroban/

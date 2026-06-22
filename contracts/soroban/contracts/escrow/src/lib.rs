@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, token};
+use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol};
 
 #[derive(Clone)]
 #[contracttype]
@@ -13,6 +13,8 @@ pub enum DataKey {
     TotalRaised,
     ApprovedWithdrawal,
     IsInitialized,
+    PlatformFeeBps,
+    PlatformFeeRecipient,
 }
 
 #[contract]
@@ -20,9 +22,21 @@ pub struct EscrowContract;
 
 #[contractimpl]
 impl EscrowContract {
-    pub fn initialize(env: Env, admin: Address, campaign_id: u64, target: i128, deadline: u64, asset: Address) {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        campaign_id: u64,
+        target: i128,
+        deadline: u64,
+        asset: Address,
+        platform_fee_bps: u32,
+        platform_fee_recipient: Address,
+    ) {
         if env.storage().instance().has(&DataKey::IsInitialized) {
             panic!("Contract is already initialized");
+        }
+        if platform_fee_bps > 10000 {
+            panic!("Platform fee BPS must not exceed 10000");
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::CampaignId, &campaign_id);
@@ -32,6 +46,8 @@ impl EscrowContract {
         env.storage().instance().set(&DataKey::TotalRaised, &0i128);
         env.storage().instance().set(&DataKey::ApprovedWithdrawal, &0i128);
         env.storage().instance().set(&DataKey::IsInitialized, &true);
+        env.storage().instance().set(&DataKey::PlatformFeeBps, &platform_fee_bps);
+        env.storage().instance().set(&DataKey::PlatformFeeRecipient, &platform_fee_recipient);
     }
 
     pub fn deposit(env: Env, from: Address, amount: i128) {
@@ -52,6 +68,11 @@ impl EscrowContract {
 
         let total_raised: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0);
         env.storage().instance().set(&DataKey::TotalRaised, &(total_raised + amount));
+
+        env.events().publish(
+            (Symbol::new(&env, "deposit"), from),
+            amount,
+        );
     }
 
     pub fn approve_withdrawal(env: Env, release_amount: i128) {
@@ -63,7 +84,6 @@ impl EscrowContract {
     }
 
     pub fn execute_withdrawal(env: Env, to: Address, release_amount: i128) {
-        // Ensure caller is verified, could be admin or anyone as long as withdrawal is approved
         let mut approved: i128 = env.storage().instance().get(&DataKey::ApprovedWithdrawal).unwrap_or(0);
         if approved < release_amount {
             panic!("Insufficient approved amount");
@@ -71,10 +91,27 @@ impl EscrowContract {
 
         let asset: Address = env.storage().instance().get(&DataKey::Asset).unwrap();
         let client = token::Client::new(&env, &asset);
-        client.transfer(&env.current_contract_address(), &to, &release_amount);
+
+        let fee_bps: u32 = env.storage().instance().get(&DataKey::PlatformFeeBps).unwrap_or(0);
+        let fee_amount = (release_amount * (fee_bps as i128)) / 10000;
+        let net_amount = release_amount - fee_amount;
+
+        if net_amount > 0 {
+            client.transfer(&env.current_contract_address(), &to, &net_amount);
+        }
+
+        if fee_amount > 0 {
+            let fee_recipient: Address = env.storage().instance().get(&DataKey::PlatformFeeRecipient).unwrap();
+            client.transfer(&env.current_contract_address(), &fee_recipient, &fee_amount);
+        }
 
         approved -= release_amount;
         env.storage().instance().set(&DataKey::ApprovedWithdrawal, &approved);
+
+        env.events().publish(
+            (Symbol::new(&env, "withdrawal"), to),
+            (release_amount, net_amount, fee_amount),
+        );
     }
 
     pub fn refund(env: Env, contributor: Address) {
@@ -101,6 +138,15 @@ impl EscrowContract {
         client.transfer(&env.current_contract_address(), &contributor, &amount);
 
         env.storage().persistent().set(&balance_key, &0i128);
+
+        let total_raised_current: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0);
+        let new_total = total_raised_current - amount;
+        env.storage().instance().set(&DataKey::TotalRaised, &new_total);
+
+        env.events().publish(
+            (Symbol::new(&env, "refund"), contributor),
+            amount,
+        );
     }
 
     pub fn get_total_raised(env: Env) -> i128 {
@@ -109,5 +155,11 @@ impl EscrowContract {
 
     pub fn get_asset(env: Env) -> Address {
         env.storage().instance().get(&DataKey::Asset).unwrap()
+    }
+
+    pub fn get_platform_fee_config(env: Env) -> (u32, Address) {
+        let bps: u32 = env.storage().instance().get(&DataKey::PlatformFeeBps).unwrap_or(0);
+        let recipient: Address = env.storage().instance().get(&DataKey::PlatformFeeRecipient).unwrap();
+        (bps, recipient)
     }
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -7,10 +7,14 @@ import VerificationBadge from '../components/VerificationBadge';
 import CampaignStatusBadge from '../components/CampaignStatusBadge';
 import DepositModal from '../components/DepositModal';
 import { stellarExpertTxUrl, stellarExpertAccountUrl } from '../config/stellar';
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+} from 'recharts';
 
 const TABS = [
   { id: 'campaigns', label: 'My Campaigns' },
   { id: 'contributions', label: 'My Contributions' },
+  { id: 'analytics', label: 'Analytics' },
 ];
 
 function progressPct(campaign) {
@@ -28,11 +32,76 @@ function formatConversionRate(row) {
   return rate.toLocaleString(undefined, { maximumFractionDigits: 6 });
 }
 
+function exportCSV(rows, filename) {
+  if (!rows.length) return;
+  const keys = Object.keys(rows[0]);
+  const csv = [keys.join(','), ...rows.map(r => keys.map(k => JSON.stringify(r[k] ?? '')).join(','))].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = filename;
+  a.click();
+}
+
+function MiniLineChart({ data, dataKey = 'total_amount', label = 'Amount' }) {
+  if (!data || data.length === 0) {
+    return <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>No contribution data yet.</p>;
+  }
+  return (
+    <ResponsiveContainer width="100%" height={180}>
+      <LineChart data={data} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+        <XAxis dataKey="day" tick={{ fontSize: 11 }} tickFormatter={d => d?.slice(5)} />
+        <YAxis tick={{ fontSize: 11 }} width={48} />
+        <Tooltip formatter={(v) => [Number(v).toLocaleString(), label]} />
+        <Line type="monotone" dataKey={dataKey} stroke="var(--color-accent)" dot={false} strokeWidth={2} />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+function MilestoneFunnel({ campaignId }) {
+  const [milestones, setMilestones] = useState(null);
+  const [campaign, setCampaign] = useState(null);
+
+  useEffect(() => {
+    Promise.all([
+      api.getMilestones(campaignId),
+      api.getCampaign(campaignId),
+    ]).then(([ms, c]) => { setMilestones(ms); setCampaign(c); }).catch(() => {});
+  }, [campaignId]);
+
+  if (!milestones || milestones.length === 0) return null;
+
+  const raised = Number(campaign?.raised_amount || 0);
+  const target = Number(campaign?.target_amount || 1);
+
+  return (
+    <div style={{ marginTop: '0.75rem' }}>
+      <strong style={{ fontSize: '0.9rem' }}>Milestone Funnel</strong>
+      {milestones.map(m => {
+        const threshold = (Number(m.release_percentage) / 100) * target;
+        const pct = Math.min(100, (raised / threshold) * 100);
+        return (
+          <div key={m.id} style={{ marginTop: '0.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem' }}>
+              <span>{m.title}</span>
+              <span style={{ color: 'var(--color-text-hint)' }}>{m.release_percentage}% · {pct.toFixed(0)}% funded</span>
+            </div>
+            <div style={{ background: 'var(--color-surface)', borderRadius: 99, height: 6, marginTop: 3 }}>
+              <div style={{ width: `${pct}%`, height: 6, borderRadius: 99, background: m.status === 'released' ? '#22c55e' : 'var(--color-accent)' }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user, token, ready, updateUser } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
-  const activeTab = tabParam === 'contributions' ? 'contributions' : 'campaigns';
+  const activeTab = tabParam === 'contributions' ? 'contributions' : tabParam === 'referrals' ? 'referrals' : 'campaigns';
 
   const [stats, setStats] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
@@ -43,8 +112,20 @@ export default function Dashboard() {
   const [balance, setBalance] = useState(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
   const [showDepositModal, setShowDepositModal] = useState(false);
+  const [dashAnalytics, setDashAnalytics] = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [selectedCampaignId, setSelectedCampaignId] = useState(null);
+  const [campaignAnalytics, setCampaignAnalytics] = useState(null);
+  const [campaignContributors, setCampaignContributors] = useState(null);
+  const [referralData, setReferralData] = useState({});
+  const [referralLoading, setReferralLoading] = useState(false);
 
   const isCreator = user?.role === 'creator' || user?.role === 'admin';
+
+  const tabs = isCreator
+    ? [...TABS, { id: 'referrals', label: 'Referrals' }]
+    : TABS;
+
   const kycRequired =
     user?.kyc_required_for_campaigns ??
     String(import.meta.env.VITE_KYC_REQUIRED_FOR_CAMPAIGNS ?? 'true').toLowerCase() !== 'false';
@@ -69,6 +150,8 @@ export default function Dashboard() {
           setStats(s);
           setCampaigns(c);
           setContributions(contrib);
+          // pre-fetch dashboard analytics for the analytics tab
+          api.getUserDashboardAnalytics().then(setDashAnalytics).catch(() => {});
         } else {
           setContributions(results[0]);
         }
@@ -80,9 +163,45 @@ export default function Dashboard() {
       });
   }, [user?.role, updateUser]);
 
+  const loadCampaignAnalytics = useCallback((id) => {
+    setSelectedCampaignId(id);
+    setCampaignAnalytics(null);
+    setCampaignContributors(null);
+    setAnalyticsLoading(true);
+    Promise.all([
+      api.getCampaignAnalytics(id),
+      api.getCampaignAnalyticsContributors(id),
+    ])
+      .then(([a, c]) => { setCampaignAnalytics(a); setCampaignContributors(c); })
+      .catch(() => {})
+      .finally(() => setAnalyticsLoading(false));
+  }, []);
+  useEffect(() => {
+    if (!isCreator || activeTab !== 'referrals' || !campaigns.length) return;
+    setReferralLoading(true);
+    Promise.all(
+      campaigns.map((c) =>
+        api.getReferralLeaderboard(c.id).then((rows) => [c.id, rows]).catch(() => [c.id, []]),
+      ),
+    )
+      .then((results) => {
+        const data = {};
+        results.forEach(([id, rows]) => {
+          data[id] = rows;
+        });
+        setReferralData(data);
+      })
+      .catch(() => {})
+      .finally(() => setReferralLoading(false));
+  }, [isCreator, activeTab, campaigns]);
+
   function setTab(tabId) {
     if (tabId === 'contributions') {
       setSearchParams({ tab: 'contributions' });
+    } else if (tabId === 'analytics') {
+      setSearchParams({ tab: 'analytics' });
+    } else if (tabId === 'referrals') {
+      setSearchParams({ tab: 'referrals' });
     } else {
       setSearchParams({});
     }
@@ -98,6 +217,7 @@ export default function Dashboard() {
   if (!user) return <Navigate to="/login" replace />;
 
   const loading = activeTab === 'campaigns' ? loadingCampaigns : loadingContributions;
+  const visibleTabs = isCreator ? TABS : TABS.filter(t => t.id !== 'analytics');
 
   return (
     <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
@@ -148,7 +268,8 @@ export default function Dashboard() {
           paddingBottom: '0.5rem',
         }}
       >
-        {TABS.map((tab) => (
+        {visibleTabs.map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
@@ -401,6 +522,232 @@ export default function Dashboard() {
                     >
                       View transaction
                     </a>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+
+      {activeTab === 'analytics' && isCreator && (
+        <section role="tabpanel" aria-labelledby="tab-analytics">
+          {/* Dashboard-wide trend */}
+          <div className="campaign-card" style={{ marginBottom: '1rem', minHeight: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <strong>Contributions — last 30 days (all campaigns)</strong>
+              {dashAnalytics?.recent_trend?.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                  onClick={() => exportCSV(dashAnalytics.recent_trend, 'contributions_trend.csv')}
+                >
+                  Export CSV
+                </button>
+              )}
+            </div>
+            <MiniLineChart data={dashAnalytics?.recent_trend} dataKey="total_amount" label="Amount" />
+            {dashAnalytics?.overview && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: '0.5rem', marginTop: '0.75rem' }}>
+                {[
+                  ['Total raised', Number(dashAnalytics.overview.total_raised).toLocaleString()],
+                  ['Contributions', dashAnalytics.overview.total_contributions],
+                  ['Unique contributors', dashAnalytics.overview.unique_contributors],
+                  ['Avg contribution', Number(dashAnalytics.overview.avg_contribution).toLocaleString(undefined, { maximumFractionDigits: 2 })],
+                ].map(([label, val]) => (
+                  <div key={label} className="campaign-card" style={{ minHeight: 'auto', padding: '0.6rem 0.75rem' }}>
+                    <strong style={{ fontSize: '1rem' }}>{val}</strong>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--color-text-hint)' }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Per-campaign drill-down */}
+          <div className="campaign-card" style={{ minHeight: 'auto' }}>
+            <strong style={{ display: 'block', marginBottom: '0.6rem' }}>Per-campaign analytics</strong>
+            {campaigns.length === 0 ? (
+              <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>No campaigns yet.</p>
+            ) : (
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                {campaigns.map(c => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => loadCampaignAnalytics(c.id)}
+                    style={{
+                      padding: '0.3rem 0.75rem',
+                      borderRadius: 8,
+                      border: '1px solid var(--color-border)',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      fontSize: '0.82rem',
+                      background: selectedCampaignId === c.id ? 'var(--color-accent)' : 'transparent',
+                      color: selectedCampaignId === c.id ? '#fff' : 'var(--color-text-secondary)',
+                    }}
+                  >
+                    {c.title}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {analyticsLoading && <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>Loading…</p>}
+
+            {campaignAnalytics && !analyticsLoading && (
+              <>
+                {/* Summary row */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  {[
+                    ['Total raised', `${Number(campaignAnalytics.campaign.raised_amount).toLocaleString()} ${campaignAnalytics.campaign.asset_type}`],
+                    ['Contributions', campaignAnalytics.summary.total_contributions],
+                    ['Unique contributors', campaignAnalytics.summary.unique_contributors],
+                    ['Avg contribution', Number(campaignAnalytics.summary.avg_contribution).toLocaleString(undefined, { maximumFractionDigits: 2 })],
+                  ].map(([label, val]) => (
+                    <div key={label} className="campaign-card" style={{ minHeight: 'auto', padding: '0.6rem 0.75rem' }}>
+                      <strong style={{ fontSize: '1rem' }}>{val}</strong>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--color-text-hint)' }}>{label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Contributor stats card */}
+                {campaignContributors && (
+                  <div className="campaign-card" style={{ minHeight: 'auto', marginBottom: '0.75rem', padding: '0.75rem' }}>
+                    <strong style={{ fontSize: '0.9rem' }}>Contributor stats</strong>
+                    <div style={{ marginTop: '0.4rem', display: 'flex', gap: '1.5rem', flexWrap: 'wrap', fontSize: '0.88rem' }}>
+                      <span>First-time: <strong>{campaignContributors.first_time_contributors ?? 0}</strong></span>
+                      <span>Returning: <strong>{campaignContributors.repeat_contributors ?? 0}</strong></span>
+                      {campaignContributors.repeat_contributors > 0 && (
+                        <span>Return rate: <strong>
+                          {(((campaignContributors.repeat_contributors) /
+                            ((campaignContributors.repeat_contributors || 0) + (campaignContributors.first_time_contributors || 0))) * 100).toFixed(0)}%
+                        </strong></span>
+                      )}
+                    </div>
+                    {campaignContributors.country_breakdown?.length > 0 && (
+                      <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--color-text-hint)' }}>Top country: </span>
+                        <strong>{campaignContributors.country_breakdown[0].country}</strong>
+                        <span style={{ color: 'var(--color-text-hint)' }}>
+                          {' '}({campaignContributors.country_breakdown.map(c => `${c.country} ${c.contributor_count}`).slice(0, 3).join(' · ')})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Time-series chart */}
+                <strong style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.9rem' }}>Contributions over time</strong>
+                <MiniLineChart data={campaignAnalytics.daily_buckets} dataKey="total_amount" label="Amount" />
+
+                {/* Milestone funnel */}
+                <MilestoneFunnel campaignId={selectedCampaignId} />
+
+                {/* CSV export */}
+                {campaignAnalytics.daily_buckets?.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    style={{ marginTop: '0.75rem', fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                    onClick={() => exportCSV(
+                      campaignAnalytics.daily_buckets.map(r => ({
+                        date: r.day,
+                        contributions: r.contribution_count,
+                        amount: r.total_amount,
+                      })),
+                      `campaign_${selectedCampaignId}_analytics.csv`
+                    )}
+                  >
+                    Export CSV
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+      {activeTab === 'referrals' && isCreator && (
+        <section role="tabpanel" aria-labelledby="tab-referrals">
+          {referralLoading ? (
+            <p style={{ color: 'var(--color-text-hint)' }}>Loading referral data...</p>
+          ) : campaigns.length === 0 ? (
+            <p className="alert alert--info">
+              No campaigns yet.{' '}
+              <Link to="/campaigns/new" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
+                Create a campaign
+              </Link>{' '}
+              to start tracking referrals.
+            </p>
+          ) : (
+            <div style={{ display: 'grid', gap: '0.75rem' }}>
+              {campaigns.map((campaign) => {
+                const refs = referralData[campaign.id] || [];
+                const totalClicks = refs.reduce((s, r) => s + r.click_count, 0);
+                const totalContributions = refs.reduce((s, r) => s + r.contribution_count, 0);
+                return (
+                  <div key={campaign.id} className="campaign-card">
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        gap: '0.5rem',
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                        marginBottom: '0.75rem',
+                      }}
+                    >
+                      <Link
+                        to={`/campaigns/${campaign.id}`}
+                        style={{ color: 'var(--color-accent)', fontWeight: 700 }}
+                      >
+                        {campaign.title}
+                      </Link>
+                      <CampaignStatusBadge status={campaign.status} />
+                    </div>
+                    {refs.length === 0 ? (
+                      <p style={{ color: 'var(--color-text-hint)', fontSize: '0.85rem' }}>
+                        No referral activity yet.
+                      </p>
+                    ) : (
+                      <>
+                        <div
+                          style={{
+                            display: 'flex',
+                            gap: '1rem',
+                            marginBottom: '0.75rem',
+                            fontSize: '0.85rem',
+                          }}
+                        >
+                          <span><strong>{totalClicks}</strong> total clicks</span>
+                          <span><strong>{totalContributions}</strong> total conversions</span>
+                        </div>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '2px solid var(--color-border)', textAlign: 'left' }}>
+                              <th style={{ padding: '0.35rem 0.5rem' }}>Referrer</th>
+                              <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>Clicks</th>
+                              <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>Conversions</th>
+                              <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>Rate</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {refs.map((r, i) => (
+                              <tr key={r.referral_code} style={{ borderBottom: '1px solid var(--color-border-lighter)' }}>
+                                <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600 }}>{r.referrer_name}</td>
+                                <td style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>{r.click_count}</td>
+                                <td style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>{r.contribution_count}</td>
+                                <td style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
+                                  {r.click_count > 0
+                                    ? `${((r.contribution_count / r.click_count) * 100).toFixed(0)}%`
+                                    : '-'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </>
+                    )}
                   </div>
                 );
               })}

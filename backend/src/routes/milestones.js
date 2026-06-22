@@ -15,8 +15,18 @@ const {
   finalizeWithdrawalSubmitted,
 } = require('../services/stellarTransactionService');
 const { withDecryptedWalletSecret } = require('../services/walletSecrets');
+const { resolveUserCampaignRole } = require('../services/campaignInviteService');
+const { canSubmitMilestones } = require('../lib/campaignPermissions');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
 const { invokeContract, nativeToScVal } = require('../services/sorobanService');
+const {
+  sendMilestoneReleasedCreatorEmail,
+  sendMilestoneReleasedContributorEmail,
+} = require('../services/emailService');
+
+function frontendBaseUrl() {
+  return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+}
 const crypto = require('crypto');
 
 function canPerformPlatformSignature(userId) {
@@ -175,7 +185,14 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
   const milestone = milestones[0];
 
   if (milestone.creator_id !== req.user.userId) {
-    return res.status(403).json({ error: 'Only the campaign creator can submit milestone evidence' });
+    const memberRole = await resolveUserCampaignRole(
+      milestone.campaign_id,
+      req.user.userId,
+      req.user.role === 'admin'
+    );
+    if (!canSubmitMilestones(memberRole)) {
+      return res.status(403).json({ error: 'Only campaign owners or managers can submit milestone evidence' });
+    }
   }
   if (!['funded', 'in_progress'].includes(milestone.campaign_status)) {
     return res.status(409).json({ error: `Milestone submission is not available while campaign status is "${milestone.campaign_status}".` });
@@ -471,6 +488,47 @@ const approveMilestoneReleaseHandler = async (req, res) => {
         withdrawal_request_id: withdrawalRequest.id,
         tx_hash: txHash,
       }).catch((e) => logger.error('Milestone webhook emit failed', { error: e.message }));
+
+      const campaignUrl = `${frontendBaseUrl()}/campaigns/${milestone.campaign_id}`;
+      db.query(
+        `SELECT u.email, u.name FROM users u WHERE u.id = $1`,
+        [milestone.creator_id]
+      ).then(({ rows: creatorRows }) => {
+        if (!creatorRows.length) return;
+        return sendMilestoneReleasedCreatorEmail({
+          to: creatorRows[0].email,
+          milestoneId: milestone.id,
+          creatorName: creatorRows[0].name,
+          campaignTitle: milestone.campaign_title,
+          campaignUrl,
+          milestoneTitle: milestone.title,
+          amount: releaseAmount,
+          asset: milestone.asset_type,
+          txHash,
+        });
+      }).catch((e) => logger.error('Milestone creator email failed', { error: e.message }));
+
+      db.query(
+        `SELECT DISTINCT ON (u.id) u.id, u.email, u.name
+         FROM contributions c
+         JOIN users u ON u.wallet_public_key = c.sender_public_key
+         WHERE c.campaign_id = $1 AND u.email IS NOT NULL
+         ORDER BY u.id, c.created_at ASC`,
+        [milestone.campaign_id]
+      ).then(({ rows: contributors }) =>
+        Promise.all(
+          contributors.map((contributor) =>
+            sendMilestoneReleasedContributorEmail({
+              to: contributor.email,
+              milestoneId: milestone.id,
+              contributorName: contributor.name,
+              campaignTitle: milestone.campaign_title,
+              campaignUrl,
+              milestoneTitle: milestone.title,
+            })
+          )
+        )
+      ).catch((e) => logger.error('Milestone contributor email failed', { error: e.message }));
     });
 
     res.json({

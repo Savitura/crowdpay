@@ -18,12 +18,16 @@ const {
   finalizeWithdrawalSubmitted,
   markWithdrawalFailed,
 } = require('../services/stellarTransactionService');
-const { sendEmail } = require('../services/emailService');
+const { sendWithdrawalApprovedEmail, sendWithdrawalRejectedEmail } = require('../services/emailService');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
 const { withDecryptedWalletSecret } = require('../services/walletSecrets');
 const { createNotification } = require('../services/notifications');
 
 const ALLOWED_CAMPAIGN_STATUS_FOR_REQUEST = ['active', 'funded'];
+
+function frontendBaseUrl() {
+  return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+}
 
 /** Fail closed when PLATFORM_APPROVER_USER_ID is unset. */
 function canPerformPlatformSignature(userId) {
@@ -486,15 +490,21 @@ const platformApproveHandler = async (req, res) => {
 
     // Notify creator
     const { rows: cRows } = await db.query(
-      `SELECT u.email, c.creator_id FROM users u JOIN campaigns c ON c.creator_id = u.id WHERE c.id = $1`,
+      `SELECT u.email, u.name, c.creator_id, c.title, c.asset_type
+       FROM users u JOIN campaigns c ON c.creator_id = u.id WHERE c.id = $1`,
       [requestRow.campaign_id]
     );
     if (cRows.length) {
-      sendEmail({
+      sendWithdrawalApprovedEmail({
         to: cRows[0].email,
-        subject: 'Withdrawal Approved',
-        text: `Your withdrawal for ${requestRow.amount} has been approved by the platform. Transaction Hash: ${txHash}`
-      });
+        withdrawalId: req.params.id,
+        creatorName: cRows[0].name,
+        amount: requestRow.amount,
+        asset: cRows[0].asset_type,
+        campaignTitle: cRows[0].title,
+        campaignUrl: `${frontendBaseUrl()}/campaigns/${requestRow.campaign_id}`,
+        txHash,
+      }).catch((err) => logger.error('Withdrawal approved email failed', { error: err.message }));
       createNotification(cRows[0].creator_id, {
         type: 'withdrawal_approved',
         title: 'Withdrawal approved',
@@ -663,15 +673,20 @@ router.post('/:id/reject', requireAuth, requirePlatformApprover, async (req, res
     await client.query('COMMIT');
 
     const { rows: cRows } = await db.query(
-      `SELECT u.email, c.creator_id FROM users u JOIN campaigns c ON c.creator_id = u.id WHERE c.id = $1`,
+      `SELECT u.email, u.name, c.creator_id, c.title, c.asset_type
+       FROM users u JOIN campaigns c ON c.creator_id = u.id WHERE c.id = $1`,
       [requestRow.campaign_id]
     );
     if (cRows.length) {
-      sendEmail({
+      sendWithdrawalRejectedEmail({
         to: cRows[0].email,
-        subject: 'Withdrawal Rejected',
-        text: `Your withdrawal request has been rejected by the platform. Reason: ${reason}`
-      });
+        withdrawalId: req.params.id,
+        creatorName: cRows[0].name,
+        amount: requestRow.amount,
+        asset: cRows[0].asset_type,
+        campaignTitle: cRows[0].title,
+        reason,
+      }).catch((err) => logger.error('Withdrawal rejected email failed', { error: err.message }));
       createNotification(cRows[0].creator_id, {
         type: 'withdrawal_rejected',
         title: 'Withdrawal rejected',

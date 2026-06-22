@@ -101,6 +101,13 @@ router.get('/me/contributions', requireAuth, asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
+const { getUserDashboardAnalytics } = require('../services/analyticsService');
+
+router.get('/me/dashboard/analytics', requireAuth, asyncHandler(async (req, res) => {
+  const data = await getUserDashboardAnalytics(req.user.userId);
+  res.json(data);
+}));
+
 // GET /api/users/me — already proposed in issue #163, implement together
 router.get('/me', requireAuth, async (req, res) => {
   const { rows } = await db.query(

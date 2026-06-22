@@ -27,6 +27,7 @@ const {
   submitCustodialContribution,
 } = require('../services/contributionService');
 const { listUserContributions } = require('../services/userDashboardService');
+const { requestRefund: contractRequestRefund } = require('../services/sorobanService');
 const asyncHandler = require('../utils/asyncHandler');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
@@ -49,6 +50,27 @@ const contributionPostLimiter = rateLimit({
  *     description: Contribution creation and quoting
  */
 
+async function attributeContributionToReferrer(campaignId, req) {
+  const cookieName = `cp_ref_${campaignId}`;
+  const refCode = req.cookies?.[cookieName];
+  if (!refCode) return;
+
+  try {
+    const { rows } = await db.query(
+      'SELECT id FROM campaign_referrals WHERE referral_code = $1 AND campaign_id = $2',
+      [refCode, campaignId]
+    );
+    if (rows.length) {
+      await db.query(
+        'UPDATE campaign_referrals SET contribution_count = contribution_count + 1 WHERE id = $1',
+        [rows[0].id]
+      );
+    }
+  } catch (err) {
+    logger.warn('Referral attribution failed', { campaign_id: campaignId, error: err.message });
+  }
+}
+
 function validateFreighterPublicKey(publicKey) {
   try {
     Keypair.fromPublicKey(publicKey);
@@ -60,8 +82,8 @@ function validateFreighterPublicKey(publicKey) {
 
 async function loadActiveCampaign(campaignId) {
   const { rows } = await db.query(
-    `SELECT c.*, u.email as creator_email FROM campaigns c 
-     JOIN users u ON c.creator_id = u.id 
+    `SELECT c.*, u.email as creator_email FROM campaigns c
+     JOIN users u ON c.creator_id = u.id
      WHERE c.id = $1 AND c.status = $2 AND c.deleted_at IS NULL`,
     [campaignId, 'active']
   );
@@ -70,10 +92,7 @@ async function loadActiveCampaign(campaignId) {
 
 function createPreparedContributionToken(payload) {
   return jwt.sign(
-    {
-      kind: 'prepared_contribution',
-      ...payload,
-    },
+    { kind: 'prepared_contribution', ...payload },
     process.env.JWT_SECRET,
     { expiresIn: PREPARED_CONTRIBUTION_EXPIRES_IN }
   );
@@ -123,7 +142,6 @@ router.get('/mine', requireAuth, asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
-// Get contributions for a campaign
 router.get('/campaign/:campaignId', async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
   const offset = Math.max(parseInt(req.query.offset) || 0, 0);
@@ -134,6 +152,7 @@ router.get('/campaign/:campaignId', async (req, res) => {
             c.source_amount, c.source_asset, c.conversion_rate, c.path,
             c.tx_hash, c.created_at,
             wr.status AS refund_status, wr.tx_hash AS refund_tx_hash,
+            c.contract_refunded_at, c.contract_refund_tx_hash,
             COUNT(*) OVER() AS total_count
      FROM contributions c
      LEFT JOIN LATERAL (
@@ -154,14 +173,12 @@ router.get('/campaign/:campaignId', async (req, res) => {
   res.json({ contributions: cleanedRows, total: Number(total), limit, offset });
 });
 
-// List contributions for the authenticated user (alias for /api/contributions/mine)
 router.get('/', requireAuth, asyncHandler(async (req, res) => {
   const rows = await listUserContributions(req.user.userId);
   if (rows === null) return res.status(404).json({ error: 'User not found' });
   res.json(rows);
 }));
 
-// Trace contribution settlement by Stellar tx hash (submitted vs indexed on ledger)
 router.get('/finalization/:txHash', requireAuth, asyncHandler(async (req, res) => {
   const txHash = req.params.txHash;
   const { rows } = await db.query(
@@ -216,51 +233,7 @@ router.get('/finalization/:txHash', requireAuth, asyncHandler(async (req, res) =
   });
 }));
 
-// Quote conversion before a path payment contribution
 router.get('/quote', requireAuth, contributionQuoteValidation, validateRequest, asyncHandler(async (req, res) => {
-  /**
-   * @openapi
-   * /api/contributions/quote:
-   *   get:
-   *     tags: [Contributions]
-   *     summary: Get a DEX quote before submitting a conversion contribution
-   *     security:
-   *       - bearerAuth: []
-   *     parameters:
-   *       - in: query
-   *         name: send_asset
-   *         required: true
-   *         schema: { type: string }
-   *       - in: query
-   *         name: dest_asset
-   *         required: true
-   *         schema: { type: string }
-   *       - in: query
-   *         name: dest_amount
-   *         required: true
-   *         schema: { type: string }
-   *     responses:
-   *       200:
-   *         description: OK
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               required: [send_asset, dest_asset, dest_amount, quoted_source_amount, max_send_amount, estimated_rate, path, path_count]
-   *               properties:
-   *                 send_asset: { type: string }
-   *                 dest_asset: { type: string }
-   *                 dest_amount: { type: string }
-   *                 quoted_source_amount: { type: string }
-   *                 max_send_amount: { type: string }
-   *                 estimated_rate: { type: string }
-   *                 path: { type: array, items: { type: string } }
-   *                 path_count: { type: integer }
-   *       400:
-   *         description: Missing/invalid query params
-   *       404:
-   *         description: No path found
-   */
   const { send_asset, dest_asset, dest_amount } = req.query;
 
   const paths = await getPathPaymentQuote({
@@ -451,52 +424,12 @@ router.post('/submit-signed', requireAuth, asyncHandler(async (req, res) => {
   });
 }));
 
-// Contribute to a campaign (authenticated, custodial)
 router.post('/', contributionPostLimiter, requireAuth, contributionValidation, validateRequest, asyncHandler(async (req, res) => {
-  /**
-   * @openapi
-   * /api/contributions:
-   *   post:
-   *     tags: [Contributions]
-   *     summary: Submit a contribution (custodial)
-   *     security:
-   *       - bearerAuth: []
-   *     requestBody:
-   *       required: true
-   *       content:
-   *         application/json:
-   *           schema:
-   *             type: object
-   *             required: [campaign_id, amount, send_asset]
-   *             properties:
-   *               campaign_id: { type: string }
-   *               amount: { type: string }
-   *               send_asset: { type: string }
-   *               display_name: { type: string, nullable: true }
-   *     responses:
-   *       202:
-   *         description: Accepted
-   *         content:
-   *           application/json:
-   *             schema:
-   *               type: object
-   *               required: [tx_hash, stellar_transaction_id, message, conversion_quote]
-   *               properties:
-   *                 tx_hash: { type: string }
-   *                 stellar_transaction_id: { type: string }
-   *                 message: { type: string }
-   *                 conversion_quote: { type: object, nullable: true }
-   *       401:
-   *         description: Unauthorized
-   *       404:
-   *         description: Campaign not found
-   */
   const { campaign_id, amount, send_asset, display_name } = req.body;
 
   const campaign = await loadActiveCampaign(campaign_id);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-  // Load contributor's custodial secret
   const { rows: users } = await db.query(
     'SELECT wallet_secret_encrypted, wallet_public_key FROM users WHERE id = $1',
     [req.user.userId]
@@ -542,7 +475,7 @@ router.post('/', contributionPostLimiter, requireAuth, contributionValidation, v
     res.status(202).json({
       tx_hash: result.txHash,
       stellar_transaction_id: result.stellarTransactionId,
-      message: 'Transaction submitted',
+      message: "Transaction submitted",
       conversion_quote: result.conversionQuote,
       ...(result.platform_fee_amount != null
         ? { platform_fee_amount: result.platform_fee_amount }
@@ -553,35 +486,122 @@ router.post('/', contributionPostLimiter, requireAuth, contributionValidation, v
       return res.status(422).json({ error: err.message });
     }
     if (err.statusCode === 502) {
-      logger.error('Stellar transaction submission failed', { campaign_id, error: err.message });
-      sendAlert('Stellar transaction submission failed', { campaign_id, error: err.message });
+      logger.error("Stellar transaction submission failed", {
+        campaign_id,
+        error: err.message,
+      });
+      sendAlert("Stellar transaction submission failed", {
+        campaign_id,
+        error: err.message,
+      });
       return res.status(502).json({
-        error: 'Stellar network rejected the transaction',
+        error: "Stellar network rejected the transaction",
         detail: err.message || String(err),
       });
     }
 
-    logger.error('Custodial contribution signing failed', { campaign_id, error: err.message });
+    logger.error("Custodial contribution signing failed", {
+      campaign_id,
+      error: err.message,
+    });
     return res.status(503).json({
-      error: 'Wallet setup is still completing; please retry in a few seconds.',
+      error: "Wallet setup is still completing; please retry in a few seconds.",
     });
   }
 
-  setImmediate(() => {
+  if (Number(campaign.raised_amount) + Number(amount) >= Number(campaign.target_amount)) {
     sendEmail({
       to: campaign.creator_email,
-      subject: `New Contribution to ${campaign.title}`,
-      text: `You just received a contribution of ${amount} ${send_asset} from public key: ${contributorPublicKey}.`
+      subject: `Target Reached for ${campaign.title}!`,
+      text: `Congratulations! Your campaign "${campaign.title}" has reached its target of ${campaign.target_amount} ${campaign.asset_type}. You can now start the withdrawal process.`
+    });
+  }
+}));
+
+/**
+ * POST /api/contributions/:id/refund
+ *
+ * Request a refund for a contribution via the on-chain escrow contract.
+ * Only the contributor who made the contribution can request a refund.
+ * The campaign must have a deployed escrow contract.
+ *
+ * Request body:
+ *   { signer_secret?: string } — optional override; defaults to platform key
+ */
+router.post('/:id/refund', requireAuth, asyncHandler(async (req, res) => {
+  const contributionId = req.params.id;
+  const signerSecret = req.body.signer_secret || process.env.PLATFORM_SECRET_KEY;
+
+  const { rows: contributions } = await db.query(
+    `SELECT ct.*, c.escrow_contract_id, c.status AS campaign_status, c.deadline
+     FROM contributions ct
+     JOIN campaigns c ON c.id = ct.campaign_id
+     WHERE ct.id = $1`,
+    [contributionId]
+  );
+
+  if (!contributions.length) {
+    return res.status(404).json({ error: 'Contribution not found' });
+  }
+
+  const contribution = contributions[0];
+
+  const { rows: users } = await db.query(
+    'SELECT wallet_public_key FROM users WHERE id = $1',
+    [req.user.userId]
+  );
+
+  const userPublicKey = users[0]?.wallet_public_key;
+  const isOwner = contribution.sender_public_key === userPublicKey;
+  const isPlatform = req.user.role === 'admin';
+
+  if (!isOwner && !isPlatform) {
+    return res.status(403).json({ error: 'You can only refund your own contributions' });
+  }
+
+  if (contribution.campaign_status !== 'failed') {
+    return res.status(409).json({ error: 'Refunds are only available for failed campaigns' });
+  }
+
+  if (!contribution.escrow_contract_id) {
+    return res.status(400).json({ error: 'Campaign does not have an escrow contract deployed' });
+  }
+
+  try {
+    const result = await contractRequestRefund({
+      contractId: contribution.escrow_contract_id,
+      contributorAddress: contribution.sender_public_key,
+      signerSecret,
     });
 
-    if (Number(campaign.raised_amount) + Number(amount) >= Number(campaign.target_amount)) {
-      sendEmail({
-        to: campaign.creator_email,
-        subject: `Target Reached for ${campaign.title}!`,
-        text: `Congratulations! Your campaign "${campaign.title}" has reached its target of ${campaign.target_amount} ${campaign.asset_type}. You can now start the withdrawal process.`
-      });
-    }
-  });
+    await db.query(
+      `UPDATE contributions
+       SET contract_refund_tx_hash = $1, contract_refunded_at = NOW()
+       WHERE id = $2`,
+      [result?.toString() || null, contributionId]
+    );
+
+    logger.info('Contract refund processed', {
+      contributionId,
+      escrowContractId: contribution.escrow_contract_id,
+      result,
+    });
+
+    res.json({
+      message: 'Refund processed via escrow contract',
+      tx_hash: result?.toString() || null,
+    });
+  } catch (err) {
+    logger.error('Contract refund failed', {
+      contributionId,
+      escrowContractId: contribution.escrow_contract_id,
+      error: err.message,
+    });
+    res.status(502).json({
+      error: 'Escrow contract refund failed',
+      detail: err.message,
+    });
+  }
 }));
 
 module.exports = router;

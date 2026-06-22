@@ -2,6 +2,12 @@ const router = require("express").Router();
 const db = require("../config/database");
 const { requireAuth } = require("../middleware/auth");
 const asyncHandler = require("../utils/asyncHandler");
+const logger = require("../config/logger");
+const { sendCampaignUpdatePostedEmail } = require("../services/emailService");
+
+function frontendBaseUrl() {
+  return (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
+}
 
 function cleanText(value = "") {
   return String(value)
@@ -13,7 +19,7 @@ async function requireCampaignCreator(req, res, next) {
   const campaignId = req.params.id;
 
   const { rows } = await db.query(
-    "SELECT id, creator_id FROM campaigns WHERE id = $1",
+    "SELECT id, creator_id, title FROM campaigns WHERE id = $1",
     [campaignId],
   );
 
@@ -73,8 +79,37 @@ router.post(
        RETURNING id, campaign_id, author_id, title, body, created_at, updated_at`,
       [req.params.id, req.user.userId, title, body],
     );
+    const update = rows[0];
 
-    res.status(201).json(rows[0]);
+    setImmediate(() => {
+      const campaignUrl = `${frontendBaseUrl()}/campaigns/${req.params.id}`;
+      db.query(
+        `SELECT DISTINCT ON (u.id) u.id, u.email, u.name
+         FROM contributions c
+         JOIN users u ON u.wallet_public_key = c.sender_public_key
+         WHERE c.campaign_id = $1 AND u.email IS NOT NULL
+         ORDER BY u.id, c.created_at ASC`,
+        [req.params.id],
+      )
+        .then(({ rows: contributors }) =>
+          Promise.all(
+            contributors.map((contributor) =>
+              sendCampaignUpdatePostedEmail({
+                to: contributor.email,
+                updateId: update.id,
+                name: contributor.name,
+                campaignTitle: req.campaign.title,
+                campaignUrl,
+                updateTitle: update.title,
+                updateBody: update.body,
+              }),
+            ),
+          ),
+        )
+        .catch((err) => logger.error("Campaign update email failed", { error: err.message }));
+    });
+
+    res.status(201).json(update);
   }),
 );
 
