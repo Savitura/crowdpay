@@ -325,7 +325,7 @@ export default function CreateCampaign() {
   if (kycRequired && user?.kyc_status !== 'verified') {
     return (
       <main className="container page-narrow" style={{ paddingTop: '3rem', paddingBottom: '3rem' }}>
-        <KycPrompt token={token} onUserUpdate={updateUser} title="Verify your identity first" />
+        <KycPrompt onUserUpdate={updateUser} title="Verify your identity first" />
         <p style={{ marginTop: '1rem', fontSize: '0.9rem', color: 'var(--color-text-hint)' }}>
           Current verification status: <strong>{user?.kyc_status || 'unverified'}</strong>.
         </p>

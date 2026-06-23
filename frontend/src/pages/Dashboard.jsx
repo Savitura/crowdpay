@@ -245,6 +245,42 @@ export default function Dashboard() {
       .finally(() => setReferralLoading(false));
   }, [isCreator, activeTab, campaigns]);
 
+  useEffect(() => {
+    const kycParam = searchParams.get('kyc');
+    if (!user || (kycParam !== 'returned' && kycParam !== 'started')) return undefined;
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 40;
+
+    async function pollKycStatus() {
+      while (!cancelled && attempts < maxAttempts) {
+        attempts += 1;
+        try {
+          const status = await api.getKycStatus();
+          if (status.status === 'verified' || status.status === 'rejected') {
+            const me = await api.getMe();
+            updateUser(me);
+            setSearchParams((params) => {
+              params.delete('kyc');
+              params.delete('reference');
+              return params;
+            }, { replace: true });
+            break;
+          }
+        } catch {
+          // keep polling until Persona webhook lands
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+    }
+
+    pollKycStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, searchParams, updateUser, setSearchParams]);
+
   function setTab(tabId) {
     if (tabId === 'contributions') {
       setSearchParams({ tab: 'contributions' });
@@ -396,7 +432,7 @@ export default function Dashboard() {
                 </div>
                 {kycRequired && user?.kyc_status !== 'verified' && (
                   <div style={{ marginTop: '0.85rem' }}>
-                    <KycPrompt token={token} onUserUpdate={updateUser} />
+                    <KycPrompt onUserUpdate={updateUser} />
                   </div>
                 )}
               </div>

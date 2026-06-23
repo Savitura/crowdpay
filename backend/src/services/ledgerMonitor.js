@@ -9,8 +9,8 @@
 const { server } = require("../config/stellar");
 const db = require("../config/database");
 const logger = require("../config/logger");
-const { getCampaignBalance } = require("./stellarService");
 const { markContributionIndexed } = require("./stellarTransactionService");
+const { reconcileCampaignBalances: runBalanceReconciliation } = require("./reconciliation");
 const { sendContributionReceipt } = require("./emailService");
 const {
   emitWebhookEventForUser,
@@ -540,42 +540,6 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
 
   const RECONCILE_INTERVAL_MS = 10 * 60 * 1000;
 
-  /**
-   * Compare each campaign's DB raised_amount against live Horizon balance.
-   */
-  async function reconcileCampaignBalances() {
-    const { rows } = await db.query(
-      `SELECT id, wallet_public_key, raised_amount, asset_type, status
-     FROM campaigns
-     WHERE status IN ('active', 'funded')`,
-    );
-
-    for (const campaign of rows) {
-      try {
-        const balances = await getCampaignBalance(campaign.wallet_public_key);
-        const onChain = parseFloat(balances[campaign.asset_type] || "0");
-        const inDb = parseFloat(campaign.raised_amount);
-        const delta = Math.abs(onChain - inDb);
-        if (delta > 0.0000001) {
-          logger.warn("Campaign raised_amount differs from Horizon balance", {
-            campaign_id: campaign.id,
-            wallet_public_key: campaign.wallet_public_key,
-            raised_amount_db: inDb,
-            balance_horizon: onChain,
-            asset_type: campaign.asset_type,
-            delta,
-          });
-        }
-      } catch (err) {
-        logger.error("Balance reconciliation failed for campaign", {
-          campaign_id: campaign.id,
-          wallet_public_key: campaign.wallet_public_key,
-          error: err.message,
-        });
-      }
-    }
-  }
-
   async function startLedgerMonitor() {
     const { rows } = await db.query(
       `SELECT id, wallet_public_key FROM campaigns WHERE status IN ('active', 'funded')`,
@@ -599,7 +563,7 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
     });
 
     setInterval(() => {
-      reconcileCampaignBalances().catch((err) =>
+      runBalanceReconciliation().catch((err) =>
         logger.error("Periodic balance reconciliation failed", {
           error: err.message,
         }),
@@ -674,7 +638,7 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
     startLedgerMonitor,
     watchCampaignWallet,
     handlePayment,
-    reconcileCampaignBalances,
+    reconcileCampaignBalances: runBalanceReconciliation,
     getLedgerStreamHealth,
     addSSEClient,
     removeSSEClient,

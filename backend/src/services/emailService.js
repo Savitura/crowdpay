@@ -10,6 +10,7 @@ const campaignFailedEmail = require("../emails/campaignFailed");
 const withdrawalApprovedEmail = require("../emails/withdrawalApproved");
 const withdrawalRejectedEmail = require("../emails/withdrawalRejected");
 const milestoneReleasedEmail = require("../emails/milestoneReleased");
+const milestoneEvidenceSubmittedEmail = require("../emails/milestoneEvidenceSubmitted");
 const kycApprovedEmail = require("../emails/kycApproved");
 const kycRejectedEmail = require("../emails/kycRejected");
 const disputeOpenedEmail = require("../emails/disputeOpened");
@@ -202,6 +203,12 @@ async function sendMilestoneReleasedContributorEmail({ to, milestoneId, ...param
   await sendIdempotent({ dedupeKey: `milestone_released_contributor:${milestoneId}:${to}`, to, subject, text, html });
 }
 
+async function sendMilestoneEvidenceSubmittedAdminEmail({ to, milestoneId, ...params }) {
+  if (!to) return;
+  const { subject, text, html } = milestoneEvidenceSubmittedEmail.buildForAdmin(params);
+  await sendIdempotent({ dedupeKey: `milestone_evidence_submitted:${milestoneId}:${to}`, to, subject, text, html });
+}
+
 async function sendKycApprovedEmail({ to, userId, ...params }) {
   if (!to) return;
   const { subject, text, html } = kycApprovedEmail.build(params);
@@ -268,6 +275,7 @@ module.exports = {
   sendWithdrawalRejectedEmail,
   sendMilestoneReleasedCreatorEmail,
   sendMilestoneReleasedContributorEmail,
+  sendMilestoneEvidenceSubmittedAdminEmail,
   sendKycApprovedEmail,
   sendKycRejectedEmail,
   sendDisputeOpenedCreatorEmail,

@@ -37,6 +37,11 @@ app.use(
     credentials: true,
   })
 );
+app.post(
+  '/api/webhooks/kyc',
+  express.raw({ type: 'application/json' }),
+  require('./routes/kycWebhook')
+);
 app.use(express.json({ limit: '50kb' }));
 app.use(cookieParser());
 app.use(Sentry.sentryRequestMiddleware ? Sentry.sentryRequestMiddleware() : (req, res, next) => next());

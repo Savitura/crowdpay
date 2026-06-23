@@ -31,6 +31,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
   const [eventsById, setEventsById] = useState({});
   const [openAudit, setOpenAudit] = useState(null);
   const [milestoneForms, setMilestoneForms] = useState({});
+  const [uploadingMilestoneId, setUploadingMilestoneId] = useState(null);
   const [expiredIds, setExpiredIds] = useState(() => new Set());
   const [liveBalance, setLiveBalance] = useState(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
@@ -54,6 +55,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
         if (!next[milestone.id]) {
           next[milestone.id] = {
             evidence_url: milestone.evidence_url || '',
+            evidence_description: milestone.evidence_description || '',
             destination_key: milestone.destination_key || '',
           };
           changed = true;
@@ -199,6 +201,21 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
     }));
   }
 
+  async function uploadMilestoneFile(milestoneId, file) {
+    if (!file) return;
+    setUploadingMilestoneId(milestoneId);
+    setError('');
+    try {
+      const result = await api.uploadMilestoneEvidence(milestoneId, file);
+      setMilestoneField(milestoneId, 'evidence_url', result.evidence_url);
+      toast?.('Evidence file uploaded', 'success');
+    } catch (err) {
+      setError(err.message || 'Evidence upload failed.');
+    } finally {
+      setUploadingMilestoneId(null);
+    }
+  }
+
   async function requestMilestoneRelease(milestoneId) {
     const payload = milestoneForms[milestoneId] || {};
     if (!payload.evidence_url?.trim() || !payload.destination_key?.trim()) {
@@ -210,14 +227,24 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
     try {
       await api.submitMilestoneEvidence(milestoneId, {
         evidence_url: payload.evidence_url.trim(),
+        evidence_description: payload.evidence_description?.trim() || undefined,
         destination_key: payload.destination_key.trim(),
       });
+      await refresh();
       onReleased?.();
+      toast?.('Evidence submitted for platform review', 'success');
     } catch (err) {
       setError(err.message || 'Milestone release request failed.');
     } finally {
       setBusyId(null);
     }
+  }
+
+  function milestoneStatusLabel(status) {
+    if (status === 'pending_review') return 'Awaiting platform review';
+    if (status === 'rejected') return 'Rejected — update evidence and resubmit';
+    if (status === 'released') return 'Released';
+    return 'Not submitted';
   }
 
   if (!token || forbidden) return null;
@@ -249,18 +276,50 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
 
       {hasMilestonePlan && isCreator && (
         <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '1rem' }}>
-          {pendingMilestones.map((milestone) => (
+          {pendingMilestones.map((milestone) => {
+            const canSubmit = ['pending', 'rejected'].includes(milestone.status);
+            const isPendingReview = milestone.status === 'pending_review';
+            return (
             <div key={milestone.id} style={styles.card}>
               <h3 style={styles.h3}>Request milestone release</h3>
               <p style={styles.hint}>
                 {milestone.title} · {Number(milestone.release_percentage).toLocaleString()}% of
                 raised funds
               </p>
-              {milestone.review_note && (
+              <p style={{ ...styles.hint, fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+                Status: {milestoneStatusLabel(milestone.status)}
+              </p>
+              {milestone.status === 'rejected' && milestone.review_note && (
+                <div className="alert alert--error" style={{ marginBottom: '0.55rem' }}>
+                  Rejection reason: {milestone.review_note}
+                </div>
+              )}
+              {isPendingReview && (
+                <div className="alert alert--info" style={{ marginBottom: '0.55rem' }}>
+                  Your evidence is under review. You will be notified when the platform approves or
+                  rejects this milestone.
+                </div>
+              )}
+              {milestone.review_note && milestone.status !== 'rejected' && (
                 <div className="alert alert--info" style={{ marginBottom: '0.55rem' }}>
                   {milestone.review_note}
                 </div>
               )}
+              <label className="label-strong" htmlFor={`milestone-evidence-file-${milestone.id}`}>
+                Upload evidence file
+              </label>
+              <input
+                id={`milestone-evidence-file-${milestone.id}`}
+                type="file"
+                accept="image/*,.pdf,.doc,.docx,.txt"
+                disabled={!canSubmit || uploadingMilestoneId === milestone.id}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) uploadMilestoneFile(milestone.id, file);
+                  e.target.value = '';
+                }}
+                style={{ marginBottom: '0.65rem' }}
+              />
               <label className="label-strong" htmlFor={`milestone-evidence-${milestone.id}`}>
                 Evidence URL
               </label>
@@ -268,8 +327,21 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                 id={`milestone-evidence-${milestone.id}`}
                 value={milestoneForms[milestone.id]?.evidence_url || ''}
                 onChange={(e) => setMilestoneField(milestone.id, 'evidence_url', e.target.value)}
-                placeholder="https://"
+                placeholder="https:// or upload a file above"
+                disabled={!canSubmit}
                 style={{ marginBottom: '0.65rem' }}
+              />
+              <label className="label-strong" htmlFor={`milestone-description-${milestone.id}`}>
+                Evidence description
+              </label>
+              <textarea
+                id={`milestone-description-${milestone.id}`}
+                value={milestoneForms[milestone.id]?.evidence_description || ''}
+                onChange={(e) => setMilestoneField(milestone.id, 'evidence_description', e.target.value)}
+                placeholder="Describe what you delivered (demo link summary, deliverable notes, etc.)"
+                rows={3}
+                disabled={!canSubmit}
+                style={{ marginBottom: '0.65rem', resize: 'vertical', fontFamily: 'inherit' }}
               />
               <label className="label-strong" htmlFor={`milestone-destination-${milestone.id}`}>
                 Destination address
@@ -279,6 +351,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                 value={milestoneForms[milestone.id]?.destination_key || ''}
                 onChange={(e) => setMilestoneField(milestone.id, 'destination_key', e.target.value)}
                 placeholder="G..."
+                disabled={!canSubmit}
                 style={{ marginBottom: '0.65rem' }}
               />
               <button
@@ -290,10 +363,15 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
               >
                 {busyId === `milestone-${milestone.id}`
                   ? 'Submitting…'
-                  : 'Request milestone release'}
+                  : uploadingMilestoneId === milestone.id
+                  ? 'Uploading…'
+                  : isPendingReview
+                  ? 'Awaiting review'
+                  : 'Submit evidence for review'}
               </button>
             </div>
-          ))}
+          );
+          })}
         </div>
       )}
 

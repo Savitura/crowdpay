@@ -28,6 +28,7 @@ const {
 } = require('../services/contributionService');
 const { listUserContributions } = require('../services/userDashboardService');
 const { requestRefund: contractRequestRefund } = require('../services/sorobanService');
+const { assertUserKycVerified } = require('../services/kycService');
 const asyncHandler = require('../utils/asyncHandler');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
@@ -104,6 +105,20 @@ function verifyPreparedContributionToken(token) {
     throw new Error('Invalid contribution prepare token');
   }
   return payload;
+}
+
+function handleKycGateError(res, err) {
+  if (err.code === 'KYC_REQUIRED') {
+    return res.status(403).json({
+      error: err.message,
+      code: 'KYC_REQUIRED',
+      kyc_status: err.kyc_status,
+    });
+  }
+  if (err.statusCode === 404) {
+    return res.status(404).json({ error: err.message });
+  }
+  throw err;
 }
 
 function validateSubmittedContributionXdr({ signedXdr, unsignedXdr, senderPublicKey }) {
@@ -267,6 +282,13 @@ router.get('/quote', requireAuth, contributionQuoteValidation, validateRequest, 
 }));
 
 router.post('/prepare', requireAuth, contributionValidation, validateRequest, asyncHandler(async (req, res) => {
+  try {
+    await assertUserKycVerified(req.user.userId);
+  } catch (err) {
+    const handled = handleKycGateError(res, err);
+    if (handled) return handled;
+  }
+
   const { campaign_id, amount, send_asset, sender_public_key, display_name } = req.body;
   if (!sender_public_key) {
     return res.status(422).json({
@@ -363,6 +385,13 @@ router.post('/prepare', requireAuth, contributionValidation, validateRequest, as
 }));
 
 router.post('/submit-signed', requireAuth, asyncHandler(async (req, res) => {
+  try {
+    await assertUserKycVerified(req.user.userId);
+  } catch (err) {
+    const handled = handleKycGateError(res, err);
+    if (handled) return handled;
+  }
+
   const { signed_xdr, prepare_token } = req.body;
   if (!signed_xdr || !prepare_token) {
     return res.status(400).json({ error: 'signed_xdr and prepare_token are required' });
@@ -425,6 +454,13 @@ router.post('/submit-signed', requireAuth, asyncHandler(async (req, res) => {
 }));
 
 router.post('/', contributionPostLimiter, requireAuth, contributionValidation, validateRequest, asyncHandler(async (req, res) => {
+  try {
+    await assertUserKycVerified(req.user.userId);
+  } catch (err) {
+    const handled = handleKycGateError(res, err);
+    if (handled) return handled;
+  }
+
   const { campaign_id, amount, send_asset, display_name } = req.body;
 
   const campaign = await loadActiveCampaign(campaign_id);

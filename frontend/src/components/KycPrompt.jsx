@@ -15,7 +15,7 @@ export default function KycPrompt({
     setBusy(true);
     setError('');
     try {
-      const result = await api.startKyc(token);
+      const result = await api.startKyc();
       if (result.user && onUserUpdate) onUserUpdate(result.user);
       if (result.redirect_url) {
         window.location.assign(result.redirect_url);
