@@ -79,6 +79,18 @@ async function applyReconciliationCorrection(campaign, dbBalance, liveBalance) {
   }
 }
 
+const MAX_STORED_RUNS = 20;
+const recentRuns = [];
+
+function recordReconciliationRun(summary) {
+  recentRuns.unshift(summary);
+  if (recentRuns.length > MAX_STORED_RUNS) recentRuns.length = MAX_STORED_RUNS;
+}
+
+function getRecentReconciliationRuns() {
+  return [...recentRuns];
+}
+
 async function reconcileCampaign(campaign) {
   try {
     const { rows: pendingRows } = await db.query(
@@ -111,6 +123,7 @@ async function reconcileCampaign(campaign) {
 }
 
 async function reconcileCampaignBalances() {
+  const startedAt = new Date().toISOString();
   const { rows } = await db.query(
     `SELECT id, wallet_public_key, asset_type, raised_amount, target_amount, status
      FROM campaigns
@@ -118,6 +131,8 @@ async function reconcileCampaignBalances() {
   );
 
   const summary = {
+    started_at: startedAt,
+    finished_at: null,
     campaigns_checked: rows.length,
     updated: 0,
     skipped: 0,
@@ -141,6 +156,9 @@ async function reconcileCampaignBalances() {
           diff: result.diff,
           stellar_transaction_id: result.stellar_transaction_id,
         });
+      } else if (result.updated) {
+        summary.updated += 1;
+        summary.results.push({ campaign_id: campaign.id, updated: true, dbBalance: result.dbBalance, liveBalance: result.liveBalance });
       }
     } catch (err) {
       summary.errors += 1;
@@ -153,6 +171,8 @@ async function reconcileCampaignBalances() {
   }
 
   return summary;
+  summary.finished_at = new Date().toISOString();
+  recordReconciliationRun(summary);
 }
 
 async function reconcileSingleCampaign(campaignId) {
@@ -173,4 +193,6 @@ module.exports = {
   getReconciliationAlertThreshold,
   hasDiscrepancy,
   DISCREPANCY_EPSILON,
+  getRecentReconciliationRuns,
+  recordReconciliationRun,
 };

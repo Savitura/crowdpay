@@ -52,6 +52,9 @@ async function authenticate(req) {
       if (rows.length) {
         req.user.is_admin = rows[0].is_admin;
         req.user.is_banned = rows[0].is_banned;
+        if (rows[0].is_admin) {
+          req.user.role = 'admin';
+        }
       }
     }
   } catch {
