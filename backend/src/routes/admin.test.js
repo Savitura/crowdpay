@@ -242,4 +242,68 @@ describe('Admin Moderation Features', async () => {
       assert.ok(Array.isArray(data.campaign_status));
     });
   });
+
+  describe('Platform operations', () => {
+    it('GET /admin/health returns platform health snapshot', async () => {
+      const res = await fetch('http://localhost:3000/api/admin/health', {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.ok(typeof data.active_campaigns === 'number');
+      assert.ok(typeof data.total_raised === 'number');
+      assert.ok(data.pending_withdrawals);
+      assert.ok(typeof data.open_disputes === 'number');
+      assert.ok(data.stellar);
+      assert.ok(typeof data.load_time_ms === 'number');
+      assert.ok(data.load_time_ms < 5000);
+    });
+
+    it('GET /admin/withdrawals returns pending queue', async () => {
+      const res = await fetch('http://localhost:3000/api/admin/withdrawals?status=pending', {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.ok(Array.isArray(data));
+    });
+
+    it('GET /admin/disputes returns dispute list', async () => {
+      const res = await fetch('http://localhost:3000/api/admin/disputes', {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.ok(Array.isArray(data));
+    });
+
+    it('PATCH /admin/users/:id/kyc updates status and logs audit', async () => {
+      const res = await fetch(`http://localhost:3000/api/admin/users/${testUserId}/kyc`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ kyc_status: 'verified', reason: 'manual test override' }),
+      });
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.strictEqual(data.kyc_status, 'verified');
+
+      const auditRes = await fetch('http://localhost:3000/api/admin/audit-log?limit=5', {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      const audit = await auditRes.json();
+      assert.ok(audit.actions.some((a) => a.action_type === 'kyc_override' && a.target_id === testUserId));
+    });
+
+    it('GET /admin/kyc/campaigns returns array', async () => {
+      const res = await fetch('http://localhost:3000/api/admin/kyc/campaigns', {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      assert.strictEqual(res.status, 200);
+      const data = await res.json();
+      assert.ok(Array.isArray(data));
+    });
+  });
 });

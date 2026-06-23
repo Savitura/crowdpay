@@ -64,7 +64,7 @@ async function logWithdrawalEvent(client, { withdrawalRequestId, actorUserId, ac
 }
 
 async function checkOwnerAccess(req, campaignId) {
-  if (req.user.role === 'admin') return true;
+  if (req.user.role === 'admin' || req.user.is_admin) return true;
 
   const { rows: campaignRows } = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [campaignId]);
   if (campaignRows.length && campaignRows[0].creator_id === req.user.userId) {
