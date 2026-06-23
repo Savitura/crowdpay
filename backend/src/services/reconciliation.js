@@ -2,6 +2,18 @@ const db = require('../config/database');
 const { getCampaignBalance } = require('./stellarService');
 const logger = require('../config/logger');
 
+const MAX_STORED_RUNS = 20;
+const recentRuns = [];
+
+function recordReconciliationRun(summary) {
+  recentRuns.unshift(summary);
+  if (recentRuns.length > MAX_STORED_RUNS) recentRuns.length = MAX_STORED_RUNS;
+}
+
+function getRecentReconciliationRuns() {
+  return [...recentRuns];
+}
+
 async function reconcileCampaign(campaign) {
   try {
     const { rows: pendingRows } = await db.query(
@@ -33,17 +45,38 @@ async function reconcileCampaign(campaign) {
 }
 
 async function reconcileCampaignBalances() {
+  const startedAt = new Date().toISOString();
   const { rows } = await db.query(
     `SELECT id, wallet_public_key, asset_type, raised_amount FROM campaigns WHERE status IN ('active', 'funded')`
   );
 
+  const summary = {
+    started_at: startedAt,
+    finished_at: null,
+    campaigns_checked: rows.length,
+    updated: 0,
+    skipped: 0,
+    errors: 0,
+    results: [],
+  };
+
   for (const campaign of rows) {
     try {
-      await reconcileCampaign(campaign);
+      const result = await reconcileCampaign(campaign);
+      if (result.skipped) {
+        summary.skipped += 1;
+      } else if (result.updated) {
+        summary.updated += 1;
+        summary.results.push({ campaign_id: campaign.id, updated: true, dbBalance: result.dbBalance, liveBalance: result.liveBalance });
+      }
     } catch (err) {
-      // Error is already logged inside reconcileCampaign
+      summary.errors += 1;
+      summary.results.push({ campaign_id: campaign.id, error: err.message });
     }
   }
+
+  summary.finished_at = new Date().toISOString();
+  recordReconciliationRun(summary);
 }
 
 async function reconcileSingleCampaign(campaignId) {
@@ -60,4 +93,6 @@ async function reconcileSingleCampaign(campaignId) {
 module.exports = {
   reconcileCampaignBalances,
   reconcileSingleCampaign,
+  getRecentReconciliationRuns,
+  recordReconciliationRun,
 };
