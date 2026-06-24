@@ -207,7 +207,11 @@ export const api = {
   getMyBalance: () => request("GET", "/users/me/balance"),
   getMyStats: () => request("GET", "/users/me/stats"),
   getMyContributions: () => request("GET", "/contributions/mine"),
-  startKyc: () => request("POST", "/users/me/kyc/start"),
+  getContributorDashboard: () => request("GET", "/contributions/dashboard"),
+  requestContributionRefund: (contributionId) =>
+    request("POST", `/contributions/${contributionId}/refund`, {}),
+  startKyc: () => request("POST", "/auth/kyc/start"),
+  getKycStatus: () => request("GET", "/auth/kyc/status"),
 
   getMyCampaigns: () => request("GET", "/campaigns/mine"),
   getFeaturedCampaigns: () => request("GET", "/campaigns/featured"),
@@ -276,6 +280,12 @@ export const api = {
   setCampaignMilestones: (campaignId, milestones) =>
     request('POST', `/campaigns/${campaignId}/milestones`, { milestones }),
   submitMilestoneEvidence: (id, body) => request('POST', `/milestones/${id}/submit`, body),
+  uploadMilestoneEvidence: (id, file) => {
+    const formData = new FormData();
+    formData.append('evidence_file', file);
+    return uploadFormData(`/milestones/${encodeURIComponent(id)}/upload-evidence`, formData);
+  },
+  getMilestoneEvents: (id) => request('GET', `/milestones/${id}/events`),
   approveMilestone: (id, body) => request('POST', `/milestones/${id}/release`, body || {}),
   rejectMilestone: (id, body) => request('POST', `/milestones/${id}/reject`, body || {}),
   contribute: (body) => request('POST', '/contributions', body),
@@ -318,9 +328,25 @@ export const api = {
   getDisputeEvents: (id) => request("GET", `/disputes/${id}/events`),
 
   getAdminStats: () => request('GET', '/admin/stats'),
+  getAdminHealth: () => request('GET', '/admin/health'),
   getAdminCampaigns: () => request('GET', '/admin/campaigns'),
+  getAdminWithdrawals: (options = {}) => request('GET', '/admin/withdrawals', null, { query: options }),
+  getAdminDisputes: (options = {}) => request('GET', '/admin/disputes', null, { query: options }),
+  getAdminDispute: (id) => request('GET', `/admin/disputes/${id}`),
+  getAdminKycCampaigns: () => request('GET', '/admin/kyc/campaigns'),
+  getAdminCampaignContributions: (campaignId, options = {}) =>
+    request('GET', `/admin/campaigns/${campaignId}/contributions`, null, { query: options }),
+  getAdminWebhookDeliveries: (options = {}) =>
+    request('GET', '/admin/webhook-deliveries', null, { query: options }),
+  adminRetryWebhookDelivery: (id, body) => request('POST', `/admin/webhook-deliveries/${id}/retry`, body),
+  adminUpdateUserKyc: (id, body) => request('PATCH', `/admin/users/${id}/kyc`, body),
   getAdminMilestones: (options = {}) => request('GET', '/admin/milestones', null, { query: options }),
-  getAdminUsers: (include_banned = false) => request('GET', '/admin/users', null, { query: { include_banned: include_banned ? 'true' : 'false' } }),
+  getAdminUsers: (options = {}) => {
+    const query = typeof options === 'boolean'
+      ? { include_banned: options ? 'true' : 'false' }
+      : options;
+    return request('GET', '/admin/users', null, { query });
+  },
   getAdminAuditLog: (options = {}) => request('GET', '/admin/audit-log', null, { query: options }),
   updateCampaignStatus: (id, status) => request('PATCH', `/admin/campaigns/${id}/status`, { status }),
   adminSuspendCampaign: (id, body) => request('PATCH', `/admin/campaigns/${id}/suspend`, body),

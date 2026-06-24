@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { api } from '../services/api';
 import { stellarExpertAccountUrl } from '../config/stellar';
+import VerificationBadge from '../components/VerificationBadge';
+import KycPrompt from '../components/KycPrompt';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 const BASE_URL = import.meta.env.VITE_API_URL || `${API_BASE_URL}/api`;
@@ -71,6 +74,12 @@ export default function Profile() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const kycRequired =
+    user?.kyc_required_for_campaigns ??
+    String(import.meta.env.VITE_KYC_REQUIRED_FOR_CAMPAIGNS ?? 'true').toLowerCase() !== 'false';
+
+  const kycStatus = user?.kyc_status || 'unverified';
+
   return (
     <main className="container page-narrow" style={{ paddingTop: '3rem', paddingBottom: '4rem' }}>
       <h1 style={{ fontSize: '1.75rem', fontWeight: 800, marginBottom: '1.5rem' }}>Your Profile</h1>
@@ -114,6 +123,39 @@ export default function Profile() {
             {saving ? 'Saving…' : 'Save changes'}
           </button>
         </form>
+      </div>
+
+      <div className="campaign-card" style={{ marginBottom: '2rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <h2 style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0 }}>Identity verification</h2>
+          <VerificationBadge status={kycStatus} />
+        </div>
+
+        {kycStatus === 'verified' && (
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', margin: 0 }}>
+            Your identity is verified
+            {user.kyc_completed_at ? ` as of ${new Date(user.kyc_completed_at).toLocaleDateString()}` : ''}.
+          </p>
+        )}
+
+        {kycStatus === 'pending' && (
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', margin: 0 }}>
+            Verification is in progress. Reviews typically complete within a few minutes.
+          </p>
+        )}
+
+        {kycStatus === 'rejected' && kycRequired && (
+          <div>
+            <p className="alert alert--error" style={{ marginBottom: '0.75rem' }}>
+              Verification was not approved. You can submit again with updated documents.
+            </p>
+            <KycPrompt onUserUpdate={updateUser} title="Try identity verification again" />
+          </div>
+        )}
+
+        {kycStatus === 'unverified' && kycRequired && (
+          <KycPrompt onUserUpdate={updateUser} title="Verify your identity" />
+        )}
       </div>
 
       <div className="campaign-card">

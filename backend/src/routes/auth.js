@@ -11,6 +11,8 @@ const { sendEmail, sendWelcomeEmail } = require('../services/emailService');
 const { requireAuth } = require('../middleware/auth');
 const { encryptWalletSecret } = require('../services/walletSecrets');
 const { isKycRequiredForCampaigns } = require('../services/kycProvider');
+const { startKycForUser, getKycStatusForUser } = require('../services/kycService');
+const asyncHandler = require('../utils/asyncHandler');
 const {
   registerValidation,
   loginValidation,
@@ -533,5 +535,32 @@ router.post(
     res.json({ message: 'Password reset successfully' });
   }
 );
+
+router.post('/kyc/start', requireAuth, asyncHandler(async (req, res) => {
+  try {
+    const result = await startKycForUser(req.user.userId);
+    if (result.status === 'verified') {
+      return res.json(result);
+    }
+    res.status(201).json(result);
+  } catch (err) {
+    if (err.statusCode === 404) {
+      return res.status(404).json({ error: err.message });
+    }
+    res.status(502).json({ error: err.message || 'Could not start identity verification' });
+  }
+}));
+
+router.get('/kyc/status', requireAuth, asyncHandler(async (req, res) => {
+  try {
+    const status = await getKycStatusForUser(req.user.userId);
+    res.json(status);
+  } catch (err) {
+    if (err.statusCode === 404) {
+      return res.status(404).json({ error: err.message });
+    }
+    throw err;
+  }
+}));
 
 module.exports = router;

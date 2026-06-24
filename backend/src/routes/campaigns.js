@@ -473,39 +473,126 @@ router.get('/:id', asyncHandler(async (req, res) => {
   res.json(response);
 }));
 
-// Embeddable campaign widget data (public, with permissive CORS)
-router.get('/:id/embed', asyncHandler(async (req, res) => {
-  // Allow this endpoint to be accessed from any origin for embedding
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+function daysRemaining(deadline) {
+  if (!deadline) return null;
+  const end = new Date(deadline);
+  end.setHours(23, 59, 59, 999);
+  return Math.max(0, Math.ceil((end.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+}
 
-  const campaignId = parseInt(req.params.id, 10);
+async function loadPublicCampaignSummary(campaignId) {
   const { rows } = await db.query(
-    `SELECT id, title, description, target_amount, raised_amount, asset_type, status,
+    `SELECT id, title, description, target_amount, raised_amount, asset_type, status, deadline,
             (SELECT COUNT(*)::int FROM contributions c WHERE c.campaign_id = campaigns.id) AS backer_count
-     FROM campaigns WHERE id = $1`,
+     FROM campaigns WHERE id = $1 AND deleted_at IS NULL`,
     [campaignId]
   );
-  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+  if (!rows.length) return null;
 
   const campaign = rows[0];
   const pct = campaign.target_amount
     ? Math.min(100, (Number(campaign.raised_amount) / Number(campaign.target_amount)) * 100)
     : 0;
 
-  res.json({
+  return {
     id: campaign.id,
     title: campaign.title,
-    description: campaign.description?.slice(0, 200) + (campaign.description?.length > 200 ? '...' : ''),
+    description: campaign.description,
     raised_amount: Number(campaign.raised_amount),
     target_amount: Number(campaign.target_amount),
     asset_type: campaign.asset_type,
     status: campaign.status,
+    deadline: campaign.deadline,
     backer_count: campaign.backer_count,
+    days_remaining: daysRemaining(campaign.deadline),
     progress_percentage: Math.round(pct * 10) / 10,
     contribution_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/campaigns/${campaign.id}`,
+  };
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function buildFundingBadgeSvg({ leftLabel, rightLabel }) {
+  const leftWidth = Math.max(72, leftLabel.length * 7 + 18);
+  const rightWidth = Math.max(100, rightLabel.length * 6.5 + 18);
+  const totalWidth = leftWidth + rightWidth;
+
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="20" role="img" aria-label="${escapeXml(`${leftLabel}: ${rightLabel}`)}">`,
+    `<linearGradient id="g" x2="0" y2="100%"><stop offset="0" stop-color="#fbfbfb"/><stop offset="1" stop-color="#f0f0f0"/></linearGradient>`,
+    `<clipPath id="c"><rect width="${totalWidth}" height="20" rx="3" fill="#fff"/></clipPath>`,
+    `<g clip-path="url(#c)">`,
+    `<rect width="${leftWidth}" height="20" fill="#555"/>`,
+    `<rect x="${leftWidth}" width="${rightWidth}" height="20" fill="#7c3aed"/>`,
+    `<rect width="${totalWidth}" height="20" fill="url(#g)"/>`,
+    `<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="11">`,
+    `<text x="${leftWidth / 2}" y="14">${escapeXml(leftLabel)}</text>`,
+    `<text x="${leftWidth + rightWidth / 2}" y="14">${escapeXml(rightLabel)}</text>`,
+    `</g></g></svg>`,
+  ].join('');
+}
+
+// Embeddable campaign widget data (public, with permissive CORS)
+router.get('/:id/embed', asyncHandler(async (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+
+  const campaignId = parseInt(req.params.id, 10);
+  const summary = await loadPublicCampaignSummary(campaignId);
+  if (!summary) return res.status(404).json({ error: 'Campaign not found' });
+
+  res.json({
+    ...summary,
+    description:
+      summary.description?.slice(0, 200) + (summary.description?.length > 200 ? '...' : ''),
   });
+}));
+
+// Compact widget payload for lightweight iframe embeds
+router.get('/:id/widget', asyncHandler(async (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+
+  const campaignId = parseInt(req.params.id, 10);
+  const summary = await loadPublicCampaignSummary(campaignId);
+  if (!summary) return res.status(404).json({ error: 'Campaign not found' });
+
+  res.json({
+    id: summary.id,
+    title: summary.title,
+    raised_amount: summary.raised_amount,
+    target_amount: summary.target_amount,
+    asset_type: summary.asset_type,
+    status: summary.status,
+    contributor_count: summary.backer_count,
+    days_remaining: summary.days_remaining,
+    progress_percentage: summary.progress_percentage,
+    contribution_url: summary.contribution_url,
+  });
+}));
+
+// SVG funding badge for README embedding (shields.io style)
+router.get('/:id/badge.svg', asyncHandler(async (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+
+  const campaignId = parseInt(req.params.id, 10);
+  const summary = await loadPublicCampaignSummary(campaignId);
+  if (!summary) return res.status(404).send('Campaign not found');
+
+  const raisedLabel = `${summary.raised_amount.toLocaleString()} / ${summary.target_amount.toLocaleString()} ${summary.asset_type}`;
+  const rightLabel = `${summary.progress_percentage}% · ${raisedLabel}`;
+  const svg = buildFundingBadgeSvg({ leftLabel: 'CrowdPay', rightLabel });
+
+  res.type('image/svg+xml').send(svg);
 }));
 
 // Get backers for a campaign

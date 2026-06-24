@@ -84,17 +84,6 @@ export default function CampaignEmbed() {
     return () => clearInterval(interval);
   }, [campaign, loading, error]);
 
-  // Listen for open message from parent
-  useEffect(() => {
-    const handler = (event) => {
-      if (event.data && event.data.type === 'open') {
-        if (onOpenRef) onOpenRef();
-      }
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, []);
-
   if (loading) {
     return (
       <div style={styles.container}>
@@ -155,6 +144,11 @@ export default function CampaignEmbed() {
           <span>
             Goal: <strong>{Number(campaign.target_amount).toLocaleString()}</strong> {campaign.asset_type}
           </span>
+          {campaign.days_remaining != null && (
+            <span>
+              <strong>{campaign.days_remaining}</strong> day{campaign.days_remaining !== 1 ? 's' : ''} left
+            </span>
+          )}
         </div>
       </div>
 

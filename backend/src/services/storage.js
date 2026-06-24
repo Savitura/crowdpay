@@ -58,4 +58,26 @@ async function uploadCampaignCoverImage(campaignId, file) {
   return buildPublicUrl(key);
 }
 
-module.exports = { uploadCampaignCoverImage };
+async function uploadMilestoneEvidence(milestoneId, file) {
+  if (!file || !file.buffer) {
+    throw new Error('Missing file buffer for upload');
+  }
+
+  const extension = path.extname(file.originalname).toLowerCase() || '.bin';
+  const key = `milestones/${milestoneId}/${Date.now()}-${crypto.randomBytes(8).toString('hex')}${extension}`;
+
+  const client = createStorageClient();
+  await client.send(
+    new PutObjectCommand({
+      Bucket: process.env.STORAGE_BUCKET,
+      Key: key,
+      Body: file.buffer,
+      ContentType: file.mimetype || 'application/octet-stream',
+      CacheControl: 'public, max-age=31536000, immutable',
+    })
+  );
+
+  return buildPublicUrl(key);
+}
+
+module.exports = { uploadCampaignCoverImage, uploadMilestoneEvidence };

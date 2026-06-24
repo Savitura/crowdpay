@@ -14,6 +14,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import AcceptInvite from './pages/AcceptInvite';
 import Developer from './pages/Developer';
 import Dashboard from './pages/Dashboard';
+import MyContributions from './pages/MyContributions';
 import Profile from './pages/Profile';
 import NotFound from './pages/NotFound';
 import { AuthProvider } from './context/AuthContext';
@@ -22,7 +23,8 @@ import { ToastProvider } from './context/ToastContext';
 
 export default function App() {
   const location = useLocation();
-  const hideNavbar = location.pathname.startsWith('/widget/');
+  const hideNavbar =
+    location.pathname.startsWith('/widget/') || location.pathname.startsWith('/embed/');
 
   return (
     <ThemeProvider>
@@ -44,7 +46,7 @@ export default function App() {
           <Route path="/developer" element={<Developer />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/profile" element={<Profile />} />
-          <Route path="/my-contributions" element={<Navigate to="/dashboard?tab=contributions" replace />} />
+          <Route path="/my-contributions" element={<MyContributions />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
         </ToastProvider>

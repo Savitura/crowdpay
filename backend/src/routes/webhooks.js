@@ -1,15 +1,8 @@
-const crypto = require('crypto');
 const router = require('express').Router();
+const crypto = require('crypto');
 const db = require('../config/database');
 const { requireAuth } = require('../middleware/auth');
 const { ALL_WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
-const { extractWebhookResult } = require('../services/kycProvider');
-const { sendKycApprovedEmail, sendKycRejectedEmail } = require('../services/emailService');
-const logger = require('../config/logger');
-
-function frontendBaseUrl() {
-  return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
-}
 
 function isValidWebhookUrl(urlString) {
   try {
@@ -33,63 +26,7 @@ function normalizeEvents(events) {
   return [...new Set(events.filter((e) => typeof e === 'string' && allowed.has(e)))];
 }
 
-router.post('/kyc', async (req, res) => {
-  const result = extractWebhookResult(req.body || {});
-  if (!result.providerReference && !result.userId) {
-    return res.status(400).json({ error: 'KYC webhook payload missing provider reference' });
-  }
-
-  if (!['verified', 'rejected', 'pending'].includes(result.kycStatus)) {
-    return res.status(400).json({ error: 'Unsupported KYC status' });
-  }
-
-  const params = [result.kycStatus, result.providerReference || null];
-  let lookup = 'kyc_provider_reference = $2';
-  if (result.userId) {
-    params.push(result.userId);
-    lookup = `(kyc_provider_reference = $2 OR id = $3)`;
-  }
-
-  const { rows } = await db.query(
-    `UPDATE users
-     SET kyc_status = $1::kyc_status,
-         kyc_provider_reference = COALESCE($2, kyc_provider_reference),
-         kyc_completed_at = CASE WHEN $1::kyc_status = 'verified' THEN NOW() ELSE NULL END
-     WHERE ${lookup}
-     RETURNING id, email, name, kyc_status, kyc_completed_at`,
-    params
-  );
-
-  if (!rows.length) {
-    return res.status(404).json({ error: 'KYC subject not found' });
-  }
-
-  if (rows[0].email) {
-    if (rows[0].kyc_status === 'verified') {
-      sendKycApprovedEmail({
-        to: rows[0].email,
-        userId: rows[0].id,
-        name: rows[0].name,
-        dashboardUrl: `${frontendBaseUrl()}/dashboard`,
-      }).catch((err) => logger.error('KYC approved email failed', { error: err.message }));
-    } else if (rows[0].kyc_status === 'rejected') {
-      sendKycRejectedEmail({
-        to: rows[0].email,
-        userId: rows[0].id,
-        name: rows[0].name,
-        reason: result.reason,
-        retryUrl: `${frontendBaseUrl()}/dashboard?kyc=retry`,
-      }).catch((err) => logger.error('KYC rejected email failed', { error: err.message }));
-    }
-  }
-
-  res.json({
-    received: true,
-    user_id: rows[0].id,
-    kyc_status: rows[0].kyc_status,
-    kyc_completed_at: rows[0].kyc_completed_at,
-  });
-});
+// KYC webhooks are handled at POST /api/webhooks/kyc (raw body + Persona signature verification).
 
 router.get('/', requireAuth, async (req, res) => {
   const { rows } = await db.query(

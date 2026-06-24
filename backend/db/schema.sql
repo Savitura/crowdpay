@@ -228,10 +228,14 @@ CREATE TABLE milestones (
   release_percentage NUMERIC(7, 4) NOT NULL CHECK (release_percentage > 0 AND release_percentage <= 100),
   sort_order      INT NOT NULL DEFAULT 0,
   evidence_url    TEXT,
+  evidence_description TEXT,
+  evidence_submitted_at TIMESTAMPTZ,
   destination_key TEXT,
   review_note     TEXT,
+  reviewer_id     UUID REFERENCES users(id),
+  reviewed_at     TIMESTAMPTZ,
   status          TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('pending', 'approved', 'released')),
+                    CHECK (status IN ('pending', 'pending_review', 'rejected', 'approved', 'released')),
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   completed_at    TIMESTAMPTZ,
   approved_at     TIMESTAMPTZ,
@@ -239,6 +243,18 @@ CREATE TABLE milestones (
 );
 
 CREATE INDEX milestones_campaign_idx ON milestones (campaign_id);
+
+CREATE TABLE milestone_events (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  milestone_id UUID NOT NULL REFERENCES milestones(id) ON DELETE CASCADE,
+  actor_id     UUID REFERENCES users(id),
+  action       TEXT NOT NULL,
+  note         TEXT,
+  metadata     JSONB NOT NULL DEFAULT '{}',
+  created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX milestone_events_milestone_idx ON milestone_events (milestone_id, created_at ASC);
 ALTER TABLE withdrawal_requests
   ADD COLUMN milestone_id UUID REFERENCES milestones(id);
 
@@ -321,3 +337,18 @@ CREATE TABLE refresh_tokens (
 
 CREATE INDEX refresh_tokens_user_active_idx ON refresh_tokens (user_id) WHERE revoked_at IS NULL;
 CREATE INDEX refresh_tokens_token_hash_idx ON refresh_tokens (token_hash);
+
+-- Referral tracking per campaign contributor
+CREATE TABLE campaign_referrals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  campaign_id UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  referrer_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  referral_code TEXT NOT NULL,
+  click_count INTEGER NOT NULL DEFAULT 0,
+  contribution_count INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_campaign_referrals_campaign_id ON campaign_referrals(campaign_id);
+CREATE UNIQUE INDEX idx_campaign_referrals_code ON campaign_referrals(referral_code);
+CREATE UNIQUE INDEX idx_campaign_referrals_user_campaign ON campaign_referrals(campaign_id, referrer_user_id);

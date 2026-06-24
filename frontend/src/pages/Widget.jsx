@@ -87,6 +87,8 @@ export default function Widget() {
   const targetAmount = Number(data.target_amount) || 0;
   const pct = targetAmount > 0 ? Math.min(100, (raisedAmount / targetAmount) * 100) : 0;
   const contributorCount = Number(data.contributor_count) || 0;
+  const daysRemaining = data.days_remaining;
+  const campaignUrl = data.contribution_url || `${window.location.origin}/campaigns/${encodeURIComponent(id)}`;
 
   return (
     <div style={styles.shell}>
@@ -96,17 +98,23 @@ export default function Widget() {
           <div style={{ ...styles.progressFill, width: `${pct}%` }} />
         </div>
         <div style={styles.meta}>
-          {raisedAmount.toLocaleString()} {data.asset_type} raised
+          {raisedAmount.toLocaleString()} / {targetAmount.toLocaleString()} {data.asset_type}
           {' · '}
-          {contributorCount} contributor{contributorCount !== 1 ? 's' : ''}
+          {contributorCount} backer{contributorCount !== 1 ? 's' : ''}
+          {daysRemaining != null && (
+            <>
+              {' · '}
+              {daysRemaining} day{daysRemaining !== 1 ? 's' : ''} left
+            </>
+          )}
         </div>
         <a
-          href={`${window.location.origin}/campaigns/${encodeURIComponent(id)}`}
+          href={campaignUrl}
           target="_blank"
           rel="noopener noreferrer"
           style={styles.link}
         >
-          Fund on CrowdPay -&gt;
+          Back this project
         </a>
       </div>
     </div>
@@ -127,7 +135,7 @@ const styles = {
   card: {
     boxSizing: 'border-box',
     width: '100%',
-    minHeight: '104px',
+    minHeight: '120px',
     padding: '0.75rem',
     border: '1px solid var(--crowdpay-border, #e5e5e5)',
     borderRadius: '10px',
@@ -160,11 +168,8 @@ const styles = {
   },
   meta: {
     color: 'var(--crowdpay-muted, #555)',
-    fontSize: '0.8rem',
-    lineHeight: 1.25,
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
+    fontSize: '0.75rem',
+    lineHeight: 1.35,
   },
   link: {
     display: 'inline-block',

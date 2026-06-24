@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 
-export default function KycPrompt({ token, onUserUpdate, title = 'Verify your identity to create campaigns' }) {
+export default function KycPrompt({ onUserUpdate, title = 'Verify your identity to create campaigns' }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -11,7 +11,7 @@ export default function KycPrompt({ token, onUserUpdate, title = 'Verify your id
     setBusy(true);
     setError('');
     try {
-      const result = await api.startKyc(token);
+      const result = await api.startKyc();
       if (result.user && onUserUpdate) onUserUpdate(result.user);
       if (result.redirect_url) {
         window.location.assign(result.redirect_url);

@@ -1,7 +1,8 @@
 const { renderLayout, heading, paragraph, buttonRow } = require("./layout");
 
-function build({ name, campaignTitle, campaignUrl, updateTitle, updateBody, unsubscribeUrl }) {
+function build({ name, campaignTitle, campaignUrl, updateTitle, updateExcerpt, updateBody, unsubscribeUrl }) {
   const recipientName = name || "there";
+  const excerpt = updateExcerpt || updateBody || "";
   const subject = `${campaignTitle} posted an update: ${updateTitle}`;
 
   const text = [
@@ -9,11 +10,11 @@ function build({ name, campaignTitle, campaignUrl, updateTitle, updateBody, unsu
     "",
     `"${campaignTitle}" posted a new update: "${updateTitle}"`,
     "",
-    updateBody,
+    excerpt,
     "",
-    `View on CrowdPay: ${campaignUrl}`,
+    `Read the full update: ${campaignUrl}`,
     "",
-    `Unsubscribe from campaign updates: ${unsubscribeUrl}`,
+    `Unsubscribe from updates for this campaign: ${unsubscribeUrl}`,
   ].join("\n");
 
   const html = renderLayout({
@@ -21,8 +22,8 @@ function build({ name, campaignTitle, campaignUrl, updateTitle, updateBody, unsu
     bodyHtml: [
       heading(updateTitle),
       paragraph(`"${campaignTitle}" posted a new update.`),
-      paragraph(updateBody),
-      buttonRow("View on CrowdPay", campaignUrl),
+      paragraph(excerpt),
+      buttonRow("Read full update", campaignUrl),
     ].join(""),
     unsubscribeUrl,
   });

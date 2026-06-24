@@ -10,6 +10,7 @@ const campaignFailedEmail = require("../emails/campaignFailed");
 const withdrawalApprovedEmail = require("../emails/withdrawalApproved");
 const withdrawalRejectedEmail = require("../emails/withdrawalRejected");
 const milestoneReleasedEmail = require("../emails/milestoneReleased");
+const milestoneEvidenceSubmittedEmail = require("../emails/milestoneEvidenceSubmitted");
 const kycApprovedEmail = require("../emails/kycApproved");
 const kycRejectedEmail = require("../emails/kycRejected");
 const disputeOpenedEmail = require("../emails/disputeOpened");
@@ -96,6 +97,14 @@ async function isUnsubscribed(email, category) {
   const { rows } = await db.query(
     "SELECT 1 FROM email_unsubscribes WHERE email = $1 AND category = $2",
     [email.toLowerCase(), category],
+  );
+  return rows.length > 0;
+}
+
+async function isCampaignUpdateUnsubscribed(email, campaignId) {
+  const { rows } = await db.query(
+    "SELECT 1 FROM campaign_update_unsubscribes WHERE email = $1 AND campaign_id = $2",
+    [email.toLowerCase(), campaignId],
   );
   return rows.length > 0;
 }
@@ -202,6 +211,12 @@ async function sendMilestoneReleasedContributorEmail({ to, milestoneId, ...param
   await sendIdempotent({ dedupeKey: `milestone_released_contributor:${milestoneId}:${to}`, to, subject, text, html });
 }
 
+async function sendMilestoneEvidenceSubmittedAdminEmail({ to, milestoneId, ...params }) {
+  if (!to) return;
+  const { subject, text, html } = milestoneEvidenceSubmittedEmail.buildForAdmin(params);
+  await sendIdempotent({ dedupeKey: `milestone_evidence_submitted:${milestoneId}:${to}`, to, subject, text, html });
+}
+
 async function sendKycApprovedEmail({ to, userId, ...params }) {
   if (!to) return;
   const { subject, text, html } = kycApprovedEmail.build(params);
@@ -238,11 +253,12 @@ async function sendDisputeResolvedContributorEmail({ to, disputeId, outcome, ...
   await sendIdempotent({ dedupeKey: `dispute_resolved_contributor:${disputeId}:${outcome}`, to, subject, text, html });
 }
 
-async function sendCampaignUpdatePostedEmail({ to, updateId, ...params }) {
+async function sendCampaignUpdatePostedEmail({ to, updateId, campaignId, ...params }) {
   if (!to) return;
   if (await isUnsubscribed(to, "campaign_update")) return;
+  if (campaignId && (await isCampaignUpdateUnsubscribed(to, campaignId))) return;
 
-  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: "campaign_update" });
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: "campaign_update", campaignId });
   const { subject, text, html } = campaignUpdatePostedEmail.build({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `campaign_update_posted:${updateId}:${to}`, to, subject, text, html });
 }
@@ -257,6 +273,7 @@ module.exports = {
   sendEmail,
   sendIdempotent,
   isUnsubscribed,
+  isCampaignUpdateUnsubscribed,
   getStellarExpertTxUrl,
   sendContributionReceipt,
   sendWelcomeEmail,
@@ -268,6 +285,7 @@ module.exports = {
   sendWithdrawalRejectedEmail,
   sendMilestoneReleasedCreatorEmail,
   sendMilestoneReleasedContributorEmail,
+  sendMilestoneEvidenceSubmittedAdminEmail,
   sendKycApprovedEmail,
   sendKycRejectedEmail,
   sendDisputeOpenedCreatorEmail,
