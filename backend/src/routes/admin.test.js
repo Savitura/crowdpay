@@ -5,6 +5,7 @@ const app = require('../index');
 
 describe('Admin Moderation Features', async () => {
   let client;
+  let server;
   let adminToken;
   let regularUserToken;
   let testUserId;
@@ -13,6 +14,7 @@ describe('Admin Moderation Features', async () => {
 
   before(async () => {
     client = await pool.connect();
+    server = app.listen(3000);
     
     // Setup: Create admin and regular user
     const adminRes = await pool.query(
@@ -47,6 +49,9 @@ describe('Admin Moderation Features', async () => {
   });
 
   after(async () => {
+    if (server) {
+      await new Promise((resolve) => server.close(resolve));
+    }
     if (client) {
       client.release();
     }

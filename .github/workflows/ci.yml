@@ -43,6 +43,12 @@ jobs:
         working-directory: ./backend
         run: npm run lint
 
+      - name: Run migrations
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/crowdpay_test
+        run: npm run migrate
+
       - name: Run test suite
         working-directory: ./backend
         env:
