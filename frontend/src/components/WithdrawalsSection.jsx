@@ -37,6 +37,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
   const [loadingBalance, setLoadingBalance] = useState(false);
   const [rejectingId, setRejectingId] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [confirmingSignId, setConfirmingSignId] = useState(null);
 
   const isCreator = user?.id && campaign.creator_id === user.id;
   const isAdmin = user?.role === 'admin';
@@ -573,31 +574,60 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                     >
                       Cancel
                     </button>
-                    {user?.wallet_type === 'freighter' ? (
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        disabled={busyId === row.id}
-                        onClick={() => signAsFreighter(row.id)}
-                        style={{ fontSize: '0.8rem' }}
-                      >
-                        {busyId === row.id ? 'Signing…' : 'Sign in Freighter'}
-                      </button>
+                    {confirmingSignId === row.id ? (
+                      <div style={styles.confirmPanel}>
+                        <p style={{ fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.4rem' }}>
+                          Confirm release of{' '}
+                          <strong>
+                            {Number(row.amount).toLocaleString()} {campaign.asset_type}
+                          </strong>{' '}
+                          to:
+                        </p>
+                        <code style={{ fontSize: '0.75rem', wordBreak: 'break-all', color: '#555' }}>
+                          {row.destination_key}
+                        </code>
+                        <p style={{ fontSize: '0.78rem', color: '#b45309', marginTop: '0.4rem' }}>
+                          This signature cannot be undone.
+                        </p>
+                        <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.6rem' }}>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ fontSize: '0.8rem' }}
+                            disabled={busyId === row.id}
+                            onClick={() => {
+                              setConfirmingSignId(null);
+                              if (user?.wallet_type === 'freighter') {
+                                signAsFreighter(row.id);
+                              } else {
+                                runAction(
+                                  row.id,
+                                  () => api.approveWithdrawalCreator(row.id),
+                                  'Withdrawal signed',
+                                );
+                              }
+                            }}
+                          >
+                            {busyId === row.id ? 'Signing…' : 'Yes, sign now'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: '0.8rem' }}
+                            onClick={() => setConfirmingSignId(null)}
+                          >
+                            Go back
+                          </button>
+                        </div>
+                      </div>
                     ) : (
                       <button
                         type="button"
                         className="btn-primary"
-                        disabled={busyId === row.id}
-                        onClick={() =>
-                          runAction(
-                            row.id,
-                            () => api.approveWithdrawalCreator(row.id),
-                            'Withdrawal signed',
-                          )
-                        }
                         style={{ fontSize: '0.8rem' }}
+                        onClick={() => setConfirmingSignId(row.id)}
                       >
-                        {busyId === row.id ? 'Signing…' : 'Sign as creator'}
+                        {user?.wallet_type === 'freighter' ? 'Sign in Freighter' : 'Sign as creator'}
                       </button>
                     )}
                   </>
@@ -750,5 +780,13 @@ const styles = {
     fontSize: '0.78rem',
     color: 'var(--color-text-secondary)',
     lineHeight: 1.5,
+  },
+  confirmPanel: {
+    width: '100%',
+    marginTop: '0.5rem',
+    padding: '0.75rem',
+    background: 'var(--color-warning-bg, #fffbeb)',
+    border: '1px solid var(--color-warning-border, #fcd34d)',
+    borderRadius: '8px',
   },
 };

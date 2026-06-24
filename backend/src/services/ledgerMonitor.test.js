@@ -56,7 +56,13 @@ test('handlePayment updates stellar_transactions when a contribution row is crea
       return { rows: [{ creator_id: 'user-creator' }] };
     }
     if (text.includes('SELECT metadata FROM stellar_transactions')) {
-      return { rows: [{ metadata: { platform_fee_amount: 0.15 } }] };
+      return { rows: [{ metadata: { platform_fee_amount: 0.15, referral_code: 'refcode1' } }] };
+    }
+    if (text.includes('SELECT id FROM campaign_referrals')) {
+      return { rows: [{ id: 'ref-row-1' }] };
+    }
+    if (text.includes('contribution_count = contribution_count + 1')) {
+      return { rows: [] };
     }
     if (text === 'BEGIN') return { rows: [] };
     if (text.includes('INSERT INTO contributions')) return { rows: [{ id: 'contrib-id' }] };

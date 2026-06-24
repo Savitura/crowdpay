@@ -40,6 +40,10 @@ function emptyMilestone() {
   return { title: '', description: '', release_percentage: '' };
 }
 
+function emptyTier() {
+  return { title: '', description: '', min_amount: '', limit: '', estimated_delivery: '' };
+}
+
 function milestonePercentTotal(milestones) {
   return milestones.reduce((sum, milestone) => sum + (Number(milestone.release_percentage) || 0), 0);
 }
@@ -60,6 +64,7 @@ export default function CreateCampaign() {
     max_contribution: location.state?.prefill?.max_contribution || '',
     show_backer_amounts: location.state?.prefill?.show_backer_amounts ?? true,
     milestones: [],
+    reward_tiers: [],
     min_contribution: '',
     max_contribution: '',
     max_per_user: '',
@@ -157,6 +162,63 @@ export default function CreateCampaign() {
     }));
   }
 
+  function setTierField(index, field, value) {
+    setForm((f) => ({
+      ...f,
+      reward_tiers: f.reward_tiers.map((tier, tierIndex) =>
+        tierIndex === index ? { ...tier, [field]: value } : tier
+      ),
+    }));
+  }
+
+  function addTier() {
+    setForm((f) => {
+      if (f.reward_tiers.length >= 10) return f;
+      return { ...f, reward_tiers: [...f.reward_tiers, emptyTier()] };
+    });
+  }
+
+  function removeTier(index) {
+    setForm((f) => ({
+      ...f,
+      reward_tiers: f.reward_tiers.filter((_, tierIndex) => tierIndex !== index),
+    }));
+  }
+
+  function validateTiers() {
+    if (form.reward_tiers.length === 0) {
+      setError('');
+      return true;
+    }
+    if (form.reward_tiers.length > 10) {
+      setError('Campaigns can define at most 10 reward tiers.');
+      return false;
+    }
+
+    for (let index = 0; index < form.reward_tiers.length; index += 1) {
+      const tier = form.reward_tiers[index];
+      if (!tier.title.trim()) {
+        setError(`Reward tier ${index + 1} needs a title.`);
+        return false;
+      }
+      if (!tier.min_amount || Number(tier.min_amount) <= 0) {
+        setError(`Reward tier ${index + 1} needs a minimum amount greater than zero.`);
+        return false;
+      }
+      if (tier.limit && (Number(tier.limit) <= 0 || !Number.isInteger(Number(tier.limit)))) {
+        setError(`Reward tier ${index + 1} limit must be a positive whole number.`);
+        return false;
+      }
+      if (tier.estimated_delivery && tier.estimated_delivery < today) {
+        setError(`Reward tier ${index + 1} estimated delivery must be today or in the future.`);
+        return false;
+      }
+    }
+
+    setError('');
+    return true;
+  }
+
   function validateStep1() {
     if (!form.title.trim()) {
       setError('Please enter a campaign title.');
@@ -246,7 +308,7 @@ export default function CreateCampaign() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!validateStep1() || !validateStep2() || !validateMilestones()) return;
+    if (!validateStep1() || !validateStep2() || !validateMilestones() || !validateTiers()) return;
     setLoading(true);
     setError('');
     try {
@@ -266,6 +328,16 @@ export default function CreateCampaign() {
                 title: milestone.title.trim(),
                 description: milestone.description.trim(),
                 release_percentage: Number(milestone.release_percentage),
+              }))
+            : undefined,
+          reward_tiers: form.reward_tiers.length
+            ? form.reward_tiers.map((tier) => ({
+                title: tier.title.trim(),
+                description: tier.description.trim() || undefined,
+                min_amount: Number(tier.min_amount),
+                asset_type: form.asset_type,
+                limit: tier.limit ? Number(tier.limit) : null,
+                estimated_delivery: tier.estimated_delivery || null,
               }))
             : undefined,
         }
@@ -733,6 +805,90 @@ export default function CreateCampaign() {
             {form.milestones.length < 5 && (
               <button type="button" className="btn-secondary" style={{ width: '100%', marginTop: '1rem' }} onClick={addMilestone}>
                 {t('createCampaign.addMilestone')}
+              </button>
+            )}
+
+            <div className="campaign-card" style={{ marginTop: '1.75rem', marginBottom: '1rem' }}>
+              <strong>Reward tiers <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>(optional)</span></strong>
+              <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.88rem', lineHeight: 1.5, marginTop: '0.35rem' }}>
+                Offer backer perks at set contribution levels. Backers who contribute at or above a tier's minimum unlock it. Up to 10 tiers.
+              </p>
+            </div>
+
+            {form.reward_tiers.length === 0 ? (
+              <div className="alert alert--info" style={{ marginBottom: '1rem' }}>
+                No reward tiers yet. Tiers are optional — you can launch without them.
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: '0.85rem' }}>
+                {form.reward_tiers.map((tier, index) => (
+                  <div key={index} className="campaign-card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <strong>Tier {index + 1}</strong>
+                      <button type="button" className="btn-secondary" onClick={() => removeTier(index)} style={{ fontSize: '0.8rem' }}>
+                        Remove
+                      </button>
+                    </div>
+                    <div className="form-stack">
+                      <label className="label-strong">Title</label>
+                      <input
+                        value={tier.title}
+                        onChange={(e) => setTierField(index, 'title', e.target.value)}
+                        placeholder="e.g. Early Bird"
+                      />
+                    </div>
+                    <div className="form-stack" style={{ marginTop: '0.75rem' }}>
+                      <label className="label-strong">Description <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>(optional)</span></label>
+                      <textarea
+                        value={tier.description}
+                        onChange={(e) => setTierField(index, 'description', e.target.value)}
+                        rows={2}
+                        placeholder="What backers get at this tier."
+                      />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.75rem' }}>
+                      <div className="form-stack">
+                        <label className="label-strong">Minimum amount ({form.asset_type})</label>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          min="0.0000001"
+                          step="any"
+                          value={tier.min_amount}
+                          onChange={(e) => setTierField(index, 'min_amount', e.target.value)}
+                          placeholder="e.g. 25"
+                        />
+                      </div>
+                      <div className="form-stack">
+                        <label className="label-strong">Limit <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>(optional)</span></label>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min="1"
+                          step="1"
+                          value={tier.limit}
+                          onChange={(e) => setTierField(index, 'limit', e.target.value)}
+                          placeholder="Unlimited"
+                        />
+                      </div>
+                    </div>
+                    <div className="form-stack" style={{ marginTop: '0.75rem' }}>
+                      <label className="label-strong">Estimated delivery <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>(optional)</span></label>
+                      <input
+                        type="date"
+                        min={today}
+                        value={tier.estimated_delivery}
+                        onChange={(e) => setTierField(index, 'estimated_delivery', e.target.value)}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {form.reward_tiers.length < 10 && (
+              <button type="button" className="btn-secondary" style={{ width: '100%', marginTop: '1rem' }} onClick={addTier}>
+                Add reward tier
               </button>
             )}
 

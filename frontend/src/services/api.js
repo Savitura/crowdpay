@@ -207,6 +207,9 @@ export const api = {
   getMyBalance: () => request("GET", "/users/me/balance"),
   getMyStats: () => request("GET", "/users/me/stats"),
   getMyContributions: () => request("GET", "/contributions/mine"),
+  getContributorDashboard: () => request("GET", "/contributions/dashboard"),
+  requestContributionRefund: (contributionId) =>
+    request("POST", `/contributions/${contributionId}/refund`, {}),
   startKyc: () => request("POST", "/auth/kyc/start"),
   getKycStatus: () => request("GET", "/auth/kyc/status"),
 
@@ -222,6 +225,8 @@ export const api = {
   getCampaignBackers: (id) => request("GET", `/campaigns/${id}/backers`),
   getCampaignBalance: (id) => request("GET", `/campaigns/${id}/balance`),
   createCampaign: (body) => request("POST", "/campaigns", body),
+  getCampaignTiers: (id) => request("GET", `/campaigns/${id}/tiers`),
+  setCampaignTiers: (id, tiers) => request("POST", `/campaigns/${id}/tiers`, tiers),
   updateCampaign: (id, body) => request("PATCH", `/campaigns/${id}`, body),
   deleteCampaign: (id) => request("DELETE", `/campaigns/${id}`),
   uploadCampaignCoverImage: (campaignId, file) => {

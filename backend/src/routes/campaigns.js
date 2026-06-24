@@ -20,6 +20,12 @@ const { uploadCampaignCoverImage } = require('../services/storage');
 const { isKycRequiredForCampaigns } = require('../services/kycProvider');
 const { listCreatorCampaigns } = require('../services/userDashboardService');
 const {
+  MAX_TIERS_PER_CAMPAIGN,
+  validateTiersInput,
+  insertTiers,
+  listTiersWithAvailability,
+} = require('../services/rewardTierService');
+const {
   createCampaignValidation,
   createCampaignUpdateValidation,
   getCampaignsValidation,
@@ -467,39 +473,126 @@ router.get('/:id', asyncHandler(async (req, res) => {
   res.json(response);
 }));
 
-// Embeddable campaign widget data (public, with permissive CORS)
-router.get('/:id/embed', asyncHandler(async (req, res) => {
-  // Allow this endpoint to be accessed from any origin for embedding
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+function daysRemaining(deadline) {
+  if (!deadline) return null;
+  const end = new Date(deadline);
+  end.setHours(23, 59, 59, 999);
+  return Math.max(0, Math.ceil((end.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+}
 
-  const campaignId = parseInt(req.params.id, 10);
+async function loadPublicCampaignSummary(campaignId) {
   const { rows } = await db.query(
-    `SELECT id, title, description, target_amount, raised_amount, asset_type, status,
+    `SELECT id, title, description, target_amount, raised_amount, asset_type, status, deadline,
             (SELECT COUNT(*)::int FROM contributions c WHERE c.campaign_id = campaigns.id) AS backer_count
-     FROM campaigns WHERE id = $1`,
+     FROM campaigns WHERE id = $1 AND deleted_at IS NULL`,
     [campaignId]
   );
-  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+  if (!rows.length) return null;
 
   const campaign = rows[0];
   const pct = campaign.target_amount
     ? Math.min(100, (Number(campaign.raised_amount) / Number(campaign.target_amount)) * 100)
     : 0;
 
-  res.json({
+  return {
     id: campaign.id,
     title: campaign.title,
-    description: campaign.description?.slice(0, 200) + (campaign.description?.length > 200 ? '...' : ''),
+    description: campaign.description,
     raised_amount: Number(campaign.raised_amount),
     target_amount: Number(campaign.target_amount),
     asset_type: campaign.asset_type,
     status: campaign.status,
+    deadline: campaign.deadline,
     backer_count: campaign.backer_count,
+    days_remaining: daysRemaining(campaign.deadline),
     progress_percentage: Math.round(pct * 10) / 10,
     contribution_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/campaigns/${campaign.id}`,
+  };
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function buildFundingBadgeSvg({ leftLabel, rightLabel }) {
+  const leftWidth = Math.max(72, leftLabel.length * 7 + 18);
+  const rightWidth = Math.max(100, rightLabel.length * 6.5 + 18);
+  const totalWidth = leftWidth + rightWidth;
+
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="20" role="img" aria-label="${escapeXml(`${leftLabel}: ${rightLabel}`)}">`,
+    `<linearGradient id="g" x2="0" y2="100%"><stop offset="0" stop-color="#fbfbfb"/><stop offset="1" stop-color="#f0f0f0"/></linearGradient>`,
+    `<clipPath id="c"><rect width="${totalWidth}" height="20" rx="3" fill="#fff"/></clipPath>`,
+    `<g clip-path="url(#c)">`,
+    `<rect width="${leftWidth}" height="20" fill="#555"/>`,
+    `<rect x="${leftWidth}" width="${rightWidth}" height="20" fill="#7c3aed"/>`,
+    `<rect width="${totalWidth}" height="20" fill="url(#g)"/>`,
+    `<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="11">`,
+    `<text x="${leftWidth / 2}" y="14">${escapeXml(leftLabel)}</text>`,
+    `<text x="${leftWidth + rightWidth / 2}" y="14">${escapeXml(rightLabel)}</text>`,
+    `</g></g></svg>`,
+  ].join('');
+}
+
+// Embeddable campaign widget data (public, with permissive CORS)
+router.get('/:id/embed', asyncHandler(async (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+
+  const campaignId = parseInt(req.params.id, 10);
+  const summary = await loadPublicCampaignSummary(campaignId);
+  if (!summary) return res.status(404).json({ error: 'Campaign not found' });
+
+  res.json({
+    ...summary,
+    description:
+      summary.description?.slice(0, 200) + (summary.description?.length > 200 ? '...' : ''),
   });
+}));
+
+// Compact widget payload for lightweight iframe embeds
+router.get('/:id/widget', asyncHandler(async (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+
+  const campaignId = parseInt(req.params.id, 10);
+  const summary = await loadPublicCampaignSummary(campaignId);
+  if (!summary) return res.status(404).json({ error: 'Campaign not found' });
+
+  res.json({
+    id: summary.id,
+    title: summary.title,
+    raised_amount: summary.raised_amount,
+    target_amount: summary.target_amount,
+    asset_type: summary.asset_type,
+    status: summary.status,
+    contributor_count: summary.backer_count,
+    days_remaining: summary.days_remaining,
+    progress_percentage: summary.progress_percentage,
+    contribution_url: summary.contribution_url,
+  });
+}));
+
+// SVG funding badge for README embedding (shields.io style)
+router.get('/:id/badge.svg', asyncHandler(async (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+
+  const campaignId = parseInt(req.params.id, 10);
+  const summary = await loadPublicCampaignSummary(campaignId);
+  if (!summary) return res.status(404).send('Campaign not found');
+
+  const raisedLabel = `${summary.raised_amount.toLocaleString()} / ${summary.target_amount.toLocaleString()} ${summary.asset_type}`;
+  const rightLabel = `${summary.progress_percentage}% · ${raisedLabel}`;
+  const svg = buildFundingBadgeSvg({ leftLabel: 'CrowdPay', rightLabel });
+
+  res.type('image/svg+xml').send(svg);
 }));
 
 // Get backers for a campaign
@@ -679,11 +772,19 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
    *       403:
    *         description: Forbidden
    */
-  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution } = req.body;
+  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution, reward_tiers } = req.body;
 
   let normalizedMilestones;
   try {
     normalizedMilestones = normalizeMilestonesInput(milestones);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  // Reward tiers are optional. Validate up front (asset must match the campaign).
+  let normalizedTiers;
+  try {
+    normalizedTiers = validateTiersInput(reward_tiers, asset_type);
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
@@ -769,6 +870,10 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
       );
     }
 
+    if (normalizedTiers.length) {
+      await insertTiers(client, campaign.id, normalizedTiers);
+    }
+
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -787,6 +892,93 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
   watchCampaignWallet(campaign.id, wallet.publicKey);
 
   res.status(201).json(campaign);
+}));
+
+/**
+ * @openapi
+ * /api/campaigns/{id}/tiers:
+ *   get:
+ *     tags: [Campaigns]
+ *     summary: List a campaign's reward tiers with remaining availability
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: List of reward tiers }
+ *       404: { description: Campaign not found }
+ */
+router.get('/:id/tiers', asyncHandler(async (req, res) => {
+  const { rows } = await db.query('SELECT id FROM campaigns WHERE id = $1', [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+  const tiers = await listTiersWithAvailability(req.params.id);
+  res.json(tiers);
+}));
+
+/**
+ * @openapi
+ * /api/campaigns/{id}/tiers:
+ *   post:
+ *     tags: [Campaigns]
+ *     summary: Add one or more reward tiers to an existing campaign (creator only)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       201: { description: Updated list of reward tiers }
+ *       400: { description: Invalid input or tier cap exceeded }
+ *       403: { description: Forbidden }
+ *       404: { description: Campaign not found }
+ */
+router.post('/:id/tiers', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+
+  const { rows: campaignRows } = await db.query('SELECT asset_type FROM campaigns WHERE id = $1', [campaignId]);
+  if (!campaignRows.length) return res.status(404).json({ error: 'Campaign not found' });
+  const assetType = campaignRows[0].asset_type;
+
+  // Accept either a single tier object or an array of tiers.
+  const input = Array.isArray(req.body) ? req.body : [req.body];
+  let normalizedTiers;
+  try {
+    normalizedTiers = validateTiersInput(input, assetType);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (!normalizedTiers.length) {
+    return res.status(400).json({ error: 'At least one reward tier is required' });
+  }
+
+  const { rows: countRows } = await db.query(
+    'SELECT COUNT(*)::int AS n FROM reward_tiers WHERE campaign_id = $1',
+    [campaignId]
+  );
+  if (countRows[0].n + normalizedTiers.length > MAX_TIERS_PER_CAMPAIGN) {
+    return res.status(400).json({
+      error: `A campaign can have at most ${MAX_TIERS_PER_CAMPAIGN} reward tiers`,
+    });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await insertTiers(client, campaignId, normalizedTiers);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    logger.error('[campaigns] add reward tiers failed', { error: err.message });
+    return res.status(500).json({ error: 'Could not add reward tiers' });
+  } finally {
+    client.release();
+  }
+
+  const tiers = await listTiersWithAvailability(campaignId);
+  res.status(201).json(tiers);
 }));
 
 // PATCH /campaigns/:id - Update campaign (title, description, deadline)
@@ -981,34 +1173,6 @@ router.post('/:id/members/invite', requireAuth, requireCampaignMember('owner', '
   if (!email || !role) return res.status(422).json({ error: 'Email and role are required' });
   if (!isValidRole(role)) {
     return res.status(422).json({ error: 'Invalid role. Must be owner, manager, editor, or viewer' });
-  }
-
-  const { rows: campaignRows } = await db.query('SELECT title FROM campaigns WHERE id = $1', [req.params.id]);
-  const { member } = await createCampaignInvite({
-    campaignId: req.params.id,
-    email,
-    role,
-    invitedByUserId: req.user.userId,
-    campaignTitle: campaignRows[0]?.title,
-  });
-  res.status(201).json(member);
-}));
-
-  const campaignUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/campaigns/${req.params.id}/invite/${inviteToken}`;
-  try {
-    const { rows: titleRows } = await db.query('SELECT title FROM campaigns WHERE id = $1', [req.params.id]);
-    await sendTeamMemberInvitedEmail({
-      to: email.trim(),
-      memberId: memberRows[0].id,
-      campaignTitle: titleRows[0]?.title,
-      role,
-      inviteUrl: campaignUrl,
-    });
-  } catch (e) {
-    logger.error('Failed to send invite email', {
-      campaign_id: req.params.id,
-      error: e.message || String(e),
-    });
   }
 
   const { rows: campaignRows } = await db.query('SELECT title FROM campaigns WHERE id = $1', [req.params.id]);

@@ -10,6 +10,8 @@ const { server } = require("../config/stellar");
 const db = require("../config/database");
 const logger = require("../config/logger");
 const { markContributionIndexed } = require("./stellarTransactionService");
+const { assignTierToContribution } = require("./rewardTierService");
+const { attributeContributionToReferrer } = require("./referralService");
 const { reconcileCampaignBalances: runBalanceReconciliation } = require("./reconciliation");
 const { sendContributionReceipt } = require("./emailService");
 const {
@@ -234,6 +236,7 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
     );
     const anchorMetadata = submittedRows[0]?.metadata?.anchor || null;
     const displayName = submittedRows[0]?.metadata?.display_name || null;
+    const referralCode = submittedRows[0]?.metadata?.referral_code || null;
 
     const { rows: inserted } = await client.query(
       `INSERT INTO contributions
@@ -275,7 +278,19 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
       [destinationAmount, campaignId],
     );
 
+    // Match this contribution to the highest reward tier it qualifies for that
+    // still has capacity (idempotent + atomic with the insert above).
+    const assignedTier = await assignTierToContribution(client, {
+      campaignId,
+      amount: destinationAmount,
+      contributionId: inserted[0].id,
+    });
+
     await markContributionIndexed(client, txHash, inserted[0].id);
+
+    if (referralCode) {
+      await attributeContributionToReferrer(campaignId, referralCode, client);
+    }
 
     if (anchorMetadata?.anchor_deposit_id) {
       await client.query(
@@ -309,6 +324,7 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
         asset: destinationAsset,
         payment_type: paymentType,
         anchor_transaction_id: anchorMetadata?.anchor_transaction_id || null,
+        reward_tier: assignedTier || null,
       },
       receiptPayload: {
         campaignId,

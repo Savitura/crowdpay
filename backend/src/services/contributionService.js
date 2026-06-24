@@ -85,6 +85,7 @@ async function submitCustodialContribution({
   intentOverride,
   anchorMetadata,
   displayName,
+  referralCode,
 }) {
   const intent =
     intentOverride ||
@@ -141,6 +142,7 @@ async function submitCustodialContribution({
   }
   const metadata = {
     ...intent.flowMetadata,
+    ...(referralCode ? { referral_code: referralCode } : {}),
     ...(anchorMetadata
       ? {
           anchor: {

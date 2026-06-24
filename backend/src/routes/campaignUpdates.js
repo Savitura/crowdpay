@@ -4,6 +4,7 @@ const { requireAuth } = require("../middleware/auth");
 const asyncHandler = require("../utils/asyncHandler");
 const logger = require("../config/logger");
 const { sendCampaignUpdatePostedEmail } = require("../services/emailService");
+const { createNotification } = require("../services/notifications");
 
 function frontendBaseUrl() {
   return (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
@@ -83,6 +84,9 @@ router.post(
 
     setImmediate(() => {
       const campaignUrl = `${frontendBaseUrl()}/campaigns/${req.params.id}`;
+      const updateExcerpt =
+        update.body.length > 200 ? `${update.body.slice(0, 200).trim()}…` : update.body;
+
       db.query(
         `SELECT DISTINCT ON (u.id) u.id, u.email, u.name
          FROM contributions c
@@ -93,17 +97,31 @@ router.post(
       )
         .then(({ rows: contributors }) =>
           Promise.all(
-            contributors.map((contributor) =>
-              sendCampaignUpdatePostedEmail({
+            contributors.map((contributor) => {
+              createNotification(contributor.id, {
+                type: "campaign_update",
+                title: `${req.campaign.title}: ${update.title}`,
+                body: updateExcerpt,
+                link: `/campaigns/${req.params.id}`,
+              }).catch((err) =>
+                logger.error("Campaign update notification failed", {
+                  userId: contributor.id,
+                  error: err.message,
+                }),
+              );
+
+              return sendCampaignUpdatePostedEmail({
                 to: contributor.email,
                 updateId: update.id,
+                campaignId: Number(req.params.id),
                 name: contributor.name,
                 campaignTitle: req.campaign.title,
                 campaignUrl,
                 updateTitle: update.title,
+                updateExcerpt,
                 updateBody: update.body,
-              }),
-            ),
+              });
+            }),
           ),
         )
         .catch((err) => logger.error("Campaign update email failed", { error: err.message }));

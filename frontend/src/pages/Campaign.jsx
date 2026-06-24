@@ -148,6 +148,7 @@ export default function Campaign() {
   );
   const [updates, setUpdates] = useState([]);
   const [milestones, setMilestones] = useState([]);
+  const [tiers, setTiers] = useState([]);
   const [updateForm, setUpdateForm] = useState({ title: "", body: "" });
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updatesError, setUpdatesError] = useState("");
@@ -159,6 +160,7 @@ export default function Campaign() {
   const [inviteSuccess, setInviteSuccess] = useState(false);
   const [showQR, setShowQR] = useState(false);
   const [embedCopied, setEmbedCopied] = useState(false);
+  const [badgeCopied, setBadgeCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [isEditingCampaign, setIsEditingCampaign] = useState(false);
   const [editFormData, setEditFormData] = useState({
@@ -193,11 +195,6 @@ export default function Campaign() {
       setReferralUrl(data.referral_url);
     }).catch(() => {});
   }, [user, id]);
-
-  useEffect(() => {
-    if (!isOwner || !id) return;
-    api.getReferralLeaderboard(id).then(setReferralLeaderboard).catch(() => {});
-  }, [isOwner, id]);
 
   useEffect(() => {
     document.body.dataset.printUrl = window.location.href;
@@ -250,6 +247,10 @@ export default function Campaign() {
       .then(setMilestones)
       .catch(() => setMilestones([]));
     api
+      .getCampaignTiers(id)
+      .then((data) => setTiers(Array.isArray(data) ? data : []))
+      .catch(() => setTiers([]));
+    api
       .getCampaignUpdates(id, { limit: 20 })
       .then(setUpdates)
       .catch(() => setUpdates([]));
@@ -265,6 +266,18 @@ export default function Campaign() {
         .catch(() => setHasPendingWithdrawal(false));
     }
   }, [id, token, contributed, showAll]);
+
+  useEffect(() => {
+    if (!campaign || !id || !user) return;
+    const currentUserId = user.id || user.userId;
+    const resolvedRole =
+      campaign.user_role ||
+      (currentUserId && String(campaign.creator_id) === String(currentUserId)
+        ? "owner"
+        : null);
+    if (resolvedRole !== "owner") return;
+    api.getReferralLeaderboard(id).then(setReferralLeaderboard).catch(() => {});
+  }, [campaign, id, user]);
 
   useEffect(() => {
     if (!id) return;
@@ -681,7 +694,10 @@ export default function Campaign() {
   const acceptedMembers = members.filter((m) => m.accepted_at);
   const pendingInvites = members.filter((m) => !m.accepted_at);
   const campaignUrl = `${window.location.origin}/campaigns/${id}`;
-  const embedCode = `<iframe src="${window.location.origin}/widget/campaigns/${id}" width="320" height="120" frameborder="0" style="border-radius:10px"></iframe>`;
+  const apiBase = (import.meta.env.VITE_API_BASE_URL || `${window.location.origin}`).replace(/\/+$/, "");
+  const widgetEmbedCode = `<iframe src="${window.location.origin}/widget/campaigns/${id}" width="320" height="140" frameborder="0" style="border-radius:10px" title="CrowdPay funding widget"></iframe>`;
+  const fullEmbedCode = `<iframe src="${window.location.origin}/embed/campaigns/${id}" width="480" height="280" frameborder="0" title="CrowdPay campaign embed"></iframe>`;
+  const badgeMarkdown = `[![CrowdPay](${apiBase}/api/campaigns/${id}/badge.svg)](${campaignUrl})`;
 
   function canEditUpdate(update) {
     return (
@@ -932,6 +948,50 @@ export default function Campaign() {
         )}
         <p style={styles.desc}>{campaign.description}</p>
       </div>
+
+      {tiers.length > 0 && (
+        <div style={{ marginBottom: "1rem" }}>
+          <h2 style={styles.sectionTitle}>Reward tiers</h2>
+          <div style={{ display: "grid", gap: "0.85rem" }}>
+            {tiers.map((tier) => (
+              <div
+                key={tier.id}
+                style={{
+                  ...styles.card,
+                  marginBottom: 0,
+                  opacity: tier.sold_out ? 0.65 : 1,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", alignItems: "baseline" }}>
+                  <strong style={{ fontSize: "1.05rem" }}>{tier.title}</strong>
+                  <span style={styles.asset}>
+                    {Number(tier.min_amount).toLocaleString()}+ {tier.asset_type}
+                  </span>
+                </div>
+                {tier.description && (
+                  <p style={{ ...styles.small, marginTop: "0.5rem", lineHeight: 1.5 }}>
+                    {tier.description}
+                  </p>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+                  {tier.estimated_delivery && (
+                    <span style={styles.small}>
+                      Estimated delivery: {new Date(tier.estimated_delivery).toLocaleDateString()}
+                    </span>
+                  )}
+                  <span style={{ ...styles.small, fontWeight: 700, marginLeft: "auto" }}>
+                    {tier.sold_out
+                      ? "Sold out"
+                      : tier.remaining == null
+                      ? "Unlimited backers"
+                      : `${Number(tier.remaining).toLocaleString()} remaining`}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={styles.card}>
         <div style={styles.amounts}>
@@ -1202,21 +1262,43 @@ export default function Campaign() {
         <summary style={styles.embedSummary}>
           Embed on your site
         </summary>
-        <pre style={{ ...styles.embedCode, marginTop: "0.75rem" }}>
-          {embedCode}
+        <p style={{ fontSize: "0.82rem", color: "var(--color-text-hint)", marginTop: "0.75rem" }}>
+          Compact widget (GitHub README, docs):
+        </p>
+        <pre style={{ ...styles.embedCode, marginTop: "0.5rem" }}>
+          {widgetEmbedCode}
         </pre>
         <button
           type="button"
           onClick={() => {
-            navigator.clipboard.writeText(embedCode).then(() => {
+            navigator.clipboard.writeText(widgetEmbedCode).then(() => {
               setEmbedCopied(true);
               setTimeout(() => setEmbedCopied(false), 2000);
             });
           }}
           className="btn-secondary"
-          style={{ marginTop: "0.75rem", fontSize: "0.85rem", minHeight: "auto" }}
+          style={{ marginTop: "0.5rem", fontSize: "0.85rem", minHeight: "auto" }}
         >
-          {embedCopied ? "Copied!" : "Copy snippet"}
+          {embedCopied ? "Copied!" : "Copy widget snippet"}
+        </button>
+        <p style={{ fontSize: "0.82rem", color: "var(--color-text-hint)", marginTop: "0.85rem" }}>
+          README badge (live funding stats):
+        </p>
+        <pre style={{ ...styles.embedCode, marginTop: "0.5rem" }}>
+          {badgeMarkdown}
+        </pre>
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard.writeText(badgeMarkdown).then(() => {
+              setBadgeCopied(true);
+              setTimeout(() => setBadgeCopied(false), 2000);
+            });
+          }}
+          className="btn-secondary"
+          style={{ marginTop: "0.5rem", fontSize: "0.85rem", minHeight: "auto" }}
+        >
+          {badgeCopied ? "Copied!" : "Copy badge markdown"}
         </button>
       </details>
 
@@ -1289,8 +1371,8 @@ export default function Campaign() {
                   lineHeight: 1.5,
                 }}
               >
-                Add this embed code to your website or blog to display a live
-                funding widget for this campaign.
+                Add these snippets to your website, GitHub README, or docs. Stats update
+                automatically — no need to re-copy.
               </p>
 
               <div style={{ marginBottom: "1rem" }}>
@@ -1303,17 +1385,14 @@ export default function Campaign() {
                     marginBottom: "0.5rem",
                   }}
                 >
-                  Embed code
+                  Compact widget (iframe)
                 </label>
                 <div style={{ position: "relative" }}>
-                  <pre style={styles.embedCode}>
-                    {`<iframe src="${window.location.origin}/embed/campaigns/${campaign.id}" \n        width="480" height="280" frameborder="0">\n</iframe>`}
-                  </pre>
+                  <pre style={styles.embedCode}>{widgetEmbedCode}</pre>
                   <button
                     type="button"
                     onClick={() => {
-                      const code = `<iframe src="${window.location.origin}/embed/campaigns/${campaign.id}" width="480" height="280" frameborder="0"></iframe>`;
-                      navigator.clipboard.writeText(code).then(() => {
+                      navigator.clipboard.writeText(widgetEmbedCode).then(() => {
                         setEmbedCopied(true);
                         setTimeout(() => setEmbedCopied(false), 2000);
                       });
@@ -1336,6 +1415,86 @@ export default function Campaign() {
                 </div>
               </div>
 
+              <div style={{ marginBottom: "1rem" }}>
+                <label
+                  style={{
+                    fontSize: "0.8rem",
+                    fontWeight: 600,
+                    color: "var(--color-text-hint)",
+                    display: "block",
+                    marginBottom: "0.5rem",
+                  }}
+                >
+                  Full embed (iframe)
+                </label>
+                <div style={{ position: "relative" }}>
+                  <pre style={styles.embedCode}>{fullEmbedCode}</pre>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(fullEmbedCode).then(() => {
+                        setEmbedCopied(true);
+                        setTimeout(() => setEmbedCopied(false), 2000);
+                      });
+                    }}
+                    style={{
+                      position: "absolute",
+                      top: "0.5rem",
+                      right: "0.5rem",
+                      background: embedCopied
+                        ? "var(--color-success-text)"
+                        : "var(--color-accent)",
+                      color: "#fff",
+                      padding: "0.4rem 0.8rem",
+                      fontSize: "0.8rem",
+                      minHeight: "auto",
+                    }}
+                  >
+                    {embedCopied ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: "1rem" }}>
+                <label
+                  style={{
+                    fontSize: "0.8rem",
+                    fontWeight: 600,
+                    color: "var(--color-text-hint)",
+                    display: "block",
+                    marginBottom: "0.5rem",
+                  }}
+                >
+                  README badge (markdown)
+                </label>
+                <div style={{ position: "relative" }}>
+                  <pre style={styles.embedCode}>{badgeMarkdown}</pre>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(badgeMarkdown).then(() => {
+                        setBadgeCopied(true);
+                        setTimeout(() => setBadgeCopied(false), 2000);
+                      });
+                    }}
+                    style={{
+                      position: "absolute",
+                      top: "0.5rem",
+                      right: "0.5rem",
+                      background: badgeCopied
+                        ? "var(--color-success-text)"
+                        : "var(--color-accent)",
+                      color: "#fff",
+                      padding: "0.4rem 0.8rem",
+                      fontSize: "0.8rem",
+                      minHeight: "auto",
+                    }}
+                  >
+                    {badgeCopied ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label
                   style={{
@@ -1350,11 +1509,11 @@ export default function Campaign() {
                 </label>
                 <div style={styles.embedPreview}>
                   <iframe
-                    src={`/embed/campaigns/${campaign.id}`}
+                    src={`/widget/campaigns/${campaign.id}`}
                     width="100%"
-                    height="280"
+                    height="140"
                     frameBorder="0"
-                    title="Campaign embed preview"
+                    title="Campaign widget preview"
                     style={{
                       border: "1px solid var(--color-border-light)",
                       borderRadius: "6px",
@@ -2142,6 +2301,7 @@ export default function Campaign() {
       {showModal && (
         <ContributeModal
           campaign={campaign}
+          tiers={tiers}
           guestFreighterMode={freighterGuestMode}
           onClose={() => {
             setShowModal(false);

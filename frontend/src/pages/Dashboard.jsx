@@ -5,6 +5,7 @@ import { api } from '../services/api';
 import KycPrompt from '../components/KycPrompt';
 import VerificationBadge from '../components/VerificationBadge';
 import CampaignStatusBadge from '../components/CampaignStatusBadge';
+import ContributorDashboard from '../components/ContributorDashboard';
 import DepositModal from '../components/DepositModal';
 import ApiKeysPanel from '../components/ApiKeysPanel';
 import { stellarExpertTxUrl, stellarExpertAccountUrl } from '../config/stellar';
@@ -115,9 +116,7 @@ export default function Dashboard() {
 
   const [stats, setStats] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
-  const [contributions, setContributions] = useState([]);
   const [loadingCampaigns, setLoadingCampaigns] = useState(true);
-  const [loadingContributions, setLoadingContributions] = useState(true);
   const [error, setError] = useState('');
   const [balance, setBalance] = useState(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
@@ -147,30 +146,20 @@ export default function Dashboard() {
 
     api.getMyBalance().then((d) => setBalance(d.balance)).catch(() => {}).finally(() => setBalanceLoading(false));
 
-    const requests = [api.getMyContributions()];
     if (isCreator) {
-      requests.unshift(api.getMe(), api.getMyStats(), api.getMyCampaigns());
-    }
-
-    Promise.all(requests)
-      .then((results) => {
-        if (isCreator) {
-          const [me, s, c, contrib] = results;
+      Promise.all([api.getMe(), api.getMyStats(), api.getMyCampaigns()])
+        .then(([me, s, c]) => {
           updateUser(me);
           setStats(s);
           setCampaigns(c);
-          setContributions(contrib);
-          // pre-fetch dashboard analytics for the analytics tab
           api.getUserDashboardAnalytics().then(setDashAnalytics).catch(() => {});
-        } else {
-          setContributions(results[0]);
-        }
-      })
-      .catch((err) => setError(err.message || 'Could not load dashboard'))
-      .finally(() => {
-        setLoadingCampaigns(false);
-        setLoadingContributions(false);
-      });
+        })
+        .catch((err) => setError(err.message || 'Could not load dashboard'))
+        .finally(() => setLoadingCampaigns(false));
+      return;
+    }
+
+    setLoadingCampaigns(false);
   }, [user?.role, updateUser]);
 
   const loadCampaignAnalytics = useCallback((id) => {
@@ -264,7 +253,8 @@ export default function Dashboard() {
   }
   if (!user) return <Navigate to="/login" replace />;
 
-  const loading = activeTab === 'campaigns' ? loadingCampaigns : loadingContributions;
+  const loading = activeTab === 'campaigns' ? loadingCampaigns : false;
+  const visibleTabs = isCreator ? TABS : TABS.filter(t => t.id !== 'analytics');
 
   return (
     <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
@@ -506,73 +496,7 @@ export default function Dashboard() {
 
       {activeTab === 'contributions' && (
         <section role="tabpanel" aria-labelledby="tab-contributions">
-          {loading ? (
-            <p style={{ color: 'var(--color-text-hint)' }}>Loading your contributions...</p>
-          ) : contributions.length === 0 ? (
-            <p className="alert alert--info">
-              You have not backed any campaigns yet.{' '}
-              <Link to="/" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
-                Browse campaigns
-              </Link>
-              .
-            </p>
-          ) : (
-            <div style={{ display: 'grid', gap: '0.75rem' }}>
-              {contributions.map((row) => {
-                const conversionLabel = formatConversionRate(row);
-                return (
-                  <div key={row.id} className="campaign-card">
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        gap: '0.5rem',
-                        flexWrap: 'wrap',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <Link
-                        to={`/campaigns/${row.campaign_id}`}
-                        style={{ color: 'var(--color-accent)', fontWeight: 700 }}
-                      >
-                        {row.campaign_title}
-                      </Link>
-                      <CampaignStatusBadge status={row.campaign_status} />
-                    </div>
-                    <div style={{ marginTop: '0.35rem', fontSize: '0.9rem' }}>
-                      {Number(row.amount).toLocaleString()} {row.asset}
-                      {' • '}
-                      {new Date(row.created_at).toLocaleString()}
-                    </div>
-                    {conversionLabel && (
-                      <div
-                        style={{
-                          marginTop: '0.25rem',
-                          fontSize: '0.85rem',
-                          color: 'var(--color-text-hint)',
-                        }}
-                      >
-                        Conversion rate: {conversionLabel}
-                      </div>
-                    )}
-                    <a
-                      href={stellarExpertTxUrl(row.tx_hash)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{
-                        marginTop: '0.35rem',
-                        display: 'inline-block',
-                        color: 'var(--color-accent)',
-                        fontSize: '0.9rem',
-                      }}
-                    >
-                      View transaction
-                    </a>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <ContributorDashboard />
         </section>
       )}
 
@@ -713,6 +637,9 @@ export default function Dashboard() {
               </>
             )}
           </div>
+        </section>
+      )}
+
       {activeTab === 'referrals' && isCreator && (
         <section role="tabpanel" aria-labelledby="tab-referrals">
           {referralLoading ? (

@@ -26,10 +26,11 @@ const {
   buildContributionMemo,
   submitCustodialContribution,
 } = require('../services/contributionService');
-const { listUserContributions } = require('../services/userDashboardService');
+const { listUserContributions, getContributorDashboard } = require('../services/userDashboardService');
 const { requestRefund: contractRequestRefund } = require('../services/sorobanService');
 const { assertUserKycVerified } = require('../services/kycService');
 const asyncHandler = require('../utils/asyncHandler');
+const { getReferralCodeFromRequest } = require('../services/referralService');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const PREPARED_CONTRIBUTION_EXPIRES_IN = '10m';
@@ -51,25 +52,10 @@ const contributionPostLimiter = rateLimit({
  *     description: Contribution creation and quoting
  */
 
-async function attributeContributionToReferrer(campaignId, req) {
-  const cookieName = `cp_ref_${campaignId}`;
-  const refCode = req.cookies?.[cookieName];
-  if (!refCode) return;
-
-  try {
-    const { rows } = await db.query(
-      'SELECT id FROM campaign_referrals WHERE referral_code = $1 AND campaign_id = $2',
-      [refCode, campaignId]
-    );
-    if (rows.length) {
-      await db.query(
-        'UPDATE campaign_referrals SET contribution_count = contribution_count + 1 WHERE id = $1',
-        [rows[0].id]
-      );
-    }
-  } catch (err) {
-    logger.warn('Referral attribution failed', { campaign_id: campaignId, error: err.message });
-  }
+function withReferralMetadata(flowMetadata, campaignId, req) {
+  const referralCode = getReferralCodeFromRequest(campaignId, req);
+  if (!referralCode) return flowMetadata;
+  return { ...flowMetadata, referral_code: referralCode };
 }
 
 function validateFreighterPublicKey(publicKey) {
@@ -155,6 +141,12 @@ router.get('/mine', requireAuth, asyncHandler(async (req, res) => {
   const rows = await listUserContributions(req.user.userId);
   if (rows === null) return res.status(404).json({ error: 'User not found' });
   res.json(rows);
+}));
+
+router.get('/dashboard', requireAuth, asyncHandler(async (req, res) => {
+  const data = await getContributorDashboard(req.user.userId);
+  if (data === null) return res.status(404).json({ error: 'User not found' });
+  res.json(data);
 }));
 
 router.get('/campaign/:campaignId', async (req, res) => {
@@ -360,7 +352,7 @@ router.post('/prepare', requireAuth, contributionValidation, validateRequest, as
       campaign_id,
       sender_public_key,
       unsigned_xdr: unsignedXdr,
-      flow_metadata: intent.flowMetadata,
+      flow_metadata: withReferralMetadata(intent.flowMetadata, campaign_id, req),
       conversion_quote: intent.conversionQuote,
     });
 
@@ -507,6 +499,7 @@ router.post('/', contributionPostLimiter, requireAuth, contributionValidation, v
       amount,
       sendAsset: send_asset,
       displayName: display_name,
+      referralCode: getReferralCodeFromRequest(campaign_id, req),
     });
     res.status(202).json({
       tx_hash: result.txHash,
