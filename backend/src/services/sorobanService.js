@@ -203,18 +203,76 @@ function encodeMilestone(m) {
   });
 }
 
+function scvAddressFromString(addressString) {
+  return nativeToScVal(Address.fromString(addressString), { type: 'address' });
+}
+
+async function createContractFromWasmHash({ wasmHash, signerSecret }) {
+  const signer = Keypair.fromSecret(signerSecret);
+  const source = await server.loadAccount(signer.publicKey());
+
+  const tx = new TransactionBuilder(source, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(Operation.createContract(wasmHash))
+    .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
+    .build();
+
+  tx.sign(signer);
+  const result = await server.submitTransaction(tx);
+
+  if (result.status === 'SUCCESS') {
+    if (result.resultMetaXdr) {
+      const meta = xdr.TransactionMeta.fromXDR(result.resultMetaXdr, 'base64');
+      const created = meta.v3().sorobanMeta().createdContracts();
+      if (created && created.length > 0) {
+        return created[0].contractId().toString('hex');
+      }
+    }
+  }
+  throw new Error(`Contract creation failed: ${result.status}`);
+}
+
+async function uploadContractWasm(wasmBuffer, signerSecret) {
+  const signer = Keypair.fromSecret(signerSecret);
+  const source = await server.loadAccount(signer.publicKey());
+
+  const tx = new TransactionBuilder(source, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(Operation.uploadContractWasm(wasmBuffer))
+    .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
+    .build();
+
+  const preparedTx = await simulateAndPrepare(tx);
+  preparedTx.sign(signer);
+  const result = await server.submitTransaction(preparedTx);
+
+  if (result.status === 'SUCCESS') {
+    if (result.resultMetaXdr) {
+      const meta = xdr.TransactionMeta.fromXDR(result.resultMetaXdr, 'base64');
+      const retVal = meta.v3().sorobanMeta().returnValue();
+      return scValToNative(retVal);
+    }
+  }
+  throw new Error(`WASM upload failed: ${result.status}`);
+}
+
 async function refund(contractId, contributorPublicKey) {
   return invokeContract({
     contractId,
     method: 'refund',
-    args: [nativeToScVal(Address.fromString(contributorPublicKey))],
+    args: [nativeToScVal(Address.fromString(contributorPublicKey), { type: 'address' })],
     signerSecret: process.env.PLATFORM_SECRET_KEY,
   });
 }
 
 /**
- * Deploy escrow and milestones contracts for a new campaign.
- * Uses pre-deployed contract IDs from environment variables.
+ * Deploy and initialize both escrow and milestones contracts for a campaign.
+ * Uses pre-deployed contract IDs from env when set, otherwise deploys new instances.
+ * Falls back to mock IDs if SOROBAN_ENABLED is not true.
  */
 async function deployCampaignContracts({
   creatorPublicKey,
@@ -227,14 +285,76 @@ async function deployCampaignContracts({
   milestones,
   signerSecret,
 }) {
-  const escrowContractId = process.env.ESCROW_CONTRACT_ID || null;
-  const milestonesContractId = process.env.MILESTONES_CONTRACT_ID || null;
+  const envEscrowId = process.env.ESCROW_CONTRACT_ID || null;
+  const envMilestonesId = process.env.MILESTONES_CONTRACT_ID || null;
 
-  if (escrowContractId) {
+  if (envEscrowId || envMilestonesId) {
+    if (envEscrowId) {
+      await initializeEscrow({
+        contractId: envEscrowId,
+        adminAddress: creatorPublicKey,
+        campaignId,
+        target: targetAmount,
+        deadline: deadlineUnix,
+        assetContractAddress,
+        platformFeeBps,
+        platformFeeRecipientAddress: platformPublicKey,
+        signerSecret,
+      });
+    }
+
+    if (envMilestonesId && milestones && milestones.length) {
+      await initializeMilestones({
+        contractId: envMilestonesId,
+        creatorAddress: creatorPublicKey,
+        platformAddress: platformPublicKey,
+        escrowContractId: envEscrowId,
+        milestones,
+        signerSecret,
+      });
+    }
+
+    return { escrowContractId: envEscrowId, milestonesContractId: envMilestonesId };
+  }
+
+  const sorobanEnabled = process.env.SOROBAN_ENABLED === 'true';
+  const escrowWasmHash = process.env.ESCOW_WASM_HASH;
+  const milestonesWasmHash = process.env.MILESTONES_WASM_HASH;
+
+  if (!sorobanEnabled) {
+    const mockEscrowId = 'C' + crypto.randomBytes(24).toString('hex').toUpperCase();
+    const mockMilestonesId = 'C' + crypto.randomBytes(24).toString('hex').toUpperCase();
+    logger.info('Soroban disabled, using mock contract IDs', {
+      mockEscrowId,
+      mockMilestonesId,
+    });
+    return { escrowContractId: mockEscrowId, milestonesContractId: mockMilestonesId };
+  }
+
+  if (!escrowWasmHash || !milestonesWasmHash) {
+    throw new Error(
+      'SOROBAN_ENABLED is true but ESCROW_WASM_HASH or MILESTONES_WASM_HASH is not configured'
+    );
+  }
+
+  try {
+    logger.info('Deploying escrow contract instance...');
+    const escrowContractId = await createContractFromWasmHash({
+      wasmHash: escrowWasmHash,
+      signerSecret,
+    });
+
+    logger.info('Deploying milestones contract instance...');
+    const milestonesContractId = await createContractFromWasmHash({
+      wasmHash: milestonesWasmHash,
+      signerSecret,
+    });
+
+    logger.info('Initializing escrow contract...');
     await initializeEscrow({
       contractId: escrowContractId,
-      adminAddress: creatorPublicKey,
-      campaignId,
+      adminAddress: milestonesContractId,
+      campaignId: parseInt(campaignId.replace(/-/g, '').slice(0, 8), 16) || 1,
       target: targetAmount,
       deadline: deadlineUnix,
       assetContractAddress,
@@ -242,9 +362,8 @@ async function deployCampaignContracts({
       platformFeeRecipientAddress: platformPublicKey,
       signerSecret,
     });
-  }
 
-  if (milestonesContractId && milestones && milestones.length) {
+    logger.info('Initializing milestones contract...');
     await initializeMilestones({
       contractId: milestonesContractId,
       creatorAddress: creatorPublicKey,
@@ -253,9 +372,204 @@ async function deployCampaignContracts({
       milestones,
       signerSecret,
     });
+
+    return { escrowContractId, milestonesContractId };
+  } catch (err) {
+    logger.error('Soroban contract deployment failed', { error: err.message });
+    throw new Error(`Soroban contract deployment failed: ${err.message}`);
+  }
+}
+
+async function submitMilestone({ contractId, creatorAddress, title, releaseBps, signerSecret }) {
+  const titleHash = Buffer.alloc(32);
+  Buffer.from(crypto.createHash('sha256').update(title).digest()).copy(titleHash);
+
+  return invokeContract({
+    contractId,
+    method: 'submit_milestone',
+    args: [
+      nativeToScVal(Address.fromString(creatorAddress), { type: 'address' }),
+      nativeToScVal(titleHash, { type: 'bytes' }),
+      nativeToScVal(releaseBps, { type: 'u32' }),
+    ],
+    signerSecret,
+  });
+}
+
+async function approveMilestone({ contractId, milestoneIndex, signerSecret }) {
+  return invokeContract({
+    contractId,
+    method: 'approve_milestone',
+    args: [
+      nativeToScVal(milestoneIndex, { type: 'u32' }),
+    ],
+    signerSecret,
+  });
+}
+
+async function rejectMilestone({ contractId, milestoneIndex, signerSecret }) {
+  return invokeContract({
+    contractId,
+    method: 'reject_milestone',
+    args: [
+      nativeToScVal(milestoneIndex, { type: 'u32' }),
+    ],
+    signerSecret,
+  });
+}
+
+async function getMilestone(contractId, milestoneIndex) {
+  return invokeContractReadOnly({
+    contractId,
+    method: 'get_milestone',
+    args: [
+      nativeToScVal(milestoneIndex, { type: 'u32' }),
+    ],
+  });
+}
+
+async function getAllMilestones(contractId) {
+  return invokeContractReadOnly({
+    contractId,
+    method: 'get_all_milestones',
+    args: [],
+  });
+}
+
+const MILESTONE_STATUS_LABELS = {
+  0: 'pending',
+  1: 'submitted',
+  2: 'released',
+  3: 'rejected',
+};
+
+function mapMilestoneOnChainStatus(statusValue) {
+  if (statusValue && typeof statusValue === 'object' && 'tag' in statusValue) {
+    const tag = String(statusValue.tag).toLowerCase();
+    if (tag.includes('approved')) return 'released';
+    if (tag.includes('submitted')) return 'submitted';
+    if (tag.includes('rejected')) return 'rejected';
+    return 'pending';
+  }
+  return MILESTONE_STATUS_LABELS[Number(statusValue)] || 'pending';
+}
+
+/**
+ * Deploy and initialize Soroban contracts for a campaign.
+ * Returns the primary contract address (escrow) plus milestones contract ID.
+ */
+async function initializeCampaignContract({
+  campaignId,
+  creator,
+  goal,
+  deadline,
+  milestones,
+  platformPublicKey,
+  assetContractAddress,
+  platformFeeBps = 0,
+  signerSecret,
+}) {
+  const { escrowContractId, milestonesContractId } = await deployCampaignContracts({
+    creatorPublicKey: creator,
+    platformPublicKey,
+    campaignId,
+    targetAmount: goal,
+    deadlineUnix: deadline,
+    assetContractAddress,
+    platformFeeBps,
+    milestones,
+    signerSecret,
+  });
+
+  return {
+    contractAddress: escrowContractId,
+    escrowContractId,
+    milestonesContractId,
+  };
+}
+
+/**
+ * Release a milestone on-chain via the milestones contract.
+ */
+async function releaseMilestone({ milestonesContractId, milestoneIndex, signerSecret }) {
+  if (!milestonesContractId) {
+    throw new Error('Campaign does not have a milestones contract deployed');
   }
 
-  return { escrowContractId, milestonesContractId };
+  try {
+    return await approveMilestone({
+      contractId: milestonesContractId,
+      milestoneIndex,
+      signerSecret,
+    });
+  } catch (err) {
+    throw new Error(`On-chain milestone release failed: ${err.message}`);
+  }
+}
+
+/**
+ * Trigger an on-chain refund for a contributor via the escrow contract.
+ */
+async function triggerRefund({ escrowContractId, contributorAddress, signerSecret }) {
+  if (!escrowContractId) {
+    throw new Error('Campaign does not have an escrow contract deployed');
+  }
+
+  try {
+    return await requestRefund({
+      contractId: escrowContractId,
+      contributorAddress,
+      signerSecret,
+    });
+  } catch (err) {
+    throw new Error(`On-chain refund failed: ${err.message}`);
+  }
+}
+
+/**
+ * Read on-chain campaign status from deployed Soroban contracts.
+ */
+async function getContractStatus({
+  escrowContractId,
+  milestonesContractId,
+  deadlineUnix,
+  targetAmount,
+}) {
+  const result = {
+    status: 'unknown',
+    totalRaised: 0,
+    milestones: [],
+  };
+
+  if (!escrowContractId && !milestonesContractId) {
+    return result;
+  }
+
+  if (escrowContractId) {
+    result.totalRaised = Number(await getEscrowTotalRaised(escrowContractId)) || 0;
+    const target = Number(targetAmount) || 0;
+    const now = Math.floor(Date.now() / 1000);
+
+    if (target > 0 && result.totalRaised >= target) {
+      result.status = 'funded';
+    } else if (deadlineUnix && now >= deadlineUnix) {
+      result.status = 'failed';
+    } else {
+      result.status = 'active';
+    }
+  }
+
+  if (milestonesContractId) {
+    const onChainMilestones = await getAllMilestones(milestonesContractId);
+    const items = Array.isArray(onChainMilestones) ? onChainMilestones : [];
+    result.milestones = items.map((milestone, index) => ({
+      index,
+      on_chain_status: mapMilestoneOnChainStatus(milestone?.status),
+      released: mapMilestoneOnChainStatus(milestone?.status) === 'released',
+    }));
+  }
+
+  return result;
 }
 
 module.exports = {
@@ -268,8 +582,21 @@ module.exports = {
   getEscrowTotalRaised,
   getEscrowAsset,
   getEscrowPlatformFeeConfig,
+  createContractFromWasmHash,
+  uploadContractWasm,
   deployCampaignContracts,
   encodeMilestone,
+  scvAddressFromString,
   nativeToScVal,
+  submitMilestone,
+  approveMilestone,
+  rejectMilestone,
+  getMilestone,
+  getAllMilestones,
+  initializeCampaignContract,
+  releaseMilestone,
+  triggerRefund,
+  getContractStatus,
+  mapMilestoneOnChainStatus,
   refund,
 };

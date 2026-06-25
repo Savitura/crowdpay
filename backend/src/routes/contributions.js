@@ -27,7 +27,7 @@ const {
   submitCustodialContribution,
 } = require('../services/contributionService');
 const { listUserContributions, getContributorDashboard } = require('../services/userDashboardService');
-const { requestRefund: contractRequestRefund } = require('../services/sorobanService');
+const { triggerRefund } = require('../services/sorobanService');
 const { assertUserKycVerified } = require('../services/kycService');
 const asyncHandler = require('../utils/asyncHandler');
 const { getReferralCodeFromRequest } = require('../services/referralService');
@@ -597,8 +597,8 @@ router.post('/:id/refund', requireAuth, asyncHandler(async (req, res) => {
   }
 
   try {
-    const result = await contractRequestRefund({
-      contractId: contribution.escrow_contract_id,
+    const result = await triggerRefund({
+      escrowContractId: contribution.escrow_contract_id,
       contributorAddress: contribution.sender_public_key,
       signerSecret,
     });

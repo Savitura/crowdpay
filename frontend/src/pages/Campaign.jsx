@@ -12,7 +12,7 @@ import CampaignDetailSkeleton from '../components/skeletons/CampaignDetailSkelet
 import ContributionListSkeleton from '../components/skeletons/ContributionListSkeleton';
 import VerificationBadge from '../components/VerificationBadge';
 import CampaignStatusBadge from '../components/CampaignStatusBadge';
-import { stellarExpertTxUrl } from '../config/stellar';
+import { stellarExpertTxUrl, stellarExpertContractUrl } from '../config/stellar';
 import CampaignQRCode from '../components/CampaignQRCode';
 import { getNetwork, signTransaction } from '@stellar/freighter-api';
 import { isConnected, getPublicKey } from '@stellar/freighter-api';
@@ -143,6 +143,8 @@ export default function Campaign() {
   const [coverUploadError, setCoverUploadError] = useState(location.state?.coverUploadError || '');
   const [updates, setUpdates] = useState([]);
   const [milestones, setMilestones] = useState([]);
+  const [contractStatus, setContractStatus] = useState(null);
+  const [contractStatusError, setContractStatusError] = useState('');
   const [tiers, setTiers] = useState([]);
   const [updateForm, setUpdateForm] = useState({ title: '', body: '' });
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -173,6 +175,9 @@ export default function Campaign() {
   const [refundBusy, setRefundBusy] = useState(false);
   const [refundError, setRefundError] = useState('');
   const [refundSuccess, setRefundSuccess] = useState('');
+  const [contributorRefundBusy, setContributorRefundBusy] = useState(false);
+  const [contributorRefundError, setContributorRefundError] = useState('');
+  const [contributorRefundSuccess, setContributorRefundSuccess] = useState('');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -253,6 +258,16 @@ export default function Campaign() {
       .getMilestones(id)
       .then(setMilestones)
       .catch(() => setMilestones([]));
+    api
+      .getContractStatus(id)
+      .then((data) => {
+        setContractStatus(data);
+        setContractStatusError('');
+      })
+      .catch((err) => {
+        setContractStatus(null);
+        setContractStatusError(err.message || 'Could not load on-chain status.');
+      });
     api
       .getCampaignTiers(id)
       .then((data) => setTiers(Array.isArray(data) ? data : []))
@@ -597,6 +612,28 @@ export default function Campaign() {
       setRefundBusy(false);
     }
   }
+
+  async function handleContributorRefund(contributionId) {
+    setContributorRefundBusy(true);
+    setContributorRefundError('');
+    setContributorRefundSuccess('');
+    try {
+      await api.requestContributionRefund(contributionId);
+      setContributorRefundSuccess('Your on-chain refund has been submitted.');
+      api
+        .getContributions(id, { limit: showAll ? 100 : 10, offset: 0 })
+        .then((data) => {
+          setContributions(data.contributions || []);
+          setTotalContributions(data.total || 0);
+        })
+        .catch(() => {});
+    } catch (err) {
+      setContributorRefundError(err.message || 'On-chain refund failed.');
+    } finally {
+      setContributorRefundBusy(false);
+    }
+  }
+
   async function handleDeleteCampaign() {
     setDeleteError('');
     if (!campaign) return;
@@ -682,6 +719,18 @@ export default function Campaign() {
     ['active', 'funded'].includes(campaign.status);
   const canViewAnalytics = userRole === 'owner' || userRole === 'manager' || userRole === 'viewer';
   const isOwner = userRole === 'owner';
+  const contractAddress = campaign.contract_address || campaign.escrow_contract_id || null;
+  const onChainFailed = contractStatus?.status === 'failed' || campaign.status === 'failed';
+  const userContribution = contributions?.find(
+    (c) => c.sender_public_key === user?.wallet_public_key
+  );
+  const canRequestOnChainRefund =
+    user &&
+    !isOwner &&
+    contractAddress &&
+    onChainFailed &&
+    userContribution &&
+    !userContribution.contract_refunded_at;
   const acceptedMembers = members.filter((m) => m.accepted_at);
   const pendingInvites = members.filter((m) => !m.accepted_at);
   const campaignUrl = `${window.location.origin}/campaigns/${id}`;
@@ -868,6 +917,60 @@ export default function Campaign() {
           </button>
         </div>
       )}
+      {canRequestOnChainRefund && (
+        <div
+          style={{
+            background: 'var(--color-bg-card, #1e1e2f)',
+            border: '1px solid var(--color-border-light)',
+            borderRadius: '10px',
+            padding: '1.1rem 1.25rem',
+            marginBottom: '1.25rem',
+          }}
+        >
+          <p
+            style={{
+              margin: '0 0 0.75rem',
+              fontSize: '0.9rem',
+              color: 'var(--color-text-secondary)',
+              lineHeight: 1.55,
+            }}
+          >
+            This campaign failed on-chain. You can claim a refund for your contribution directly
+            from the escrow contract.
+          </p>
+          {contributorRefundError && (
+            <p
+              className="alert alert--error"
+              style={{ marginBottom: '0.75rem', fontSize: '0.875rem' }}
+              role="alert"
+            >
+              {contributorRefundError}
+            </p>
+          )}
+          {contributorRefundSuccess && (
+            <p
+              className="alert alert--success"
+              style={{ marginBottom: '0.75rem', fontSize: '0.875rem' }}
+              role="status"
+            >
+              {contributorRefundSuccess}
+            </p>
+          )}
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={contributorRefundBusy}
+            onClick={() => handleContributorRefund(userContribution.id)}
+            style={{
+              background: contributorRefundBusy ? undefined : '#dc2626',
+              borderColor: contributorRefundBusy ? undefined : '#dc2626',
+              fontSize: '0.9rem',
+            }}
+          >
+            {contributorRefundBusy ? 'Processing refund…' : 'Refund available'}
+          </button>
+        </div>
+      )}
       {campaign.creator_kyc_status !== 'verified' && (
         <div className="alert alert--warning" style={{ marginBottom: '1.25rem' }} role="status">
           <strong>Legacy campaign:</strong> this campaign was created before creator identity
@@ -892,8 +995,44 @@ export default function Campaign() {
           <span style={styles.asset}>{campaign.asset_type}</span>
           <CampaignStatusBadge status={campaign.status} />
           <VerificationBadge status={campaign.creator_kyc_status} />
+          {contractAddress && (
+            <span
+              title="This campaign is backed by a Soroban smart contract"
+              style={{
+                background: 'var(--color-success-bg)',
+                color: 'var(--color-success-text)',
+                borderRadius: '999px',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                padding: '0.25rem 0.6rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.25rem',
+              }}
+            >
+              <span aria-hidden="true">⛓️</span> On-chain verified
+            </span>
+          )}
         </div>
         <h1 style={styles.title}>{campaign.title}</h1>
+        {contractAddress && (
+          <p style={{ margin: '0.35rem 0 0', fontSize: '0.82rem', color: 'var(--color-text-secondary)' }}>
+            Contract:{' '}
+            <a
+              href={stellarExpertContractUrl(contractAddress)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: 'var(--color-accent)', fontWeight: 600, fontFamily: 'monospace' }}
+            >
+              {contractAddress.slice(0, 6)}…{contractAddress.slice(-6)} ↗
+            </a>
+          </p>
+        )}
+        {contractStatusError && (
+          <p className="alert alert--warning" style={{ marginTop: '0.5rem', fontSize: '0.82rem' }} role="status">
+            {contractStatusError}
+          </p>
+        )}
         {campaign.creator_name && <p style={styles.creator}>by {campaign.creator_name}</p>}
         <p style={styles.desc}>{campaign.description}</p>
       </div>
@@ -1477,7 +1616,11 @@ export default function Campaign() {
         isCreator={!!(user?.id && campaign.creator_id === user.id)}
       />
 
-      <MilestoneTracker milestones={milestones} assetType={campaign.asset_type} />
+      <MilestoneTracker
+        milestones={milestones}
+        assetType={campaign.asset_type}
+        contractMilestones={contractStatus?.milestones}
+      />
       {canManageTeam && (
         <div style={{ marginBottom: '2rem' }} data-no-print>
           <div

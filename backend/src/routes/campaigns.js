@@ -14,7 +14,13 @@ const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../servi
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
 const { refreshCampaignStatus, refreshActiveCampaignStatuses } = require('../services/campaignStatusService');
 const { queueFailedCampaignRefunds } = require('../services/campaignStatusActions');
-const { invokeContract, encodeMilestone, nativeToScVal, deployCampaignContracts } = require('../services/sorobanService');
+const {
+  deployCampaignContracts,
+  getContractStatus,
+  invokeContract,
+  encodeMilestone,
+  nativeToScVal,
+} = require('../services/sorobanService');
 const { sendEmail, sendTeamMemberInvitedEmail } = require('../services/emailService');
 const { uploadCampaignCoverImage } = require('../services/storage');
 const { isKycRequiredForCampaigns } = require('../services/kycProvider');
@@ -375,6 +381,63 @@ router.get('/featured', asyncHandler(async (req, res) => {
     LIMIT 3
   `);
   res.json(rows);
+}));
+
+router.get('/:id/contract-status', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT id, contract_address, escrow_contract_id, milestones_contract_id,
+            target_amount, deadline, status
+     FROM campaigns
+     WHERE id = $1`,
+    [req.params.id]
+  );
+
+  if (!rows.length) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+
+  const campaign = rows[0];
+  const escrowContractId = campaign.escrow_contract_id || campaign.contract_address;
+
+  if (!escrowContractId && !campaign.milestones_contract_id) {
+    return res.json({
+      has_contract: false,
+      status: campaign.status,
+      totalRaised: 0,
+      milestones: [],
+    });
+  }
+
+  try {
+    const deadlineUnix = campaign.deadline
+      ? Math.floor(new Date(campaign.deadline).getTime() / 1000)
+      : 0;
+    const targetAmount = Math.floor(Number(campaign.target_amount) * 10_000_000);
+
+    const onChain = await getContractStatus({
+      escrowContractId,
+      milestonesContractId: campaign.milestones_contract_id,
+      deadlineUnix,
+      targetAmount,
+    });
+
+    res.json({
+      has_contract: true,
+      contract_address: campaign.contract_address || escrowContractId,
+      escrow_contract_id: escrowContractId,
+      milestones_contract_id: campaign.milestones_contract_id,
+      ...onChain,
+    });
+  } catch (err) {
+    logger.error('Failed to read on-chain contract status', {
+      campaign_id: req.params.id,
+      error: err.message,
+    });
+    res.status(502).json({
+      error: 'Could not read on-chain contract status',
+      detail: err.message,
+    });
+  }
 }));
 
 router.get('/:id', asyncHandler(async (req, res) => {
@@ -821,17 +884,31 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
   // ASSET_CONTRACT_ADDRESS in env and populate it from the Stellar asset contract.
   const assetContractAddress = process.env.USDC_CONTRACT_ADDRESS || process.env.USDC_ISSUER;
 
-  const { escrowContractId, milestonesContractId } = await deployCampaignContracts({
-    creatorPublicKey,
-    platformPublicKey,
-    campaignId: req.body.title + Date.now(),
-    targetAmount: Math.floor(parseFloat(target_amount) * 10_000_000),
-    deadlineUnix,
-    assetContractAddress,
-    platformFeeBps,
-    milestones: normalizedMilestones,
-    signerSecret: process.env.PLATFORM_SECRET_KEY,
-  });
+  let escrowContractId;
+  let milestonesContractId;
+  try {
+    ({ escrowContractId, milestonesContractId } = await deployCampaignContracts({
+      creatorPublicKey,
+      platformPublicKey,
+      campaignId: req.body.title + Date.now(),
+      targetAmount: Math.floor(parseFloat(target_amount) * 10_000_000),
+      deadlineUnix,
+      assetContractAddress,
+      platformFeeBps,
+      milestones: normalizedMilestones,
+      signerSecret: process.env.PLATFORM_SECRET_KEY,
+    }));
+  } catch (err) {
+    logger.error('Soroban contract deployment failed during campaign creation', {
+      error: err.message,
+      creatorUserId: req.user.userId,
+    });
+    return res.status(502).json({
+      error: 'Soroban contract deployment failed',
+      detail: err.message,
+    });
+  }
+  const contractAddress = escrowContractId;
 
   const client = await db.connect();
   let campaign;
@@ -840,11 +917,13 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
     const { rows } = await client.query(
       `INSERT INTO campaigns
          (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, 
-          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id, platform_fee_bps)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id, platform_fee_bps,
+          contract_address, contract_deployed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
        RETURNING *`,
       [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline, 
-       min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId, platformFeeBps]
+       min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId, platformFeeBps,
+       contractAddress]
     );
     campaign = rows[0];
 

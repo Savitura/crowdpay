@@ -71,6 +71,7 @@ function buildApp({ queryImpl, userId = 'creator-1', role = 'creator', platformA
     },
     '../services/sorobanService': {
       invokeContract: async () => {},
+      releaseMilestone: async () => {},
       nativeToScVal: (v) => v,
     },
     '../services/campaignInviteService': {

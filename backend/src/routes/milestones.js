@@ -19,7 +19,7 @@ const { withDecryptedWalletSecret } = require('../services/walletSecrets');
 const { resolveUserCampaignRole } = require('../services/campaignInviteService');
 const { canSubmitMilestones } = require('../lib/campaignPermissions');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
-const { invokeContract, nativeToScVal } = require('../services/sorobanService');
+const { invokeContract, nativeToScVal, releaseMilestone } = require('../services/sorobanService');
 const { uploadMilestoneEvidence } = require('../services/storage');
 const { createNotification } = require('../services/notifications');
 const {
@@ -679,24 +679,37 @@ const approveMilestoneReleaseHandler = async (req, res) => {
       metadata: { tx_hash: txHash },
     });
 
-    // Soroban integration: Approve milestone on-chain
+    // Soroban integration: release milestone on-chain
     const { rows: campaignRows } = await client.query(
       'SELECT milestones_contract_id FROM campaigns WHERE id = $1',
       [milestone.campaign_id]
     );
-    const contractId = campaignRows[0]?.milestones_contract_id;
-    if (contractId) {
+    const milestonesContractId = campaignRows[0]?.milestones_contract_id;
+    if (milestonesContractId) {
       try {
-        await invokeContract({
-          contractId,
-          method: 'approve_milestone',
-          args: [nativeToScVal(milestone.sort_order)],
+        await releaseMilestone({
+          milestonesContractId,
+          milestoneIndex: milestone.sort_order,
           signerSecret: process.env.PLATFORM_SECRET_KEY,
         });
+        await client.query(
+          `UPDATE withdrawal_requests
+           SET contract_milestone_index = $1
+           WHERE id = $2`,
+          [milestone.sort_order, withdrawalRequest.id]
+        );
       } catch (err) {
-        logger.error('Soroban approve_milestone failed', { error: err.message, milestone_id: milestone.id });
-        // Note: Funds might have been released by the backend call already, 
-        // or the contract might fail if it's already approved.
+        await client.query('ROLLBACK');
+        logger.error('Soroban milestone release failed', {
+          error: err.message,
+          milestone_id: milestone.id,
+          tx_hash: txHash,
+        });
+        return res.status(502).json({
+          error: 'On-chain milestone release failed',
+          detail: err.message,
+          tx_hash: txHash,
+        });
       }
     }
 
