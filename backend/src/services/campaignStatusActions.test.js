@@ -198,14 +198,17 @@ test('recordStatusTransition is idempotent via unique constraint', async () => {
 });
 
 test('queueFailedCampaignRefunds automatically executes contract refunds, retries on failure, updates DB, and sends emails', async () => {
+  const originalPlatformSecretKey = process.env.PLATFORM_SECRET_KEY;
+  process.env.PLATFORM_SECRET_KEY = 'test-secret-key';
+
   const refundCalls = [];
   const dbQueries = [];
   const sentEmails = [];
 
   const mockSorobanService = {
-    refund: async (contractId, contributorPublicKey) => {
-      refundCalls.push({ contractId, contributorPublicKey });
-      if (contributorPublicKey === 'fail-key') {
+    triggerRefund: async ({ escrowContractId, contributorAddress }) => {
+      refundCalls.push({ escrowContractId, contributorAddress });
+      if (contributorAddress === 'fail-key') {
         throw new Error('Soroban error');
       }
     }
@@ -265,10 +268,10 @@ test('queueFailedCampaignRefunds automatically executes contract refunds, retrie
   // Assertions:
   // 1. Should call refund for both. fail-key fails, so it's retried 3 times.
   assert.equal(refundCalls.length, 4);
-  assert.deepEqual(refundCalls[0], { contractId: 'escrow-123', contributorPublicKey: 'user-key-1' });
-  assert.deepEqual(refundCalls[1], { contractId: 'escrow-123', contributorPublicKey: 'fail-key' });
-  assert.deepEqual(refundCalls[2], { contractId: 'escrow-123', contributorPublicKey: 'fail-key' });
-  assert.deepEqual(refundCalls[3], { contractId: 'escrow-123', contributorPublicKey: 'fail-key' });
+  assert.deepEqual(refundCalls[0], { escrowContractId: 'escrow-123', contributorAddress: 'user-key-1' });
+  assert.deepEqual(refundCalls[1], { escrowContractId: 'escrow-123', contributorAddress: 'fail-key' });
+  assert.deepEqual(refundCalls[2], { escrowContractId: 'escrow-123', contributorAddress: 'fail-key' });
+  assert.deepEqual(refundCalls[3], { escrowContractId: 'escrow-123', contributorAddress: 'fail-key' });
 
   // 2. Should update refunded = TRUE in DB only for successful one
   const updateQuery = dbQueries.find(q => q.text.includes('UPDATE contributions') && q.text.includes('refunded = TRUE') && q.params[0] === 'contrib-1');
@@ -281,5 +284,7 @@ test('queueFailedCampaignRefunds automatically executes contract refunds, retrie
   assert.equal(sentEmails.length, 1);
   assert.equal(sentEmails[0].to, 'email-user-key-1@test.com');
   assert.ok(sentEmails[0].subject.includes('Refund processed'));
+
+  process.env.PLATFORM_SECRET_KEY = originalPlatformSecretKey;
 });
 
