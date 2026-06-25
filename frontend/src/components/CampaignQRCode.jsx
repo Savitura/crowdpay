@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 
 export default function CampaignQRCode({ url, size = 180 }) {

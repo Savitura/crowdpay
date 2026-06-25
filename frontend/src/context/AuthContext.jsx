@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { api } from '../services/api';
 
 const AuthContext = createContext(null);
@@ -67,7 +67,10 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = useCallback(async (userData) => {
-    const normalized = { ...userData, role: userData.role || (userData.is_admin ? 'admin' : 'contributor') };
+    const normalized = {
+      ...userData,
+      role: userData.role || (userData.is_admin ? 'admin' : 'contributor'),
+    };
     setUser(normalized);
     localStorage.setItem('cp_user', JSON.stringify(normalized));
     setReady(true);
@@ -76,7 +79,8 @@ export function AuthProvider({ children }) {
   const logout = useCallback(async () => {
     try {
       await api.logout();
-    } catch {
+    } catch (_err) {
+      // Silently ignore logout errors
     }
     setUser(null);
     localStorage.removeItem('cp_user');

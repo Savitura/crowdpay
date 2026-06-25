@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 const BASE_URL = import.meta.env.VITE_API_URL || `${API_BASE_URL}/api`;
@@ -54,9 +54,7 @@ export default function CampaignEmbed() {
       }
 
       if (msg.type === 'contribution') {
-        setCampaign((prev) =>
-          prev ? { ...prev, raised_amount: msg.raised_amount } : prev
-        );
+        setCampaign((prev) => (prev ? { ...prev, raised_amount: msg.raised_amount } : prev));
       }
     };
 
@@ -84,6 +82,17 @@ export default function CampaignEmbed() {
     return () => clearInterval(interval);
   }, [campaign, loading, error]);
 
+  // Listen for open message from parent
+  useEffect(() => {
+    const handler = (event) => {
+      if (event.data && event.data.type === 'open') {
+        // Handle open event if needed
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
   if (loading) {
     return (
       <div style={styles.container}>
@@ -107,12 +116,10 @@ export default function CampaignEmbed() {
   return (
     <div style={styles.container}>
       {isLive && <span style={styles.liveIndicator} title="Live updates active" />}
-      
+
       <h1 style={styles.title}>{campaign.title}</h1>
-      
-      {campaign.description && (
-        <p style={styles.description}>{campaign.description}</p>
-      )}
+
+      {campaign.description && <p style={styles.description}>{campaign.description}</p>}
 
       <div style={styles.progressSection}>
         <div style={styles.amounts}>
@@ -123,9 +130,7 @@ export default function CampaignEmbed() {
             <span style={styles.asset}>{campaign.asset_type}</span>
             <span style={styles.label}> raised</span>
           </div>
-          <div style={styles.target}>
-            {progressPct.toFixed(1)}%
-          </div>
+          <div style={styles.target}>{progressPct.toFixed(1)}%</div>
         </div>
 
         <div style={styles.progressBar}>
@@ -142,9 +147,10 @@ export default function CampaignEmbed() {
             <strong>{campaign.backer_count}</strong> backer{campaign.backer_count !== 1 ? 's' : ''}
           </span>
           <span>
-            Goal: <strong>{Number(campaign.target_amount).toLocaleString()}</strong> {campaign.asset_type}
+            Goal: <strong>{Number(campaign.target_amount).toLocaleString()}</strong>{' '}
+            {campaign.asset_type}
           </span>
-          {campaign.days_remaining != null && (
+          {campaign.days_remaining !== null && campaign.days_remaining !== undefined && (
             <span>
               <strong>{campaign.days_remaining}</strong> day{campaign.days_remaining !== 1 ? 's' : ''} left
             </span>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { api } from '../services/api';
 import { getNetwork, signTransaction } from '@stellar/freighter-api';
 import { stellarExpertTxUrl } from '../config/stellar';
@@ -72,7 +72,8 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
       return;
     }
     setLoadingBalance(true);
-    api.getCampaignBalance(campaign.id)
+    api
+      .getCampaignBalance(campaign.id)
       .then((b) => {
         setLiveBalance(parseFloat(b[campaign.asset_type] || '0'));
         setLoadingBalance(false);
@@ -263,8 +264,8 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
       <h2 style={styles.h2}>Manual fund release</h2>
       <p style={styles.intro}>
         Funds leave the campaign wallet only after <strong>you</strong> (creator) and{' '}
-        <strong>CrowdPay</strong> (platform) both approve the same transaction. Every step is
-        logged for review.
+        <strong>CrowdPay</strong> (platform) both approve the same transaction. Every step is logged
+        for review.
       </p>
 
       {hasMilestonePlan && (
@@ -349,9 +350,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
               <input
                 id={`milestone-destination-${milestone.id}`}
                 value={milestoneForms[milestone.id]?.destination_key || ''}
-                onChange={(e) =>
-                  setMilestoneField(milestone.id, 'destination_key', e.target.value)
-                }
+                onChange={(e) => setMilestoneField(milestone.id, 'destination_key', e.target.value)}
                 placeholder="G..."
                 disabled={!canSubmit}
                 style={{ marginBottom: '0.65rem' }}
@@ -359,12 +358,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
               <button
                 type="button"
                 className="btn-primary"
-                disabled={
-                  !canSubmit ||
-                  busyId === `milestone-${milestone.id}` ||
-                  uploadingMilestoneId === milestone.id ||
-                  milestone.status === 'released'
-                }
+                disabled={busyId === `milestone-${milestone.id}` || milestone.status === 'released'}
                 onClick={() => requestMilestoneRelease(milestone.id)}
                 style={{ width: '100%' }}
               >
@@ -402,7 +396,13 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
             Destination must be a valid Stellar public key. Amount is in {campaign.asset_type}.
           </p>
           {liveBalance !== null && (
-            <p style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>
+            <p
+              style={{
+                fontSize: '0.82rem',
+                color: 'var(--color-text-secondary)',
+                marginBottom: '0.5rem',
+              }}
+            >
               Available on-chain:{' '}
               <strong>
                 {liveBalance.toLocaleString()} {campaign.asset_type}
@@ -425,7 +425,13 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
             </p>
           )}
           {loadingBalance && (
-            <p style={{ fontSize: '0.82rem', color: 'var(--color-text-hint)', marginBottom: '0.5rem' }}>
+            <p
+              style={{
+                fontSize: '0.82rem',
+                color: 'var(--color-text-hint)',
+                marginBottom: '0.5rem',
+              }}
+            >
               Loading balance…
             </p>
           )}
@@ -475,8 +481,8 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
             {liveBalance !== null && Number(form.amount) > liveBalance
               ? 'Amount exceeds balance'
               : busyId === 'new'
-              ? 'Submitting…'
-              : 'Submit request'}
+                ? 'Submitting…'
+                : 'Submit request'}
           </button>
         </form>
       )}
@@ -516,7 +522,10 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                   </div>
                 )}
                 {row.denial_reason && (
-                  <div className="alert alert--error" style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>
+                  <div
+                    className="alert alert--error"
+                    style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}
+                  >
                     {row.denial_reason}
                   </div>
                 )}
@@ -567,7 +576,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                         runAction(
                           row.id,
                           () => api.cancelWithdrawal(row.id, { reason: 'Cancelled by creator' }),
-                          'Withdrawal cancelled',
+                          'Withdrawal cancelled'
                         )
                       }
                       style={{ fontSize: '0.8rem' }}
@@ -624,6 +633,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                       <button
                         type="button"
                         className="btn-primary"
+                        disabled={busyId === row.id}
                         style={{ fontSize: '0.8rem' }}
                         onClick={() => setConfirmingSignId(row.id)}
                       >
@@ -678,7 +688,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                                     api.rejectWithdrawal(row.id, {
                                       reason: rejectReason || 'Rejected by platform',
                                     }),
-                                  'Withdrawal rejected',
+                                  'Withdrawal rejected'
                                 );
                                 setRejectingId(null);
                                 setRejectReason('');
@@ -718,7 +728,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                               runAction(
                                 row.id,
                                 () => api.approveWithdrawalPlatform(row.id),
-                                'Withdrawal approved',
+                                'Withdrawal approved'
                               )
                             }
                             style={{ fontSize: '0.8rem' }}
@@ -746,11 +756,25 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
 }
 
 const styles = {
-  section: { marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--color-border-light)' },
+  section: {
+    marginTop: '2rem',
+    paddingTop: '1.5rem',
+    borderTop: '1px solid var(--color-border-light)',
+  },
   h2: { fontSize: '1.15rem', fontWeight: 800, marginBottom: '0.5rem' },
   h3: { fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' },
-  intro: { color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.55, marginBottom: '1rem' },
-  hint: { color: 'var(--color-text-hint)', fontSize: '0.82rem', lineHeight: 1.45, marginBottom: '0.65rem' },
+  intro: {
+    color: 'var(--color-text-secondary)',
+    fontSize: '0.9rem',
+    lineHeight: 1.55,
+    marginBottom: '1rem',
+  },
+  hint: {
+    color: 'var(--color-text-hint)',
+    fontSize: '0.82rem',
+    lineHeight: 1.45,
+    marginBottom: '0.65rem',
+  },
   card: {
     background: 'var(--color-bg)',
     border: '1px solid var(--color-border-light)',
@@ -760,7 +784,14 @@ const styles = {
     flexDirection: 'column',
     gap: '0.25rem',
   },
-  list: { listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.75rem', margin: 0, padding: 0 },
+  list: {
+    listStyle: 'none',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.75rem',
+    margin: 0,
+    padding: 0,
+  },
   row: {
     display: 'flex',
     flexDirection: 'column',
@@ -780,13 +811,5 @@ const styles = {
     fontSize: '0.78rem',
     color: 'var(--color-text-secondary)',
     lineHeight: 1.5,
-  },
-  confirmPanel: {
-    width: '100%',
-    marginTop: '0.5rem',
-    padding: '0.75rem',
-    background: 'var(--color-warning-bg, #fffbeb)',
-    border: '1px solid var(--color-warning-border, #fcd34d)',
-    borderRadius: '8px',
   },
 };

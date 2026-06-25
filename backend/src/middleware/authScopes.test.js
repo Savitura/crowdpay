@@ -64,6 +64,17 @@ test('developer scope required for api-keys routes', () => {
   assert.equal(res.statusCode, 403);
 });
 
+test('developer scope required for /api/users/api-keys routes', () => {
+  const req = {
+    originalUrl: '/api/users/api-keys',
+    method: 'POST',
+    auth: { kind: 'api_key', scopes: ['read', 'write', 'withdrawals'] },
+  };
+  const res = mockRes();
+  assert.equal(assertApiKeyScopes(req, res), false);
+  assert.equal(res.statusCode, 403);
+});
+
 test('full scope allows developer routes', () => {
   const req = {
     originalUrl: '/api/api-keys',

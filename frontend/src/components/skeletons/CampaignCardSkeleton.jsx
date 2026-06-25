@@ -1,5 +1,3 @@
-import React from 'react';
-
 export default function CampaignCardSkeleton() {
   return (
     <div className="skeleton--card" aria-hidden="true">

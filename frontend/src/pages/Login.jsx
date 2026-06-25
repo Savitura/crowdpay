@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
@@ -43,9 +43,21 @@ export default function Login() {
 
   return (
     <main className="container" style={{ paddingTop: '4rem', maxWidth: '400px' }}>
-      <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1.5rem' }}>{t('login.title')}</h1>
-      <form noValidate onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-        <input type="email" placeholder={t('login.email')} value={form.email} onChange={set('email')} required />
+      <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1.5rem' }}>
+        {t('login.title')}
+      </h1>
+      <form
+        noValidate
+        onSubmit={handleSubmit}
+        style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}
+      >
+        <input
+          type="email"
+          placeholder={t('login.email')}
+          value={form.email}
+          onChange={set('email')}
+          required
+        />
         <div style={{ position: 'relative' }}>
           <input
             id="login-password"
@@ -78,12 +90,22 @@ export default function Login() {
             {showPassword ? t('common.hide') : t('common.show')}
           </button>
         </div>
-        {error && <p style={{ color: 'var(--color-status-error)', fontSize: '0.875rem' }}>{error}</p>}
-        <button type="submit" className="btn-primary" disabled={loading} style={{ padding: '0.8rem' }}>
+        {error && (
+          <p style={{ color: 'var(--color-status-error)', fontSize: '0.875rem' }}>{error}</p>
+        )}
+        <button
+          type="submit"
+          className="btn-primary"
+          disabled={loading}
+          style={{ padding: '0.8rem' }}
+        >
           {loading ? t('login.loading') : t('login.submit')}
         </button>
         <div style={{ textAlign: 'center' }}>
-          <Link to="/forgot-password" style={{ color: 'var(--color-text-hint)', fontSize: '0.85rem', textDecoration: 'none' }}>
+          <Link
+            to="/forgot-password"
+            style={{ color: 'var(--color-text-hint)', fontSize: '0.85rem', textDecoration: 'none' }}
+          >
             {t('login.forgotPassword')}
           </Link>
         </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../services/api';
 
 export default function DepositModal({ onClose, onSuccess }) {
@@ -17,12 +17,18 @@ export default function DepositModal({ onClose, onSuccess }) {
   const selectedAnchor = anchorInfo.anchors.find((a) => a.id === selectedAnchorId) || null;
 
   useEffect(() => {
-    api.getMyBalance().then((d) => setBalance(d.balance)).catch(() => {});
-    api.getSep24Assets().then((info) => {
-      setAnchorInfo(info || { anchors: [] });
-      const first = (info?.anchors || []).find((a) => a.available);
-      if (first) setSelectedAnchorId(first.id);
-    }).catch(() => {});
+    api
+      .getMyBalance()
+      .then((d) => setBalance(d.balance))
+      .catch(() => {});
+    api
+      .getSep24Assets()
+      .then((info) => {
+        setAnchorInfo(info || { anchors: [] });
+        const first = (info?.anchors || []).find((a) => a.available);
+        if (first) setSelectedAnchorId(first.id);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -60,22 +66,33 @@ export default function DepositModal({ onClose, onSuccess }) {
 
     poll();
     const id = window.setInterval(poll, 4000);
-    return () => { stopped = true; window.clearInterval(id); };
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+    };
   }, [session?.id, onSuccess, phase]);
 
   useEffect(() => {
     const modal = modalRef.current;
     if (!modal) return;
-    const focusable = modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    const focusable = modal.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     first?.focus();
     function trapTab(e) {
       if (e.key !== 'Tab') return;
       if (e.shiftKey) {
-        if (document.activeElement === first) { e.preventDefault(); last?.focus(); }
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        }
       } else {
-        if (document.activeElement === last) { e.preventDefault(); first?.focus(); }
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
       }
     }
     modal.addEventListener('keydown', trapTab);
@@ -139,13 +156,19 @@ export default function DepositModal({ onClose, onSuccess }) {
       >
         {phase === 'form' ? (
           <>
-            <h2 id="deposit-title" style={styles.title}>Add Funds</h2>
+            <h2 id="deposit-title" style={styles.title}>
+              Add Funds
+            </h2>
             <p style={styles.subtitle}>
               Deposit fiat currency into your CrowdPay wallet via a supported anchor.
             </p>
 
             {balance && (
-              <div className="alert alert--info" style={{ marginBottom: '1rem', fontSize: '0.85rem' }} role="status">
+              <div
+                className="alert alert--info"
+                style={{ marginBottom: '1rem', fontSize: '0.85rem' }}
+                role="status"
+              >
                 <strong>Current wallet balance:</strong>{' '}
                 {Object.entries(balance)
                   .filter(([, v]) => Number(v) > 0)
@@ -185,8 +208,8 @@ export default function DepositModal({ onClose, onSuccess }) {
 
               {selectedAnchor && (
                 <div className="alert alert--info" style={{ marginBottom: '1rem' }} role="status">
-                  <strong>{selectedAnchor.name}.</strong> CrowdPay will open the anchor’s hosted flow.
-                  Once the deposit completes, the funds will appear in your custodial wallet.
+                  <strong>{selectedAnchor.name}.</strong> CrowdPay will open the anchor’s hosted
+                  flow. Once the deposit completes, the funds will appear in your custodial wallet.
                 </div>
               )}
 
@@ -228,8 +251,8 @@ export default function DepositModal({ onClose, onSuccess }) {
               Complete your deposit
             </h2>
             <p className="alert alert--info" style={{ marginBottom: '1rem' }} role="status">
-              Finish the hosted deposit flow in the popup window. CrowdPay is polling the anchor and will update
-              your wallet balance automatically when the funds arrive.
+              Finish the hosted deposit flow in the popup window. CrowdPay is polling the anchor and
+              will update your wallet balance automatically when the funds arrive.
             </p>
             {session?.anchor_transaction_id && (
               <p style={{ fontSize: '0.875rem', marginBottom: '0.75rem' }}>
@@ -241,12 +264,19 @@ export default function DepositModal({ onClose, onSuccess }) {
                 type="button"
                 className="btn-secondary"
                 style={{ width: '100%', marginBottom: '0.75rem' }}
-                onClick={() => window.open(session.interactive_url, '_blank', 'noopener,noreferrer')}
+                onClick={() =>
+                  window.open(session.interactive_url, '_blank', 'noopener,noreferrer')
+                }
               >
                 Reopen deposit window
               </button>
             )}
-            <button type="button" className="btn-primary" style={{ width: '100%' }} onClick={handleClose}>
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ width: '100%' }}
+              onClick={handleClose}
+            >
               Close
             </button>
           </div>
@@ -268,7 +298,12 @@ export default function DepositModal({ onClose, onSuccess }) {
                 {error}
               </p>
             )}
-            <button type="button" className="btn-primary" style={{ width: '100%', marginTop: '0.5rem' }} onClick={handleClose}>
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ width: '100%', marginTop: '0.5rem' }}
+              onClick={handleClose}
+            >
               Done
             </button>
           </div>
@@ -289,8 +324,18 @@ const styles = {
     zIndex: 100,
     padding: '0.75rem',
   },
-  title: { fontSize: '1.2rem', fontWeight: 800, marginBottom: '0.5rem', color: 'var(--color-text-primary)' },
-  subtitle: { color: 'var(--color-text-secondary)', fontSize: '0.875rem', lineHeight: 1.55, marginBottom: '1.1rem' },
+  title: {
+    fontSize: '1.2rem',
+    fontWeight: 800,
+    marginBottom: '0.5rem',
+    color: 'var(--color-text-primary)',
+  },
+  subtitle: {
+    color: 'var(--color-text-secondary)',
+    fontSize: '0.875rem',
+    lineHeight: 1.55,
+    marginBottom: '1.1rem',
+  },
   actions: {
     display: 'flex',
     flexDirection: 'row',

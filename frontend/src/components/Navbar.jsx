@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
+import NotificationDropdown from './NotificationDropdown';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
@@ -22,7 +23,11 @@ export default function Navbar() {
       setNotifications([]);
       return;
     }
-    const fetchNotifs = () => api.getNotifications().then(setNotifications).catch(() => {});
+    const fetchNotifs = () =>
+      api
+        .getNotifications()
+        .then(setNotifications)
+        .catch(() => {});
     fetchNotifs();
     const id = setInterval(fetchNotifs, 30_000);
     return () => clearInterval(id);
@@ -43,6 +48,16 @@ export default function Navbar() {
   function handleLogout() {
     logout();
     navigate('/');
+  }
+
+  function handleMarkRead(id) {
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n))
+    );
+  }
+
+  function handleMarkAllRead() {
+    setNotifications((prev) => prev.map((n) => ({ ...n, read_at: new Date().toISOString() })));
   }
 
   return (
@@ -75,7 +90,9 @@ export default function Navbar() {
               >
                 {t('nav.startCampaign')}
               </Link>
-              <span style={styles.name} aria-hidden="true">{user.name}</span>
+              <span style={styles.name} aria-hidden="true">
+                {user.name}
+              </span>
               <div style={styles.bellWrap} ref={bellRef}>
                 <button
                   onClick={() => setShowDropdown((v) => !v)}
@@ -94,13 +111,21 @@ export default function Navbar() {
                   />
                 )}
               </div>
-              <button onClick={handleLogout} className="btn-secondary" style={{ padding: '0.4rem 0.9rem' }}>
+              <button
+                onClick={handleLogout}
+                className="btn-secondary"
+                style={{ padding: '0.4rem 0.9rem' }}
+              >
                 {t('nav.logout')}
               </button>
             </>
           ) : (
             <>
-              <Link to="/login" style={styles.link} aria-current={pathname === '/login' ? 'page' : undefined}>
+              <Link
+                to="/login"
+                style={styles.link}
+                aria-current={pathname === '/login' ? 'page' : undefined}
+              >
                 {t('nav.login')}
               </Link>
               <Link to="/register" aria-current={pathname === '/register' ? 'page' : undefined}>
@@ -117,10 +142,23 @@ export default function Navbar() {
 }
 
 const styles = {
-  nav: { background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, zIndex: 10 },
+  nav: {
+    background: 'var(--color-bg)',
+    borderBottom: '1px solid var(--color-border)',
+    position: 'sticky',
+    top: 0,
+    zIndex: 10,
+  },
   logo: { fontWeight: 800, fontSize: '1.15rem', color: 'var(--color-accent)' },
   link: { color: 'var(--color-text-secondary)', fontWeight: 500, fontSize: '0.9rem' },
-  name: { color: 'var(--color-text-secondary)', fontSize: '0.85rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  name: {
+    color: 'var(--color-text-secondary)',
+    fontSize: '0.85rem',
+    maxWidth: '140px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
   languageSelect: {
     background: 'transparent',
     border: '1px solid var(--color-border)',

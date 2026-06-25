@@ -206,6 +206,12 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
     '../services/sorobanService': {
       triggerRefund: async () => null,
     },
+    '../services/kycService': {
+      assertUserKycVerified: async () => {},
+    },
+    '../services/emailService': {
+      sendEmail: async () => {},
+    },
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
         req.user = { userId: 'user-1' };

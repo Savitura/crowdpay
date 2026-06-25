@@ -1,9 +1,13 @@
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import RelativeTime from './RelativeTime';
 
-export default function NotificationDropdown({ notifications, onMarkRead, onMarkAllRead, onClose }) {
+export default function NotificationDropdown({
+  notifications,
+  onMarkRead,
+  onMarkAllRead,
+  onClose,
+}) {
   const navigate = useNavigate();
 
   async function handleClick(notif) {
@@ -19,7 +23,9 @@ export default function NotificationDropdown({ notifications, onMarkRead, onMark
     <div style={styles.dropdown}>
       <div style={styles.header}>
         <span style={styles.headerTitle}>Notifications</span>
-        <button style={styles.markAll} onClick={onMarkAllRead}>Mark all as read</button>
+        <button style={styles.markAll} onClick={onMarkAllRead}>
+          Mark all as read
+        </button>
       </div>
       {notifications.length === 0 ? (
         <div style={styles.empty}>No notifications yet.</div>
@@ -27,12 +33,19 @@ export default function NotificationDropdown({ notifications, onMarkRead, onMark
         notifications.map((n) => (
           <button
             key={n.id}
-            style={{ ...styles.item, background: n.read_at ? 'transparent' : 'var(--color-accent-muted, rgba(99,102,241,0.08))' }}
+            style={{
+              ...styles.item,
+              background: n.read_at
+                ? 'transparent'
+                : 'var(--color-accent-muted, rgba(99,102,241,0.08))',
+            }}
             onClick={() => handleClick(n)}
           >
             <div style={styles.itemTitle}>{n.title}</div>
             {n.body && <div style={styles.itemBody}>{n.body}</div>}
-            <div style={styles.itemTime}><RelativeTime date={n.created_at} /></div>
+            <div style={styles.itemTime}>
+              <RelativeTime date={n.created_at} />
+            </div>
           </button>
         ))
       )}

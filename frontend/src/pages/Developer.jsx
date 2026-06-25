@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -105,7 +105,9 @@ export default function Developer() {
   if (!user) {
     return (
       <main className="container" style={{ paddingTop: '4rem', maxWidth: '720px' }}>
-        <p><Link to="/login">Log in</Link> to manage API keys and webhooks.</p>
+        <p>
+          <Link to="/login">Log in</Link> to manage API keys and webhooks.
+        </p>
       </main>
     );
   }
@@ -115,7 +117,7 @@ export default function Developer() {
     setRevealedKey('');
     setError('');
     try {
-      const res = await api.createApiKey({ label: newKeyLabel, scopes: newKeyScopes });
+      const res = await api.createApiKey({ name: newKeyLabel, scopes: newKeyScopes });
       setRevealedKey(res.api_key);
       await refresh();
     } catch (err) {
@@ -124,7 +126,7 @@ export default function Developer() {
   }
 
   async function revokeKey(id) {
-    if (!confirm('Revoke this API key?')) return;
+    if (!window.confirm('Revoke this API key?')) return;
     setError('');
     try {
       await api.deleteApiKey(id);
@@ -149,7 +151,7 @@ export default function Developer() {
   }
 
   async function revokeHook(id) {
-    if (!confirm('Remove this webhook endpoint?')) return;
+    if (!window.confirm('Remove this webhook endpoint?')) return;
     setError('');
     try {
       await api.deleteWebhook(id);
@@ -160,19 +162,14 @@ export default function Developer() {
   }
 
   function toggleEvent(ev) {
-    setHookEvents((cur) =>
-      cur.includes(ev) ? cur.filter((x) => x !== ev) : [...cur, ev]
-    );
+    setHookEvents((cur) => (cur.includes(ev) ? cur.filter((x) => x !== ev) : [...cur, ev]));
   }
 
   function toggleScope(sc) {
-    setNewKeyScopes((cur) =>
-      cur.includes(sc) ? cur.filter((x) => x !== sc) : [...cur, sc]
-    );
+    setNewKeyScopes((cur) => (cur.includes(sc) ? cur.filter((x) => x !== sc) : [...cur, sc]));
   }
 
-  const selectedEndpoint =
-    V1_ENDPOINTS.find((e) => e.id === explorerEndpoint) || V1_ENDPOINTS[0];
+  const selectedEndpoint = V1_ENDPOINTS.find((e) => e.id === explorerEndpoint) || V1_ENDPOINTS[0];
 
   function buildExplorerUrl() {
     let path = selectedEndpoint.path;
@@ -203,7 +200,12 @@ export default function Developer() {
       }
       const options = {
         method: selectedEndpoint.method,
-        headers: selectedEndpoint.method === 'GET' ? (explorerApiKey && selectedEndpoint.auth ? { Authorization: headers.Authorization } : undefined) : headers,
+        headers:
+          selectedEndpoint.method === 'GET'
+            ? explorerApiKey && selectedEndpoint.auth
+              ? { Authorization: headers.Authorization }
+              : undefined
+            : headers,
       };
       if (selectedEndpoint.method !== 'GET' && selectedEndpoint.bodyTemplate) {
         options.body = explorerBody;
@@ -225,24 +227,39 @@ export default function Developer() {
   }
 
   return (
-    <main className="container" style={{ paddingTop: '3rem', paddingBottom: '4rem', maxWidth: '900px' }}>
+    <main
+      className="container"
+      style={{ paddingTop: '3rem', paddingBottom: '4rem', maxWidth: '900px' }}
+    >
       <h1 style={{ fontSize: '1.75rem', fontWeight: 800, marginBottom: '0.35rem' }}>Developer</h1>
       <p style={{ color: 'var(--color-text-hint)', marginBottom: '2rem', fontSize: '0.95rem' }}>
-        API keys and webhooks for integrating CrowdPay as a funding backend. Public API documentation:{' '}
-        <a href="/v1/docs" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
+        API keys and webhooks for integrating CrowdPay as a funding backend. Public API
+        documentation:{' '}
+        <a
+          href="/v1/docs"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: 'var(--color-accent)', fontWeight: 600 }}
+        >
           OpenAPI /v1/docs
         </a>
-        . See <code style={{ fontSize: '0.85rem' }}>backend/docs/webhooks-integration.md</code> for HMAC verification.
+        . See <code style={{ fontSize: '0.85rem' }}>backend/docs/webhooks-integration.md</code> for
+        HMAC verification.
       </p>
       {error && <p style={{ color: 'var(--color-status-error)', marginBottom: '1rem' }}>{error}</p>}
       {loading && <p style={{ color: 'var(--color-text-hint)' }}>Loading…</p>}
 
       <section style={{ marginBottom: '2.5rem' }}>
-        <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.75rem' }}>API explorer</h2>
+        <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.75rem' }}>
+          API explorer
+        </h2>
         <p style={{ fontSize: '0.9rem', color: 'var(--color-text-hint)', marginBottom: '1rem' }}>
           Try public API v1 endpoints with your API key. Rate limit: 100 requests/minute per key.
         </p>
-        <form onSubmit={runExplorerRequest} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxWidth: '640px' }}>
+        <form
+          onSubmit={runExplorerRequest}
+          style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxWidth: '640px' }}
+        >
           <label style={{ fontSize: '0.85rem' }}>
             Endpoint
             <select
@@ -251,7 +268,9 @@ export default function Developer() {
               style={{ display: 'block', width: '100%', marginTop: '0.35rem' }}
             >
               {V1_ENDPOINTS.map((ep) => (
-                <option key={ep.id} value={ep.id}>{ep.label}</option>
+                <option key={ep.id} value={ep.id}>
+                  {ep.label}
+                </option>
               ))}
             </select>
           </label>
@@ -261,7 +280,7 @@ export default function Developer() {
               type="password"
               value={explorerApiKey}
               onChange={(e) => setExplorerApiKey(e.target.value)}
-              placeholder="cp_live_…"
+              placeholder="cpk_…"
               style={{ display: 'block', width: '100%', marginTop: '0.35rem' }}
             />
           </label>
@@ -282,9 +301,7 @@ export default function Developer() {
               Query: {field}
               <input
                 value={explorerQuery[field] || ''}
-                onChange={(e) =>
-                  setExplorerQuery((cur) => ({ ...cur, [field]: e.target.value }))
-                }
+                onChange={(e) => setExplorerQuery((cur) => ({ ...cur, [field]: e.target.value }))}
                 style={{ display: 'block', width: '100%', marginTop: '0.35rem' }}
               />
             </label>
@@ -296,17 +313,41 @@ export default function Developer() {
                 rows={5}
                 value={explorerBody}
                 onChange={(e) => setExplorerBody(e.target.value)}
-                style={{ display: 'block', width: '100%', marginTop: '0.35rem', fontFamily: 'monospace', fontSize: '0.85rem' }}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  marginTop: '0.35rem',
+                  fontFamily: 'monospace',
+                  fontSize: '0.85rem',
+                }}
               />
             </label>
           )}
-          <button type="submit" className="btn-primary" disabled={explorerBusy} style={{ alignSelf: 'flex-start', padding: '0.5rem 1rem' }}>
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={explorerBusy}
+            style={{ alignSelf: 'flex-start', padding: '0.5rem 1rem' }}
+          >
             {explorerBusy ? 'Sending…' : 'Send request'}
           </button>
         </form>
-        {explorerError && <p style={{ color: 'var(--color-status-error)', marginTop: '0.75rem' }}>{explorerError}</p>}
+        {explorerError && (
+          <p style={{ color: 'var(--color-status-error)', marginTop: '0.75rem' }}>
+            {explorerError}
+          </p>
+        )}
         {explorerResponse && (
-          <pre style={{ marginTop: '1rem', padding: '0.85rem', background: 'var(--color-border-lightest)', borderRadius: 8, overflow: 'auto', fontSize: '0.8rem' }}>
+          <pre
+            style={{
+              marginTop: '1rem',
+              padding: '0.85rem',
+              background: 'var(--color-border-lightest)',
+              borderRadius: 8,
+              overflow: 'auto',
+              fontSize: '0.8rem',
+            }}
+          >
             {explorerResponse}
           </pre>
         )}
@@ -315,26 +356,59 @@ export default function Developer() {
       <section style={{ marginBottom: '2.5rem' }}>
         <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.75rem' }}>API keys</h2>
         {revealedKey && (
-          <div style={{ background: 'var(--color-warning-bg)', border: '1px solid var(--color-warning-border)', padding: '0.85rem', borderRadius: 8, marginBottom: '1rem' }}>
+          <div
+            style={{
+              background: 'var(--color-warning-bg)',
+              border: '1px solid var(--color-warning-border)',
+              padding: '0.85rem',
+              borderRadius: 8,
+              marginBottom: '1rem',
+            }}
+          >
             <strong>Copy now:</strong>
-            <pre style={{ margin: '0.5rem 0 0', wordBreak: 'break-all', fontSize: '0.8rem' }}>{revealedKey}</pre>
+            <pre style={{ margin: '0.5rem 0 0', wordBreak: 'break-all', fontSize: '0.8rem' }}>
+              {revealedKey}
+            </pre>
           </div>
         )}
-        <form onSubmit={createKey} style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem' }}>
-          <input value={newKeyLabel} onChange={(e) => setNewKeyLabel(e.target.value)} placeholder="Label" style={{ minWidth: '160px' }} />
+        <form
+          onSubmit={createKey}
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '0.5rem',
+            alignItems: 'center',
+            marginBottom: '1rem',
+          }}
+        >
+          <input
+            value={newKeyLabel}
+            onChange={(e) => setNewKeyLabel(e.target.value)}
+            placeholder="Label"
+            style={{ minWidth: '160px' }}
+          />
           <span style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>Scopes:</span>
           {SCOPE_OPTIONS.map((sc) => (
-            <label key={sc} style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-              <input type="checkbox" checked={newKeyScopes.includes(sc)} onChange={() => toggleScope(sc)} />
+            <label
+              key={sc}
+              style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+            >
+              <input
+                type="checkbox"
+                checked={newKeyScopes.includes(sc)}
+                onChange={() => toggleScope(sc)}
+              />
               {sc}
             </label>
           ))}
-          <button type="submit" className="btn-primary" style={{ padding: '0.45rem 0.9rem' }}>Create key</button>
+          <button type="submit" className="btn-primary" style={{ padding: '0.45rem 0.9rem' }}>
+            Create key
+          </button>
         </form>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border-light)' }}>
-              <th style={{ padding: '0.4rem' }}>Label</th>
+              <th style={{ padding: '0.4rem' }}>Name</th>
               <th>Prefix</th>
               <th>Scopes</th>
               <th>Last used</th>
@@ -342,17 +416,30 @@ export default function Developer() {
             </tr>
           </thead>
           <tbody>
-            {keys.filter((k) => !k.revoked_at).map((k) => (
-              <tr key={k.id} style={{ borderBottom: '1px solid var(--color-border-lighter)' }}>
-                <td style={{ padding: '0.45rem' }}>{k.label}</td>
-                <td><code>{k.key_prefix}</code></td>
-                <td>{(k.scopes || []).join(', ')}</td>
-                <td style={{ color: 'var(--color-text-hint)' }}>{k.last_used_at ? new Date(k.last_used_at).toLocaleString() : '—'}</td>
-                <td>
-                  <button type="button" className="btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }} onClick={() => revokeKey(k.id)}>Revoke</button>
-                </td>
-              </tr>
-            ))}
+            {keys
+              .filter((k) => !k.revoked_at)
+              .map((k) => (
+                <tr key={k.id} style={{ borderBottom: '1px solid var(--color-border-lighter)' }}>
+                  <td style={{ padding: '0.45rem' }}>{k.label}</td>
+                  <td>
+                    <code>{k.key_prefix}</code>
+                  </td>
+                  <td>{(k.scopes || []).join(', ')}</td>
+                  <td style={{ color: 'var(--color-text-hint)' }}>
+                    {k.last_used_at ? new Date(k.last_used_at).toLocaleString() : '—'}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}
+                      onClick={() => revokeKey(k.id)}
+                    >
+                      Revoke
+                    </button>
+                  </td>
+                </tr>
+              ))}
           </tbody>
         </table>
       </section>
@@ -360,42 +447,109 @@ export default function Developer() {
       <section style={{ marginBottom: '2.5rem' }}>
         <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.75rem' }}>Webhooks</h2>
         {revealedSecret && (
-          <div style={{ background: 'var(--color-warning-bg)', border: '1px solid var(--color-warning-border)', padding: '0.85rem', borderRadius: 8, marginBottom: '1rem' }}>
+          <div
+            style={{
+              background: 'var(--color-warning-bg)',
+              border: '1px solid var(--color-warning-border)',
+              padding: '0.85rem',
+              borderRadius: 8,
+              marginBottom: '1rem',
+            }}
+          >
             <strong>Signing secret (copy once):</strong>
-            <pre style={{ margin: '0.5rem 0 0', wordBreak: 'break-all', fontSize: '0.8rem' }}>{revealedSecret}</pre>
+            <pre style={{ margin: '0.5rem 0 0', wordBreak: 'break-all', fontSize: '0.8rem' }}>
+              {revealedSecret}
+            </pre>
           </div>
         )}
-        <form onSubmit={createHook} style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', maxWidth: '520px', marginBottom: '1rem' }}>
-          <input value={hookUrl} onChange={(e) => setHookUrl(e.target.value)} placeholder="https://example.com/crowdpay-webhook" required />
+        <form
+          onSubmit={createHook}
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.65rem',
+            maxWidth: '520px',
+            marginBottom: '1rem',
+          }}
+        >
+          <input
+            value={hookUrl}
+            onChange={(e) => setHookUrl(e.target.value)}
+            placeholder="https://example.com/crowdpay-webhook"
+            required
+          />
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
             {EVENT_OPTIONS.map((ev) => (
-              <label key={ev} style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <input type="checkbox" checked={hookEvents.includes(ev)} onChange={() => toggleEvent(ev)} />
+              <label
+                key={ev}
+                style={{
+                  fontSize: '0.85rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.25rem',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={hookEvents.includes(ev)}
+                  onChange={() => toggleEvent(ev)}
+                />
                 {ev}
               </label>
             ))}
           </div>
-          <button type="submit" className="btn-primary" style={{ padding: '0.5rem 1rem', alignSelf: 'flex-start' }}>Add endpoint</button>
+          <button
+            type="submit"
+            className="btn-primary"
+            style={{ padding: '0.5rem 1rem', alignSelf: 'flex-start' }}
+          >
+            Add endpoint
+          </button>
         </form>
         <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-          {hooks.filter((h) => !h.revoked_at).map((h) => (
-            <li key={h.id} style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--color-border-lighter)', display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontWeight: 600 }}>{h.url}</div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>{(h.events || []).join(', ')} · {h.secret_hint}</div>
-              </div>
-              <button type="button" className="btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }} onClick={() => revokeHook(h.id)}>Remove</button>
-            </li>
-          ))}
+          {hooks
+            .filter((h) => !h.revoked_at)
+            .map((h) => (
+              <li
+                key={h.id}
+                style={{
+                  padding: '0.5rem 0',
+                  borderBottom: '1px solid var(--color-border-lighter)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: '1rem',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 600 }}>{h.url}</div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>
+                    {(h.events || []).join(', ')} · {h.secret_hint}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}
+                  onClick={() => revokeHook(h.id)}
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
         </ul>
       </section>
 
       <section>
-        <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.75rem' }}>Webhook delivery log</h2>
+        <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.75rem' }}>
+          Webhook delivery log
+        </h2>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
             <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border-light)' }}>
+              <tr
+                style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border-light)' }}
+              >
                 <th style={{ padding: '0.35rem' }}>Time</th>
                 <th>Event</th>
                 <th>Status</th>
@@ -407,12 +561,19 @@ export default function Developer() {
             <tbody>
               {deliveries.map((d) => (
                 <tr key={d.id} style={{ borderBottom: '1px solid var(--color-border-lightest)' }}>
-                  <td style={{ padding: '0.35rem', whiteSpace: 'nowrap' }}>{new Date(d.created_at).toLocaleString()}</td>
+                  <td style={{ padding: '0.35rem', whiteSpace: 'nowrap' }}>
+                    {new Date(d.created_at).toLocaleString()}
+                  </td>
                   <td>{d.event_type}</td>
                   <td>{d.status}</td>
                   <td>{d.response_status ?? '—'}</td>
                   <td>{d.attempt_count}</td>
-                  <td style={{ maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis' }} title={d.last_error || ''}>{d.last_error || '—'}</td>
+                  <td
+                    style={{ maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                    title={d.last_error || ''}
+                  >
+                    {d.last_error || '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>

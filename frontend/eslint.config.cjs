@@ -1,7 +1,6 @@
 const js = require('@eslint/js');
 const reactPlugin = require('eslint-plugin-react');
 const reactHooksPlugin = require('eslint-plugin-react-hooks');
-const prettierConfig = require('eslint-config-prettier');
 
 module.exports = [
   // Ignore patterns
@@ -9,17 +8,15 @@ module.exports = [
     ignores: ['node_modules/**', 'dist/**', 'coverage/**'],
   },
 
-  // ESLint core recommended rules
+  // Apply recommended rules to all JS/JSX files
   js.configs.recommended,
-
-  // React flat config (includes plugin registration + recommended rules)
-  reactPlugin.configs.flat.recommended,
-
-  // React Hooks flat config
-  reactHooksPlugin.configs.recommended,
 
   {
     files: ['**/*.{js,jsx}'],
+    plugins: {
+      react: reactPlugin,
+      'react-hooks': reactHooksPlugin,
+    },
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
@@ -32,35 +29,43 @@ module.exports = [
         document: 'readonly',
         navigator: 'readonly',
         console: 'readonly',
-        setTimeout: 'readonly',
-        clearTimeout: 'readonly',
-        setInterval: 'readonly',
-        clearInterval: 'readonly',
         fetch: 'readonly',
         URL: 'readonly',
         URLSearchParams: 'readonly',
         localStorage: 'readonly',
         sessionStorage: 'readonly',
-        alert: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+        Promise: 'readonly',
         FormData: 'readonly',
         FileReader: 'readonly',
         Blob: 'readonly',
+        Event: 'readonly',
+        EventSource: 'readonly',
+        CustomEvent: 'readonly',
+        MessageEvent: 'readonly',
+        HTMLElement: 'readonly',
+        AbortController: 'readonly',
+        AbortSignal: 'readonly',
       },
     },
-    plugins: {
-      'prettier': require('eslint-plugin-prettier'),
+    settings: {
+      react: {
+        version: 'detect',
+      },
     },
     rules: {
-      'react/react-in-jsx-scope': 'off',  // not needed with React 17+
-      'react/prop-types': 'off',          // project doesn't use PropTypes
+      ...reactPlugin.configs.recommended.rules,
+      ...reactPlugin.configs['jsx-runtime'].rules,
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
       'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
-      'prettier/prettier': 'warn',
-    },
-    settings: {
-      react: { version: 'detect' },
+      'react/prop-types': 'warn',
+      eqeqeq: 'error',
+      'no-var': 'error',
+      'prefer-const': 'warn',
     },
   },
-
-  // Disable ESLint rules that conflict with Prettier (must be last)
-  prettierConfig,
 ];

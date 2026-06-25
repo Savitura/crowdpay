@@ -103,4 +103,6 @@ router.patch('/me', requireAuth, async (req, res) => {
   res.json(rows[0]);
 });
 
+router.use('/api-keys', require('./apiKeys'));
+
 module.exports = router;

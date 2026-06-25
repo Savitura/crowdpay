@@ -277,7 +277,7 @@ async function deployCampaignContracts({
   signerSecret,
 }) {
   const sorobanEnabled = process.env.SOROBAN_ENABLED === 'true';
-  const escrowWasmHash = process.env.ESCOW_WASM_HASH;
+  const escrowWasmHash = process.env.ESCROW_WASM_HASH;
   const milestonesWasmHash = process.env.MILESTONES_WASM_HASH;
 
   if (!sorobanEnabled) {
@@ -485,6 +485,14 @@ async function triggerRefund({ escrowContractId, contributorAddress, signerSecre
   }
 }
 
+async function refund(contractId, contributorPublicKey) {
+  return triggerRefund({
+    escrowContractId: contractId,
+    contributorAddress: contributorPublicKey,
+    signerSecret: process.env.PLATFORM_SECRET_KEY,
+  });
+}
+
 /**
  * Read on-chain campaign status from deployed Soroban contracts.
  */
@@ -555,6 +563,7 @@ module.exports = {
   initializeCampaignContract,
   releaseMilestone,
   triggerRefund,
+  refund,
   getContractStatus,
   mapMilestoneOnChainStatus,
 };

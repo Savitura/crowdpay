@@ -506,7 +506,7 @@ router.post('/', contributionPostLimiter, requireAuth, contributionValidation, v
       stellar_transaction_id: result.stellarTransactionId,
       message: "Transaction submitted",
       conversion_quote: result.conversionQuote,
-      ...(result.platform_fee_amount != null
+      ...(result.platform_fee_amount !== null
         ? { platform_fee_amount: result.platform_fee_amount }
         : {}),
     });

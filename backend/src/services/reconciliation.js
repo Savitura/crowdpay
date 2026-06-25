@@ -1,15 +1,17 @@
-const Sentry = require('@sentry/node');
-const db = require('../config/database');
-const logger = require('../config/logger');
-const cache = require('../utils/cache');
-const { getCampaignBalance } = require('./stellarService');
-const { insertReconciliationAdjustment } = require('./stellarTransactionService');
+const Sentry = require("@sentry/node");
+const db = require("../config/database");
+const logger = require("../config/logger");
+const cache = require("../utils/cache");
+const { getCampaignBalance } = require("./stellarService");
+const {
+  insertReconciliationAdjustment,
+} = require("./stellarTransactionService");
 
 const DISCREPANCY_EPSILON = 0.0000001;
 
 function getReconciliationAlertThreshold() {
   const raw = process.env.RECONCILIATION_DISCREPANCY_ALERT_THRESHOLD;
-  if (raw === undefined || raw === '') return 1;
+  if (raw === undefined || raw === "") return 1;
   const parsed = parseFloat(raw);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1;
 }
@@ -23,10 +25,10 @@ function alertDiscrepancyIfNeeded(campaignId, audit) {
   if (Math.abs(audit.diff) < threshold) return;
 
   Sentry.withScope((scope) => {
-    scope.setLevel('warning');
-    scope.setTag('campaign_id', campaignId);
-    scope.setContext('reconciliation', audit);
-    Sentry.captureMessage('Campaign raised_amount reconciliation discrepancy');
+    scope.setLevel("warning");
+    scope.setTag("campaign_id", campaignId);
+    scope.setContext("reconciliation", audit);
+    Sentry.captureMessage("Campaign raised_amount reconciliation discrepancy");
   });
 }
 
@@ -40,11 +42,14 @@ async function applyReconciliationCorrection(campaign, dbBalance, liveBalance) {
     asset_type: campaign.asset_type,
   };
 
-  logger.warn('[reconcile] raised_amount corrected to match on-chain balance', audit);
+  logger.warn(
+    "[reconcile] raised_amount corrected to match on-chain balance",
+    audit,
+  );
 
   const client = await db.connect();
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
     await client.query(
       `UPDATE campaigns
        SET raised_amount = $1,
@@ -53,7 +58,7 @@ async function applyReconciliationCorrection(campaign, dbBalance, liveBalance) {
              ELSE status
            END
        WHERE id = $2`,
-      [liveBalance, campaign.id]
+      [liveBalance, campaign.id],
     );
     const stellarTxId = await insertReconciliationAdjustment(client, {
       campaignId: campaign.id,
@@ -62,17 +67,23 @@ async function applyReconciliationCorrection(campaign, dbBalance, liveBalance) {
       diff,
       assetType: campaign.asset_type,
     });
-    await client.query('COMMIT');
+    await client.query("COMMIT");
 
     cache.invalidate(`campaigns:id:${campaign.id}`);
-    cache.invalidatePrefix('campaigns:list:');
-    cache.invalidatePrefix('stats:');
+    cache.invalidatePrefix("campaigns:list:");
+    cache.invalidatePrefix("stats:");
 
     alertDiscrepancyIfNeeded(campaign.id, audit);
 
-    return { updated: true, dbBalance, liveBalance, diff, stellar_transaction_id: stellarTxId };
+    return {
+      updated: true,
+      dbBalance,
+      liveBalance,
+      diff,
+      stellar_transaction_id: stellarTxId,
+    };
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     throw err;
   } finally {
     client.release();
@@ -95,26 +106,30 @@ async function reconcileCampaign(campaign) {
   try {
     const { rows: pendingRows } = await db.query(
       `SELECT id FROM withdrawal_requests WHERE campaign_id = $1 AND status = 'pending' LIMIT 1`,
-      [campaign.id]
+      [campaign.id],
     );
     if (pendingRows.length > 0) {
-      logger.info('[reconcile] Skipping campaign due to pending withdrawal', {
+      logger.info("[reconcile] Skipping campaign due to pending withdrawal", {
         campaign_id: campaign.id,
       });
-      return { skipped: true, reason: 'pending_withdrawal' };
+      return { skipped: true, reason: "pending_withdrawal" };
     }
 
     const onChain = await getCampaignBalance(campaign.wallet_public_key);
-    const liveBalance = parseFloat(onChain[campaign.asset_type] || '0');
+    const liveBalance = parseFloat(onChain[campaign.asset_type] || "0");
     const dbBalance = parseFloat(campaign.raised_amount);
 
     if (!hasDiscrepancy(dbBalance, liveBalance)) {
       return { updated: false, dbBalance, liveBalance, diff: 0 };
     }
 
-    return await applyReconciliationCorrection(campaign, dbBalance, liveBalance);
+    return await applyReconciliationCorrection(
+      campaign,
+      dbBalance,
+      liveBalance,
+    );
   } catch (err) {
-    logger.error('[reconcile] Failed for campaign', {
+    logger.error("[reconcile] Failed for campaign", {
       campaign_id: campaign.id,
       error: err.message,
     });
@@ -127,7 +142,7 @@ async function reconcileCampaignBalances() {
   const { rows } = await db.query(
     `SELECT id, wallet_public_key, asset_type, raised_amount, target_amount, status
      FROM campaigns
-     WHERE status IN ('active', 'funded')`
+     WHERE status IN ('active', 'funded')`,
   );
 
   const summary = {
@@ -145,7 +160,11 @@ async function reconcileCampaignBalances() {
       const result = await reconcileCampaign(campaign);
       if (result.skipped) {
         summary.skipped += 1;
-        summary.results.push({ campaign_id: campaign.id, skipped: true, reason: result.reason });
+        summary.results.push({
+          campaign_id: campaign.id,
+          skipped: true,
+          reason: result.reason,
+        });
       } else if (result.updated) {
         summary.updated += 1;
         summary.results.push({
@@ -156,9 +175,6 @@ async function reconcileCampaignBalances() {
           diff: result.diff,
           stellar_transaction_id: result.stellar_transaction_id,
         });
-      } else if (result.updated) {
-        summary.updated += 1;
-        summary.results.push({ campaign_id: campaign.id, updated: true, dbBalance: result.dbBalance, liveBalance: result.liveBalance });
       }
     } catch (err) {
       summary.errors += 1;
@@ -167,22 +183,22 @@ async function reconcileCampaignBalances() {
   }
 
   if (summary.updated > 0 || summary.errors > 0) {
-    logger.info('[reconcile] Batch reconciliation finished', summary);
+    logger.info("[reconcile] Batch reconciliation finished", summary);
   }
 
-  return summary;
   summary.finished_at = new Date().toISOString();
   recordReconciliationRun(summary);
+  return summary;
 }
 
 async function reconcileSingleCampaign(campaignId) {
   const { rows } = await db.query(
     `SELECT id, wallet_public_key, asset_type, raised_amount, target_amount, status
      FROM campaigns WHERE id = $1`,
-    [campaignId]
+    [campaignId],
   );
   if (!rows.length) {
-    throw new Error('Campaign not found');
+    throw new Error("Campaign not found");
   }
   return await reconcileCampaign(rows[0]);
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   getNetwork,
   isConnected as isFreighterConnected,
@@ -44,11 +44,35 @@ function friendlyFreighterError(err, fallback) {
   return fallback;
 }
 
-export default function ContributeModal({ campaign, onClose, onSuccess, guestFreighterMode = false }) {
+function matchTier(tiers, amount) {
+  if (!tiers || !Array.isArray(tiers) || !amount) return null;
+  const numAmount = parseFloat(amount);
+  if (isNaN(numAmount)) return null;
+
+  const eligible = tiers.filter(
+    (t) => numAmount >= parseFloat(t.min_amount) && !t.sold_out
+  );
+
+  if (eligible.length === 0) return null;
+
+  eligible.sort((a, b) => parseFloat(b.min_amount) - parseFloat(a.min_amount));
+  return eligible[0];
+}
+
+export default function ContributeModal({
+  campaign,
+  onClose,
+  onSuccess,
+  guestFreighterMode = false,
+  onUserUpdate,
+  tiers = [],
+}) {
   const { user, token, updateUser } = useAuth();
   const [amount, setAmount] = useState('');
   const [sendAsset, setSendAsset] = useState(campaign.asset_type);
-  const [paymentMethod, setPaymentMethod] = useState(guestFreighterMode ? 'freighter' : 'custodial');
+  const [paymentMethod, setPaymentMethod] = useState(
+    guestFreighterMode ? 'freighter' : 'custodial'
+  );
   const [anchorInfo, setAnchorInfo] = useState({ anchors: [] });
   const [selectedAnchorId, setSelectedAnchorId] = useState('');
   const [anchorSession, setAnchorSession] = useState(null);
@@ -63,7 +87,10 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
   const [feeBps, setFeeBps] = useState(0);
 
   useEffect(() => {
-    api.getPlatformConfig().then((cfg) => setFeeBps(cfg.platform_fee_bps || 0)).catch(() => {});
+    api
+      .getPlatformConfig()
+      .then((cfg) => setFeeBps(cfg.platform_fee_bps || 0))
+      .catch(() => {});
   }, []);
   const [freighterAvailable, setFreighterAvailable] = useState(false);
   const [freighterChecked, setFreighterChecked] = useState(false);
@@ -73,31 +100,52 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
 
   const modalRef = useRef(null);
 
-
-  const selectedAnchor = anchorInfo.anchors.find((anchor) => anchor.id === selectedAnchorId) || null;
+  const selectedAnchor =
+    anchorInfo.anchors.find((anchor) => anchor.id === selectedAnchorId) || null;
   const effectiveSendAsset =
     paymentMethod === 'anchor' ? selectedAnchor?.asset?.code || campaign.asset_type : sendAsset;
   const isPathPayment = effectiveSendAsset !== campaign.asset_type;
   const destAmount = amount.trim();
+  const matchedTier = matchTier(tiers, destAmount);
+  const [unlockedTier, setUnlockedTier] = useState(null);
 
   const kycRequired =
     user?.kyc_required_for_campaigns ??
     String(import.meta.env.VITE_KYC_REQUIRED_FOR_CAMPAIGNS ?? 'true').toLowerCase() !== 'false';
-  const needsKyc = Boolean(user) && kycRequired && user.kyc_status !== 'verified';
+  const needsKyc = kycRequired && user?.kyc_status !== 'verified';
+
+  const handleClose = () => {
+    if (anchorPopupRef.current && !anchorPopupRef.current.closed) {
+      anchorPopupRef.current.close();
+    }
+    setPhase('form');
+    setError('');
+    setQuoteError('');
+    setAmount('');
+    onClose();
+  };
 
   // Fetch anchor info and existing contributions on mount
   useEffect(() => {
-    api.getAnchorInfo().then(setAnchorInfo).catch(() => {});
-    api.getContributions(campaign.id, { limit: 100 }).then((d) => setExistingContributions(d.contributions || [])).catch(() => {});
+    api
+      .getAnchorInfo()
+      .then(setAnchorInfo)
+      .catch(() => {});
+    api
+      .getContributions(campaign.id, { limit: 100 })
+      .then((d) => setExistingContributions(d.contributions || []))
+      .catch(() => {});
   }, [campaign.id]);
 
   // Check Freighter availability
   useEffect(() => {
-    isFreighterConnected().then((res) => {
-      const connected = res?.isConnected ?? res;
-      setFreighterAvailable(!!connected);
-      setFreighterChecked(true);
-    }).catch(() => setFreighterChecked(true));
+    isFreighterConnected()
+      .then((res) => {
+        const connected = res?.isConnected ?? res;
+        setFreighterAvailable(!!connected);
+        setFreighterChecked(true);
+      })
+      .catch(() => setFreighterChecked(true));
   }, []);
 
   const fetchQuote = useCallback(async () => {
@@ -271,7 +319,12 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
   async function submitWithCustodial() {
     setLoadingLabel('Submitting with CrowdPay wallet…');
     return api.contribute(
-      { campaign_id: campaign.id, amount: destAmount, send_asset: sendAsset, display_name: displayName.trim() || undefined },
+      {
+        campaign_id: campaign.id,
+        amount: destAmount,
+        send_asset: sendAsset,
+        display_name: displayName.trim() || undefined,
+      },
       token
     );
   }
@@ -306,7 +359,9 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
     }
     if (network?.networkPassphrase !== prepared.network_passphrase) {
       const current = network?.network || 'another network';
-      throw new Error(`Freighter is connected to ${current}. Switch it to ${prepared.network_name} and try again.`);
+      throw new Error(
+        `Freighter is connected to ${current}. Switch it to ${prepared.network_name} and try again.`
+      );
     }
 
     setLoadingLabel('Waiting for signature…');
@@ -315,7 +370,9 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
       address: signerAddress,
     });
     if (signed?.error) {
-      throw new Error(friendlyFreighterError(signed.error, 'Freighter could not sign this transaction.'));
+      throw new Error(
+        friendlyFreighterError(signed.error, 'Freighter could not sign this transaction.')
+      );
     }
     if (!signed?.signedTxXdr) {
       throw new Error('Freighter did not return a signed transaction.');
@@ -365,7 +422,6 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
     });
   }
 
-
   async function handleSubmit(e) {
     e.preventDefault();
     if (!destAmount || Number(destAmount) <= 0) {
@@ -389,7 +445,9 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
             .reduce((sum, c) => sum + Number(c.amount), 0)
         : 0;
       if (existingSum + amountNum > Number(campaign.max_per_user)) {
-        setError(`You have already contributed ${existingSum} ${campaign.asset_type}. The per-contributor limit is ${campaign.max_per_user}.`);
+        setError(
+          `You have already contributed ${existingSum} ${campaign.asset_type}. The per-contributor limit is ${campaign.max_per_user}.`
+        );
         return;
       }
     }
@@ -397,23 +455,24 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
     setLoading(true);
     setLoadingLabel('Submitting…');
     setError('');
+    setUnlockedTier(matchedTier);
     try {
       const data =
         paymentMethod === 'anchor'
           ? await submitWithAnchor()
           : paymentMethod === 'freighter'
-          ? await submitWithFreighter()
-          : await submitWithCustodial();
+            ? await submitWithFreighter()
+            : await submitWithCustodial();
       if (paymentMethod === 'anchor') return;
-      
+
       setResult(data);
       setPhase('confirming');
       setLoadingLabel('Confirming on Stellar…');
-      
+
       // Poll finalization endpoint until status is 'finalized' or 'failed'
       const pollFinalization = async (txHash, maxAttempts = 15) => {
         for (let i = 0; i < maxAttempts; i++) {
-          await new Promise(r => setTimeout(r, 2000));
+          await new Promise((r) => setTimeout(r, 2000));
           try {
             const finalizationResult = await api.getContributionFinalization(txHash, token);
             if (finalizationResult.finalization_status === 'finalized') {
@@ -436,7 +495,7 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
         setError(null);
         onSuccess();
       };
-      
+
       pollFinalization(data.tx_hash);
     } catch (err) {
       if (paymentMethod === 'anchor' && anchorPopupRef.current && !anchorPopupRef.current.closed) {
@@ -451,13 +510,6 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
       setLoading(false);
       setLoadingLabel('Submitting…');
     }
-  }
-
-  function handleClose() {
-    if (anchorPopupRef.current && !anchorPopupRef.current.closed) {
-      anchorPopupRef.current.close();
-    }
-    onClose();
   }
 
   return (
@@ -475,11 +527,13 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
             <h2 id="contribute-title" style={styles.title}>
               Identity verification required
             </h2>
-            <KycPrompt
-              onUserUpdate={updateUser}
-              title="Verify your identity before contributing"
-            />
-            <button type="button" className="btn-secondary" style={{ marginTop: '1rem', width: '100%' }} onClick={handleClose}>
+            <KycPrompt onUserUpdate={updateUser} title="Verify your identity before contributing" />
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{ marginTop: '1rem', width: '100%' }}
+              onClick={handleClose}
+            >
               Close
             </button>
           </>
@@ -489,8 +543,8 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
               Support this campaign
             </h2>
             <p style={styles.subtitle}>
-              Goal currency: <strong>{campaign.asset_type}</strong>. You choose what you send; the campaign receives
-              the amount below in <strong>{campaign.asset_type}</strong>.
+              Goal currency: <strong>{campaign.asset_type}</strong>. You choose what you send; the
+              campaign receives the amount below in <strong>{campaign.asset_type}</strong>.
             </p>
 
             <form noValidate onSubmit={handleSubmit}>
@@ -498,21 +552,25 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
                 <legend className="label-strong" style={{ marginBottom: '0.45rem' }}>
                   Payment method
                 </legend>
-                <div className="asset-picker" role="radiogroup" aria-label="Contribution payment method">
+                <div
+                  className="asset-picker"
+                  role="radiogroup"
+                  aria-label="Contribution payment method"
+                >
                   {!guestFreighterMode && (
-                  <label
-                    className={`asset-picker__option${paymentMethod === 'custodial' ? ' asset-picker__option--selected' : ''}`}
-                  >
-                    <input
-                      type="radio"
-                      name="payment_method"
-                      value="custodial"
-                      checked={paymentMethod === 'custodial'}
-                      onChange={() => setPaymentMethod('custodial')}
-                    />
-                    <div className="asset-picker__code">CrowdPay wallet</div>
-                    <div className="asset-picker__hint">Uses your existing custodial balance</div>
-                  </label>
+                    <label
+                      className={`asset-picker__option${paymentMethod === 'custodial' ? ' asset-picker__option--selected' : ''}`}
+                    >
+                      <input
+                        type="radio"
+                        name="payment_method"
+                        value="custodial"
+                        checked={paymentMethod === 'custodial'}
+                        onChange={() => setPaymentMethod('custodial')}
+                      />
+                      <div className="asset-picker__code">CrowdPay wallet</div>
+                      <div className="asset-picker__hint">Uses your existing custodial balance</div>
+                    </label>
                   )}
                   {(freighterAvailable || guestFreighterMode) && (
                     <label
@@ -526,7 +584,9 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
                         onChange={() => setPaymentMethod('freighter')}
                       />
                       <div className="asset-picker__code">Pay with Freighter</div>
-                      <div className="asset-picker__hint">You sign in-browser; CrowdPay never sees your key</div>
+                      <div className="asset-picker__hint">
+                        You sign in-browser; CrowdPay never sees your key
+                      </div>
                     </label>
                   )}
                   {anchorInfo.anchors.some((anchor) => anchor.available) && (
@@ -541,17 +601,28 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
                         onChange={() => setPaymentMethod('anchor')}
                       />
                       <div className="asset-picker__code">Deposit via anchor</div>
-                      <div className="asset-picker__hint">Open a bank or cash ramp, fund your Stellar wallet, then contribute automatically</div>
+                      <div className="asset-picker__hint">
+                        Open a bank or cash ramp, fund your Stellar wallet, then contribute
+                        automatically
+                      </div>
                     </label>
                   )}
                 </div>
-                {freighterChecked && !freighterAvailable && (paymentMethod === 'freighter' || guestFreighterMode) && (
-                  <span id="contrib-wallet-help" style={styles.help}>
-                    Freighter extension not detected.{' '}
-                    <a href="https://www.freighter.app/" target="_blank" rel="noopener noreferrer">Install Freighter</a>{' '}
-                    to contribute from your own Stellar wallet.
-                  </span>
-                )}
+                {freighterChecked &&
+                  !freighterAvailable &&
+                  (paymentMethod === 'freighter' || guestFreighterMode) && (
+                    <span id="contrib-wallet-help" style={styles.help}>
+                      Freighter extension not detected.{' '}
+                      <a
+                        href="https://www.freighter.app/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Install Freighter
+                      </a>{' '}
+                      to contribute from your own Stellar wallet.
+                    </span>
+                  )}
               </fieldset>
 
               {paymentMethod === 'anchor' ? (
@@ -584,9 +655,14 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
                     </div>
                   </fieldset>
                   {selectedAnchor && (
-                    <div className="alert alert--info" style={{ marginBottom: '1rem' }} role="status">
-                      <strong>{selectedAnchor.name}.</strong> CrowdPay will open the anchor’s hosted KYC and payment flow,
-                      wait for {selectedAnchor.asset.code} to arrive in your Stellar wallet, and then submit the campaign contribution for you.
+                    <div
+                      className="alert alert--info"
+                      style={{ marginBottom: '1rem' }}
+                      role="status"
+                    >
+                      <strong>{selectedAnchor.name}.</strong> CrowdPay will open the anchor’s hosted
+                      KYC and payment flow, wait for {selectedAnchor.asset.code} to arrive in your
+                      Stellar wallet, and then submit the campaign contribution for you.
                     </div>
                   )}
                 </>
@@ -635,39 +711,84 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
                   <span style={{ display: 'block', marginBottom: '0.25rem' }}>
                     This is the credited amount toward the campaign goal, in {campaign.asset_type}.
                   </span>
-                  {(campaign.min_contribution || campaign.max_contribution || campaign.max_per_user) && (
-                    <span style={{ display: 'block', marginTop: '0.35rem', borderTop: '1px dashed var(--color-border-lighter)', paddingTop: '0.35rem' }}>
+                  {(campaign.min_contribution ||
+                    campaign.max_contribution ||
+                    campaign.max_per_user) && (
+                    <span
+                      style={{
+                        display: 'block',
+                        marginTop: '0.35rem',
+                        borderTop: '1px dashed var(--color-border-lighter)',
+                        paddingTop: '0.35rem',
+                      }}
+                    >
                       <strong>Limits for this campaign:</strong>
-                      <ul style={{ margin: '0.25rem 0 0', paddingLeft: '1rem', listStyleType: 'disc' }}>
+                      <ul
+                        style={{
+                          margin: '0.25rem 0 0',
+                          paddingLeft: '1rem',
+                          listStyleType: 'disc',
+                        }}
+                      >
                         {campaign.min_contribution && (
-                          <li>Minimum per contribution: {Number(campaign.min_contribution).toLocaleString()} {campaign.asset_type}</li>
+                          <li>
+                            Minimum per contribution:{' '}
+                            {Number(campaign.min_contribution).toLocaleString()}{' '}
+                            {campaign.asset_type}
+                          </li>
                         )}
                         {campaign.max_contribution && (
-                          <li>Maximum per contribution: {Number(campaign.max_contribution).toLocaleString()} {campaign.asset_type}</li>
+                          <li>
+                            Maximum per contribution:{' '}
+                            {Number(campaign.max_contribution).toLocaleString()}{' '}
+                            {campaign.asset_type}
+                          </li>
                         )}
-                        {campaign.max_per_user && (() => {
-                          const existingSum = user?.wallet_public_key
-                            ? existingContributions
-                                .filter((c) => c.sender_public_key === user.wallet_public_key)
-                                .reduce((sum, c) => sum + Number(c.amount), 0)
-                            : 0;
-                          const remaining = Math.max(0, Number(campaign.max_per_user) - existingSum);
-                          return (
-                            <li>
-                              Per-contributor limit: {Number(campaign.max_per_user).toLocaleString()} {campaign.asset_type}
-                              {existingSum > 0 && ` (You have contributed ${existingSum.toLocaleString()} ${campaign.asset_type}; ${remaining.toLocaleString()} remaining)`}
-                            </li>
-                          );
-                        })()}
+                        {campaign.max_per_user &&
+                          (() => {
+                            const existingSum = user?.wallet_public_key
+                              ? existingContributions
+                                  .filter((c) => c.sender_public_key === user.wallet_public_key)
+                                  .reduce((sum, c) => sum + Number(c.amount), 0)
+                              : 0;
+                            const remaining = Math.max(
+                              0,
+                              Number(campaign.max_per_user) - existingSum
+                            );
+                            return (
+                              <li>
+                                Per-contributor limit:{' '}
+                                {Number(campaign.max_per_user).toLocaleString()}{' '}
+                                {campaign.asset_type}
+                                {existingSum > 0 &&
+                                  ` (You have contributed ${existingSum.toLocaleString()} ${campaign.asset_type}; ${remaining.toLocaleString()} remaining)`}
+                              </li>
+                            );
+                          })()}
                       </ul>
                     </span>
                   )}
                 </span>
               </div>
 
+              {tiers.length > 0 && destAmount && Number(destAmount) > 0 && (
+                matchedTier ? (
+                  <div className="alert alert--success" style={{ marginBottom: '1rem', fontSize: '0.85rem' }} role="status">
+                    <strong>Unlocks tier:</strong> {matchedTier.title} (from {Number(matchedTier.min_amount).toLocaleString()} {campaign.asset_type})
+                  </div>
+                ) : (
+                  <div className="alert alert--info" style={{ marginBottom: '1rem', fontSize: '0.85rem' }} role="status">
+                    This amount does not yet reach a reward tier.
+                  </div>
+                )
+              )}
+
               <div className="form-stack" style={{ marginBottom: '1rem' }}>
                 <label className="label-strong" htmlFor="contrib-display-name">
-                  Display name <span style={{ fontWeight: 500, color: 'var(--color-text-secondary)' }}>(optional)</span>
+                  Display name{' '}
+                  <span style={{ fontWeight: 500, color: 'var(--color-text-secondary)' }}>
+                    (optional)
+                  </span>
                 </label>
                 <input
                   id="contrib-display-name"
@@ -683,37 +804,48 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
 
               {isPathPayment && (
                 <div className="alert alert--info" style={{ marginTop: '0.85rem' }} role="status">
-                  <strong>Cross-asset payment.</strong> Stellar will convert from {effectiveSendAsset} to {campaign.asset_type}{' '}
-                  when you confirm. Estimated fees are tiny; conversion uses the network DEX.
+                  <strong>Cross-asset payment.</strong> Stellar will convert from{' '}
+                  {effectiveSendAsset} to {campaign.asset_type} when you confirm. Estimated fees are
+                  tiny; conversion uses the network DEX.
                 </div>
               )}
 
               {paymentMethod === 'freighter' && (
                 <div className="alert alert--info" style={{ marginTop: '0.85rem' }} role="status">
-                  <strong>Non-custodial payment.</strong> CrowdPay will prepare the transaction, Freighter will ask you
-                  to sign it locally, and only the signed XDR comes back for submission.
+                  <strong>Non-custodial payment.</strong> CrowdPay will prepare the transaction,
+                  Freighter will ask you to sign it locally, and only the signed XDR comes back for
+                  submission.
                 </div>
               )}
 
               {paymentMethod === 'anchor' && selectedAnchor && (
                 <div className="alert alert--info" style={{ marginTop: '0.85rem' }} role="status">
-                  <strong>Anchor deposit.</strong> This starts a SEP-24 flow with {selectedAnchor.name}. After the deposit
-                  confirms, CrowdPay submits the normal Stellar contribution from your custodial wallet.
+                  <strong>Anchor deposit.</strong> This starts a SEP-24 flow with{' '}
+                  {selectedAnchor.name}. After the deposit confirms, CrowdPay submits the normal
+                  Stellar contribution from your custodial wallet.
                 </div>
               )}
 
               {isPathPayment && destAmount && Number(destAmount) > 0 && (
                 <div style={{ marginTop: '0.85rem', minHeight: '3.5rem' }}>
-                  {quoteLoading && <p style={{ fontSize: '0.85rem', color: 'var(--color-text-hint)' }}>Fetching live quote…</p>}
+                  {quoteLoading && (
+                    <p style={{ fontSize: '0.85rem', color: 'var(--color-text-hint)' }}>
+                      Fetching live quote…
+                    </p>
+                  )}
                   {!quoteLoading && quote && (
                     <div className="alert alert--success" role="status">
-                      <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>Estimated from your wallet</div>
+                      <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>
+                        Estimated from your wallet
+                      </div>
                       <div style={{ fontSize: '0.875rem', lineHeight: 1.45 }}>
-                        Up to <strong>{quote.max_send_amount}</strong> {effectiveSendAsset} (includes a small slippage buffer).
+                        Up to <strong>{quote.max_send_amount}</strong> {effectiveSendAsset}{' '}
+                        (includes a small slippage buffer).
                         {Array.isArray(quote.path) && quote.path.length > 0 && (
                           <>
                             {' '}
-                            Route: {effectiveSendAsset} → {quote.path.join(' → ')} → {campaign.asset_type}
+                            Route: {effectiveSendAsset} → {quote.path.join(' → ')} →{' '}
+                            {campaign.asset_type}
                           </>
                         )}
                       </div>
@@ -728,14 +860,21 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
               )}
 
               {feeBps > 0 && destAmount && Number(destAmount) > 0 && (
-                <div className="alert alert--info" style={{ marginTop: '0.85rem', fontSize: '0.875rem' }} role="status">
+                <div
+                  className="alert alert--info"
+                  style={{ marginTop: '0.85rem', fontSize: '0.875rem' }}
+                  role="status"
+                >
                   {(() => {
-                    const feeAmt = (Number(destAmount) * feeBps / 10000).toFixed(7);
+                    const feeAmt = ((Number(destAmount) * feeBps) / 10000).toFixed(7);
                     const netAmt = (Number(destAmount) - Number(feeAmt)).toFixed(7);
                     return (
                       <>
-                        <strong>Platform fee:</strong> {feeBps / 100}% = {feeAmt} {campaign.asset_type}
-                        {' '}— campaign receives <strong>{netAmt} {campaign.asset_type}</strong>
+                        <strong>Platform fee:</strong> {feeBps / 100}% = {feeAmt}{' '}
+                        {campaign.asset_type} — campaign receives{' '}
+                        <strong>
+                          {netAmt} {campaign.asset_type}
+                        </strong>
                       </>
                     );
                   })()}
@@ -760,10 +899,10 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
                   {loading
                     ? loadingLabel
                     : paymentMethod === 'anchor'
-                    ? 'Open deposit flow'
-                    : paymentMethod === 'freighter'
-                    ? 'Review in Freighter'
-                    : 'Confirm payment'}
+                      ? 'Open deposit flow'
+                      : paymentMethod === 'freighter'
+                        ? 'Review in Freighter'
+                        : 'Confirm payment'}
                 </button>
               </div>
             </form>
@@ -774,7 +913,8 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
               Complete your deposit
             </h2>
             <p className="alert alert--info" style={{ marginBottom: '1rem' }} role="status">
-              Finish the hosted deposit flow in the popup window. CrowdPay is polling the anchor and will submit the campaign contribution automatically when the funds arrive.
+              Finish the hosted deposit flow in the popup window. CrowdPay is polling the anchor and
+              will submit the campaign contribution automatically when the funds arrive.
             </p>
             {anchorSession?.anchor_transaction_id && (
               <p style={{ fontSize: '0.875rem', marginBottom: '0.75rem' }}>
@@ -782,10 +922,15 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
               </p>
             )}
             {anchorSession?.conversion_quote && (
-              <div className="alert alert--success" style={{ marginBottom: '1rem', fontSize: '0.85rem' }}>
-                <strong>Planned contribution:</strong> up to {anchorSession.conversion_quote.max_send_amount}{' '}
+              <div
+                className="alert alert--success"
+                style={{ marginBottom: '1rem', fontSize: '0.85rem' }}
+              >
+                <strong>Planned contribution:</strong> up to{' '}
+                {anchorSession.conversion_quote.max_send_amount}{' '}
                 {anchorSession.conversion_quote.send_asset} will be used so the campaign receives{' '}
-                {anchorSession.conversion_quote.campaign_amount} {anchorSession.conversion_quote.campaign_asset}.
+                {anchorSession.conversion_quote.campaign_amount}{' '}
+                {anchorSession.conversion_quote.campaign_asset}.
               </div>
             )}
             {anchorSession?.interactive_url && (
@@ -793,12 +938,19 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
                 type="button"
                 className="btn-secondary"
                 style={{ width: '100%', marginBottom: '0.75rem' }}
-                onClick={() => window.open(anchorSession.interactive_url, '_blank', 'noopener,noreferrer')}
+                onClick={() =>
+                  window.open(anchorSession.interactive_url, '_blank', 'noopener,noreferrer')
+                }
               >
                 Reopen deposit window
               </button>
             )}
-            <button type="button" className="btn-primary" style={{ width: '100%' }} onClick={handleClose}>
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ width: '100%' }}
+              onClick={handleClose}
+            >
               Close
             </button>
           </div>
@@ -808,22 +960,32 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
               Confirming on Stellar…
             </h2>
             <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-              <div style={{
-                width: '48px',
-                height: '48px',
-                border: '4px solid var(--color-border-lighter)',
-                borderTop: '4px solid var(--color-accent)',
-                borderRadius: '50%',
-                animation: 'spin 1s linear infinite',
-                margin: '0 auto',
-                marginBottom: '1rem',
-              }} />
+              <div
+                style={{
+                  width: '48px',
+                  height: '48px',
+                  border: '4px solid var(--color-border-lighter)',
+                  borderTop: '4px solid var(--color-accent)',
+                  borderRadius: '50%',
+                  animation: 'spin 1s linear infinite',
+                  margin: '0 auto',
+                  marginBottom: '1rem',
+                }}
+              />
               <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.95rem' }}>
-                Your payment was submitted. We're waiting for it to be confirmed on the Stellar ledger, which usually takes 3–5 seconds.
+                Your payment was submitted. We&apos;re waiting for it to be confirmed on the Stellar
+                ledger, which usually takes 3–5 seconds.
               </p>
             </div>
             {result?.tx_hash && (
-              <p style={{ fontSize: '0.875rem', marginBottom: '1rem', wordBreak: 'break-all', textAlign: 'center' }}>
+              <p
+                style={{
+                  fontSize: '0.875rem',
+                  marginBottom: '1rem',
+                  wordBreak: 'break-all',
+                  textAlign: 'center',
+                }}
+              >
                 <a
                   href={stellarExpertTxUrl(result.tx_hash)}
                   target="_blank"
@@ -848,6 +1010,11 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
             <p className="alert alert--success" style={{ marginBottom: '1rem' }} role="status">
               Your contribution is on its way. It usually confirms in a few seconds on Stellar.
             </p>
+            {unlockedTier && (
+              <p className="alert alert--success" style={{ marginBottom: '1rem', fontSize: '0.9rem' }} role="status">
+                🎉 {"You've"} unlocked: <strong>{unlockedTier.title}</strong>
+              </p>
+            )}
             {result?.tx_hash && (
               <p style={{ fontSize: '0.875rem', marginBottom: '0.75rem', wordBreak: 'break-all' }}>
                 <strong>Transaction</strong>{' '}
@@ -862,14 +1029,21 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
               </p>
             )}
             {result?.conversion_quote && (
-              <div className="alert alert--info" style={{ marginBottom: '1rem', fontSize: '0.85rem' }}>
+              <div
+                className="alert alert--info"
+                style={{ marginBottom: '1rem', fontSize: '0.85rem' }}
+              >
                 <strong>Conversion summary:</strong> up to {result.conversion_quote.max_send_amount}{' '}
                 {result.conversion_quote.send_asset} authorized for{' '}
-                {result.conversion_quote.campaign_amount} {result.conversion_quote.campaign_asset} received.
+                {result.conversion_quote.campaign_amount} {result.conversion_quote.campaign_asset}{' '}
+                received.
               </div>
             )}
             {result?.anchor_transaction_id && (
-              <div className="alert alert--info" style={{ marginBottom: '1rem', fontSize: '0.85rem' }}>
+              <div
+                className="alert alert--info"
+                style={{ marginBottom: '1rem', fontSize: '0.85rem' }}
+              >
                 <strong>Anchor reference:</strong> {result.anchor_transaction_id}
               </div>
             )}
@@ -880,15 +1054,25 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
               </p>
             )}
 
-            <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--color-border-lighter)', paddingTop: '1.25rem' }}>
-              <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.75rem' }}>Tell your friends!</h3>
+            <div
+              style={{
+                marginTop: '1.5rem',
+                borderTop: '1px solid var(--color-border-lighter)',
+                paddingTop: '1.25rem',
+              }}
+            >
+              <h3 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.75rem' }}>
+                Tell your friends!
+              </h3>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <button
                   type="button"
                   className="btn-secondary"
                   style={{ flex: 1, fontSize: '0.85rem' }}
                   onClick={() => {
-                    const text = encodeURIComponent(`I just backed ${campaign.title} on CrowdPay! Join me: ${window.location.origin}/campaigns/${campaign.id}`);
+                    const text = encodeURIComponent(
+                      `I just backed ${campaign.title} on CrowdPay! Join me: ${window.location.origin}/campaigns/${campaign.id}`
+                    );
                     window.open(`https://twitter.com/intent/tweet?text=${text}`, '_blank');
                   }}
                 >
@@ -899,7 +1083,9 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
                   className="btn-secondary"
                   style={{ flex: 1, fontSize: '0.85rem' }}
                   onClick={() => {
-                    const text = encodeURIComponent(`I just backed ${campaign.title} on CrowdPay! Join me: ${window.location.origin}/campaigns/${campaign.id}`);
+                    const text = encodeURIComponent(
+                      `I just backed ${campaign.title} on CrowdPay! Join me: ${window.location.origin}/campaigns/${campaign.id}`
+                    );
                     window.open(`https://wa.me/?text=${text}`, '_blank');
                   }}
                 >
@@ -908,7 +1094,12 @@ export default function ContributeModal({ campaign, onClose, onSuccess, guestFre
               </div>
             </div>
 
-            <button type="button" className="btn-primary" style={{ width: '100%', marginTop: '1.25rem' }} onClick={handleClose}>
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ width: '100%', marginTop: '1.25rem' }}
+              onClick={handleClose}
+            >
               Done
             </button>
           </div>
@@ -929,8 +1120,18 @@ const styles = {
     zIndex: 100,
     padding: '0.75rem',
   },
-  title: { fontSize: '1.2rem', fontWeight: 800, marginBottom: '0.5rem', color: 'var(--color-text-primary)' },
-  subtitle: { color: 'var(--color-text-secondary)', fontSize: '0.875rem', lineHeight: 1.55, marginBottom: '1.1rem' },
+  title: {
+    fontSize: '1.2rem',
+    fontWeight: 800,
+    marginBottom: '0.5rem',
+    color: 'var(--color-text-primary)',
+  },
+  subtitle: {
+    color: 'var(--color-text-secondary)',
+    fontSize: '0.875rem',
+    lineHeight: 1.55,
+    marginBottom: '1.1rem',
+  },
   help: { fontSize: '0.78rem', color: 'var(--color-text-hint)', marginTop: '0.2rem' },
   actions: {
     display: 'flex',

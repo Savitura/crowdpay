@@ -1,4 +1,3 @@
-import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import CampaignEmbed from './pages/CampaignEmbed';
 
