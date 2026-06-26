@@ -90,6 +90,119 @@ fn test_initialize_rejects_invalid_fee() {
 }
 
 #[test]
+fn test_initialize_rejects_fee_above_cap() {
+    let env = Env::default();
+
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let fee_recipient = Address::generate(&env);
+    let (token_addr, _) = install_token(&env);
+
+    let contract_id = env.register(EscrowContract, ());
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    // 1001 BPS is one basis point above the 10% cap and must be rejected.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.initialize(&admin, &1u64, &1000, &100, &token_addr, &1001, &fee_recipient);
+    }));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_initialize_accepts_fee_at_cap() {
+    let env = Env::default();
+    let (contract_id, _, _, _) = setup_contract(&env, 1000, 100, 1000);
+
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let (bps, _) = client.get_platform_fee_config();
+    assert_eq!(bps, 1000);
+}
+
+#[test]
+fn test_propose_and_confirm_fee_change() {
+    let env = Env::default();
+    let (contract_id, _admin, _, _fee_recipient) = setup_contract(&env, 1000, 999999, 100);
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    // Proposing does not change the active fee.
+    client.propose_fee_change(&500);
+    assert_eq!(client.get_pending_fee(), Some(500));
+    let (bps, _) = client.get_platform_fee_config();
+    assert_eq!(bps, 100);
+
+    // Confirmation applies the pending fee and clears the proposal.
+    client.confirm_fee_change();
+    let (bps, _) = client.get_platform_fee_config();
+    assert_eq!(bps, 500);
+    assert_eq!(client.get_pending_fee(), None);
+}
+
+#[test]
+fn test_propose_fee_change_rejects_above_cap() {
+    let env = Env::default();
+    let (contract_id, _admin, _, _fee_recipient) = setup_contract(&env, 1000, 999999, 100);
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.propose_fee_change(&1001);
+    }));
+    assert!(result.is_err());
+
+    // The active fee is untouched and nothing is left pending.
+    let (bps, _) = client.get_platform_fee_config();
+    assert_eq!(bps, 100);
+    assert_eq!(client.get_pending_fee(), None);
+}
+
+#[test]
+fn test_confirm_fee_change_rejects_when_no_pending() {
+    let env = Env::default();
+    let (contract_id, _admin, _, _fee_recipient) = setup_contract(&env, 1000, 999999, 100);
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.confirm_fee_change();
+    }));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_cancel_fee_change() {
+    let env = Env::default();
+    let (contract_id, _admin, _, _fee_recipient) = setup_contract(&env, 1000, 999999, 100);
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    client.propose_fee_change(&500);
+    client.cancel_fee_change();
+
+    assert_eq!(client.get_pending_fee(), None);
+    let (bps, _) = client.get_platform_fee_config();
+    assert_eq!(bps, 100);
+}
+
+#[test]
+fn test_fee_change_requires_admin_auth() {
+    // In a fresh env without mock_all_auths, propose must fail without the admin's auth.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let env = Env::default();
+        let contract_id = env.register(EscrowContract, ());
+        let client = EscrowContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let fee_recipient = Address::generate(&env);
+        let token_addr = env.register_stellar_asset_contract(admin.clone());
+
+        // initialize has no require_auth, so it succeeds without mocked auths.
+        client.initialize(&admin, &1u64, &1000, &999999, &token_addr, &100, &fee_recipient);
+
+        // propose_fee_change requires admin auth, which is not provided here.
+        client.propose_fee_change(&500);
+    }));
+    assert!(result.is_err());
+}
+
+#[test]
 fn test_deposit_increases_balance() {
     let env = Env::default();
     let (contract_id, _, contributor, _fee_recipient) = setup_contract(&env, 1000, 999999, 0);

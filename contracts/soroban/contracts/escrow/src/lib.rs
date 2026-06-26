@@ -1,6 +1,13 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol};
 
+/// Maximum platform fee the contract will ever accept, in basis points (10% = 1000 BPS).
+///
+/// This guards against configuration typos (e.g. `1000` instead of `100`, or `10000`
+/// instead of `100`) that would otherwise route an unreasonable share — or all — of a
+/// campaign's funds to the platform. Any fee above this cap is rejected outright.
+pub const MAX_FEE_BPS: u32 = 1000;
+
 #[derive(Clone)]
 #[contracttype]
 pub enum DataKey {
@@ -15,6 +22,7 @@ pub enum DataKey {
     IsInitialized,
     PlatformFeeBps,
     PlatformFeeRecipient,
+    PendingFeeBps,
 }
 
 #[contract]
@@ -35,8 +43,8 @@ impl EscrowContract {
         if env.storage().instance().has(&DataKey::IsInitialized) {
             panic!("Contract is already initialized");
         }
-        if platform_fee_bps > 10000 {
-            panic!("Platform fee BPS must not exceed 10000");
+        if platform_fee_bps > MAX_FEE_BPS {
+            panic!("Platform fee BPS must not exceed MAX_FEE_BPS");
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::CampaignId, &campaign_id);
@@ -82,6 +90,76 @@ impl EscrowContract {
 
         let approved: i128 = env.storage().instance().get(&DataKey::ApprovedWithdrawal).unwrap_or(0);
         env.storage().instance().set(&DataKey::ApprovedWithdrawal, &(approved + release_amount));
+    }
+
+    /// Step 1 of 2: the admin proposes a new platform fee.
+    ///
+    /// The proposal is validated against [`MAX_FEE_BPS`] and stored as pending, but it
+    /// does **not** take effect until [`Self::confirm_fee_change`] is called in a separate
+    /// transaction. Requiring two explicit admin actions makes an accidental, fund-draining
+    /// fee change far harder to trigger by a single typo.
+    pub fn propose_fee_change(env: Env, new_fee_bps: u32) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        if new_fee_bps > MAX_FEE_BPS {
+            panic!("Platform fee BPS must not exceed MAX_FEE_BPS");
+        }
+
+        env.storage().instance().set(&DataKey::PendingFeeBps, &new_fee_bps);
+
+        env.events().publish(
+            (Symbol::new(&env, "fee_proposed"), admin),
+            new_fee_bps,
+        );
+    }
+
+    /// Step 2 of 2: the admin confirms the pending fee, applying it.
+    ///
+    /// Panics if there is no pending proposal. The pending value is re-validated against
+    /// [`MAX_FEE_BPS`] as a defense-in-depth measure before it becomes the active fee.
+    pub fn confirm_fee_change(env: Env) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let new_fee_bps: u32 = match env.storage().instance().get(&DataKey::PendingFeeBps) {
+            Some(bps) => bps,
+            None => panic!("No pending fee change to confirm"),
+        };
+
+        if new_fee_bps > MAX_FEE_BPS {
+            panic!("Platform fee BPS must not exceed MAX_FEE_BPS");
+        }
+
+        env.storage().instance().set(&DataKey::PlatformFeeBps, &new_fee_bps);
+        env.storage().instance().remove(&DataKey::PendingFeeBps);
+
+        env.events().publish(
+            (Symbol::new(&env, "fee_changed"), admin),
+            new_fee_bps,
+        );
+    }
+
+    /// Cancels any pending fee proposal without applying it.
+    pub fn cancel_fee_change(env: Env) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        if !env.storage().instance().has(&DataKey::PendingFeeBps) {
+            panic!("No pending fee change to cancel");
+        }
+
+        env.storage().instance().remove(&DataKey::PendingFeeBps);
+
+        env.events().publish(
+            (Symbol::new(&env, "fee_cancelled"), admin),
+            (),
+        );
+    }
+
+    /// Returns the pending proposed fee in BPS, or `None` if no change is pending.
+    pub fn get_pending_fee(env: Env) -> Option<u32> {
+        env.storage().instance().get(&DataKey::PendingFeeBps)
     }
 
     pub fn execute_withdrawal(env: Env, to: Address, release_amount: i128) {
