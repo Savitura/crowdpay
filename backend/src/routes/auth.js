@@ -66,14 +66,30 @@ function clearAccessTokenCookie(res) {
 }
 
 const isTest = process.env.NODE_ENV === 'test';
+
+// Per-IP rate limiter: 5 registration attempts per hour
 const registerLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  max: isTest ? 100000 : 10,
-  message: { error: 'Too many requests, please try again later.' },
+  max: isTest ? 100000 : 5,
+  message: { error: 'Too many registration attempts from this IP. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => isTest,
 });
+
+// Per-email rate limiter: 3 registrations per 24 hours
+const registerEmailLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  max: isTest ? 100000 : 3,
+  message: { error: 'Too many registration attempts for this email. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => isTest,
+  keyGenerator: (req) => {
+    return String((req.body?.email || '').trim().toLowerCase());
+  },
+});
+
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: isTest ? 100000 : 20,
@@ -169,7 +185,7 @@ async function rotateRefreshToken(oldToken, userId) {
   return createRefreshToken(userId);
 }
 
-router.post('/register', registerLimiter, registerValidation, validateRequest, async (req, res) => {
+router.post('/register', registerLimiter, registerEmailLimiter, registerValidation, validateRequest, async (req, res) => {
   /**
    * @openapi
    * /api/auth/register:
