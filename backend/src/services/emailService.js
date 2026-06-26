@@ -1,5 +1,6 @@
 const nodemailer = require("nodemailer");
 const db = require("../config/database");
+const logger = require("../config/logger");
 const { getStellarExpertTxUrl } = require("../utils/stellarExplorer");
 const { buildUnsubscribeUrl } = require("../utils/unsubscribeToken");
 
@@ -43,12 +44,12 @@ if (
  */
 async function sendEmail({ to, subject, text, html }) {
   if (emailsDisabled) {
-    console.log(`[Email Service Disabled] to: ${to} | subject: ${subject}`);
+    logger.info('Email sending disabled', { subject });
     return;
   }
 
   if (!transporter) {
-    console.log(`[Email Service Mock] to: ${to} | subject: ${subject}`);
+    logger.info('Email Service Mock: would have sent email', { subject });
     return;
   }
 
@@ -61,10 +62,7 @@ async function sendEmail({ to, subject, text, html }) {
       html: html || "",
     });
   } catch (error) {
-    console.error(
-      `[Email Service Error] Failed to send email to ${to}:`,
-      error.message,
-    );
+    logger.error('Failed to send email', { subject, err: error.message });
     throw error;
   }
 }
@@ -86,7 +84,7 @@ async function sendIdempotent({ dedupeKey, to, subject, text, html }) {
   );
 
   if (!rows.length) {
-    console.log(`[Email Service] Skipped duplicate send for key: ${dedupeKey}`);
+    logger.info('Email Service: skipped duplicate send', { dedupeKey });
     return;
   }
 
@@ -123,7 +121,7 @@ async function sendContributionReceipt({
   senderPublicKey,
 }) {
   if (emailsDisabled) {
-    console.log("[receipt] Email sending disabled via DISABLE_EMAILS=true");
+    logger.info('Email sending disabled, skipping contribution receipt');
     return;
   }
 

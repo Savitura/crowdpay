@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const db = require('../config/database');
+const logger = require('../config/logger');
 
 const WEBHOOK_EVENTS = {
   CAMPAIGN_FUNDED: 'campaign.funded',
@@ -45,7 +46,7 @@ async function emitWebhookEventForUser(ownerUserId, eventType, payload) {
     const deliveryId = inserted[0].id;
     setImmediate(() => {
       processDelivery(deliveryId).catch((err) =>
-        console.error(`[webhooks] delivery ${deliveryId}:`, err.message)
+        logger.error('[webhooks] delivery failed', { deliveryId, err: err.message })
       );
     });
   }
@@ -152,7 +153,7 @@ async function scheduleRetry(deliveryId, attemptJustUsed, errMsg, httpStatus, sn
 
   setTimeout(() => {
     processDelivery(deliveryId).catch((err) =>
-      console.error(`[webhooks] retry ${deliveryId}:`, err.message)
+      logger.error('[webhooks] retry failed', { deliveryId, err: err.message })
     );
   }, delay);
 }
@@ -165,7 +166,7 @@ async function processDueRetries() {
   );
   for (const r of rows) {
     processDelivery(r.id).catch((err) =>
-      console.error(`[webhooks] poller ${r.id}:`, err.message)
+      logger.error('[webhooks] poller delivery failed', { deliveryId: r.id, err: err.message })
     );
   }
 }
@@ -187,7 +188,7 @@ async function emitWebhookEventForCampaign(campaignId, eventType, payload) {
     const deliveryId = inserted[0].id;
     setImmediate(() => {
       processCampaignWebhookDelivery(deliveryId).catch((err) =>
-        console.error(`[campaign-webhooks] delivery ${deliveryId}:`, err.message)
+        logger.error('[campaign-webhooks] delivery failed', { deliveryId, err: err.message })
       );
     });
   }
@@ -291,7 +292,7 @@ async function scheduleCampaignWebhookRetry(deliveryId, attemptJustUsed, errMsg,
 
   setTimeout(() => {
     processCampaignWebhookDelivery(deliveryId).catch((err) =>
-      console.error(`[campaign-webhooks] retry ${deliveryId}:`, err.message)
+      logger.error('[campaign-webhooks] retry failed', { deliveryId, err: err.message })
     );
   }, delay);
 }
@@ -304,15 +305,15 @@ async function processDueCampaignWebhookRetries() {
   );
   for (const r of rows) {
     processCampaignWebhookDelivery(r.id).catch((err) =>
-      console.error(`[campaign-webhooks] poller ${r.id}:`, err.message)
+      logger.error('[campaign-webhooks] poller delivery failed', { deliveryId: r.id, err: err.message })
     );
   }
 }
 
 function startWebhookRetryPoller() {
   setInterval(() => {
-    processDueRetries().catch((e) => console.error('[webhooks] poller:', e.message));
-    processDueCampaignWebhookRetries().catch((e) => console.error('[campaign-webhooks] poller:', e.message));
+    processDueRetries().catch((e) => logger.error('[webhooks] poller error', { err: e.message }));
+    processDueCampaignWebhookRetries().catch((e) => logger.error('[campaign-webhooks] poller error', { err: e.message }));
   }, 5000);
 }
 
