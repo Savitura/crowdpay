@@ -1,6 +1,8 @@
-import React from 'react';
-import { Navigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { api } from '../services/api';
+import { stellarExpertTxUrl } from '../config/stellar';
 import ContributorDashboard from '../components/ContributorDashboard';
 
 export default function MyContributions() {

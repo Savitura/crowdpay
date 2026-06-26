@@ -112,7 +112,7 @@ function ContributionRow({ c }) {
           )}
         </div>
       </div>
-      {c.amount != null && (
+      {c.amount !== null && (
         <span style={styles.amount}>
           {Number(c.amount).toLocaleString()} {c.asset}
         </span>
@@ -157,6 +157,7 @@ export default function Campaign() {
   const [embedCopied, setEmbedCopied] = useState(false);
   const [badgeCopied, setBadgeCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [showEmbedSection, setShowEmbedSection] = useState(false);
   const [isEditingCampaign, setIsEditingCampaign] = useState(false);
   const [editFormData, setEditFormData] = useState({
     title: '',
@@ -195,6 +196,14 @@ export default function Campaign() {
   }, [user, id]);
 
   useEffect(() => {
+    if (!isOwner || !id) return;
+    api
+      .getReferralLeaderboard(id)
+      .then(setReferralLeaderboard)
+      .catch(() => {});
+  }, [isOwner, id]);
+
+  useEffect(() => {
     document.body.dataset.printUrl = window.location.href;
     document.body.dataset.printDate = new Date().toLocaleDateString();
     return () => {
@@ -224,9 +233,11 @@ export default function Campaign() {
           api
             .getCampaignAnalytics(id)
             .then(setAnalytics)
-            .catch(() => setAnalytics(null));
+            .catch(() => setAnalytics(null))
+            .finally(() => setAnalyticsLoading(false));
         } else {
           setAnalytics(null);
+          setAnalyticsLoading(false);
         }
       })
       .catch((err) => setLoadError(err.message || 'Could not load campaign.'));
@@ -240,10 +251,26 @@ export default function Campaign() {
         setContributions([]);
         setTotalContributions(0);
       });
+    setMilestonesLoading(true);
     api
       .getMilestones(id)
       .then(setMilestones)
-      .catch(() => setMilestones([]));
+      .catch(() => setMilestones([]))
+      .finally(() => setMilestonesLoading(false));
+    api
+      .getContractStatus(id)
+      .then((data) => {
+        setContractStatus(data);
+        setContractStatusError('');
+      })
+      .catch((err) => {
+        setContractStatus(null);
+        setContractStatusError(err.message || 'Could not load on-chain status.');
+      });
+    api
+      .getCampaignTiers(id)
+      .then((data) => setTiers(Array.isArray(data) ? data : []))
+      .catch(() => setTiers([]));
     api
       .getCampaignUpdates(id, { limit: 20 })
       .then(setUpdates)
@@ -310,13 +337,13 @@ export default function Campaign() {
     };
 
     const start = () => {
-      if (intervalId != null) return;
+      if (intervalId !== null) return;
       refresh();
       intervalId = window.setInterval(refresh, 15_000);
     };
 
     const stop = () => {
-      if (intervalId == null) return;
+      if (intervalId === null) return;
       window.clearInterval(intervalId);
       intervalId = null;
     };
@@ -391,7 +418,7 @@ export default function Campaign() {
       const data = await api.getCloneData(id, token);
       navigate('/campaigns/new', { state: { prefill: data } });
     } catch (err) {
-      alert(err.message || 'Failed to fetch campaign clone data');
+      window.alert(err.message || 'Failed to fetch campaign clone data');
     }
   }
 
@@ -585,6 +612,28 @@ export default function Campaign() {
       setRefundBusy(false);
     }
   }
+
+  async function handleContributorRefund(contributionId) {
+    setContributorRefundBusy(true);
+    setContributorRefundError('');
+    setContributorRefundSuccess('');
+    try {
+      await api.requestContributionRefund(contributionId);
+      setContributorRefundSuccess('Your on-chain refund has been submitted.');
+      api
+        .getContributions(id, { limit: showAll ? 100 : 10, offset: 0 })
+        .then((data) => {
+          setContributions(data.contributions || []);
+          setTotalContributions(data.total || 0);
+        })
+        .catch(() => {});
+    } catch (err) {
+      setContributorRefundError(err.message || 'On-chain refund failed.');
+    } finally {
+      setContributorRefundBusy(false);
+    }
+  }
+
   async function handleDeleteCampaign() {
     setDeleteError('');
     if (!campaign) return;
@@ -709,6 +758,7 @@ export default function Campaign() {
       window.open('https://www.freighter.app/', '_blank', 'noopener,noreferrer');
     }
   }
+
 
   async function submitUpdate(e) {
     e.preventDefault();
@@ -880,11 +930,73 @@ export default function Campaign() {
           <span style={styles.asset}>{campaign.asset_type}</span>
           <CampaignStatusBadge status={campaign.status} />
           <VerificationBadge status={campaign.creator_kyc_status} />
+          {contractAddress && (
+            <span
+              title="This campaign is backed by a Soroban smart contract"
+              style={{
+                background: 'var(--color-success-bg)',
+                color: 'var(--color-success-text)',
+                borderRadius: '999px',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                padding: '0.25rem 0.6rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.25rem',
+              }}
+            >
+              <span aria-hidden="true">⛓️</span> On-chain verified
+            </span>
+          )}
         </div>
         <h1 style={styles.title}>{campaign.title}</h1>
         {campaign.creator_name && <p style={styles.creator}>by {campaign.creator_name}</p>}
         <p style={styles.desc}>{campaign.description}</p>
       </div>
+
+      {tiers.length > 0 && (
+        <div style={{ marginBottom: "1rem" }}>
+          <h2 style={styles.sectionTitle}>Reward tiers</h2>
+          <div style={{ display: "grid", gap: "0.85rem" }}>
+            {tiers.map((tier) => (
+              <div
+                key={tier.id}
+                style={{
+                  ...styles.card,
+                  marginBottom: 0,
+                  opacity: tier.sold_out ? 0.65 : 1,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", alignItems: "baseline" }}>
+                  <strong style={{ fontSize: "1.05rem" }}>{tier.title}</strong>
+                  <span style={styles.asset}>
+                    {Number(tier.min_amount).toLocaleString()}+ {tier.asset_type}
+                  </span>
+                </div>
+                {tier.description && (
+                  <p style={{ ...styles.small, marginTop: "0.5rem", lineHeight: 1.5 }}>
+                    {tier.description}
+                  </p>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+                  {tier.estimated_delivery && (
+                    <span style={styles.small}>
+                      Estimated delivery: {new Date(tier.estimated_delivery).toLocaleDateString()}
+                    </span>
+                  )}
+                  <span style={{ ...styles.small, fontWeight: 700, marginLeft: "auto" }}>
+                    {tier.sold_out
+                      ? "Sold out"
+                      : tier.remaining === null || tier.remaining === undefined
+                      ? "Unlimited backers"
+                      : `${Number(tier.remaining).toLocaleString()} remaining`}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={styles.card}>
         <div style={styles.amounts}>
@@ -2015,6 +2127,7 @@ export default function Campaign() {
       {showModal && (
         <ContributeModal
           campaign={campaign}
+          tiers={tiers}
           guestFreighterMode={freighterGuestMode}
           onClose={() => {
             setShowModal(false);

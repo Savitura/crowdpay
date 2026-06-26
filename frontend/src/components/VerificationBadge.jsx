@@ -1,5 +1,3 @@
-import React from 'react';
-
 export default function VerificationBadge({ status, compact = false }) {
   if (status === 'verified') {
     return <span style={compact ? styles.verifiedCompact : styles.verified}>✓ Verified</span>;

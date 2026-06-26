@@ -5,6 +5,7 @@ const {
   sendCampaignFundedContributorEmail,
   sendCampaignFailedCreatorEmail,
   sendCampaignFailedContributorEmail,
+  sendEmail,
 } = require('./emailService');
 const { createNotification } = require('./notifications');
 const {
@@ -14,7 +15,7 @@ const {
 } = require('./webhookDispatcher');
 const { buildWithdrawalTransaction } = require('./stellarService');
 const { insertWithdrawalPendingSignatures } = require('./stellarTransactionService');
-const { invokeContract, requestRefund: contractRequestRefund } = require('./sorobanService');
+const { invokeContract, refund: contractRefund } = require('./sorobanService');
 
 function frontendBaseUrl() {
   return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
@@ -247,11 +248,32 @@ async function createFailedNotifications(campaign, contributors) {
 }
 
 /**
+ * Helper to retry refund operation with exponential backoff.
+ */
+async function refundWithRetry(escrowContractId, senderPublicKey, contributionId, maxRetries = 3) {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      await contractRefund(escrowContractId, senderPublicKey);
+      return;
+    } catch (err) {
+      attempt++;
+      if (attempt >= maxRetries) {
+        throw err;
+      }
+      const delay = process.env.NODE_ENV === 'test' ? 1 : Math.pow(2, attempt) * 1000;
+      logger.warn(`Refund attempt ${attempt} failed for contribution ${contributionId}. Retrying in ${delay}ms...`, { error: err.message });
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
+/**
  * Queue refund withdrawal requests for each Stellar contribution on a failed campaign.
  */
 async function queueFailedCampaignRefunds(campaignId, actorUserId) {
   const { rows: campaigns } = await db.query(
-    `SELECT id, wallet_public_key, status, creator_id, escrow_contract_id FROM campaigns WHERE id = $1`,
+    `SELECT id, wallet_public_key, status, creator_id, escrow_contract_id, title FROM campaigns WHERE id = $1`,
     [campaignId]
   );
   if (!campaigns.length || campaigns[0].status !== 'failed') {
@@ -263,24 +285,35 @@ async function queueFailedCampaignRefunds(campaignId, actorUserId) {
   if (campaign.escrow_contract_id && process.env.PLATFORM_SECRET_KEY) {
     try {
       const { rows: contributions } = await db.query(
-        `SELECT id, sender_public_key FROM contributions WHERE campaign_id = $1 ORDER BY created_at ASC`,
+        `SELECT id, sender_public_key, amount, asset FROM contributions WHERE campaign_id = $1 AND refunded = FALSE ORDER BY created_at ASC`,
         [campaignId]
       );
       for (const contribution of contributions) {
         try {
-          await contractRequestRefund({
-            contractId: campaign.escrow_contract_id,
-            contributorAddress: contribution.sender_public_key,
-            signerSecret: process.env.PLATFORM_SECRET_KEY,
-          });
+          await refundWithRetry(campaign.escrow_contract_id, contribution.sender_public_key, contribution.id);
           await db.query(
-            `UPDATE contributions SET contract_refunded_at = NOW() WHERE id = $1`,
+            `UPDATE contributions SET contract_refunded_at = NOW(), refunded = TRUE WHERE id = $1`,
             [contribution.id]
           );
           logger.info('On-chain refund processed for failed campaign', {
             campaign_id: campaignId,
             contribution_id: contribution.id,
           });
+
+          const { rows: users } = await db.query(
+            `SELECT email, name FROM users WHERE wallet_public_key = $1`,
+            [contribution.sender_public_key]
+          );
+
+          if (users.length && users[0].email) {
+            await sendEmail({
+              to: users[0].email,
+              subject: `Refund processed for campaign "${campaign.title}"`,
+              text: `Hi ${users[0].name || 'there'},\n\nYour contribution of ${contribution.amount} ${contribution.asset} to the campaign "${campaign.title}" has been refunded because the campaign did not meet its funding goal by the deadline.\n\nThank you for using CrowdPay.`,
+            }).catch((emailErr) => {
+              logger.error(`Failed to send refund email to ${users[0].email}:`, { error: emailErr.message });
+            });
+          }
         } catch (err) {
           logger.warn('On-chain refund failed for contribution, falling back to Stellar withdrawal', {
             campaign_id: campaignId,
@@ -301,6 +334,7 @@ async function queueFailedCampaignRefunds(campaignId, actorUserId) {
     `SELECT c.*
        FROM contributions c
        WHERE c.campaign_id = $1
+         AND c.refunded = FALSE
          AND NOT EXISTS (
            SELECT 1 FROM withdrawal_requests wr WHERE wr.contribution_id = c.id
          )

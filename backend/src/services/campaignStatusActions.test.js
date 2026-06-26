@@ -196,3 +196,90 @@ test('recordStatusTransition is idempotent via unique constraint', async () => {
 
   assert.equal(calls.emails.length, 2);
 });
+
+test('queueFailedCampaignRefunds automatically executes contract refunds, retries on failure, updates DB, and sends emails', async () => {
+  const refundCalls = [];
+  const dbQueries = [];
+  const sentEmails = [];
+
+  const mockSorobanService = {
+    refund: async (contractId, contributorPublicKey) => {
+      refundCalls.push({ contractId, contributorPublicKey });
+      if (contributorPublicKey === 'fail-key') {
+        throw new Error('Soroban error');
+      }
+    }
+  };
+
+  const mockDb = {
+    query: async (text, params) => {
+      dbQueries.push({ text, params });
+      if (text.includes('SELECT id, wallet_public_key, status, creator_id, escrow_contract_id, title FROM campaigns')) {
+        return {
+          rows: [{
+            id: 'failed-campaign-id',
+            wallet_public_key: 'GPK',
+            status: 'failed',
+            creator_id: 'creator-1',
+            escrow_contract_id: 'escrow-123',
+            title: 'Failed Campaign'
+          }]
+        };
+      }
+      if (text.includes('FROM contributions WHERE campaign_id = $1 AND refunded = FALSE')) {
+        return {
+          rows: [
+            { id: 'contrib-1', sender_public_key: 'user-key-1', amount: '10.0', asset: 'USDC' },
+            { id: 'contrib-2', sender_public_key: 'fail-key', amount: '5.0', asset: 'XLM' }
+          ]
+        };
+      }
+      if (text.includes('SELECT email, name FROM users WHERE wallet_public_key = $1')) {
+        return {
+          rows: [{ email: `email-${params[0]}@test.com`, name: `User ${params[0]}` }]
+        };
+      }
+      if (text.includes('FROM contributions c') && text.includes('withdrawal_requests')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    }
+  };
+
+  const { actions } = buildActions({
+    db: mockDb,
+    modules: {
+      './sorobanService': mockSorobanService,
+      './emailService': {
+        sendCampaignFailedCreatorEmail: async () => {},
+        sendCampaignFailedContributorEmail: async () => {},
+        sendEmail: async (options) => {
+          sentEmails.push(options);
+        }
+      }
+    }
+  });
+
+  await actions.queueFailedCampaignRefunds('failed-campaign-id', 'creator-1');
+
+  // Assertions:
+  // 1. Should call refund for both. fail-key fails, so it's retried 3 times.
+  assert.equal(refundCalls.length, 4);
+  assert.deepEqual(refundCalls[0], { contractId: 'escrow-123', contributorPublicKey: 'user-key-1' });
+  assert.deepEqual(refundCalls[1], { contractId: 'escrow-123', contributorPublicKey: 'fail-key' });
+  assert.deepEqual(refundCalls[2], { contractId: 'escrow-123', contributorPublicKey: 'fail-key' });
+  assert.deepEqual(refundCalls[3], { contractId: 'escrow-123', contributorPublicKey: 'fail-key' });
+
+  // 2. Should update refunded = TRUE in DB only for successful one
+  const updateQuery = dbQueries.find(q => q.text.includes('UPDATE contributions') && q.text.includes('refunded = TRUE') && q.params[0] === 'contrib-1');
+  assert.ok(updateQuery);
+
+  const failedUpdateQuery = dbQueries.filter(q => q.text.includes('UPDATE contributions') && q.text.includes('refunded = TRUE') && q.params[0] === 'contrib-2');
+  assert.equal(failedUpdateQuery.length, 0);
+
+  // 3. Should send email only for successful one
+  assert.equal(sentEmails.length, 1);
+  assert.equal(sentEmails[0].to, 'email-user-key-1@test.com');
+  assert.ok(sentEmails[0].subject.includes('Refund processed'));
+});
+

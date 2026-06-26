@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   getNetwork,
   isConnected as isFreighterConnected,
@@ -68,6 +68,7 @@ export default function ContributeModal({
   const [phase, setPhase] = useState('form');
   const [result, setResult] = useState(null);
   const [feeBps, setFeeBps] = useState(0);
+  const [usdcIssuer, setUsdcIssuer] = useState('');
 
   useEffect(() => {
     api
@@ -89,11 +90,39 @@ export default function ContributeModal({
     paymentMethod === 'anchor' ? selectedAnchor?.asset?.code || campaign.asset_type : sendAsset;
   const isPathPayment = effectiveSendAsset !== campaign.asset_type;
   const destAmount = amount.trim();
+  const matchedTier = matchTier(tiers, destAmount);
+  const [unlockedTier, setUnlockedTier] = useState(null);
+
+  const activeUsdcIssuer = usdcIssuer || import.meta.env.VITE_USDC_ISSUER || (
+    (import.meta.env.VITE_STELLAR_NETWORK || 'testnet') === 'public' || (import.meta.env.VITE_STELLAR_NETWORK || 'testnet') === 'mainnet'
+      ? 'GA5ZSEQAQM22CZF22KKOW3QJ24JEVH6KUC4WNZEX7S4EBAC6VHMCDVTY'
+      : 'GBBD472Q6TDQNCA24G2UG4M326T7J62TK2TYWNDSTXT5VBN2O4OXCT3U'
+  );
+
+  const getStellarPayUri = () => {
+    if (!destAmount || isNaN(parseFloat(destAmount))) return '#';
+    let uri = `stellar:pay?destination=${encodeURIComponent(campaign.wallet_public_key)}&amount=${encodeURIComponent(destAmount)}`;
+    if (sendAsset !== 'XLM') {
+      uri += `&asset_code=${encodeURIComponent(sendAsset)}&asset_issuer=${encodeURIComponent(activeUsdcIssuer)}`;
+    }
+    return uri;
+  };
 
   const kycRequired =
     user?.kyc_required_for_campaigns ??
     String(import.meta.env.VITE_KYC_REQUIRED_FOR_CAMPAIGNS ?? 'true').toLowerCase() !== 'false';
-  const needsKyc = Boolean(user) && kycRequired && user.kyc_status !== 'verified';
+  const needsKyc = kycRequired && user?.kyc_status !== 'verified';
+
+  const handleClose = () => {
+    if (anchorPopupRef.current && !anchorPopupRef.current.closed) {
+      anchorPopupRef.current.close();
+    }
+    setPhase('form');
+    setError('');
+    setQuoteError('');
+    setAmount('');
+    onClose();
+  };
 
   // Fetch anchor info and existing contributions on mount
   useEffect(() => {
@@ -425,6 +454,7 @@ export default function ContributeModal({
     setLoading(true);
     setLoadingLabel('Submitting…');
     setError('');
+    setUnlockedTier(matchedTier);
     try {
       const data =
         paymentMethod === 'anchor'
@@ -479,13 +509,6 @@ export default function ContributeModal({
       setLoading(false);
       setLoadingLabel('Submitting…');
     }
-  }
-
-  function handleClose() {
-    if (anchorPopupRef.current && !anchorPopupRef.current.closed) {
-      anchorPopupRef.current.close();
-    }
-    onClose();
   }
 
   return (
@@ -550,14 +573,14 @@ export default function ContributeModal({
                   )}
                   {(freighterAvailable || guestFreighterMode) && (
                     <label
-                      className={`asset-picker__option${paymentMethod === 'freighter' ? ' asset-picker__option--selected' : ''}`}
+                      className={`asset-picker__option${paymentMethod === 'custodial' ? ' asset-picker__option--selected' : ''}`}
                     >
                       <input
                         type="radio"
                         name="payment_method"
-                        value="freighter"
-                        checked={paymentMethod === 'freighter'}
-                        onChange={() => setPaymentMethod('freighter')}
+                        value="custodial"
+                        checked={paymentMethod === 'custodial'}
+                        onChange={() => setPaymentMethod('custodial')}
                       />
                       <div className="asset-picker__code">Pay with Freighter</div>
                       <div className="asset-picker__hint">
@@ -565,6 +588,23 @@ export default function ContributeModal({
                       </div>
                     </label>
                   )}
+                  <label
+                    className={`asset-picker__option${paymentMethod === 'freighter' ? ' asset-picker__option--selected' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="payment_method"
+                      value="freighter"
+                      checked={paymentMethod === 'freighter'}
+                      onChange={() => setPaymentMethod('freighter')}
+                    />
+                    <div className="asset-picker__code">Pay with Freighter</div>
+                    <div className="asset-picker__hint">
+                      {freighterAvailable
+                        ? 'You sign in-browser; CrowdPay never sees your key'
+                        : 'Freighter not detected — see alternatives below'}
+                    </div>
+                  </label>
                   {anchorInfo.anchors.some((anchor) => anchor.available) && (
                     <label
                       className={`asset-picker__option${paymentMethod === 'anchor' ? ' asset-picker__option--selected' : ''}`}
@@ -746,6 +786,18 @@ export default function ContributeModal({
                   )}
                 </span>
               </div>
+
+              {tiers.length > 0 && destAmount && Number(destAmount) > 0 && (
+                matchedTier ? (
+                  <div className="alert alert--success" style={{ marginBottom: '1rem', fontSize: '0.85rem' }} role="status">
+                    <strong>Unlocks tier:</strong> {matchedTier.title} (from {Number(matchedTier.min_amount).toLocaleString()} {campaign.asset_type})
+                  </div>
+                ) : (
+                  <div className="alert alert--info" style={{ marginBottom: '1rem', fontSize: '0.85rem' }} role="status">
+                    This amount does not yet reach a reward tier.
+                  </div>
+                )
+              )}
 
               <div className="form-stack" style={{ marginBottom: '1rem' }}>
                 <label className="label-strong" htmlFor="contrib-display-name">
@@ -974,6 +1026,11 @@ export default function ContributeModal({
             <p className="alert alert--success" style={{ marginBottom: '1rem' }} role="status">
               Your contribution is on its way. It usually confirms in a few seconds on Stellar.
             </p>
+            {unlockedTier && (
+              <p className="alert alert--success" style={{ marginBottom: '1rem', fontSize: '0.9rem' }} role="status">
+                🎉 {"You've"} unlocked: <strong>{unlockedTier.title}</strong>
+              </p>
+            )}
             {result?.tx_hash && (
               <p style={{ fontSize: '0.875rem', marginBottom: '0.75rem', wordBreak: 'break-all' }}>
                 <strong>Transaction</strong>{' '}

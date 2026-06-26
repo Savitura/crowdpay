@@ -5,6 +5,8 @@ const request = require('supertest');
 
 const mockSentry = {
   init: () => {},
+  expressIntegration: () => ({}),
+  expressErrorHandler: () => (err, req, res, next) => next(err),
   Handlers: {
     requestHandler: () => (req, res, next) => next(),
     tracingHandler: () => (req, res, next) => next(),
@@ -92,7 +94,9 @@ test('GET /health returns 503 and error message when database query fails', asyn
   
   assert.equal(response.status, 503);
   assert.deepEqual(response.body, {
-    status: 'error',
-    error: 'Connection refused',
+    error: {
+      code: 'ERROR',
+      message: 'Connection refused',
+    },
   });
 });

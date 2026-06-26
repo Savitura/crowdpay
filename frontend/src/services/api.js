@@ -293,6 +293,8 @@ export const api = {
   approveRefundCreator: (id, body) =>
     request('POST', `/campaigns/${id}/refund/approve/creator`, body || {}),
   approveRefundPlatform: (id) => request('POST', `/campaigns/${id}/refund/approve/platform`, {}),
+  requestContributionRefund: (contributionId) =>
+    request('POST', `/contributions/${contributionId}/refund`, {}),
 
   getWithdrawalCapabilities: () => request('GET', '/withdrawals/capabilities'),
   listWithdrawals: (campaignId) => request('GET', `/withdrawals/campaign/${campaignId}`),
@@ -344,9 +346,9 @@ export const api = {
   adminUnbanUser: (id) => request('PATCH', `/admin/users/${id}/unban`, {}),
   adminPromoteUser: (id) => request('PATCH', `/admin/users/${id}/promote`, {}),
   adminDemoteUser: (id) => request('PATCH', `/admin/users/${id}/demote`, {}),
-  listApiKeys: () => request('GET', '/api-keys'),
-  createApiKey: (body) => request('POST', '/api-keys', body),
-  deleteApiKey: (id) => request('DELETE', `/api-keys/${id}`),
+  listApiKeys: () => request('GET', '/users/api-keys'),
+  createApiKey: (body) => request('POST', '/users/api-keys', body),
+  deleteApiKey: (id) => request('DELETE', `/users/api-keys/${id}`),
   listWebhooks: () => request('GET', '/webhooks'),
   createWebhook: (body) => request('POST', '/webhooks', body),
   listWebhookDeliveries: (options = {}) =>

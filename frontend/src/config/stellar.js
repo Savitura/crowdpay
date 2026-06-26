@@ -9,3 +9,8 @@ export function stellarExpertAccountUrl(publicKey) {
   if (!publicKey) return '#';
   return `https://stellar.expert/explorer/${network}/account/${publicKey}`;
 }
+
+export function stellarExpertContractUrl(contractId) {
+  if (!contractId) return '#';
+  return `https://stellar.expert/explorer/${network}/contract/${contractId}`;
+}

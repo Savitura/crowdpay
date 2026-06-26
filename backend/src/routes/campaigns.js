@@ -20,6 +20,12 @@ const { uploadCampaignCoverImage } = require('../services/storage');
 const { isKycRequiredForCampaigns } = require('../services/kycProvider');
 const { listCreatorCampaigns } = require('../services/userDashboardService');
 const {
+  MAX_TIERS_PER_CAMPAIGN,
+  validateTiersInput,
+  insertTiers,
+  listTiersWithAvailability,
+} = require('../services/rewardTierService');
+const {
   createCampaignValidation,
   createCampaignUpdateValidation,
   getCampaignsValidation,
@@ -371,6 +377,74 @@ router.get('/featured', asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
+router.get('/categories', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(`
+    SELECT category, COUNT(*)::int AS count
+    FROM campaigns
+    WHERE status = 'active' AND deleted_at IS NULL
+    GROUP BY category
+    ORDER BY category ASC
+  `);
+  res.json(rows);
+}));
+
+router.get('/:id/contract-status', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT id, contract_address, escrow_contract_id, milestones_contract_id,
+            target_amount, deadline, status
+     FROM campaigns
+     WHERE id = $1`,
+    [req.params.id]
+  );
+
+  if (!rows.length) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+
+  const campaign = rows[0];
+  const escrowContractId = campaign.escrow_contract_id || campaign.contract_address;
+
+  if (!escrowContractId && !campaign.milestones_contract_id) {
+    return res.json({
+      has_contract: false,
+      status: campaign.status,
+      totalRaised: 0,
+      milestones: [],
+    });
+  }
+
+  try {
+    const deadlineUnix = campaign.deadline
+      ? Math.floor(new Date(campaign.deadline).getTime() / 1000)
+      : 0;
+    const targetAmount = Math.floor(Number(campaign.target_amount) * 10_000_000);
+
+    const onChain = await getContractStatus({
+      escrowContractId,
+      milestonesContractId: campaign.milestones_contract_id,
+      deadlineUnix,
+      targetAmount,
+    });
+
+    res.json({
+      has_contract: true,
+      contract_address: campaign.contract_address || escrowContractId,
+      escrow_contract_id: escrowContractId,
+      milestones_contract_id: campaign.milestones_contract_id,
+      ...onChain,
+    });
+  } catch (err) {
+    logger.error('Failed to read on-chain contract status', {
+      campaign_id: req.params.id,
+      error: err.message,
+    });
+    res.status(502).json({
+      error: 'Could not read on-chain contract status',
+      detail: err.message,
+    });
+  }
+}));
+
 router.get('/:id', asyncHandler(async (req, res) => {
   /**
    * @openapi
@@ -436,7 +510,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   const token =
     req.cookies?.cp_token ||
     (header && header.startsWith('Bearer ') ? header.slice(7).trim() : null);
-  if (token && !token.startsWith('cp_live_')) {
+  if (token && !token.startsWith('cp_live_') && !token.startsWith('cpk_')) {
     try {
       const jwt = require('jsonwebtoken');
       const payload = jwt.verify(token, process.env.JWT_SECRET);
@@ -766,11 +840,19 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
    *       403:
    *         description: Forbidden
    */
-  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution } = req.body;
+  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution, reward_tiers } = req.body;
 
   let normalizedMilestones;
   try {
     normalizedMilestones = normalizeMilestonesInput(milestones);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  // Reward tiers are optional. Validate up front (asset must match the campaign).
+  let normalizedTiers;
+  try {
+    normalizedTiers = validateTiersInput(reward_tiers, asset_type);
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
@@ -807,17 +889,31 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
   // ASSET_CONTRACT_ADDRESS in env and populate it from the Stellar asset contract.
   const assetContractAddress = process.env.USDC_CONTRACT_ADDRESS || process.env.USDC_ISSUER;
 
-  const { escrowContractId, milestonesContractId } = await deployCampaignContracts({
-    creatorPublicKey,
-    platformPublicKey,
-    campaignId: req.body.title + Date.now(),
-    targetAmount: Math.floor(parseFloat(target_amount) * 10_000_000),
-    deadlineUnix,
-    assetContractAddress,
-    platformFeeBps,
-    milestones: normalizedMilestones,
-    signerSecret: process.env.PLATFORM_SECRET_KEY,
-  });
+  let escrowContractId;
+  let milestonesContractId;
+  try {
+    ({ escrowContractId, milestonesContractId } = await deployCampaignContracts({
+      creatorPublicKey,
+      platformPublicKey,
+      campaignId: req.body.title + Date.now(),
+      targetAmount: Math.floor(parseFloat(target_amount) * 10_000_000),
+      deadlineUnix,
+      assetContractAddress,
+      platformFeeBps,
+      milestones: normalizedMilestones,
+      signerSecret: process.env.PLATFORM_SECRET_KEY,
+    }));
+  } catch (err) {
+    logger.error('Soroban contract deployment failed during campaign creation', {
+      error: err.message,
+      creatorUserId: req.user.userId,
+    });
+    return res.status(502).json({
+      error: 'Soroban contract deployment failed',
+      detail: err.message,
+    });
+  }
+  const contractAddress = escrowContractId;
 
   const client = await db.connect();
   let campaign;
@@ -826,11 +922,13 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
     const { rows } = await client.query(
       `INSERT INTO campaigns
          (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, 
-          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id, platform_fee_bps)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id, platform_fee_bps,
+          contract_address, contract_deployed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
        RETURNING *`,
       [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline, 
-       min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId, platformFeeBps]
+       min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId, platformFeeBps,
+       contractAddress]
     );
     campaign = rows[0];
 
@@ -856,6 +954,10 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
       );
     }
 
+    if (normalizedTiers.length) {
+      await insertTiers(client, campaign.id, normalizedTiers);
+    }
+
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -874,6 +976,93 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
   watchCampaignWallet(campaign.id, wallet.publicKey);
 
   res.status(201).json(campaign);
+}));
+
+/**
+ * @openapi
+ * /api/campaigns/{id}/tiers:
+ *   get:
+ *     tags: [Campaigns]
+ *     summary: List a campaign's reward tiers with remaining availability
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: List of reward tiers }
+ *       404: { description: Campaign not found }
+ */
+router.get('/:id/tiers', asyncHandler(async (req, res) => {
+  const { rows } = await db.query('SELECT id FROM campaigns WHERE id = $1', [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+  const tiers = await listTiersWithAvailability(req.params.id);
+  res.json(tiers);
+}));
+
+/**
+ * @openapi
+ * /api/campaigns/{id}/tiers:
+ *   post:
+ *     tags: [Campaigns]
+ *     summary: Add one or more reward tiers to an existing campaign (creator only)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       201: { description: Updated list of reward tiers }
+ *       400: { description: Invalid input or tier cap exceeded }
+ *       403: { description: Forbidden }
+ *       404: { description: Campaign not found }
+ */
+router.post('/:id/tiers', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+
+  const { rows: campaignRows } = await db.query('SELECT asset_type FROM campaigns WHERE id = $1', [campaignId]);
+  if (!campaignRows.length) return res.status(404).json({ error: 'Campaign not found' });
+  const assetType = campaignRows[0].asset_type;
+
+  // Accept either a single tier object or an array of tiers.
+  const input = Array.isArray(req.body) ? req.body : [req.body];
+  let normalizedTiers;
+  try {
+    normalizedTiers = validateTiersInput(input, assetType);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (!normalizedTiers.length) {
+    return res.status(400).json({ error: 'At least one reward tier is required' });
+  }
+
+  const { rows: countRows } = await db.query(
+    'SELECT COUNT(*)::int AS n FROM reward_tiers WHERE campaign_id = $1',
+    [campaignId]
+  );
+  if (countRows[0].n + normalizedTiers.length > MAX_TIERS_PER_CAMPAIGN) {
+    return res.status(400).json({
+      error: `A campaign can have at most ${MAX_TIERS_PER_CAMPAIGN} reward tiers`,
+    });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await insertTiers(client, campaignId, normalizedTiers);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    logger.error('[campaigns] add reward tiers failed', { error: err.message });
+    return res.status(500).json({ error: 'Could not add reward tiers' });
+  } finally {
+    client.release();
+  }
+
+  const tiers = await listTiersWithAvailability(campaignId);
+  res.status(201).json(tiers);
 }));
 
 // PATCH /campaigns/:id - Update campaign (title, description, deadline)

@@ -1,0 +1,2 @@
+ALTER TABLE contributions
+  ADD COLUMN refunded BOOLEAN NOT NULL DEFAULT FALSE;

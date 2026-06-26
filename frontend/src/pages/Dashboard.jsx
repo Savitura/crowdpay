@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -7,6 +7,7 @@ import VerificationBadge from '../components/VerificationBadge';
 import CampaignStatusBadge from '../components/CampaignStatusBadge';
 import ContributorDashboard from '../components/ContributorDashboard';
 import DepositModal from '../components/DepositModal';
+import ApiKeysPanel from '../components/ApiKeysPanel';
 import { stellarExpertTxUrl, stellarExpertAccountUrl } from '../config/stellar';
 import {
   LineChart,
@@ -22,6 +23,7 @@ const TABS = [
   { id: 'campaigns', label: 'My Campaigns' },
   { id: 'contributions', label: 'My Contributions' },
   { id: 'analytics', label: 'Analytics' },
+  { id: 'api-keys', label: 'API Keys' },
 ];
 
 function progressPct(campaign) {
@@ -30,10 +32,10 @@ function progressPct(campaign) {
 }
 
 function formatConversionRate(row) {
-  if (row.conversion_rate == null) return null;
+  if (row.conversion_rate === null) return null;
   const rate = Number(row.conversion_rate);
   if (!Number.isFinite(rate)) return null;
-  if (row.source_asset && row.source_amount != null) {
+  if (row.source_asset && row.source_amount !== null) {
     return `1 ${row.source_asset} ≈ ${rate.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${row.asset}`;
   }
   return rate.toLocaleString(undefined, { maximumFractionDigits: 6 });
@@ -284,6 +286,8 @@ export default function Dashboard() {
       setSearchParams({ tab: 'analytics' });
     } else if (tabId === 'referrals') {
       setSearchParams({ tab: 'referrals' });
+    } else if (tabId === 'api-keys') {
+      setSearchParams({ tab: 'api-keys' });
     } else {
       setSearchParams({});
     }
@@ -919,6 +923,8 @@ export default function Dashboard() {
           )}
         </section>
       )}
+
+      {activeTab === 'api-keys' && <ApiKeysPanel />}
 
       {showDepositModal && (
         <DepositModal

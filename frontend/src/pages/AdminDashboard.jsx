@@ -1,8 +1,16 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import RelativeTime from '../components/RelativeTime';
+
+const DISPUTE_STATUSES = [
+  'open',
+  'under_review',
+  'resolved_creator',
+  'resolved_contributor',
+  'closed',
+];
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -85,7 +93,6 @@ function PlatformHealthPanel() {
   const [health, setHealth] = useState(null);
   const [webhooks, setWebhooks] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [retryingId, setRetryingId] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -232,94 +239,6 @@ function PlatformHealthPanel() {
 }
 
 function WithdrawalQueue() {
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [review, setReview] = useState(null);
-  const [detail, setDetail] = useState(null);
-  const [events, setEvents] = useState([]);
-  const [contributions, setContributions] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const [rejectReason, setRejectReason] = useState('');
-  const [canApprove, setCanApprove] = useState(false);
-  const [error, setError] = useState('');
-
-  const load = useCallback(() => {
-    setLoading(true);
-    Promise.all([api.getAdminWithdrawals({ status: 'pending' }), api.getWithdrawalCapabilities()])
-      .then(([list, caps]) => {
-        setRows(list);
-        setCanApprove(!!caps.can_approve_platform);
-      })
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  async function openReview(row) {
-    setReview(row);
-    setError('');
-    setRejectReason('');
-    try {
-      const [wr, ev, contribs] = await Promise.all([
-        api.getWithdrawal(row.id),
-        api.getWithdrawalEvents(row.id),
-        api.getAdminCampaignContributions(row.campaign_id, { limit: 15 }),
-      ]);
-      setDetail(wr);
-      setEvents(ev);
-      setContributions(contribs);
-    } catch (err) {
-      setError(err.message || 'Could not load withdrawal details');
-    }
-  }
-
-  function closeReview() {
-    setReview(null);
-    setDetail(null);
-    setEvents([]);
-    setContributions([]);
-    setRejectReason('');
-    setError('');
-  }
-
-  async function approve() {
-    if (!review) return;
-    setBusy(true);
-    setError('');
-    try {
-      await api.approveWithdrawalPlatform(review.id);
-      closeReview();
-      load();
-    } catch (err) {
-      setError(err.message || 'Approval failed');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function reject() {
-    if (!review) return;
-    if (!rejectReason.trim()) {
-      setError('Rejection reason is required');
-      return;
-    }
-    setBusy(true);
-    setError('');
-    try {
-      await api.rejectWithdrawal(review.id, { reason: rejectReason.trim() });
-      closeReview();
-      load();
-    } catch (err) {
-      setError(err.message || 'Rejection failed');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (loading) return <p style={{ color: 'var(--color-text-hint)' }}>Loading withdrawals…</p>;
-
   return (
     <>
       {rows.length === 0 ? (
@@ -838,8 +757,8 @@ function KycOversight() {
   );
 }
 
-function MilestoneApprovalQueue() {
-  const [milestones, setMilestones] = useState([]);
+function CampaignsQueue() {
+  const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [rejectingId, setRejectingId] = useState(null);
@@ -1082,7 +1001,7 @@ function CampaignsQueue() {
       .getAdminCampaigns()
       .then(setCampaigns)
       .finally(() => setLoading(false));
-  }, []);
+  }
 
   async function feature(id) {
     const note = window.prompt('Featured note (optional):', '');
@@ -1092,7 +1011,7 @@ function CampaignsQueue() {
       const updated = await api.getAdminCampaigns();
       setCampaigns(updated);
     } catch (err) {
-      alert(err.message || 'Could not feature campaign');
+      window.alert(err.message || 'Could not feature campaign');
     }
   }
 
@@ -1103,7 +1022,7 @@ function CampaignsQueue() {
       const updated = await api.getAdminCampaigns();
       setCampaigns(updated);
     } catch (err) {
-      alert(err.message || 'Could not unfeature campaign');
+      window.alert(err.message || 'Could not unfeature campaign');
     }
   }
 

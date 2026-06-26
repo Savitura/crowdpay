@@ -1,5 +1,3 @@
-import React from 'react';
-
 export default function ContributionListSkeleton({ rows = 4 }) {
   const widths = [78, 62, 71, 55, 68];
   return (

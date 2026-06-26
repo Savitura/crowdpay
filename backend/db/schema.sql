@@ -81,6 +81,7 @@ CREATE TABLE contributions (
   path                JSONB,
   tx_hash             TEXT UNIQUE NOT NULL,  -- deduplicate by Stellar transaction hash
   display_name        TEXT,
+  refunded            BOOLEAN NOT NULL DEFAULT FALSE,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 

@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const db = require('../config/database');
 const Sentry = require('@sentry/node');
+const { authenticateCpkApiKey } = require('../services/apiKeyService');
 
 function apiKeyPepper() {
   return process.env.API_KEY_PEPPER || process.env.JWT_SECRET || 'dev-api-key-pepper';
@@ -15,6 +16,18 @@ async function authenticate(req) {
   const header = req.headers.authorization;
   const token = req.cookies?.cp_token || (header && header.startsWith('Bearer ') ? header.slice(7).trim() : null);
   if (!token) throw new Error('Missing token');
+
+  if (token.startsWith('cpk_')) {
+    const auth = await authenticateCpkApiKey(token);
+    if (!auth) throw new Error('Invalid API key');
+    req.user = {
+      userId: auth.userId,
+      role: auth.role,
+      is_admin: auth.is_admin,
+    };
+    req.auth = { kind: 'api_key', apiKeyId: auth.apiKeyId, scopes: auth.scopes };
+    return;
+  }
 
   if (token.startsWith('cp_live_')) {
     const keyHash = hashApiKey(token);
@@ -106,7 +119,7 @@ function assertApiKeyScopes(req, res) {
     return true;
   }
 
-  if (path.startsWith('/api/api-keys') || path.startsWith('/api/webhooks')) {
+  if (path.startsWith('/api/api-keys') || path.startsWith('/api/users/api-keys') || path.startsWith('/api/webhooks')) {
     if (!scopes.includes('developer')) {
       res.status(403).json({ error: 'API key requires developer scope for this resource' });
       return false;

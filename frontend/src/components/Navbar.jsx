@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
@@ -68,6 +68,18 @@ export default function Navbar() {
   function handleLogout() {
     logout();
     navigate('/');
+  }
+
+  function handleMarkRead(id) {
+    api.markNotificationRead(id).catch(() => {});
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n))
+    );
+  }
+
+  function handleMarkAllRead() {
+    api.markAllNotificationsRead().catch(() => {});
+    setNotifications((prev) => prev.map((n) => ({ ...n, read_at: new Date().toISOString() })));
   }
 
   return (

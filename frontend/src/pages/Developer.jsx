@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -14,50 +14,6 @@ const SCOPE_OPTIONS = ['read', 'write', 'withdrawals', 'developer', 'full'];
 
 const V1_API_BASE = `${(import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')}/api/v1`;
 
-const V1_ENDPOINTS = [
-  {
-    id: 'list-campaigns',
-    label: 'GET /campaigns — list public campaigns',
-    method: 'GET',
-    path: '/campaigns',
-    auth: false,
-    queryFields: ['search', 'status', 'asset', 'sort', 'limit', 'offset'],
-  },
-  {
-    id: 'get-campaign',
-    label: 'GET /campaigns/:id — campaign detail',
-    method: 'GET',
-    path: '/campaigns/:id',
-    auth: false,
-    pathFields: ['id'],
-  },
-  {
-    id: 'list-contributions',
-    label: 'GET /campaigns/:id/contributions — list contributions',
-    method: 'GET',
-    path: '/campaigns/:id/contributions',
-    auth: true,
-    pathFields: ['id'],
-    queryFields: ['limit', 'offset'],
-  },
-  {
-    id: 'create-contribution',
-    label: 'POST /campaigns/:id/contributions — record from tx hash',
-    method: 'POST',
-    path: '/campaigns/:id/contributions',
-    auth: true,
-    pathFields: ['id'],
-    bodyTemplate: { tx_hash: '' },
-  },
-  {
-    id: 'users-me',
-    label: 'GET /users/me — authenticated profile',
-    method: 'GET',
-    path: '/users/me',
-    auth: true,
-  },
-];
-
 export default function Developer() {
   const { user } = useAuth();
   const [keys, setKeys] = useState([]);
@@ -71,11 +27,12 @@ export default function Developer() {
   const [hookEvents, setHookEvents] = useState(['contribution.received']);
   const [revealedSecret, setRevealedSecret] = useState('');
   const [loading, setLoading] = useState(true);
-  const [explorerEndpoint, setExplorerEndpoint] = useState(V1_ENDPOINTS[0].id);
+  const [v1Endpoints, setV1Endpoints] = useState([]);
+  const [explorerEndpoint, setExplorerEndpoint] = useState('');
   const [explorerApiKey, setExplorerApiKey] = useState('');
-  const [explorerPathParams, setExplorerPathParams] = useState({ id: '' });
+  const [explorerPathParams, setExplorerPathParams] = useState({});
   const [explorerQuery, setExplorerQuery] = useState({});
-  const [explorerBody, setExplorerBody] = useState('{\n  "tx_hash": ""\n}');
+  const [explorerBody, setExplorerBody] = useState('');
   const [explorerResponse, setExplorerResponse] = useState('');
   const [explorerBusy, setExplorerBusy] = useState(false);
   const [explorerError, setExplorerError] = useState('');
@@ -98,9 +55,97 @@ export default function Developer() {
     }
   }
 
+  async function loadOpenApi() {
+    try {
+      const res = await fetch(`${V1_API_BASE}/docs/openapi.json`);
+      if (!res.ok) throw new Error('Failed to fetch OpenAPI spec');
+      const spec = await res.json();
+      
+      const endpoints = [];
+      for (const [path, methods] of Object.entries(spec.paths || {})) {
+        for (const [method, operation] of Object.entries(methods)) {
+          const pathFields = [];
+          const queryFields = [];
+          let bodyTemplate = null;
+
+          (operation.parameters || []).forEach((p) => {
+            if (p.in === 'path') pathFields.push(p.name);
+            if (p.in === 'query') queryFields.push(p.name);
+          });
+
+          const normalizedPath = path.replace(/{([^}]+)}/g, ':$1');
+
+          if (operation.requestBody?.content?.['application/json']?.schema?.properties) {
+            bodyTemplate = Object.keys(
+              operation.requestBody.content['application/json'].schema.properties
+            ).reduce((acc, k) => ({ ...acc, [k]: '' }), {});
+          } else if (method.toUpperCase() !== 'GET') {
+            bodyTemplate = {};
+          }
+
+          endpoints.push({
+            id: `${method.toUpperCase()}-${path}`,
+            label: `${method.toUpperCase()} ${normalizedPath} — ${operation.summary || ''}`,
+            method: method.toUpperCase(),
+            path: normalizedPath,
+            auth: !!(operation.security && operation.security.length),
+            pathFields,
+            queryFields,
+            bodyTemplate,
+          });
+        }
+      }
+      setV1Endpoints(endpoints);
+
+      const saved = localStorage.getItem('cp_explorer_endpoint');
+      if (saved && endpoints.find((e) => e.id === saved)) {
+        setExplorerEndpoint(saved);
+      } else if (endpoints.length > 0) {
+        setExplorerEndpoint(endpoints[0].id);
+      }
+    } catch (err) {
+      console.error('Failed to load OpenAPI spec', err);
+    }
+  }
+
   useEffect(() => {
     refresh();
+    loadOpenApi();
   }, []);
+
+  useEffect(() => {
+    if (!explorerEndpoint) return;
+    localStorage.setItem('cp_explorer_endpoint', explorerEndpoint);
+    
+    const savedParamsStr = localStorage.getItem(`cp_explorer_params_${explorerEndpoint}`);
+    if (savedParamsStr) {
+      try {
+        const parsed = JSON.parse(savedParamsStr);
+        setExplorerPathParams(parsed.pathParams || {});
+        setExplorerQuery(parsed.query || {});
+        setExplorerBody(parsed.body || '');
+      } catch {}
+    } else {
+      const ep = v1Endpoints.find((e) => e.id === explorerEndpoint);
+      setExplorerPathParams({});
+      setExplorerQuery({});
+      setExplorerBody(ep?.bodyTemplate ? JSON.stringify(ep.bodyTemplate, null, 2) : '');
+    }
+    setExplorerResponse('');
+    setExplorerError('');
+  }, [explorerEndpoint, v1Endpoints]);
+
+  useEffect(() => {
+    if (!explorerEndpoint) return;
+    localStorage.setItem(
+      `cp_explorer_params_${explorerEndpoint}`,
+      JSON.stringify({
+        pathParams: explorerPathParams,
+        query: explorerQuery,
+        body: explorerBody,
+      })
+    );
+  }, [explorerPathParams, explorerQuery, explorerBody, explorerEndpoint]);
 
   if (!user) {
     return (
@@ -117,7 +162,7 @@ export default function Developer() {
     setRevealedKey('');
     setError('');
     try {
-      const res = await api.createApiKey({ label: newKeyLabel, scopes: newKeyScopes });
+      const res = await api.createApiKey({ name: newKeyLabel, scopes: newKeyScopes });
       setRevealedKey(res.api_key);
       await refresh();
     } catch (err) {
@@ -126,7 +171,7 @@ export default function Developer() {
   }
 
   async function revokeKey(id) {
-    if (!confirm('Revoke this API key?')) return;
+    if (!window.confirm('Revoke this API key?')) return;
     setError('');
     try {
       await api.deleteApiKey(id);
@@ -151,7 +196,7 @@ export default function Developer() {
   }
 
   async function revokeHook(id) {
-    if (!confirm('Remove this webhook endpoint?')) return;
+    if (!window.confirm('Remove this webhook endpoint?')) return;
     setError('');
     try {
       await api.deleteWebhook(id);
@@ -172,6 +217,7 @@ export default function Developer() {
   const selectedEndpoint = V1_ENDPOINTS.find((e) => e.id === explorerEndpoint) || V1_ENDPOINTS[0];
 
   function buildExplorerUrl() {
+    if (!selectedEndpoint) return '';
     let path = selectedEndpoint.path;
     (selectedEndpoint.pathFields || []).forEach((field) => {
       path = path.replace(`:${field}`, encodeURIComponent(explorerPathParams[field] || ''));
@@ -185,8 +231,28 @@ export default function Developer() {
     return `${V1_API_BASE}${path}${qs ? `?${qs}` : ''}`;
   }
 
+  function getCurlCommand() {
+    if (!selectedEndpoint) return '';
+    const url = buildExplorerUrl();
+    let cmd = `curl -X ${selectedEndpoint.method} "${url}"`;
+    
+    if (selectedEndpoint.auth && explorerApiKey) {
+      cmd += ` \\\n  -H "Authorization: Bearer ${explorerApiKey}"`;
+    }
+    
+    if (selectedEndpoint.method !== 'GET' && selectedEndpoint.bodyTemplate !== null) {
+      cmd += ` \\\n  -H "Content-Type: application/json"`;
+      if (explorerBody) {
+        const safeBody = explorerBody.replace(/'/g, "'\\''");
+        cmd += ` \\\n  -d '${safeBody}'`;
+      }
+    }
+    return cmd;
+  }
+
   async function runExplorerRequest(e) {
     e.preventDefault();
+    if (!selectedEndpoint) return;
     setExplorerBusy(true);
     setExplorerError('');
     setExplorerResponse('');
@@ -207,7 +273,7 @@ export default function Developer() {
               : undefined
             : headers,
       };
-      if (selectedEndpoint.method !== 'GET' && selectedEndpoint.bodyTemplate) {
+      if (selectedEndpoint.method !== 'GET' && selectedEndpoint.bodyTemplate !== null) {
         options.body = explorerBody;
       }
       const res = await fetch(buildExplorerUrl(), options);
@@ -218,7 +284,7 @@ export default function Developer() {
       } catch {
         parsed = text;
       }
-      setExplorerResponse(JSON.stringify({ status: res.status, body: parsed }, null, 2));
+      setExplorerResponse(JSON.stringify({ status: res.status, headers: Object.fromEntries(res.headers.entries()), body: parsed }, null, 2));
     } catch (err) {
       setExplorerError(err.message || 'Request failed');
     } finally {
@@ -408,7 +474,7 @@ export default function Developer() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border-light)' }}>
-              <th style={{ padding: '0.4rem' }}>Label</th>
+              <th style={{ padding: '0.4rem' }}>Name</th>
               <th>Prefix</th>
               <th>Scopes</th>
               <th>Last used</th>

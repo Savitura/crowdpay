@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
@@ -46,13 +46,13 @@ export default function Widget() {
     };
 
     const start = () => {
-      if (intervalId != null) return;
+      if (intervalId !== null) return;
       load();
       intervalId = window.setInterval(load, 30_000);
     };
 
     const stop = () => {
-      if (intervalId == null) return;
+      if (intervalId !== null) return;
       window.clearInterval(intervalId);
       intervalId = null;
       controller?.abort();
@@ -101,7 +101,7 @@ export default function Widget() {
           {raisedAmount.toLocaleString()} / {targetAmount.toLocaleString()} {data.asset_type}
           {' · '}
           {contributorCount} backer{contributorCount !== 1 ? 's' : ''}
-          {daysRemaining != null && (
+          {daysRemaining !== null && daysRemaining !== undefined && (
             <>
               {' · '}
               {daysRemaining} day{daysRemaining !== 1 ? 's' : ''} left

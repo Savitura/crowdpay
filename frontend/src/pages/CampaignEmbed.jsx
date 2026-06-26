@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 const BASE_URL = import.meta.env.VITE_API_URL || `${API_BASE_URL}/api`;
@@ -150,7 +150,7 @@ export default function CampaignEmbed() {
             Goal: <strong>{Number(campaign.target_amount).toLocaleString()}</strong>{' '}
             {campaign.asset_type}
           </span>
-          {campaign.days_remaining != null && (
+          {campaign.days_remaining !== null && campaign.days_remaining !== undefined && (
             <span>
               <strong>{campaign.days_remaining}</strong> day{campaign.days_remaining !== 1 ? 's' : ''} left
             </span>

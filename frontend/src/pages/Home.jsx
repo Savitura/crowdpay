@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
@@ -149,7 +149,7 @@ export default function Home() {
   const setFilters = (next) => {
     const params = new URLSearchParams(searchParams);
     Object.entries(next).forEach(([key, value]) => {
-      if (value === '' || value == null) {
+      if (value === '' || value === null) {
         params.delete(key);
       } else {
         params.set(key, String(value));

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { stellarExpertAccountUrl } from '../config/stellar';
