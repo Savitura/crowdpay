@@ -210,6 +210,7 @@ export const api = {
 
   getMyCampaigns: () => request('GET', '/campaigns/mine'),
   getFeaturedCampaigns: () => request('GET', '/campaigns/featured'),
+  getCampaignCategories: () => request('GET', '/campaigns/categories'),
   getCampaigns: (options = {}) => request('GET', '/campaigns', null, { query: options }),
   getCampaign: (id, options = {}) => request('GET', `/campaigns/${id}`, null, { query: options }),
   getContractStatus: (id) => request('GET', `/campaigns/${id}/contract-status`),

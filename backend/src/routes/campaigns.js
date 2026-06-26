@@ -383,6 +383,17 @@ router.get('/featured', asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
+router.get('/categories', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(`
+    SELECT category, COUNT(*)::int AS count
+    FROM campaigns
+    WHERE status = 'active' AND deleted_at IS NULL
+    GROUP BY category
+    ORDER BY category ASC
+  `);
+  res.json(rows);
+}));
+
 router.get('/:id/contract-status', asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `SELECT id, contract_address, escrow_contract_id, milestones_contract_id,
