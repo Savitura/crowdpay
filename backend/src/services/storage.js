@@ -1,6 +1,10 @@
 const path = require('path');
 const crypto = require('crypto');
+const fileType = require('file-type');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4'];
 
 function createStorageClient() {
   const endpoint = process.env.STORAGE_ENDPOINT;
@@ -36,13 +40,37 @@ function buildPublicUrl(key) {
   return `https://${bucket}.${normalizedEndpoint}/${encodeURIComponent(key)}`;
 }
 
-async function uploadCampaignCoverImage(campaignId, file) {
+async function validateAndProcessFile(file) {
   if (!file || !file.buffer) {
     throw new Error('Missing file buffer for upload');
   }
 
-  const extension = path.extname(file.originalname).toLowerCase();
-  const key = `campaigns/${campaignId}/${Date.now()}-${crypto.randomBytes(8).toString('hex')}${extension}`;
+  if (file.buffer.length > MAX_FILE_SIZE) {
+    const error = new Error('File exceeds maximum allowed size');
+    error.status = 413;
+    throw error;
+  }
+
+  const type = await fileType.fromBuffer(file.buffer);
+  if (!type || !ALLOWED_MIME_TYPES.includes(type.mime)) {
+    const error = new Error('Unsupported Media Type');
+    error.status = 415;
+    throw error;
+  }
+
+  const hash = crypto.createHash('sha256').update(file.buffer).digest('hex');
+  const sanitizedExtension = `.${type.ext}`;
+
+  return {
+    mime: type.mime,
+    hash,
+    extension: sanitizedExtension,
+  };
+}
+
+async function uploadCampaignCoverImage(campaignId, file) {
+  const { mime, hash, extension } = await validateAndProcessFile(file);
+  const key = `campaigns/${campaignId}/${hash}${extension}`;
 
   const client = createStorageClient();
   await client.send(
@@ -50,7 +78,7 @@ async function uploadCampaignCoverImage(campaignId, file) {
       Bucket: process.env.STORAGE_BUCKET,
       Key: key,
       Body: file.buffer,
-      ContentType: file.mimetype,
+      ContentType: mime,
       CacheControl: 'public, max-age=31536000, immutable',
     })
   );
@@ -59,12 +87,8 @@ async function uploadCampaignCoverImage(campaignId, file) {
 }
 
 async function uploadMilestoneEvidence(milestoneId, file) {
-  if (!file || !file.buffer) {
-    throw new Error('Missing file buffer for upload');
-  }
-
-  const extension = path.extname(file.originalname).toLowerCase() || '.bin';
-  const key = `milestones/${milestoneId}/${Date.now()}-${crypto.randomBytes(8).toString('hex')}${extension}`;
+  const { mime, hash, extension } = await validateAndProcessFile(file);
+  const key = `milestones/${milestoneId}/${hash}${extension}`;
 
   const client = createStorageClient();
   await client.send(
@@ -72,7 +96,7 @@ async function uploadMilestoneEvidence(milestoneId, file) {
       Bucket: process.env.STORAGE_BUCKET,
       Key: key,
       Body: file.buffer,
-      ContentType: file.mimetype || 'application/octet-stream',
+      ContentType: mime,
       CacheControl: 'public, max-age=31536000, immutable',
     })
   );
