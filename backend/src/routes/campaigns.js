@@ -48,12 +48,9 @@ const {
   canManageMembers,
   canChangeRoles,
 } = require('../lib/campaignPermissions');
+const { stripHtml } = require('../lib/sanitize');
 
 const crypto = require('crypto');
-
-function stripHtml(value = '') {
-  return String(value).replace(/<[^>]*>/g, '').trim();
-}
 
 function generateReferralCode() {
   return crypto.randomBytes(6).toString('base64url').slice(0, 8);

@@ -889,3 +889,123 @@ test('POST /api/contributions validates cumulative max_per_user cap', async () =
   assert.equal(response.status, 400);
   assert.equal(response.body.error, 'You have already contributed 80 USDC. The per-contributor limit is 100.0000000.');
 });
+
+function buildRefundApp({ contributionRow, refundImpl }) {
+  const stellarStub = { getSupportedAssetCodes: () => ['XLM', 'USDC'] };
+  const updates = [];
+
+  const router = proxyquire('./contributions', {
+    '../config/stellar': { networkPassphrase: TESTNET_PASSPHRASE, isTestnet: true },
+    '../config/database': {
+      query: async (text, params) => {
+        if (text.includes('FROM contributions')) {
+          return { rows: contributionRow ? [contributionRow] : [] };
+        }
+        if (text.includes('FROM users')) {
+          return { rows: [{ wallet_public_key: 'GOWNER' }] };
+        }
+        if (text.includes('UPDATE contributions')) {
+          updates.push(params);
+          return { rows: [] };
+        }
+        return { rows: [] };
+      },
+    },
+    '../services/stellarService': stellarStub,
+    '../services/contributionService': {
+      SLIPPAGE_BPS: 500,
+      buildContributionMemo: () => 'cp-c-1',
+      buildContributionIntent: async () => ({}),
+      submitCustodialContribution: async () => ({}),
+    },
+    '../services/sorobanService': {
+      triggerRefund: refundImpl || (async () => 'refund-tx-hash'),
+    },
+    '../middleware/auth': {
+      requireAuth: (req, _res, next) => {
+        req.user = { userId: 'user-1' };
+        next();
+      },
+    },
+    '../middleware/validation': {
+      contributionValidation: [],
+      contributionQuoteValidation: [],
+      validateRequest: (_req, _res, next) => next(),
+    },
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/contributions', router);
+  return { app, updates };
+}
+
+const FAILED_CONTRIBUTION = {
+  id: 'c-1',
+  sender_public_key: 'GOWNER',
+  escrow_contract_id: 'CESCROW',
+  campaign_status: 'failed',
+  contract_refunded_at: null,
+  contract_refund_tx_hash: null,
+};
+
+test('POST /api/contributions/:id/refund returns 400 for a funded campaign', async () => {
+  const { app } = buildRefundApp({
+    contributionRow: { ...FAILED_CONTRIBUTION, campaign_status: 'funded' },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions/c-1/refund')
+    .set('Authorization', 'Bearer token')
+    .send({});
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /only available for failed campaigns/i);
+  assert.equal(response.body.campaign_status, 'funded');
+  assert.ok(response.body.eligibility);
+});
+
+test('POST /api/contributions/:id/refund returns 400 for an active campaign', async () => {
+  const { app } = buildRefundApp({
+    contributionRow: { ...FAILED_CONTRIBUTION, campaign_status: 'active' },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions/c-1/refund')
+    .set('Authorization', 'Bearer token')
+    .send({});
+
+  assert.equal(response.status, 400);
+});
+
+test('POST /api/contributions/:id/refund rejects a duplicate refund with 409', async () => {
+  const { app } = buildRefundApp({
+    contributionRow: {
+      ...FAILED_CONTRIBUTION,
+      contract_refunded_at: '2026-06-01T00:00:00.000Z',
+      contract_refund_tx_hash: 'existing-tx',
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions/c-1/refund')
+    .set('Authorization', 'Bearer token')
+    .send({});
+
+  assert.equal(response.status, 409);
+  assert.match(response.body.error, /already been refunded/i);
+  assert.equal(response.body.tx_hash, 'existing-tx');
+});
+
+test('POST /api/contributions/:id/refund processes an eligible failed-campaign refund', async () => {
+  const { app, updates } = buildRefundApp({ contributionRow: FAILED_CONTRIBUTION });
+
+  const response = await request(app)
+    .post('/api/contributions/c-1/refund')
+    .set('Authorization', 'Bearer token')
+    .send({});
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.tx_hash, 'refund-tx-hash');
+  assert.equal(updates.length, 1);
+});

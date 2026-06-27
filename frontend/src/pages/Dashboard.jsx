@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import KycPrompt from '../components/KycPrompt';
@@ -20,10 +21,10 @@ import {
 } from 'recharts';
 
 const TABS = [
-  { id: 'campaigns', label: 'My Campaigns' },
-  { id: 'contributions', label: 'My Contributions' },
-  { id: 'analytics', label: 'Analytics' },
-  { id: 'api-keys', label: 'API Keys' },
+  { id: 'campaigns', labelKey: 'dashboard.tabs.campaigns' },
+  { id: 'contributions', labelKey: 'dashboard.tabs.contributions' },
+  { id: 'analytics', labelKey: 'dashboard.tabs.analytics' },
+  { id: 'api-keys', labelKey: 'dashboard.tabs.apiKeys' },
 ];
 
 function progressPct(campaign) {
@@ -54,11 +55,12 @@ function exportCSV(rows, filename) {
   a.click();
 }
 
-function MiniLineChart({ data, dataKey = 'total_amount', label = 'Amount' }) {
+function MiniLineChart({ data, dataKey = 'total_amount', label = '' }) {
+  const { t } = useTranslation();
   if (!data || data.length === 0) {
     return (
       <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
-        No contribution data yet.
+        {t('dashboard.noContributionData')}
       </p>
     );
   }
@@ -82,6 +84,7 @@ function MiniLineChart({ data, dataKey = 'total_amount', label = 'Amount' }) {
 }
 
 function MilestoneFunnel({ campaignId }) {
+  const { t } = useTranslation();
   const [milestones, setMilestones] = useState(null);
   const [campaign, setCampaign] = useState(null);
 
@@ -101,7 +104,7 @@ function MilestoneFunnel({ campaignId }) {
 
   return (
     <div style={{ marginTop: '0.75rem' }}>
-      <strong style={{ fontSize: '0.9rem' }}>Milestone Funnel</strong>
+      <strong style={{ fontSize: '0.9rem' }}>{t('dashboard.milestoneFunnel')}</strong>
       {milestones.map((m) => {
         const threshold = (Number(m.release_percentage) / 100) * target;
         const pct = Math.min(100, (raised / threshold) * 100);
@@ -110,7 +113,7 @@ function MilestoneFunnel({ campaignId }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem' }}>
               <span>{m.title}</span>
               <span style={{ color: 'var(--color-text-hint)' }}>
-                {m.release_percentage}% · {pct.toFixed(0)}% funded
+                {m.release_percentage}% · {t('dashboard.percentFunded', { percent: pct.toFixed(0) })}
               </span>
             </div>
             <div
@@ -139,6 +142,7 @@ function MilestoneFunnel({ campaignId }) {
 
 export default function Dashboard() {
   const { user, token, ready, updateUser } = useAuth();
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
   const activeTab =
@@ -151,6 +155,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
   const [loadingCampaigns, setLoadingCampaigns] = useState(true);
+  const [loadingContributions, setLoadingContributions] = useState(false);
   const [error, setError] = useState('');
   const [balance, setBalance] = useState(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
@@ -165,7 +170,9 @@ export default function Dashboard() {
 
   const isCreator = user?.role === 'creator' || user?.role === 'admin';
 
-  const tabs = isCreator ? [...TABS, { id: 'referrals', label: 'Referrals' }] : TABS;
+  const tabs = isCreator
+    ? [...TABS, { id: 'referrals', labelKey: 'dashboard.tabs.referrals' }]
+    : TABS;
 
   const kycRequired =
     user?.kyc_required_for_campaigns ??
@@ -188,21 +195,20 @@ export default function Dashboard() {
           updateUser(me);
           setStats(s);
           setCampaigns(c);
-          setContributions(contrib);
           // pre-fetch dashboard analytics for the analytics tab
           api
             .getUserDashboardAnalytics()
             .then(setDashAnalytics)
             .catch(() => {});
-        } else {
-          setContributions(results[0]);
-        }
-      })
-      .catch((err) => setError(err.message || 'Could not load dashboard'))
-      .finally(() => {
-        setLoadingCampaigns(false);
-        setLoadingContributions(false);
-      });
+        })
+        .catch((err) => setError(err.message || 'Could not load dashboard'))
+        .finally(() => {
+          setLoadingCampaigns(false);
+        });
+    } else {
+      setLoadingCampaigns(false);
+      setLoadingContributions(false);
+    }
   }, [user?.role, updateUser]);
 
   const loadCampaignAnalytics = useCallback((id) => {
@@ -296,7 +302,7 @@ export default function Dashboard() {
   if (!ready) {
     return (
       <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
-        <p style={{ color: 'var(--color-text-hint)' }}>Restoring your session...</p>
+        <p style={{ color: 'var(--color-text-hint)' }}>{t('dashboard.restoringSession')}</p>
       </main>
     );
   }
@@ -307,7 +313,7 @@ export default function Dashboard() {
 
   return (
     <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
-      <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>Dashboard</h1>
+      <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>{t('dashboard.title')}</h1>
 
       <div className="campaign-card" style={{ marginBottom: '1rem', minHeight: 'auto' }}>
         <div
@@ -320,18 +326,18 @@ export default function Dashboard() {
           }}
         >
           <div>
-            <strong>Wallet balance</strong>
+            <strong>{t('dashboard.walletBalance')}</strong>
             <div
               style={{ color: 'var(--color-text-hint)', fontSize: '0.88rem', marginTop: '0.2rem' }}
             >
               {balanceLoading
-                ? 'Loading…'
+                ? t('common.loading')
                 : balance
                   ? Object.entries(balance)
                       .filter(([, v]) => Number(v) > 0)
                       .map(([code, val]) => `${Number(val).toLocaleString()} ${code}`)
-                      .join(' · ') || 'No funds'
-                  : 'No funds'}
+                      .join(' · ') || t('dashboard.noFunds')
+                  : t('dashboard.noFunds')}
               {user?.wallet_public_key && (
                 <span style={{ marginLeft: '0.5rem' }}>
                   ·{' '}
@@ -341,21 +347,21 @@ export default function Dashboard() {
                     rel="noopener noreferrer"
                     style={{ color: 'var(--color-accent)' }}
                   >
-                    View on Stellar Expert ↗
+                    {t('dashboard.viewOnStellarExpert')}
                   </a>
                 </span>
               )}
             </div>
           </div>
           <button type="button" className="btn-primary" onClick={() => setShowDepositModal(true)}>
-            Add Funds
+            {t('dashboard.addFunds')}
           </button>
         </div>
       </div>
 
       <div
         role="tablist"
-        aria-label="Dashboard sections"
+        aria-label={t('dashboard.sectionsLabel')}
         style={{
           display: 'flex',
           gap: '0.5rem',
@@ -382,7 +388,9 @@ export default function Dashboard() {
               color: activeTab === tab.id ? '#fff' : 'var(--color-text-secondary)',
             }}
           >
-            {tab.label}
+          {tab.label
+            ? tab.label
+            : t(tab.labelKey)}
           </button>
         ))}
       </div>
@@ -392,14 +400,14 @@ export default function Dashboard() {
       {activeTab === 'campaigns' && (
         <section role="tabpanel" aria-labelledby="tab-campaigns">
           {loading ? (
-            <p style={{ color: 'var(--color-text-hint)' }}>Loading your campaigns...</p>
+            <p style={{ color: 'var(--color-text-hint)' }}>{t('dashboard.loadingCampaigns')}</p>
           ) : !isCreator ? (
             <p className="alert alert--info">
-              You have not created any campaigns.{' '}
+              {t('dashboard.noCreatedCampaigns')}{' '}
               <Link to="/campaigns/new" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
-                Start a campaign
+                {t('home.startCampaign')}
               </Link>{' '}
-              or view your backing history in My Contributions.
+              {t('dashboard.noCreatedCampaignsHint')}
             </p>
           ) : (
             <>
@@ -414,7 +422,7 @@ export default function Dashboard() {
                   }}
                 >
                   <div>
-                    <strong>Identity verification</strong>
+                    <strong>{t('dashboard.identityVerification')}</strong>
                     <div
                       style={{
                         color: 'var(--color-text-hint)',
@@ -422,9 +430,9 @@ export default function Dashboard() {
                         marginTop: '0.2rem',
                       }}
                     >
-                      Status: {user?.kyc_status || 'unverified'}
+                      {t('dashboard.status')}: {user?.kyc_status || t('dashboard.unverified')}
                       {user?.kyc_completed_at
-                        ? ` • Completed ${new Date(user.kyc_completed_at).toLocaleDateString()}`
+                        ? ` • ${t('dashboard.completedOn', { date: new Date(user.kyc_completed_at).toLocaleDateString() })}`
                         : ''}
                     </div>
                   </div>
@@ -447,32 +455,30 @@ export default function Dashboard() {
               >
                 <div className="campaign-card">
                   <strong>{stats?.total_campaigns || 0}</strong>
-                  <div>Total campaigns</div>
+                  <div>{t('dashboard.totalCampaigns')}</div>
                 </div>
                 <div className="campaign-card">
                   <strong>{Number(stats?.total_raised || 0).toLocaleString()}</strong>
-                  <div>Total raised</div>
+                  <div>{t('dashboard.totalRaised')}</div>
                 </div>
                 <div className="campaign-card">
                   <strong>{stats?.active_campaigns || 0}</strong>
-                  <div>Active</div>
+                  <div>{t('dashboard.active')}</div>
                 </div>
                 <div className="campaign-card">
                   <strong>{stats?.funded_campaigns || 0}</strong>
-                  <div>Funded</div>
+                  <div>{t('dashboard.funded')}</div>
                 </div>
               </div>
 
               <div style={{ marginBottom: '1rem' }}>
                 <Link to="/campaigns/new" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
-                  + Create new campaign
+                  {t('dashboard.createNewCampaign')}
                 </Link>
               </div>
 
               {campaigns.length === 0 ? (
-                <p className="alert alert--info">
-                  No campaigns yet. Create your first campaign to get started.
-                </p>
+                <p className="alert alert--info">{t('dashboard.noCampaigns')}</p>
               ) : (
                 <div style={{ display: 'grid', gap: '0.75rem' }}>
                   {campaigns.map((campaign) => {
@@ -519,9 +525,9 @@ export default function Dashboard() {
                             fontSize: '0.85rem',
                           }}
                         >
-                          {campaign.contributor_count} contributors
+                          {t('dashboard.contributorsCount', { count: campaign.contributor_count })}
                           {campaign.deadline
-                            ? ` • Deadline ${new Date(campaign.deadline).toLocaleDateString()}`
+                            ? ` • ${t('dashboard.deadline', { date: new Date(campaign.deadline).toLocaleDateString() })}`
                             : ''}
                         </div>
                         <div
@@ -536,7 +542,7 @@ export default function Dashboard() {
                             to={`/campaigns/${campaign.id}`}
                             style={{ color: 'var(--color-accent)', fontWeight: 600 }}
                           >
-                            View campaign
+                            {t('dashboard.viewCampaign')}
                           </Link>
                           {campaign.status === 'funded' && (
                             <Link
@@ -544,8 +550,8 @@ export default function Dashboard() {
                               style={{ color: 'var(--color-accent)', fontWeight: 600 }}
                             >
                               {campaign.has_milestones
-                                ? 'Manage milestone releases'
-                                : 'Request withdrawal'}
+                                ? t('dashboard.manageMilestoneReleases')
+                                : t('dashboard.requestWithdrawal')}
                             </Link>
                           )}
                         </div>
@@ -579,7 +585,7 @@ export default function Dashboard() {
                 marginBottom: '0.75rem',
               }}
             >
-              <strong>Contributions — last 30 days (all campaigns)</strong>
+              <strong>{t('dashboard.contributionsLast30Days')}</strong>
               {dashAnalytics?.recent_trend?.length > 0 && (
                 <button
                   type="button"
@@ -587,14 +593,14 @@ export default function Dashboard() {
                   style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
                   onClick={() => exportCSV(dashAnalytics.recent_trend, 'contributions_trend.csv')}
                 >
-                  Export CSV
+                  {t('dashboard.exportCsv')}
                 </button>
               )}
             </div>
             <MiniLineChart
               data={dashAnalytics?.recent_trend}
               dataKey="total_amount"
-              label="Amount"
+              label={t('dashboard.amount')}
             />
             {dashAnalytics?.overview && (
               <div
@@ -606,11 +612,11 @@ export default function Dashboard() {
                 }}
               >
                 {[
-                  ['Total raised', Number(dashAnalytics.overview.total_raised).toLocaleString()],
-                  ['Contributions', dashAnalytics.overview.total_contributions],
-                  ['Unique contributors', dashAnalytics.overview.unique_contributors],
+                  [t('dashboard.analyticsOverview.totalRaised'), Number(dashAnalytics.overview.total_raised).toLocaleString()],
+                  [t('dashboard.analyticsOverview.contributions'), dashAnalytics.overview.total_contributions],
+                  [t('dashboard.analyticsOverview.uniqueContributors'), dashAnalytics.overview.unique_contributors],
                   [
-                    'Avg contribution',
+                    t('dashboard.analyticsOverview.avgContribution'),
                     Number(dashAnalytics.overview.avg_contribution).toLocaleString(undefined, {
                       maximumFractionDigits: 2,
                     }),
@@ -634,11 +640,11 @@ export default function Dashboard() {
           {/* Per-campaign drill-down */}
           <div className="campaign-card" style={{ minHeight: 'auto' }}>
             <strong style={{ display: 'block', marginBottom: '0.6rem' }}>
-              Per-campaign analytics
+              {t('dashboard.perCampaignAnalytics')}
             </strong>
             {campaigns.length === 0 ? (
               <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
-                No campaigns yet.
+                {t('dashboard.noCampaigns')}
               </p>
             ) : (
               <div
@@ -673,7 +679,7 @@ export default function Dashboard() {
             )}
 
             {analyticsLoading && (
-              <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>Loading…</p>
+              <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>{t('common.loading')}</p>
             )}
 
             {campaignAnalytics && !analyticsLoading && (
@@ -689,13 +695,13 @@ export default function Dashboard() {
                 >
                   {[
                     [
-                      'Total raised',
+                      t('dashboard.analyticsOverview.totalRaised'),
                       `${Number(campaignAnalytics.campaign.raised_amount).toLocaleString()} ${campaignAnalytics.campaign.asset_type}`,
                     ],
-                    ['Contributions', campaignAnalytics.summary.total_contributions],
-                    ['Unique contributors', campaignAnalytics.summary.unique_contributors],
+                    [t('dashboard.analyticsOverview.contributions'), campaignAnalytics.summary.total_contributions],
+                    [t('dashboard.analyticsOverview.uniqueContributors'), campaignAnalytics.summary.unique_contributors],
                     [
-                      'Avg contribution',
+                      t('dashboard.analyticsOverview.avgContribution'),
                       Number(campaignAnalytics.summary.avg_contribution).toLocaleString(undefined, {
                         maximumFractionDigits: 2,
                       }),
@@ -720,7 +726,7 @@ export default function Dashboard() {
                     className="campaign-card"
                     style={{ minHeight: 'auto', marginBottom: '0.75rem', padding: '0.75rem' }}
                   >
-                    <strong style={{ fontSize: '0.9rem' }}>Contributor stats</strong>
+                    <strong style={{ fontSize: '0.9rem' }}>{t('dashboard.contributorStats')}</strong>
                     <div
                       style={{
                         marginTop: '0.4rem',
@@ -731,15 +737,15 @@ export default function Dashboard() {
                       }}
                     >
                       <span>
-                        First-time:{' '}
+                        {t('dashboard.firstTime')}:{' '}
                         <strong>{campaignContributors.first_time_contributors ?? 0}</strong>
                       </span>
                       <span>
-                        Returning: <strong>{campaignContributors.repeat_contributors ?? 0}</strong>
+                        {t('dashboard.returning')}: <strong>{campaignContributors.repeat_contributors ?? 0}</strong>
                       </span>
                       {campaignContributors.repeat_contributors > 0 && (
                         <span>
-                          Return rate:{' '}
+                          {t('dashboard.returnRate')}:{' '}
                           <strong>
                             {(
                               (campaignContributors.repeat_contributors /
@@ -754,7 +760,7 @@ export default function Dashboard() {
                     </div>
                     {campaignContributors.country_breakdown?.length > 0 && (
                       <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
-                        <span style={{ color: 'var(--color-text-hint)' }}>Top country: </span>
+                        <span style={{ color: 'var(--color-text-hint)' }}>{t('dashboard.topCountry')}: </span>
                         <strong>{campaignContributors.country_breakdown[0].country}</strong>
                         <span style={{ color: 'var(--color-text-hint)' }}>
                           {' '}
@@ -772,12 +778,12 @@ export default function Dashboard() {
 
                 {/* Time-series chart */}
                 <strong style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.9rem' }}>
-                  Contributions over time
+                  {t('dashboard.contributionsOverTime')}
                 </strong>
                 <MiniLineChart
                   data={campaignAnalytics.daily_buckets}
                   dataKey="total_amount"
-                  label="Amount"
+                  label={t('dashboard.amount')}
                 />
 
                 {/* Milestone funnel */}
@@ -800,7 +806,7 @@ export default function Dashboard() {
                       )
                     }
                   >
-                    Export CSV
+                    {t('dashboard.exportCsv')}
                   </button>
                 )}
               </>
@@ -812,14 +818,14 @@ export default function Dashboard() {
       {activeTab === 'referrals' && isCreator && (
         <section role="tabpanel" aria-labelledby="tab-referrals">
           {referralLoading ? (
-            <p style={{ color: 'var(--color-text-hint)' }}>Loading referral data...</p>
+            <p style={{ color: 'var(--color-text-hint)' }}>{t('dashboard.loadingReferrals')}</p>
           ) : campaigns.length === 0 ? (
             <p className="alert alert--info">
-              No campaigns yet.{' '}
+              {t('dashboard.noReferralCampaigns')}{' '}
               <Link to="/campaigns/new" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
-                Create a campaign
+                {t('dashboard.createCampaign')}
               </Link>{' '}
-              to start tracking referrals.
+              {t('dashboard.startTrackingReferrals')}
             </p>
           ) : (
             <div style={{ display: 'grid', gap: '0.75rem' }}>
@@ -849,7 +855,7 @@ export default function Dashboard() {
                     </div>
                     {refs.length === 0 ? (
                       <p style={{ color: 'var(--color-text-hint)', fontSize: '0.85rem' }}>
-                        No referral activity yet.
+                        {t('dashboard.noReferralActivity')}
                       </p>
                     ) : (
                       <>
@@ -862,10 +868,10 @@ export default function Dashboard() {
                           }}
                         >
                           <span>
-                            <strong>{totalClicks}</strong> total clicks
+                            <strong>{totalClicks}</strong> {t('dashboard.totalClicks')}
                           </span>
                           <span>
-                            <strong>{totalContributions}</strong> total conversions
+                            <strong>{totalContributions}</strong> {t('dashboard.totalConversions')}
                           </span>
                         </div>
                         <table
@@ -878,15 +884,15 @@ export default function Dashboard() {
                                 textAlign: 'left',
                               }}
                             >
-                              <th style={{ padding: '0.35rem 0.5rem' }}>Referrer</th>
+                              <th style={{ padding: '0.35rem 0.5rem' }}>{t('dashboard.referrer')}</th>
                               <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
-                                Clicks
+                                {t('dashboard.clicks')}
                               </th>
                               <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
-                                Conversions
+                                {t('dashboard.conversions')}
                               </th>
                               <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
-                                Rate
+                                {t('dashboard.rate')}
                               </th>
                             </tr>
                           </thead>

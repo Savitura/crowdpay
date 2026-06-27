@@ -1,8 +1,9 @@
 const router = require('express').Router();
 const crypto = require('crypto');
 const db = require('../config/database');
+const logger = require('../config/logger');
 const { requireAuth } = require('../middleware/auth');
-const { ALL_WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
+const { ALL_WEBHOOK_EVENTS, processDelivery } = require('../services/webhookDispatcher');
 
 function isValidWebhookUrl(urlString) {
   try {
@@ -102,6 +103,32 @@ router.get('/deliveries', requireAuth, async (req, res) => {
     params
   );
   res.json(rows);
+});
+
+router.post('/deliveries/:id/replay', requireAuth, async (req, res) => {
+  const { rows } = await db.query(
+    `UPDATE webhook_deliveries d
+     SET status = 'pending', attempt_count = 0, last_error = NULL,
+         response_status = NULL, response_body_snippet = NULL,
+         next_retry_at = NULL, delivered_at = NULL, updated_at = NOW()
+     FROM webhooks w
+     WHERE d.id = $1 AND d.webhook_id = w.id AND w.user_id = $2
+       AND d.status IN ('failed', 'retrying')
+     RETURNING d.id`,
+    [req.params.id, req.user.userId]
+  );
+
+  if (!rows.length) {
+    return res.status(404).json({ error: 'Failed delivery not found or not replayable' });
+  }
+
+  setImmediate(() => {
+    processDelivery(rows[0].id).catch((err) => {
+      logger.error('Failed to replay webhook delivery', { err });
+    });
+  });
+
+  res.json({ message: 'Replay queued', id: rows[0].id });
 });
 
 module.exports = router;

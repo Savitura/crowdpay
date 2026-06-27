@@ -15,22 +15,16 @@ import {
 const STATUS_OPTIONS = ['', 'active', 'funded', 'closed', 'failed'];
 const ASSET_OPTIONS = ['', 'USDC', 'XLM'];
 const SORT_OPTIONS = [
-  { value: 'newest', key: 'home.newest', label: 'Newest' },
-  { value: 'trending', label: 'Trending' },
-  { value: 'most_funded', key: 'home.mostFunded', label: 'Most funded' },
-  { value: 'closest_to_goal', key: 'home.closestToGoal', label: 'Closest to goal' },
+  { value: 'newest', key: 'home.newest', labelKey: 'home.newest' },
+  { value: 'trending', labelKey: 'home.sortTrending' },
+  { value: 'most_funded', key: 'home.mostFunded', labelKey: 'home.mostFunded' },
+  { value: 'closest_to_goal', key: 'home.closestToGoal', labelKey: 'home.closestToGoal' },
 ];
-const CATEGORY_LABELS = {
-  technology: 'Technology',
-  community: 'Community',
-  arts: 'Arts & Culture',
-  education: 'Education',
-  environment: 'Environment',
-  health: 'Health',
-  business: 'Business',
-  open_source: 'Open Source',
-  other: 'Other',
-};
+const QUICK_SORT_OPTIONS = [
+  { value: 'newest', labelKey: 'home.newest' },
+  { value: 'trending', labelKey: 'home.sortTrending' },
+  { value: 'funded', labelKey: 'home.sortMostFunded' },
+];
 const SEARCH_DEBOUNCE_MS = 450;
 
 export default function Home() {
@@ -252,7 +246,7 @@ export default function Home() {
 
       {featured.length > 0 && (
         <section style={{ marginBottom: '2.5rem' }}>
-          <h2 style={styles.sectionTitle}>⭐️ Featured campaigns</h2>
+          <h2 style={styles.sectionTitle}>{t('home.featuredCampaigns')}</h2>
           <div
             style={{
               ...styles.grid,
@@ -316,7 +310,7 @@ export default function Home() {
           >
             {SORT_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
-                {option.key ? t(option.key) : option.label}
+                {option.key ? t(option.key) : t(option.labelKey)}
               </option>
             ))}
           </select>
@@ -330,7 +324,7 @@ export default function Home() {
           className={category === '' ? 'pill-active' : 'pill'}
           onClick={() => setFilters({ category: '' })}
         >
-          All
+          {t('home.allCategories')}
         </button>
         {categoryCounts.map((cat) => (
           <button
@@ -339,24 +333,20 @@ export default function Home() {
             className={category === cat.category ? 'pill-active' : 'pill'}
             onClick={() => setFilters({ category: cat.category })}
           >
-            {CATEGORY_LABELS[cat.category] || cat.category} ({cat.count})
+            {t(`home.categories.${cat.category}`, { defaultValue: cat.category })} ({cat.count})
           </button>
         ))}
       </div>
 
       <div style={styles.sortBar}>
-        {[
-          { value: 'newest', label: 'Newest' },
-          { value: 'trending', label: '🔥 Trending' },
-          { value: 'funded', label: 'Most funded' },
-        ].map((opt) => (
+        {QUICK_SORT_OPTIONS.map((opt) => (
           <button
             key={opt.value}
             type="button"
             className={sort === opt.value ? 'pill-active' : 'pill'}
             onClick={() => handleSortChange(opt.value)}
           >
-            {opt.label}
+            {t(opt.labelKey)}
           </button>
         ))}
       </div>

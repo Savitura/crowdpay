@@ -6,7 +6,8 @@ const { triggerCampaignStatusActions } = require('./campaignStatusActions');
 const CAMPAIGN_STATUS_REFRESH_LOCK_KEY = 323001;
 
 const RETURNING_COLUMNS =
-  'id, title, target_amount, raised_amount, deadline, status, escrow_contract_id';
+  'id, title, creator_id, target_amount, raised_amount, deadline, status, escrow_contract_id, ' +
+  '(SELECT COUNT(*) FROM contributions WHERE contributions.campaign_id = campaigns.id) AS backer_count';
 
 const ATOMIC_TRANSITION_SQL = `
   SET status = CASE
@@ -39,6 +40,24 @@ function splitTransitionResults(rows) {
 }
 
 /**
+ * Emit a structured log line for a single campaign status transition.
+ * All numeric fields are cast to Number so log queries can apply arithmetic
+ * (e.g. alert when funded_count > threshold).
+ */
+function logTransition(campaign, oldStatus) {
+  logger.info('Campaign status transition', {
+    campaignId: campaign.id,
+    creatorId: campaign.creator_id,
+    oldStatus,
+    newStatus: campaign.status,
+    raisedAmount: Number(campaign.raised_amount),
+    goalAmount: Number(campaign.target_amount),
+    backerCount: Number(campaign.backer_count),
+    deadline: campaign.deadline,
+  });
+}
+
+/**
  * Reconcile status for one campaign (active → funded or failed based on goal/deadline).
  * Uses a single atomic UPDATE so concurrent callers cannot both observe and transition active rows.
  */
@@ -55,6 +74,7 @@ async function refreshCampaignStatus(campaignId, client) {
 
   const transitioned = rows[0] || null;
   if (transitioned) {
+    logTransition(transitioned, 'active');
     await triggerCampaignStatusActions(transitioned, 'active');
   }
 
@@ -94,9 +114,11 @@ async function refreshActiveCampaignStatuses() {
 
     if (funded.length || failed.length) {
       for (const campaign of funded) {
+        logTransition(campaign, 'active');
         await triggerCampaignStatusActions(campaign, 'active');
       }
       for (const campaign of failed) {
+        logTransition(campaign, 'active');
         await triggerCampaignStatusActions(campaign, 'active');
       }
 

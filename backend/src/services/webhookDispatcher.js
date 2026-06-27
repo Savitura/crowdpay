@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const db = require('../config/database');
 const logger = require('../config/logger');
+const { sendEmail } = require('./emailService');
 
 const WEBHOOK_EVENTS = {
   CAMPAIGN_FUNDED: 'campaign.funded',
@@ -14,13 +15,15 @@ const WEBHOOK_EVENTS = {
 const ALL_WEBHOOK_EVENTS = Object.values(WEBHOOK_EVENTS);
 const MAX_DELIVERY_ATTEMPTS = 5;
 const MAX_CAMPAIGN_DELIVERY_ATTEMPTS = 3;
+const WEBHOOK_RETRY_DELAYS_MS = [60_000, 300_000, 1_800_000, 7_200_000, 86_400_000];
 
 function hmacSignature(secret, bodyUtf8) {
   return crypto.createHmac('sha256', secret).update(bodyUtf8, 'utf8').digest('hex');
 }
 
 function backoffMs(attemptNumber) {
-  return Math.min(30_000, 1000 * 2 ** Math.max(0, attemptNumber - 1));
+  const boundedAttempt = Math.min(Math.max(attemptNumber, 1), WEBHOOK_RETRY_DELAYS_MS.length);
+  return WEBHOOK_RETRY_DELAYS_MS[boundedAttempt - 1];
 }
 
 function backoffMsForCampaign(attemptNumber) {
@@ -130,6 +133,32 @@ async function processDelivery(deliveryId) {
   );
 }
 
+async function notifyCreatorOfFailedDelivery(deliveryId, errMsg) {
+  try {
+    const { rows } = await db.query(
+      `SELECT u.email, u.name, w.url, d.event_type
+       FROM webhook_deliveries d
+       JOIN webhooks w ON w.id = d.webhook_id
+       JOIN users u ON u.id = w.user_id
+       WHERE d.id = $1`,
+      [deliveryId]
+    );
+
+    if (!rows.length || !rows[0].email) return;
+
+    const row = rows[0];
+    const subject = 'Webhook delivery failed after retries';
+    const text = `Hi ${row.name || 'there'},\n\nWe could not deliver your webhook for ${row.event_type} to ${row.url} after all retries. Last error: ${errMsg || 'unknown'}.`;
+    await sendEmail({
+      to: row.email,
+      subject,
+      text,
+    });
+  } catch (emailErr) {
+    logger.error('[webhooks] failed to notify creator', { deliveryId, err: emailErr.message });
+  }
+}
+
 async function scheduleRetry(deliveryId, attemptJustUsed, errMsg, httpStatus, snippet) {
   if (attemptJustUsed >= MAX_DELIVERY_ATTEMPTS) {
     await db.query(
@@ -138,6 +167,7 @@ async function scheduleRetry(deliveryId, attemptJustUsed, errMsg, httpStatus, sn
        WHERE id = $1`,
       [deliveryId, errMsg, httpStatus, snippet]
     );
+    await notifyCreatorOfFailedDelivery(deliveryId, errMsg);
     return;
   }
 
@@ -232,7 +262,6 @@ async function processCampaignWebhookDelivery(deliveryId) {
   );
 
   let res;
-  let responseText = '';
   try {
     res = await fetch(row.url, {
       method: 'POST',
@@ -245,7 +274,6 @@ async function processCampaignWebhookDelivery(deliveryId) {
       body: bodyUtf8,
       signal: AbortSignal.timeout(9000),
     });
-    responseText = await res.text();
   } catch (err) {
     await scheduleCampaignWebhookRetry(deliveryId, nextAttempt, err.message || String(err), null);
     return;
@@ -323,6 +351,7 @@ module.exports = {
   MAX_DELIVERY_ATTEMPTS,
   MAX_CAMPAIGN_DELIVERY_ATTEMPTS,
   hmacSignature,
+  backoffMs,
   emitWebhookEventForUser,
   emitWebhookEventForCampaign,
   processDelivery,
