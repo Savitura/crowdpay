@@ -56,6 +56,11 @@ const createCampaignValidation = [
     .withMessage('Title is required')
     .isLength({ max: 100 })
     .withMessage('Title must be at most 100 characters'),
+  body('category')
+    .optional({ nullable: true })
+    .customSanitizer(stripHtml)
+    .isLength({ max: 50 })
+    .withMessage('Category must be at most 50 characters'),
   body('description')
     .optional({ nullable: true })
     .customSanitizer(stripHtml)
@@ -210,6 +215,11 @@ const withdrawalValidation = [
 
 const getCampaignsValidation = [
   query('search').optional().customSanitizer(stripHtml),
+  query('category').optional().customSanitizer(stripHtml),
+  query('min_progress')
+    .optional()
+    .isFloat({ min: 0, max: 100 })
+    .withMessage('min_progress must be between 0 and 100'),
   query('status')
     .optional()
     .isIn(VALID_CAMPAIGN_STATUSES)

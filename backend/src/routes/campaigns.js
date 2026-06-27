@@ -189,7 +189,7 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
    *                   items:
    *                     type: object
    */
-  const { search, status, asset, sort = 'newest' } = req.query;
+  const { search, status, asset, category, min_progress, sort = 'newest' } = req.query;
   const limit = Number(req.query.limit || 20);
   const offset = Number(req.query.offset || 0);
   const filters = [];
@@ -204,6 +204,15 @@ router.get('/', getCampaignsValidation, validateRequest, async (req, res) => {
   if (asset) {
     params.push(asset);
     filters.push(`asset_type = $${params.length}`);
+  }
+  if (category) {
+    params.push(category);
+    filters.push(`category = $${params.length}`);
+  }
+  if (min_progress) {
+    params.push(Number(min_progress));
+    // Progress is (raised_amount / target_amount) * 100
+    filters.push(`(raised_amount / target_amount) * 100 >= $${params.length}`);
   }
   if (search) {
     params.push(search);
@@ -646,6 +655,7 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
    *               milestones: { type: array, items: { type: object }, nullable: true }
    *               min_contribution: { type: string, nullable: true }
    *               max_contribution: { type: string, nullable: true }
+   *               category: { type: string, nullable: true }
    *     responses:
    *       201:
    *         description: Created
@@ -654,7 +664,7 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
    *       403:
    *         description: Forbidden
    */
-  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution } = req.body;
+  const { title, description, target_amount, asset_type, deadline, milestones, min_contribution, max_contribution, category } = req.body;
 
   let normalizedMilestones;
   try {
@@ -695,11 +705,11 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
     const { rows } = await client.query(
       `INSERT INTO campaigns
          (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, 
-          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          min_contribution, max_contribution, escrow_contract_id, milestones_contract_id, category)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
       [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline, 
-       min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId]
+       min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId, category || null]
     );
     campaign = rows[0];
 

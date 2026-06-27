@@ -33,6 +33,8 @@ export default function Home() {
   const search = searchParams.get('search') || '';
   const status = searchParams.get('status') || '';
   const asset = searchParams.get('asset') || '';
+  const category = searchParams.get('category') || '';
+  const minProgress = searchParams.get('min_progress') || '';
   const sort = searchParams.get('sort') || 'newest';
   const limit = Number(searchParams.get('limit') || 20);
   const offset = Number(searchParams.get('offset') || 0);
@@ -50,14 +52,14 @@ export default function Home() {
     setListError('');
     setLoading(true);
     api
-      .getCampaigns({ search, status, asset, sort, limit, offset })
+      .getCampaigns({ search, status, asset, category, min_progress: minProgress, sort, limit, offset })
       .then((data) => {
         setCampaigns(data.campaigns || []);
         setTotal(data.total || 0);
       })
       .catch((err) => setListError(err.message || 'Could not load campaigns.'))
       .finally(() => setLoading(false));
-  }, [search, status, asset, sort, limit, offset]);
+  }, [search, status, asset, category, minProgress, sort, limit, offset]);
 
   const setFilters = (next) => {
     const params = new URLSearchParams(searchParams);
@@ -193,6 +195,27 @@ export default function Home() {
           </select>
         </label>
         <label style={styles.filterItem}>
+          Category
+          <input
+            value={category}
+            onChange={(e) => setFilters({ category: e.target.value })}
+            placeholder="e.g. tech, art"
+            style={styles.filterInput}
+          />
+        </label>
+        <label style={styles.filterItem}>
+          Min Progress (%)
+          <input
+            type="number"
+            min="0"
+            max="100"
+            value={minProgress}
+            onChange={(e) => setFilters({ min_progress: e.target.value })}
+            placeholder="e.g. 50"
+            style={styles.filterInput}
+          />
+        </label>
+        <label style={styles.filterItem}>
           Sort by
           <select
             value={sort}
@@ -207,6 +230,36 @@ export default function Home() {
           </select>
         </label>
       </div>
+
+      {(search || status || asset || category || minProgress) && (
+        <div style={styles.activeFilters}>
+          {search && (
+            <button className="filter-chip" onClick={() => setFilters({ search: '' })}>
+              Search: {search} ✕
+            </button>
+          )}
+          {status && (
+            <button className="filter-chip" onClick={() => setFilters({ status: '' })}>
+              Status: {status} ✕
+            </button>
+          )}
+          {asset && (
+            <button className="filter-chip" onClick={() => setFilters({ asset: '' })}>
+              Asset: {asset} ✕
+            </button>
+          )}
+          {category && (
+            <button className="filter-chip" onClick={() => setFilters({ category: '' })}>
+              Category: {category} ✕
+            </button>
+          )}
+          {minProgress && (
+            <button className="filter-chip" onClick={() => setFilters({ min_progress: '' })}>
+              Min Progress: {minProgress}% ✕
+            </button>
+          )}
+        </div>
+      )}
 
       <h2 style={styles.sectionTitle}>Active campaigns</h2>
 
@@ -289,6 +342,7 @@ const styles = {
   },
   filterItem: { display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.9rem', color: 'var(--color-text-primary)' },
   filterInput: { width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--color-border)', fontSize: '0.95rem' },
+  activeFilters: { display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.25rem' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', gap: '1.25rem' },
   pagination: { marginTop: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' },
   paginationInfo: { color: 'var(--color-text-secondary)', fontSize: '0.95rem' },

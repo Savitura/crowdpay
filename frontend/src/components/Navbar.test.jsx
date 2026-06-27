@@ -19,6 +19,10 @@ vi.mock('../context/AuthContext', () => ({
   useAuth: vi.fn(),
 }));
 
+vi.mock('../context/ThemeContext', () => ({
+  useTheme: () => ({ dark: false, toggleTheme: vi.fn() }),
+}));
+
 import { useAuth } from '../context/AuthContext';
 
 describe('Navbar', () => {

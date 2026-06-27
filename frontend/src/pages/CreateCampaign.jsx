@@ -37,6 +37,7 @@ export default function CreateCampaign() {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
     deadline: '',
+    category: '',
     milestones: [],
     min_contribution: '',
     max_contribution: '',
@@ -210,6 +211,7 @@ export default function CreateCampaign() {
           title: form.title.trim(),
           description: form.description.trim() || undefined,
           target_amount: form.target_amount,
+          category: form.category.trim() || undefined,
           asset_type: form.asset_type,
           deadline: form.deadline || undefined,
           min_contribution: form.min_contribution ? Number(form.min_contribution) : undefined,
@@ -366,6 +368,19 @@ export default function CreateCampaign() {
                 onChange={setField('target_amount')}
                 placeholder="0.00"
                 required
+              />
+            </div>
+
+            <div className="form-stack" style={{ marginTop: '1rem' }}>
+              <label className="label-strong" htmlFor="cc-category">
+                Category (Optional)
+              </label>
+              <input
+                id="cc-category"
+                value={form.category}
+                onChange={setField('category')}
+                placeholder="e.g. tech, art, community"
+                autoComplete="off"
               />
             </div>
 
