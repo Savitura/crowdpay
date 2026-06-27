@@ -158,8 +158,12 @@ function normalizeMilestonesInput(input) {
   });
 
   const totalUnits = normalized.reduce((sum, milestone) => sum + milestone.release_percentage_units, 0);
-  if (totalUnits !== 100 * MILESTONE_PERCENT_SCALE) {
-    throw new Error('Milestone release percentages must sum to exactly 100%');
+  const expectedUnits = 100 * MILESTONE_PERCENT_SCALE;
+  if (totalUnits > expectedUnits) {
+    throw new Error('Milestone percentages must not exceed 100%');
+  }
+  if (totalUnits < expectedUnits) {
+    throw new Error('Milestone percentages must sum to at least 100%');
   }
 
   return normalized;

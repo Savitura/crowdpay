@@ -224,9 +224,9 @@ router.post('/', requireAuth, async (req, res) => {
     }
 
     const newTotal = Number(stats[0]?.total_percentage || 0) + percentage;
-    if (newTotal > 100.0001) {
+    if (newTotal > 100.001) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Milestone release percentages cannot exceed 100% total' });
+      return res.status(400).json({ error: 'Milestone percentages must not exceed 100%' });
     }
 
     const { rows } = await client.query(
