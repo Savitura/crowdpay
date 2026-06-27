@@ -186,13 +186,23 @@ app.use("/api/emails", require("./routes/emails"));
 
 app.get("/health", async (_, res) => {
   try {
-    await db.query("SELECT 1");
+    await db.query('SELECT 1');
+    const { total, idle, waiting, max, utilisation } = db.getPoolMetrics();
+
+    if (utilisation > 90) {
+      Sentry.withScope((scope) => {
+        scope.setLevel('warning');
+        scope.setTag('pool.utilisation', utilisation);
+        scope.setContext('db.pool', { total, idle, waiting, max, utilisation });
+        Sentry.captureMessage('Database pool utilisation exceeds 90%');
+      });
+    }
+
     res.json({
       status: "ok",
       db: {
-        total: db.totalCount,
-        idle: db.idleCount,
-        waiting: db.waitingCount,
+        pool: { total, idle, waiting, max },
+        utilisation,
       },
     });
   } catch (err) {
