@@ -423,6 +423,11 @@ export default function ContributeModal({
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (quoteLoading) return;
+    if (isPathPayment && (!quote || !!quoteError)) {
+      setError('A valid quote is required before submitting.');
+      return;
+    }
     if (!destAmount || Number(destAmount) <= 0) {
       setError('Enter an amount greater than zero.');
       return;
@@ -910,15 +915,17 @@ export default function ContributeModal({
                 <button
                   type="submit"
                   className="btn-primary"
-                  disabled={loading || (isPathPayment && (quoteLoading || !!quoteError || !quote))}
+                  disabled={loading || quoteLoading || (isPathPayment && (!!quoteError || !quote))}
                 >
                   {loading
                     ? loadingLabel
-                    : paymentMethod === 'anchor'
-                      ? 'Open deposit flow'
-                      : paymentMethod === 'freighter'
-                        ? 'Review in Freighter'
-                        : 'Confirm payment'}
+                    : quoteLoading
+                      ? 'Loading quote…'
+                      : paymentMethod === 'anchor'
+                        ? 'Open deposit flow'
+                        : paymentMethod === 'freighter'
+                          ? 'Review in Freighter'
+                          : 'Confirm payment'}
                 </button>
               </div>
             </form>
