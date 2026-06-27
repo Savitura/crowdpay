@@ -1,6 +1,7 @@
 const { body, query, validationResult } = require('express-validator');
 const { Keypair } = require('@stellar/stellar-sdk');
 const { getSupportedAssetCodes } = require('../services/stellarService');
+const { stripHtml } = require('../lib/sanitize');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const VALID_CAMPAIGN_STATUSES = ['active', 'funded', 'closed', 'failed'];
@@ -13,10 +14,6 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 function isUuid(value) {
   return typeof value === 'string' && UUID_PATTERN.test(value);
-}
-
-function stripHtml(value = '') {
-  return String(value).replace(/<[^>]*>/g, '').trim();
 }
 
 const passwordValidation = [
