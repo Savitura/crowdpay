@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Link, useParams, useLocation, useNavigate } from 'react-router-dom';
+import DOMPurify from 'dompurify';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import ContributeModal from '../components/ContributeModal';
@@ -1952,7 +1953,7 @@ export default function Campaign() {
               lineHeight: 1.5,
             }}
             dangerouslySetInnerHTML={{
-              __html: markdownToHtml(update.body),
+              __html: DOMPurify.sanitize(markdownToHtml(update.body)),
             }}
           />
         </article>

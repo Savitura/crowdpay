@@ -5,7 +5,7 @@ const Sentry = require('@sentry/node');
 const { authenticateCpkApiKey } = require('../services/apiKeyService');
 
 function apiKeyPepper() {
-  return process.env.API_KEY_PEPPER || process.env.JWT_SECRET || 'dev-api-key-pepper';
+  return process.env.API_KEY_PEPPER;
 }
 
 function hashApiKey(rawKey) {

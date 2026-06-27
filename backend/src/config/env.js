@@ -3,6 +3,7 @@ const { validateWalletSecretConfig } = require('../services/walletSecrets');
 const REQUIRED = [
   'DATABASE_URL',
   'JWT_SECRET',
+  'API_KEY_PEPPER',
   'PLATFORM_SECRET_KEY',
   'STELLAR_NETWORK',
   'STELLAR_HORIZON_URL',
@@ -15,6 +16,13 @@ function validateEnv() {
     const list = missing.map((k) => `  - ${k}`).join('\n');
     process.stderr.write(
       `\n[crowdpay] Cannot start: missing required environment variables:\n${list}\n\nSet them in your .env file.\n\n`
+    );
+    process.exit(1);
+  }
+
+  if (process.env.API_KEY_PEPPER === process.env.JWT_SECRET) {
+    process.stderr.write(
+      '\n[crowdpay] Cannot start: API_KEY_PEPPER must differ from JWT_SECRET — secrets must not be reused across concerns.\n\n'
     );
     process.exit(1);
   }
