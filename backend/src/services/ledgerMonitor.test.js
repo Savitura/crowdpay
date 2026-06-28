@@ -2,33 +2,30 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const proxyquire = require('proxyquire').noCallThru();
 
-test('handlePayment updates stellar_transactions when a contribution row is created', async () => {
+function buildLedgerMonitor(mockQuery) {
   const updates = [];
-  const mockQuery = async (text, params) => {
-    if (text.includes('SELECT status FROM campaigns')) return { rows: [{ status: 'active' }] };
-    if (text.includes('SELECT id FROM contributions')) return { rows: [] };
-    if (text.includes('SELECT creator_id FROM campaigns')) {
-      return { rows: [{ creator_id: 'user-creator' }] };
-    }
-    if (text.includes('SELECT metadata FROM stellar_transactions')) {
-      return { rows: [{ metadata: { platform_fee_amount: 0.15 } }] };
-    }
-    if (text === 'BEGIN') return { rows: [] };
-    if (text.includes('INSERT INTO contributions')) return { rows: [{ id: 'contrib-id' }] };
-    if (text.includes('UPDATE campaigns')) return { rows: [] };
-    if (text.includes('UPDATE stellar_transactions') && text.includes("kind = 'contribution'")) {
+  const wrappedQuery = async (text, params) => {
+    if (text.includes('UPDATE campaigns') && text.includes('raised_amount = raised_amount +')) {
       updates.push({ text, params });
-      return { rows: [] };
+      return {
+        rows: [{
+          id: 'camp-1',
+          creator_id: 'user-creator',
+          title: 'Test Campaign',
+          raised_amount: '100',
+          target_amount: '100',
+          asset_type: 'XLM',
+          newly_funded: true,
+        }],
+      };
     }
-    if (text === 'COMMIT') return { rows: [] };
-    if (text === 'ROLLBACK') return { rows: [] };
-    return { rows: [] };
+    return mockQuery(text, params);
   };
 
   const mockDb = {
-    query: mockQuery,
+    query: wrappedQuery,
     connect: async () => ({
-      query: mockQuery,
+      query: wrappedQuery,
       release: () => {},
     }),
   };
@@ -36,11 +33,52 @@ test('handlePayment updates stellar_transactions when a contribution row is crea
   const ledgerMonitor = proxyquire('./ledgerMonitor', {
     '../config/database': mockDb,
     '../config/stellar': { server: {} },
+    './stellarService': { getCampaignBalance: async () => ({}) },
     './webhookDispatcher': {
       emitWebhookEventForUser: async () => {},
-      WEBHOOK_EVENTS: {},
+      emitWebhookEventForCampaign: async () => {},
+      WEBHOOK_EVENTS: { CAMPAIGN_FUNDED: 'campaign.funded', CONTRIBUTION_RECEIVED: 'contribution.received' },
+    },
+    './campaignStatusActions': {
+      triggerCampaignStatusActions: async () => {},
     },
   });
+
+  return { ledgerMonitor, updates };
+}
+
+test('handlePayment updates stellar_transactions when a contribution row is created', async () => {
+  const stellarUpdates = [];
+  const mockQuery = async (text, params) => {
+    if (text.includes('SELECT status FROM campaigns')) return { rows: [{ status: 'active' }] };
+    if (text.includes('SELECT id FROM contributions')) return { rows: [] };
+    if (text.includes('SELECT creator_id FROM campaigns')) {
+      return { rows: [{ creator_id: 'user-creator' }] };
+    }
+    if (text.includes('SELECT metadata FROM stellar_transactions')) {
+      return { rows: [{ metadata: { platform_fee_amount: 0.15, referral_code: 'refcode1' } }] };
+    }
+    if (text.includes('SELECT id FROM campaign_referrals')) {
+      return { rows: [{ id: 'ref-row-1' }] };
+    }
+    if (text.includes('contribution_count = contribution_count + 1')) {
+      return { rows: [] };
+    }
+    if (text === 'BEGIN') return { rows: [] };
+    if (text.includes('INSERT INTO contributions')) return { rows: [{ id: 'contrib-id' }] };
+    if (text.includes('UPDATE stellar_transactions') && text.includes("kind = 'contribution'")) {
+      stellarUpdates.push({ text, params });
+      return { rows: [] };
+    }
+    if (text.includes('SELECT raised_amount FROM campaigns')) {
+      return { rows: [{ raised_amount: '100' }] };
+    }
+    if (text === 'COMMIT') return { rows: [] };
+    if (text === 'ROLLBACK') return { rows: [] };
+    return { rows: [] };
+  };
+
+  const { ledgerMonitor, updates } = buildLedgerMonitor(mockQuery);
 
   const payment = {
     to: 'GWALLET',
@@ -53,6 +91,47 @@ test('handlePayment updates stellar_transactions when a contribution row is crea
 
   await ledgerMonitor.handlePayment('camp-1', 'GWALLET', payment);
 
+  assert.equal(stellarUpdates.length, 1);
+  assert.deepEqual(stellarUpdates[0].params, ['contrib-id', 'txhash-abc']);
   assert.equal(updates.length, 1);
-  assert.deepEqual(updates[0].params, ['contrib-id', 'txhash-abc']);
+  assert.match(updates[0].text, /raised_amount = raised_amount \+ \$1/);
+  assert.match(updates[0].text, /WHEN raised_amount \+ \$1 >= target_amount THEN 'funded'/);
+  assert.deepEqual(updates[0].params, [1, 'camp-1']);
+});
+
+test('handlePayment accepts contributions on funded campaigns', async () => {
+  let insertCalled = false;
+  const mockQuery = async (text) => {
+    if (text.includes('SELECT status FROM campaigns')) return { rows: [{ status: 'funded' }] };
+    if (text.includes('SELECT id FROM contributions')) return { rows: [] };
+    if (text.includes('SELECT creator_id FROM campaigns')) {
+      return { rows: [{ creator_id: 'user-creator' }] };
+    }
+    if (text.includes('SELECT metadata FROM stellar_transactions')) {
+      return { rows: [{ metadata: {} }] };
+    }
+    if (text === 'BEGIN') return { rows: [] };
+    if (text.includes('INSERT INTO contributions')) {
+      insertCalled = true;
+      return { rows: [{ id: 'contrib-id' }] };
+    }
+    if (text.includes('SELECT raised_amount FROM campaigns')) {
+      return { rows: [{ raised_amount: '110' }] };
+    }
+    if (text === 'COMMIT') return { rows: [] };
+    return { rows: [] };
+  };
+
+  const { ledgerMonitor } = buildLedgerMonitor(mockQuery);
+
+  await ledgerMonitor.handlePayment('camp-1', 'GWALLET', {
+    to: 'GWALLET',
+    from: 'GFROM',
+    type: 'payment',
+    asset_type: 'native',
+    amount: '10',
+    transaction_hash: 'txhash-overfund',
+  });
+
+  assert.equal(insertCalled, true);
 });

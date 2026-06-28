@@ -1,0 +1,488 @@
+const db = require('../config/database');
+const logger = require('../config/logger');
+const {
+  sendCampaignFundedCreatorEmail,
+  sendCampaignFundedContributorEmail,
+  sendCampaignFailedCreatorEmail,
+  sendCampaignFailedContributorEmail,
+  sendEmail,
+} = require('./emailService');
+const { createNotification } = require('./notifications');
+const {
+  emitWebhookEventForUser,
+  emitWebhookEventForCampaign,
+  WEBHOOK_EVENTS,
+} = require('./webhookDispatcher');
+const { buildWithdrawalTransaction } = require('./stellarService');
+const { insertWithdrawalPendingSignatures } = require('./stellarTransactionService');
+const { invokeContract, refund: contractRefund } = require('./sorobanService');
+
+function frontendBaseUrl() {
+  return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+}
+
+function refundActorUserId(creatorId) {
+  return process.env.PLATFORM_APPROVER_USER_ID || creatorId;
+}
+
+async function logWithdrawalEvent(client, { withdrawalRequestId, actorUserId, action, note, metadata }) {
+  const runner = client || db;
+  await runner.query(
+    `INSERT INTO withdrawal_approval_events
+       (withdrawal_request_id, actor_user_id, action, note, metadata)
+     VALUES ($1, $2, $3, $4, $5::jsonb)`,
+    [
+      withdrawalRequestId,
+      actorUserId || null,
+      action,
+      note || null,
+      metadata ? JSON.stringify(metadata) : null,
+    ]
+  );
+}
+
+/**
+ * Record a terminal status transition. Returns the event row id when newly inserted,
+ * or null when this transition was already processed (idempotency guard).
+ */
+async function recordStatusTransition(campaignId, previousStatus, newStatus) {
+  const { rows } = await db.query(
+    `INSERT INTO campaign_status_events (campaign_id, previous_status, new_status)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (campaign_id, new_status) DO NOTHING
+     RETURNING id`,
+    [campaignId, previousStatus, newStatus]
+  );
+  return rows[0]?.id || null;
+}
+
+async function loadCampaignContext(campaignId) {
+  const { rows } = await db.query(
+    `SELECT c.id, c.title, c.status, c.target_amount, c.raised_amount, c.deadline,
+            c.wallet_public_key, c.escrow_contract_id, c.creator_id,
+            u.email AS creator_email, u.name AS creator_name
+     FROM campaigns c
+     JOIN users u ON u.id = c.creator_id
+     WHERE c.id = $1`,
+    [campaignId]
+  );
+  return rows[0] || null;
+}
+
+async function loadContributorRecipients(campaignId) {
+  const { rows } = await db.query(
+    `SELECT DISTINCT ON (u.id) u.id, u.email, u.name
+     FROM contributions c
+     JOIN users u ON u.wallet_public_key = c.sender_public_key
+     WHERE c.campaign_id = $1
+       AND u.email IS NOT NULL
+     ORDER BY u.id, c.created_at ASC`,
+    [campaignId]
+  );
+  return rows;
+}
+
+async function syncSorobanStatus(campaign) {
+  if (!campaign.escrow_contract_id) return;
+
+  const platformSecret = process.env.PLATFORM_SECRET_KEY;
+  if (!platformSecret) {
+    logger.warn('Skipping Soroban status sync — PLATFORM_SECRET_KEY not configured', {
+      campaign_id: campaign.id,
+    });
+    return;
+  }
+
+  try {
+    await invokeContract({
+      contractId: campaign.escrow_contract_id,
+      method: 'get_total_raised',
+      args: [],
+      signerSecret: platformSecret,
+    });
+    logger.info('Soroban escrow contract verified for campaign status transition', {
+      campaign_id: campaign.id,
+      contract_id: campaign.escrow_contract_id,
+      status: campaign.status,
+    });
+  } catch (err) {
+    logger.error('Soroban escrow verification failed after status transition', {
+      campaign_id: campaign.id,
+      contract_id: campaign.escrow_contract_id,
+      error: err.message,
+    });
+  }
+}
+
+async function sendFundedEmails(campaign, contributors) {
+  const campaignUrl = `${frontendBaseUrl()}/campaigns/${campaign.id}`;
+  const creatorName = campaign.creator_name || 'there';
+
+  await sendCampaignFundedCreatorEmail({
+    to: campaign.creator_email,
+    campaignId: campaign.id,
+    creatorName,
+    campaignTitle: campaign.title,
+    campaignUrl,
+    targetAmount: campaign.target_amount,
+    raisedAmount: campaign.raised_amount,
+  });
+
+  await Promise.all(
+    contributors.map((contributor) =>
+      sendCampaignFundedContributorEmail({
+        to: contributor.email,
+        campaignId: campaign.id,
+        contributorName: contributor.name,
+        campaignTitle: campaign.title,
+        campaignUrl,
+      })
+    )
+  );
+}
+
+async function sendFailedEmails(campaign, contributors) {
+  const campaignUrl = `${frontendBaseUrl()}/campaigns/${campaign.id}`;
+  const refundsUrl = `${campaignUrl}?refund=1`;
+  const creatorName = campaign.creator_name || 'there';
+  const deadlineText = campaign.deadline
+    ? new Date(campaign.deadline).toDateString()
+    : 'the deadline';
+
+  await sendCampaignFailedCreatorEmail({
+    to: campaign.creator_email,
+    campaignId: campaign.id,
+    creatorName,
+    campaignTitle: campaign.title,
+    campaignUrl,
+    targetAmount: campaign.target_amount,
+    raisedAmount: campaign.raised_amount,
+    deadlineText,
+  });
+
+  await Promise.all(
+    contributors.map((contributor) =>
+      sendCampaignFailedContributorEmail({
+        to: contributor.email,
+        campaignId: campaign.id,
+        contributorName: contributor.name,
+        campaignTitle: campaign.title,
+        campaignUrl,
+        refundsUrl,
+      })
+    )
+  );
+}
+
+async function emitFundedWebhooks(campaign) {
+  const payload = {
+    campaign_id: campaign.id,
+    title: campaign.title,
+    target_amount: String(campaign.target_amount),
+    raised_amount: String(campaign.raised_amount),
+    status: 'funded',
+    timestamp: new Date().toISOString(),
+  };
+
+  await emitWebhookEventForUser(campaign.creator_id, WEBHOOK_EVENTS.CAMPAIGN_FUNDED, {
+    campaign: payload,
+  });
+  await emitWebhookEventForCampaign(campaign.id, WEBHOOK_EVENTS.CAMPAIGN_FUNDED, payload);
+}
+
+async function emitFailedWebhooks(campaign) {
+  const payload = {
+    campaign_id: campaign.id,
+    title: campaign.title,
+    target_amount: String(campaign.target_amount),
+    raised_amount: String(campaign.raised_amount),
+    status: 'failed',
+    deadline: campaign.deadline,
+    timestamp: new Date().toISOString(),
+  };
+
+  await emitWebhookEventForUser(campaign.creator_id, WEBHOOK_EVENTS.CAMPAIGN_FAILED, {
+    campaign: payload,
+  });
+  await emitWebhookEventForCampaign(campaign.id, WEBHOOK_EVENTS.CAMPAIGN_FAILED, payload);
+}
+
+async function createFundedNotifications(campaign, contributors) {
+  await createNotification(campaign.creator_id, {
+    type: 'goal_reached',
+    title: 'Goal reached!',
+    body: `Your campaign "${campaign.title}" has reached its funding goal.`,
+    link: `/campaigns/${campaign.id}`,
+  });
+
+  await Promise.all(
+    contributors.map((contributor) =>
+      createNotification(contributor.id, {
+        type: 'campaign_funded',
+        title: 'Campaign fully funded',
+        body: `"${campaign.title}" has reached its funding goal.`,
+        link: `/campaigns/${campaign.id}`,
+      })
+    )
+  );
+}
+
+async function createFailedNotifications(campaign, contributors) {
+  await createNotification(campaign.creator_id, {
+    type: 'campaign_failed',
+    title: 'Campaign ended',
+    body: `"${campaign.title}" ended without reaching its goal.`,
+    link: `/campaigns/${campaign.id}`,
+  });
+
+  await Promise.all(
+    contributors.map((contributor) =>
+      createNotification(contributor.id, {
+        type: 'refund_available',
+        title: 'Refund available',
+        body: `"${campaign.title}" ended below its goal. You can claim a refund.`,
+        link: `/campaigns/${campaign.id}?refund=1`,
+      })
+    )
+  );
+}
+
+/**
+ * Helper to retry refund operation with exponential backoff.
+ */
+async function refundWithRetry(escrowContractId, senderPublicKey, contributionId, maxRetries = 3) {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      await contractRefund(escrowContractId, senderPublicKey);
+      return;
+    } catch (err) {
+      attempt++;
+      if (attempt >= maxRetries) {
+        throw err;
+      }
+      const delay = process.env.NODE_ENV === 'test' ? 1 : Math.pow(2, attempt) * 1000;
+      logger.warn(`Refund attempt ${attempt} failed for contribution ${contributionId}. Retrying in ${delay}ms...`, { error: err.message });
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
+/**
+ * Queue refund withdrawal requests for each Stellar contribution on a failed campaign.
+ */
+async function queueFailedCampaignRefunds(campaignId, actorUserId) {
+  const { rows: campaigns } = await db.query(
+    `SELECT id, wallet_public_key, status, creator_id, escrow_contract_id, title FROM campaigns WHERE id = $1`,
+    [campaignId]
+  );
+  if (!campaigns.length || campaigns[0].status !== 'failed') {
+    return { refundsCreated: 0, refunds: [] };
+  }
+  const campaign = campaigns[0];
+
+  // If an escrow contract is deployed, trigger on-chain refunds first
+  if (campaign.escrow_contract_id && process.env.PLATFORM_SECRET_KEY) {
+    try {
+      const { rows: contributions } = await db.query(
+        `SELECT id, sender_public_key, amount, asset FROM contributions WHERE campaign_id = $1 AND refunded = FALSE ORDER BY created_at ASC`,
+        [campaignId]
+      );
+      for (const contribution of contributions) {
+        try {
+          await refundWithRetry(campaign.escrow_contract_id, contribution.sender_public_key, contribution.id);
+          await db.query(
+            `UPDATE contributions SET contract_refunded_at = NOW(), refunded = TRUE WHERE id = $1`,
+            [contribution.id]
+          );
+          logger.info('On-chain refund processed for failed campaign', {
+            campaign_id: campaignId,
+            contribution_id: contribution.id,
+          });
+
+          const { rows: users } = await db.query(
+            `SELECT email, name FROM users WHERE wallet_public_key = $1`,
+            [contribution.sender_public_key]
+          );
+
+          if (users.length && users[0].email) {
+            await sendEmail({
+              to: users[0].email,
+              subject: `Refund processed for campaign "${campaign.title}"`,
+              text: `Hi ${users[0].name || 'there'},\n\nYour contribution of ${contribution.amount} ${contribution.asset} to the campaign "${campaign.title}" has been refunded because the campaign did not meet its funding goal by the deadline.\n\nThank you for using CrowdPay.`,
+            }).catch((emailErr) => {
+              logger.error(`Failed to send refund email to ${users[0].email}:`, { error: emailErr.message });
+            });
+          }
+        } catch (err) {
+          logger.warn('On-chain refund failed for contribution, falling back to Stellar withdrawal', {
+            campaign_id: campaignId,
+            contribution_id: contribution.id,
+            error: err.message,
+          });
+        }
+      }
+    } catch (err) {
+      logger.error('On-chain refund batch failed, falling back to Stellar withdrawals', {
+        campaign_id: campaignId,
+        error: err.message,
+      });
+    }
+  }
+
+  const { rows: contributions } = await db.query(
+    `SELECT c.*
+       FROM contributions c
+       WHERE c.campaign_id = $1
+         AND c.refunded = FALSE
+         AND NOT EXISTS (
+           SELECT 1 FROM withdrawal_requests wr WHERE wr.contribution_id = c.id
+         )
+       ORDER BY c.created_at ASC`,
+    [campaignId]
+  );
+
+  if (!contributions.length) {
+    return { refundsCreated: 0, refunds: [] };
+  }
+
+  const client = await db.connect();
+  const created = [];
+  try {
+    await client.query('BEGIN');
+
+    for (const contribution of contributions) {
+      const unsignedXdr = await buildWithdrawalTransaction({
+        campaignWalletPublicKey: campaign.wallet_public_key,
+        destinationPublicKey: contribution.sender_public_key,
+        amount: contribution.amount,
+        asset: contribution.asset,
+      });
+
+      const { rows: requestRows } = await client.query(
+        `INSERT INTO withdrawal_requests
+           (campaign_id, requested_by, amount, destination_key, unsigned_xdr,
+            creator_signed, platform_signed, contribution_id, is_refund)
+         VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, $6, TRUE)
+         RETURNING id`,
+        [
+          campaignId,
+          actorUserId || refundActorUserId(campaign.creator_id),
+          contribution.amount,
+          contribution.sender_public_key,
+          unsignedXdr,
+          contribution.id,
+        ]
+      );
+
+      const refundRequestId = requestRows[0].id;
+      await logWithdrawalEvent(client, {
+        withdrawalRequestId: refundRequestId,
+        actorUserId: actorUserId || refundActorUserId(campaign.creator_id),
+        action: 'requested',
+        note: 'Automatic refund queued for failed campaign',
+        metadata: {
+          contribution_id: contribution.id,
+          amount: contribution.amount,
+          asset: contribution.asset,
+          automated: true,
+        },
+      });
+      await insertWithdrawalPendingSignatures(client, {
+        campaignId,
+        withdrawalRequestId: refundRequestId,
+        userId: actorUserId || refundActorUserId(campaign.creator_id),
+        unsignedXdr,
+        metadata: {
+          refund_for_contribution_id: contribution.id,
+          amount: contribution.amount,
+          asset: contribution.asset,
+          automated: true,
+        },
+      });
+
+      created.push({ contribution_id: contribution.id, refund_request_id: refundRequestId });
+    }
+
+    await client.query('COMMIT');
+    return { refundsCreated: created.length, refunds: created };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    logger.error('Automatic refund queue failed', { campaign_id: campaignId, error: err.message });
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function handleFundedTransition(campaign) {
+  const contributors = await loadContributorRecipients(campaign.id);
+
+  await Promise.all([
+    sendFundedEmails(campaign, contributors),
+    emitFundedWebhooks(campaign),
+    createFundedNotifications(campaign, contributors),
+    syncSorobanStatus(campaign),
+  ]);
+}
+
+async function handleFailedTransition(campaign) {
+  const contributors = await loadContributorRecipients(campaign.id);
+  const actorUserId = refundActorUserId(campaign.creator_id);
+
+  await Promise.all([
+    sendFailedEmails(campaign, contributors),
+    emitFailedWebhooks(campaign),
+    createFailedNotifications(campaign, contributors),
+  ]);
+
+  const refundResult = await queueFailedCampaignRefunds(campaign.id, actorUserId);
+  logger.info('Failed campaign refund queue completed', {
+    campaign_id: campaign.id,
+    refunds_created: refundResult.refundsCreated,
+  });
+}
+
+/**
+ * Run downstream actions after a campaign transitions to funded or failed.
+ * Idempotent: duplicate calls for the same terminal status are no-ops.
+ */
+async function triggerCampaignStatusActions(campaign, previousStatus) {
+  if (!campaign?.id || !campaign?.status) return;
+  if (campaign.status !== 'funded' && campaign.status !== 'failed') return;
+
+  const eventId = await recordStatusTransition(campaign.id, previousStatus, campaign.status);
+  if (!eventId) {
+    logger.debug('Campaign status actions already processed', {
+      campaign_id: campaign.id,
+      status: campaign.status,
+    });
+    return;
+  }
+
+  const fullCampaign = await loadCampaignContext(campaign.id);
+  if (!fullCampaign) {
+    logger.error('Campaign not found for status actions', { campaign_id: campaign.id });
+    return;
+  }
+
+  logger.info('Triggering campaign status actions', {
+    campaign_id: campaign.id,
+    previous_status: previousStatus,
+    new_status: campaign.status,
+    event_id: eventId,
+  });
+
+  if (campaign.status === 'funded') {
+    await handleFundedTransition(fullCampaign);
+  } else {
+    await handleFailedTransition(fullCampaign);
+  }
+}
+
+module.exports = {
+  triggerCampaignStatusActions,
+  recordStatusTransition,
+  queueFailedCampaignRefunds,
+  refundActorUserId,
+};

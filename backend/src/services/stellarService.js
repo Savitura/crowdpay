@@ -24,6 +24,13 @@ const {
   isTestnet,
   configuredAssets,
 } = require('../config/stellar');
+const Sentry = require("@sentry/node");
+const {
+  TX_TIMEOUT_CONTRIBUTION_S,
+  TX_TIMEOUT_WITHDRAWAL_S,
+  CUSTODIAL_ACCOUNT_BASE_RESERVE_XLM,
+  CUSTODIAL_ACCOUNT_PER_TRUSTLINE_XLM,
+} = require("../config/constants");
 
 const PLATFORM_KEYPAIR = Keypair.fromSecret(process.env.PLATFORM_SECRET_KEY);
 
@@ -65,9 +72,10 @@ function accountHasCreditTrustline(account, assetCode) {
 
 /** Minimum starting XLM for a new account that will hold `trustlineCount` trust lines (approximate). */
 function suggestedFundingXlmForCustodialAccount(trustlineCount) {
-  const base = 2.5;
-  const perTrustline = 0.51;
-  return (base + Math.max(0, trustlineCount) * perTrustline).toFixed(7);
+  return (
+    CUSTODIAL_ACCOUNT_BASE_RESERVE_XLM +
+    Math.max(0, trustlineCount) * CUSTODIAL_ACCOUNT_PER_TRUSTLINE_XLM
+  ).toFixed(7);
 }
 
 async function accountExistsOnLedger(publicKey) {
@@ -101,7 +109,7 @@ async function fundCustodialAccountFromPlatformIfNeeded(publicKey) {
         startingBalance,
       })
     )
-    .setTimeout(30)
+    .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
     .build();
 
   tx.sign(PLATFORM_KEYPAIR);
@@ -131,7 +139,7 @@ async function submitMissingTrustlinesForCustodialAccount(signerSecret) {
 
   if (!missing) return null;
 
-  const tx = builder.setTimeout(30).build();
+  const tx = builder.setTimeout(TX_TIMEOUT_CONTRIBUTION_S).build();
   tx.sign(keypair);
   const result = await server.submitTransaction(tx);
   return result.hash;
@@ -175,7 +183,7 @@ async function createCampaignWallet(creatorPublicKey) {
         startingBalance: campaignStartingBalance,
       })
     )
-    .setTimeout(30)
+    .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
     .build();
 
   tx.sign(PLATFORM_KEYPAIR);
@@ -212,7 +220,7 @@ async function createCampaignWallet(creatorPublicKey) {
         highThreshold: 2,
       })
     )
-    .setTimeout(30)
+    .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
     .build();
 
   setupTx.sign(campaignKeypair);
@@ -257,6 +265,7 @@ async function buildUnsignedContributionPayment({
     );
   }
 
+  const tx = builder.build();
   return tx.toXDR();
 }
 
@@ -271,6 +280,7 @@ async function prepareSignedContributionPayment({
   memo,
 }) {
   const senderKeypair = Keypair.fromSecret(senderSecret);
+  const { feeAmount } = calcFee(amount);
   const unsignedXdr = await buildUnsignedContributionPayment({
     senderPublicKey: senderKeypair.publicKey(),
     destinationPublicKey,
@@ -343,6 +353,7 @@ async function buildUnsignedContributionPathPayment({
     );
   }
 
+  const tx = builder.build();
   return tx.toXDR();
 }
 
@@ -359,6 +370,7 @@ async function prepareSignedContributionPathPayment({
   memo,
 }) {
   const senderKeypair = Keypair.fromSecret(senderSecret);
+  const { feeAmount } = calcFee(destAmount);
   const unsignedXdr = await buildUnsignedContributionPathPayment({
     senderPublicKey: senderKeypair.publicKey(),
     destinationPublicKey,
@@ -438,7 +450,39 @@ async function buildWithdrawalTransaction({
         amount: String(amount),
       })
     )
-    .setTimeout(300) // 5 minutes for both parties to sign
+    .setTimeout(TX_TIMEOUT_WITHDRAWAL_S) // platform approver may not be available immediately (see issue #128)
+    .build();
+
+  return tx.toXDR();
+}
+
+/**
+ * Build a batch refund transaction for a campaign wallet returning funds to multiple contributors.
+ * Returns the unsigned XDR.
+ */
+async function buildBatchRefundTransaction({
+  campaignWalletPublicKey,
+  refunds,
+}) {
+  const campaignAccount = await server.loadAccount(campaignWalletPublicKey);
+  const builder = new TransactionBuilder(campaignAccount, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  });
+
+  for (const refund of refunds) {
+    const stellarAsset = toStellarAsset(refund.asset);
+    builder.addOperation(
+      Operation.payment({
+        destination: refund.destinationPublicKey,
+        asset: stellarAsset,
+        amount: String(refund.amount),
+      })
+    );
+  }
+
+  const tx = builder
+    .setTimeout(TX_TIMEOUT_WITHDRAWAL_S) // 7 days
     .build();
 
   return tx.toXDR();
@@ -462,6 +506,20 @@ function signTransactionXdr({ xdr, signerSecret }) {
 function signatureCountFromXdr(xdr) {
   const tx = new Transaction(xdr, networkPassphrase);
   return tx.signatures.length;
+}
+
+/**
+ * Returns true if the XDR transaction's maxTime has already passed.
+ * Returns false if the XDR cannot be parsed or has no time bounds set.
+ */
+function isXdrExpired(xdr) {
+  try {
+    const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
+    const { timeBounds } = tx;
+    return !!(timeBounds && Math.floor(Date.now() / 1000) > Number(timeBounds.maxTime));
+  } catch {
+    return false;
+  }
 }
 
 async function submitPreparedTransaction(xdr) {
@@ -571,6 +629,7 @@ module.exports = {
   getAccountMultisigConfig,
   signTransactionXdr,
   signatureCountFromXdr,
+  isXdrExpired,
   submitSignedWithdrawal,
   recoverWalletFromSecret,
   getWalletTransactionHistory,

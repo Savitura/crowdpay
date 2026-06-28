@@ -3,7 +3,7 @@ const db = require('../config/database');
 const logger = require('../config/logger');
 const { requireAuth } = require('../middleware/auth');
 const { withDecryptedWalletSecret } = require('../services/walletSecrets');
-const { ensureCustodialAccountFundedAndTrusted, getSupportedAssetCodes } = require('../services/stellarService');
+const { ensureCustodialAccountFundedAndTrusted, getSupportedAssetCodes, getCampaignBalance } = require('../services/stellarService');
 const { buildContributionIntent, submitCustodialContribution } = require('../services/contributionService');
 const {
   getAvailableAnchors,
@@ -17,24 +17,28 @@ const {
 } = require('../services/anchorService');
 
 function mapSessionForClient(row) {
-  return {
+  const session = {
     id: row.id,
     anchor_id: row.anchor_id,
     anchor_transaction_id: row.anchor_transaction_id,
     anchor_asset: row.anchor_asset,
     anchor_amount: row.anchor_amount,
-    campaign_id: row.campaign_id,
-    contribution_amount: row.contribution_amount,
+    deposit_type: row.deposit_type,
     status: row.status,
     anchor_status: row.last_anchor_status,
     interactive_url: row.interactive_url,
     last_error: row.last_error,
-    contribution_tx_hash: row.contribution_tx_hash,
-    contribution_id: row.contribution_id,
-    conversion_quote: row.conversion_quote,
     updated_at: row.updated_at,
     completed_at: row.completed_at,
   };
+  if (row.campaign_id) {
+    session.campaign_id = row.campaign_id;
+    session.contribution_amount = row.contribution_amount;
+    session.contribution_tx_hash = row.contribution_tx_hash;
+    session.contribution_id = row.contribution_id;
+    session.conversion_quote = row.conversion_quote;
+  }
+  return session;
 }
 
 async function loadUserWallet(userId) {
@@ -206,6 +210,108 @@ router.post('/deposits/start', requireAuth, async (req, res) => {
   }
 });
 
+router.get('/sep24/assets', (_req, res) => {
+  res.json({
+    supported_assets: getSupportedAssetCodes(),
+    anchors: getAvailableAnchors().map(publicAnchorInfo),
+  });
+});
+
+router.post('/sep24/deposit', requireAuth, async (req, res) => {
+  const { amount, anchor_id } = req.body || {};
+  if (!amount || !anchor_id) {
+    return res.status(400).json({ error: 'amount and anchor_id are required' });
+  }
+
+  const anchor = getAnchorById(anchor_id);
+  if (!anchor) {
+    return res.status(404).json({ error: 'Anchor not found' });
+  }
+  if (!isAnchorConfigured(anchor)) {
+    return res.status(503).json({ error: 'This anchor is not configured for the current backend environment' });
+  }
+  if (!getSupportedAssetCodes().includes(anchor.assetCode)) {
+    return res.status(409).json({
+      error: `Anchor asset ${anchor.assetCode} is not enabled in CrowdPay's Stellar asset config`,
+    });
+  }
+
+  const { rows: userRows } = await db.query(
+    'SELECT id, wallet_public_key, wallet_secret_encrypted FROM users WHERE id = $1',
+    [req.user.userId]
+  );
+  if (!userRows.length) {
+    return res.status(404).json({ error: 'User wallet not found' });
+  }
+  const user = userRows[0];
+
+  try {
+    const session = await withDecryptedWalletSecret(
+      user.wallet_secret_encrypted,
+      {
+        userId: user.id,
+        walletPublicKey: user.wallet_public_key,
+      },
+      async (userSecret) => {
+        await ensureCustodialAccountFundedAndTrusted({
+          publicKey: user.wallet_public_key,
+          secret: userSecret,
+        });
+
+        const auth = await authenticateWithAnchor({
+          anchor,
+          userPublicKey: user.wallet_public_key,
+          userSecret,
+        });
+
+        const interactive = await startInteractiveDeposit({
+          anchor,
+          authToken: auth.token,
+          userPublicKey: user.wallet_public_key,
+          amount: String(amount),
+        });
+
+        const { rows } = await db.query(
+          `INSERT INTO anchor_deposits
+             (user_id, deposit_type, anchor_id, anchor_transaction_id, anchor_asset, anchor_amount,
+              interactive_url, anchor_auth_token, anchor_auth_expires_at, status, last_anchor_status, last_anchor_payload)
+           VALUES ($1, 'wallet', $2, $3, $4, $5, $6, $7, $8, 'pending_anchor', $9, $10::jsonb)
+           RETURNING *`,
+          [
+            user.id,
+            anchor.id,
+            interactive.id,
+            anchor.assetCode,
+            String(amount),
+            interactive.url,
+            auth.token,
+            auth.expiresAt,
+            interactive.status || 'pending_anchor',
+            JSON.stringify(interactive),
+          ]
+        );
+
+        return rows[0];
+      }
+    );
+
+    res.status(201).json({
+      ...mapSessionForClient(session),
+      anchor: publicAnchorInfo(anchor),
+    });
+  } catch (err) {
+    const status = err.statusCode || 503;
+    logger.error('SEP-24 wallet deposit start failed', {
+      anchor_id,
+      user_id: req.user.userId,
+      error: err.message,
+    });
+    res.status(status).json({
+      error: err.message || 'Could not start the wallet deposit flow right now',
+    });
+  }
+});
+
 router.get('/deposits/:id', requireAuth, async (req, res) => {
   const { rows } = await db.query(
     `SELECT ad.*, u.wallet_public_key, u.wallet_secret_encrypted
@@ -291,60 +397,72 @@ router.get('/deposits/:id', requireAuth, async (req, res) => {
     };
 
     if (remoteStatus === 'completed' && !session.contribution_tx_hash && !session.contribution_id) {
-      const campaign = await loadCampaignForContribution(session.campaign_id);
-      if (!campaign) {
+      if (session.deposit_type === 'wallet') {
         await db.query(
           `UPDATE anchor_deposits
-           SET status = 'failed',
-               last_error = $1,
+           SET status = 'completed',
+               last_error = NULL,
                updated_at = NOW(),
                completed_at = COALESCE(completed_at, NOW())
-           WHERE id = $2`,
-          ['Deposit completed, but the campaign is no longer accepting contributions.', session.id]
+           WHERE id = $1`,
+          [session.id]
         );
       } else {
-        try {
-          const result = await submitCustodialContribution({
-            campaign,
-            campaignId: session.campaign_id,
-            userId: req.user.userId,
-            walletPublicKey: session.wallet_public_key,
-            walletSecretEncrypted: session.wallet_secret_encrypted,
-            amount: session.contribution_amount,
-            sendAsset: session.anchor_asset,
-            intentOverride: session.contribution_flow,
-            anchorMetadata: {
-              anchor_id: session.anchor_id,
-              anchor_transaction_id: session.anchor_transaction_id,
-              anchor_asset: session.anchor_asset,
-              anchor_amount: session.anchor_amount,
-              anchor_deposit_id: session.id,
-            },
-          });
-
+        const campaign = await loadCampaignForContribution(session.campaign_id);
+        if (!campaign) {
           await db.query(
             `UPDATE anchor_deposits
-             SET status = 'contribution_submitted',
-                 contribution_tx_hash = $1,
-                 contribution_stellar_transaction_id = $2,
-                 last_error = NULL,
-                 updated_at = NOW()
-             WHERE id = $3`,
-            [result.txHash, result.stellarTransactionId, session.id]
-          );
-        } catch (err) {
-          logger.error('Anchor contribution submission failed after deposit completion', {
-            anchor_deposit_id: session.id,
-            error: err.message,
-          });
-          await db.query(
-            `UPDATE anchor_deposits
-             SET status = 'deposit_completed',
+             SET status = 'failed',
                  last_error = $1,
-                 updated_at = NOW()
+                 updated_at = NOW(),
+                 completed_at = COALESCE(completed_at, NOW())
              WHERE id = $2`,
-            [err.message || 'Contribution submission failed after deposit completion', session.id]
+            ['Deposit completed, but the campaign is no longer accepting contributions.', session.id]
           );
+        } else {
+          try {
+            const result = await submitCustodialContribution({
+              campaign,
+              campaignId: session.campaign_id,
+              userId: req.user.userId,
+              walletPublicKey: session.wallet_public_key,
+              walletSecretEncrypted: session.wallet_secret_encrypted,
+              amount: session.contribution_amount,
+              sendAsset: session.anchor_asset,
+              intentOverride: session.contribution_flow,
+              anchorMetadata: {
+                anchor_id: session.anchor_id,
+                anchor_transaction_id: session.anchor_transaction_id,
+                anchor_asset: session.anchor_asset,
+                anchor_amount: session.anchor_amount,
+                anchor_deposit_id: session.id,
+              },
+            });
+
+            await db.query(
+              `UPDATE anchor_deposits
+               SET status = 'contribution_submitted',
+                   contribution_tx_hash = $1,
+                   contribution_stellar_transaction_id = $2,
+                   last_error = NULL,
+                   updated_at = NOW()
+               WHERE id = $3`,
+              [result.txHash, result.stellarTransactionId, session.id]
+            );
+          } catch (err) {
+            logger.error('Anchor contribution submission failed after deposit completion', {
+              anchor_deposit_id: session.id,
+              error: err.message,
+            });
+            await db.query(
+              `UPDATE anchor_deposits
+               SET status = 'deposit_completed',
+                   last_error = $1,
+                   updated_at = NOW()
+               WHERE id = $2`,
+              [err.message || 'Contribution submission failed after deposit completion', session.id]
+            );
+          }
         }
       }
     }
@@ -362,6 +480,130 @@ router.get('/deposits/:id', requireAuth, async (req, res) => {
     res.status(err.statusCode || 502).json({
       error: err.message || 'Could not refresh anchor transaction status',
     });
+  }
+});
+
+router.post('/callbacks/sep24', async (req, res) => {
+  const transaction = req.body?.transaction || req.body;
+  if (!transaction || !transaction.id) {
+    return res.status(400).json({ error: 'Invalid callback payload' });
+  }
+
+  try {
+    const { rows } = await db.query(
+      `SELECT ad.*, u.wallet_public_key, u.wallet_secret_encrypted
+       FROM anchor_deposits ad
+       JOIN users u ON u.id = ad.user_id
+       WHERE ad.anchor_transaction_id = $1`,
+      [transaction.id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    const session = rows[0];
+    const remoteStatus = transaction.status;
+    let localStatus = session.status;
+
+    if (isAnchorFailureStatus(remoteStatus)) {
+      localStatus = 'failed';
+    } else if (remoteStatus === 'completed' && session.contribution_id) {
+      localStatus = 'completed';
+    } else if (remoteStatus === 'completed' && session.contribution_tx_hash) {
+      localStatus = 'contribution_submitted';
+    } else if (remoteStatus === 'completed') {
+      localStatus = 'deposit_completed';
+    } else {
+      localStatus = 'pending_anchor';
+    }
+
+    await db.query(
+      `UPDATE anchor_deposits
+       SET status = $1,
+           last_anchor_status = $2,
+           last_anchor_payload = $3::jsonb,
+           updated_at = NOW(),
+           completed_at = CASE WHEN $1 IN ('completed', 'failed') THEN COALESCE(completed_at, NOW()) ELSE completed_at END
+       WHERE id = $4`,
+      [localStatus, remoteStatus, JSON.stringify(transaction), session.id]
+    );
+
+    if (remoteStatus === 'completed' && !session.contribution_tx_hash && !session.contribution_id) {
+      if (session.deposit_type === 'wallet') {
+        await db.query(
+          `UPDATE anchor_deposits
+           SET status = 'completed',
+               last_error = NULL,
+               updated_at = NOW(),
+               completed_at = COALESCE(completed_at, NOW())
+           WHERE id = $1`,
+          [session.id]
+        );
+      } else {
+        const campaign = await loadCampaignForContribution(session.campaign_id);
+        if (!campaign) {
+          await db.query(
+            `UPDATE anchor_deposits
+             SET status = 'failed',
+                 last_error = $1,
+                 updated_at = NOW(),
+                 completed_at = COALESCE(completed_at, NOW())
+             WHERE id = $2`,
+            ['Deposit completed, but the campaign is no longer accepting contributions.', session.id]
+          );
+        } else {
+          try {
+            const result = await submitCustodialContribution({
+              campaign,
+              campaignId: session.campaign_id,
+              userId: session.user_id,
+              walletPublicKey: session.wallet_public_key,
+              walletSecretEncrypted: session.wallet_secret_encrypted,
+              amount: session.contribution_amount,
+              sendAsset: session.anchor_asset,
+              intentOverride: session.contribution_flow,
+              anchorMetadata: {
+                anchor_id: session.anchor_id,
+                anchor_transaction_id: session.anchor_transaction_id,
+                anchor_asset: session.anchor_asset,
+                anchor_amount: session.anchor_amount,
+                anchor_deposit_id: session.id,
+              },
+            });
+
+            await db.query(
+              `UPDATE anchor_deposits
+               SET status = 'contribution_submitted',
+                   contribution_tx_hash = $1,
+                   contribution_stellar_transaction_id = $2,
+                   last_error = NULL,
+                   updated_at = NOW()
+               WHERE id = $3`,
+              [result.txHash, result.stellarTransactionId, session.id]
+            );
+          } catch (err) {
+            logger.error('Anchor contribution submission failed after deposit completion via webhook', {
+              anchor_deposit_id: session.id,
+              error: err.message,
+            });
+            await db.query(
+              `UPDATE anchor_deposits
+               SET status = 'deposit_completed',
+                   last_error = $1,
+                   updated_at = NOW()
+               WHERE id = $2`,
+              [err.message || 'Contribution submission failed after deposit completion', session.id]
+            );
+          }
+        }
+      }
+    }
+
+    res.status(200).json({ success: true });
+  } catch (err) {
+    logger.error('Webhook processing failed', { error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

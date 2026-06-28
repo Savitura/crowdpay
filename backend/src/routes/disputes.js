@@ -1,8 +1,17 @@
 const router = require('express').Router();
 const db = require('../config/database');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { sendEmail } = require('../services/emailService');
+const {
+  sendDisputeOpenedCreatorEmail,
+  sendDisputeOpenedAdminEmail,
+  sendDisputeResolvedCreatorEmail,
+  sendDisputeResolvedContributorEmail,
+} = require('../services/emailService');
 const logger = require('../config/logger');
+
+function frontendBaseUrl() {
+  return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+}
 
 async function logDisputeEvent(client, { disputeId, actorId, action, note }) {
   await client.query(
@@ -74,16 +83,41 @@ router.post('/campaigns/:id/disputes', requireAuth, async (req, res) => {
 
     // Notify creator
     const { rows: creatorRows } = await db.query(
-      'SELECT email FROM users WHERE id = $1',
+      'SELECT email, name FROM users WHERE id = $1',
       [campaign.creator_id]
     );
     if (creatorRows.length) {
-      sendEmail({
+      sendDisputeOpenedCreatorEmail({
         to: creatorRows[0].email,
-        subject: `Dispute raised on your campaign "${campaign.title}"`,
-        text: `A contributor has raised a dispute on your campaign "${campaign.title}".\nReason: ${reason}\n\nThe platform team will review and contact you shortly.`,
-      });
+        disputeId: dispute.id,
+        creatorName: creatorRows[0].name,
+        campaignTitle: campaign.title,
+        reason,
+      }).catch((err) => logger.error('Dispute opened creator email failed', { error: err.message }));
     }
+
+    // Notify admins
+    const { rows: adminRows } = await db.query(
+      "SELECT email, name FROM users WHERE role = 'admin' OR is_admin = TRUE"
+    );
+    const { rows: raisedByRows } = await db.query(
+      'SELECT name FROM users WHERE id = $1',
+      [req.user.userId]
+    );
+    await Promise.all(
+      adminRows.map((admin) =>
+        sendDisputeOpenedAdminEmail({
+          to: admin.email,
+          disputeId: dispute.id,
+          campaignTitle: campaign.title,
+          campaignId: campaign.id,
+          raisedByName: raisedByRows[0]?.name || 'A contributor',
+          reason,
+          description: description.trim(),
+          adminUrl: `${frontendBaseUrl()}/admin/disputes/${dispute.id}`,
+        }).catch((err) => logger.error('Dispute opened admin email failed', { error: err.message }))
+      )
+    );
 
     logger.info('Dispute raised', { dispute_id: dispute.id, campaign_id: campaign.id });
     res.status(201).json(dispute);
@@ -203,15 +237,23 @@ router.patch('/disputes/:id', requireAuth, requireRole('admin'), async (req, res
 
       // Notify contributor
       const { rows: userRows } = await db.query(
-        'SELECT email FROM users WHERE id = $1',
+        'SELECT email, name FROM users WHERE id = $1',
         [dispute.raised_by]
       );
+      const { rows: disputeCampaignRows } = await db.query(
+        'SELECT title FROM campaigns WHERE id = $1',
+        [dispute.campaign_id]
+      );
       if (userRows.length) {
-        sendEmail({
+        sendDisputeResolvedContributorEmail({
           to: userRows[0].email,
-          subject: 'Your dispute has been resolved in your favour',
-          text: `Your dispute has been resolved. A refund has been initiated for your contributions. ${resolution_note ? `\nNote: ${resolution_note}` : ''}`,
-        });
+          disputeId: dispute.id,
+          outcome: 'resolved in your favor — a refund has been initiated',
+          contributorName: userRows[0].name,
+          campaignTitle: disputeCampaignRows[0]?.title,
+          resolutionNote: resolution_note,
+          campaignUrl: `${frontendBaseUrl()}/campaigns/${dispute.campaign_id}`,
+        }).catch((err) => logger.error('Dispute resolved contributor email failed', { error: err.message }));
       }
     }
 
@@ -223,6 +265,24 @@ router.patch('/disputes/:id', requireAuth, requireRole('admin'), async (req, res
          WHERE campaign_id = $1 AND status = 'on_hold' AND dispute_id = $2`,
         [dispute.campaign_id, dispute.id]
       );
+
+      const { rows: creatorRows } = await db.query(
+        `SELECT u.email, u.name, c.title
+         FROM campaigns c JOIN users u ON u.id = c.creator_id
+         WHERE c.id = $1`,
+        [dispute.campaign_id]
+      );
+      if (creatorRows.length) {
+        sendDisputeResolvedCreatorEmail({
+          to: creatorRows[0].email,
+          disputeId: dispute.id,
+          outcome: 'resolved in your favor — the dispute is closed',
+          creatorName: creatorRows[0].name,
+          campaignTitle: creatorRows[0].title,
+          resolutionNote: resolution_note,
+          campaignUrl: `${frontendBaseUrl()}/campaigns/${dispute.campaign_id}`,
+        }).catch((err) => logger.error('Dispute resolved creator email failed', { error: err.message }));
+      }
     }
 
     await client.query('COMMIT');

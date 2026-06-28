@@ -1,26 +1,22 @@
 const { body, query, validationResult } = require('express-validator');
 const { Keypair } = require('@stellar/stellar-sdk');
 const { getSupportedAssetCodes } = require('../services/stellarService');
+const { stripHtml } = require('../lib/sanitize');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const VALID_CAMPAIGN_STATUSES = ['active', 'funded', 'closed', 'failed'];
-const VALID_ORDER_BY = ['newest', 'ending_soon', 'most_funded', 'most_backed'];
+const VALID_ORDER_BY = ['newest', 'ending_soon', 'most_funded', 'most_backed', 'closest_to_goal', 'trending'];
+const VALID_CATEGORIES = [
+  'technology', 'community', 'arts', 'education',
+  'environment', 'health', 'business', 'open_source', 'other',
+];
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isUuid(value) {
   return typeof value === 'string' && UUID_PATTERN.test(value);
 }
 
-function stripHtml(value = '') {
-  return String(value).replace(/<[^>]*>/g, '').trim();
-}
-
-const registerValidation = [
-  body('email')
-    .trim()
-    .toLowerCase()
-    .isEmail()
-    .withMessage('Invalid email format'),
+const passwordValidation = [
   body('password')
     .isLength({ min: 8 })
     .withMessage('Password must be at least 8 characters long')
@@ -30,10 +26,38 @@ const registerValidation = [
     .withMessage('Password must include an uppercase letter')
     .matches(/[0-9]/)
     .withMessage('Password must include a number'),
+];
+
+const registerValidation = [
+  body('email')
+    .trim()
+    .toLowerCase()
+    .isEmail()
+    .withMessage('Invalid email format'),
+  ...passwordValidation,
   body('name')
     .customSanitizer(stripHtml)
     .notEmpty()
     .withMessage('Name is required'),
+  // Optional wallet_type for non-custodial registration
+  body('wallet_type')
+    .optional()
+    .isIn(['custodial', 'freighter'])
+    .withMessage('wallet_type must be custodial or freighter'),
+  // For freighter users we accept an optional wallet_public_key
+  body('wallet_public_key')
+    .optional()
+    .custom((value, { req }) => {
+      if (req.body.wallet_type === 'freighter') {
+        try {
+          Keypair.fromPublicKey(value);
+          return true;
+        } catch (_err) {
+          throw new Error('wallet_public_key must be a valid Stellar public key');
+        }
+      }
+      return true;
+    }),
   body('role')
     .optional()
     .isIn(['contributor', 'creator'])
@@ -47,6 +71,19 @@ const loginValidation = [
     .isEmail()
     .withMessage('Invalid email format'),
   body('password').notEmpty().withMessage('Password is required'),
+];
+
+const forgotPasswordValidation = [
+  body('email')
+    .trim()
+    .toLowerCase()
+    .isEmail()
+    .withMessage('Invalid email format'),
+];
+
+const resetPasswordValidation = [
+  body('token').notEmpty().withMessage('Reset token is required'),
+  ...passwordValidation,
 ];
 
 const createCampaignValidation = [
@@ -79,12 +116,14 @@ const createCampaignValidation = [
   body('deadline')
     .optional({ nullable: true, checkFalsy: true })
     .isISO8601()
-    .withMessage('Deadline must be a valid date')
+    .withMessage('Deadline must be a valid ISO 8601 date (preferably with Z suffix for UTC)')
     .custom((value) => {
+      // Treat deadline as UTC
       const deadline = new Date(value);
       const now = new Date();
-      if (deadline <= now) {
-        throw new Error('Deadline must be in the future');
+      // Convert both to UTC timestamps for comparison
+      if (deadline.getTime() <= now.getTime()) {
+        throw new Error('Deadline must be in the future (UTC)');
       }
       return true;
     }),
@@ -105,10 +144,20 @@ const createCampaignValidation = [
       }
       return true;
     }),
+  body('max_per_user')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ gt: 0 })
+    .withMessage('Per-contributor cap must be greater than zero')
+    .custom((value, { req }) => {
+      if (value && req.body.min_contribution && parseFloat(value) <= parseFloat(req.body.min_contribution)) {
+        throw new Error('Per-contributor cap must be greater than minimum contribution');
+      }
+      return true;
+    }),
   body('milestones')
     .optional({ nullable: true })
     .custom((value) => {
-      if (value == null) return true;
+      if (value == null) return true; // eslint-disable-line eqeqeq
       if (!Array.isArray(value)) throw new Error('Milestones must be an array');
       if (value.length > 10) throw new Error('Campaigns can define at most 10 milestones');
       for (const [index, milestone] of value.entries()) {
@@ -131,6 +180,10 @@ const createCampaignValidation = [
     .optional()
     .isBoolean()
     .withMessage('show_backer_amounts must be a boolean'),
+  body('category')
+    .optional({ nullable: true, checkFalsy: true })
+    .isIn(VALID_CATEGORIES)
+    .withMessage(`category must be one of: ${VALID_CATEGORIES.join(', ')}`),
 ];
 
 const createCampaignUpdateValidation = [
@@ -228,6 +281,10 @@ const getCampaignsValidation = [
     .optional()
     .isIn(SUPPORTED_ASSETS)
     .withMessage(`asset must be one of: ${SUPPORTED_ASSETS.join(', ')}`),
+  query('category')
+    .optional()
+    .isIn(VALID_CATEGORIES)
+    .withMessage(`category must be one of: ${VALID_CATEGORIES.join(', ')}`),
   query('sort')
     .optional()
     .isIn(VALID_ORDER_BY)
@@ -251,9 +308,20 @@ function validateRequest(req, res, next) {
   return res.status(400).json({ errors: result.array() });
 }
 
+function validateRequestAsError(req, res, next) {
+  const result = validationResult(req);
+  if (result.isEmpty()) return next();
+
+  return res.status(400).json({ error: result.array()[0].msg });
+}
+
 module.exports = {
   registerValidation,
   loginValidation,
+  forgotPasswordValidation,
+  resetPasswordValidation,
+  passwordValidation,
+  validateRequestAsError,
   createCampaignValidation,
   createCampaignUpdateValidation,
   contributionValidation,

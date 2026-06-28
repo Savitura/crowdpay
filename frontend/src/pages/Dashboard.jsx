@@ -1,237 +1,947 @@
-import React, { useEffect, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { useEffect, useState, useCallback } from 'react';
+import PropTypes from 'prop-types';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
-import MilestoneTracker from '../components/MilestoneTracker';
 import KycPrompt from '../components/KycPrompt';
 import VerificationBadge from '../components/VerificationBadge';
+import CampaignStatusBadge from '../components/CampaignStatusBadge';
+import ContributorDashboard from '../components/ContributorDashboard';
+import DepositModal from '../components/DepositModal';
+import ApiKeysPanel from '../components/ApiKeysPanel';
+import { stellarExpertAccountUrl } from '../config/stellar';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from 'recharts';
+
+const TABS = [
+  { id: 'campaigns', labelKey: 'dashboard.tabs.campaigns' },
+  { id: 'contributions', labelKey: 'dashboard.tabs.contributions' },
+  { id: 'analytics', labelKey: 'dashboard.tabs.analytics' },
+  { id: 'api-keys', labelKey: 'dashboard.tabs.apiKeys' },
+];
 
 function progressPct(campaign) {
   if (!Number(campaign.target_amount)) return 0;
   return Math.min(100, (Number(campaign.raised_amount) / Number(campaign.target_amount)) * 100);
 }
 
-export default function Dashboard() {
-  const { token, user, ready, updateUser } = useAuth();
-  const [stats, setStats] = useState(null);
-  const [campaigns, setCampaigns] = useState([]);
-  const [milestonesByCampaign, setMilestonesByCampaign] = useState({});
-  const [milestoneForms, setMilestoneForms] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [milestoneBusyId, setMilestoneBusyId] = useState(null);
+function exportCSV(rows, filename) {
+  if (!rows.length) return;
+  const keys = Object.keys(rows[0]);
+  const csv = [
+    keys.join(','),
+    ...rows.map((r) => keys.map((k) => JSON.stringify(r[k] ?? '')).join(',')),
+  ].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = filename;
+  a.click();
+}
 
-  const [disputesByCampaign, setDisputesByCampaign] = useState({});
+function MiniLineChart({ data, dataKey = 'total_amount', label = '' }) {
+  const { t } = useTranslation();
+  if (!data || data.length === 0) {
+    return (
+      <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
+        {t('dashboard.noContributionData')}
+      </p>
+    );
+  }
+  return (
+    <ResponsiveContainer width="100%" height={180}>
+      <LineChart data={data} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+        <XAxis dataKey="day" tick={{ fontSize: 11 }} tickFormatter={(d) => d?.slice(5)} />
+        <YAxis tick={{ fontSize: 11 }} width={48} />
+        <Tooltip formatter={(v) => [Number(v).toLocaleString(), label]} />
+        <Line
+          type="monotone"
+          dataKey={dataKey}
+          stroke="var(--color-accent)"
+          dot={false}
+          strokeWidth={2}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+function MilestoneFunnel({ campaignId }) {
+  const { t } = useTranslation();
+  const [milestones, setMilestones] = useState(null);
+  const [campaign, setCampaign] = useState(null);
 
   useEffect(() => {
-    if (!token) return;
-    Promise.all([api.getMe(token), api.getMyStats(token), api.getMyCampaigns(token)])
-      .then(async ([me, s, c]) => {
-        updateUser(me);
-        setStats(s);
-        setCampaigns(c);
-        const milestoneEntries = await Promise.all(
-          c.map(async (campaign) => {
-            const milestones = await api.getMilestones(campaign.id).catch(() => []);
-            return [campaign.id, milestones];
-          })
-        );
-        const milestoneMap = Object.fromEntries(milestoneEntries);
-        setMilestonesByCampaign(milestoneMap);
-        setMilestoneForms(
-          Object.fromEntries(
-            milestoneEntries.flatMap(([campaignId, milestones]) =>
-              milestones.map((milestone) => [
-                milestone.id,
-                {
-                  campaignId,
-                  evidence_url: milestone.evidence_url || '',
-                  destination_key: milestone.destination_key || '',
-                },
-              ])
-            )
-          )
-        );
-        // Load open disputes for each campaign
-        const disputeEntries = await Promise.all(
-          c.map(async (campaign) => {
-            const disputes = await api.getCampaignDisputes(campaign.id, token).catch(() => []);
-            return [campaign.id, disputes.filter((d) => d.status === 'open' || d.status === 'under_review')];
-          })
-        );
-        setDisputesByCampaign(Object.fromEntries(disputeEntries));
+    Promise.all([api.getMilestones(campaignId), api.getCampaign(campaignId)])
+      .then(([ms, c]) => {
+        setMilestones(ms);
+        setCampaign(c);
       })
-      .catch((err) => setError(err.message || 'Could not load dashboard'))
-      .finally(() => setLoading(false));
-  }, [token, updateUser]);
+      .catch(() => {});
+  }, [campaignId]);
 
-  function setMilestoneField(milestoneId, field, value) {
-    setMilestoneForms((current) => ({
-      ...current,
-      [milestoneId]: {
-        ...current[milestoneId],
-        [field]: value,
-      },
-    }));
-  }
+  if (!milestones || milestones.length === 0) return null;
 
-  async function submitMilestone(milestoneId) {
-    const payload = milestoneForms[milestoneId];
-    if (!payload?.evidence_url || !payload?.destination_key) {
-      setError('Milestone evidence and payout destination are both required.');
-      return;
+  const raised = Number(campaign?.raised_amount || 0);
+  const target = Number(campaign?.target_amount || 1);
+
+  return (
+    <div style={{ marginTop: '0.75rem' }}>
+      <strong style={{ fontSize: '0.9rem' }}>{t('dashboard.milestoneFunnel')}</strong>
+      {milestones.map((m) => {
+        const threshold = (Number(m.release_percentage) / 100) * target;
+        const pct = Math.min(100, (raised / threshold) * 100);
+        return (
+          <div key={m.id} style={{ marginTop: '0.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem' }}>
+              <span>{m.title}</span>
+              <span style={{ color: 'var(--color-text-hint)' }}>
+                {m.release_percentage}% · {t('dashboard.percentFunded', { percent: pct.toFixed(0) })}
+              </span>
+            </div>
+            <div
+              style={{
+                background: 'var(--color-surface)',
+                borderRadius: 99,
+                height: 6,
+                marginTop: 3,
+              }}
+            >
+              <div
+                style={{
+                  width: `${pct}%`,
+                  height: 6,
+                  borderRadius: 99,
+                  background: m.status === 'released' ? '#22c55e' : 'var(--color-accent)',
+                }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+MiniLineChart.propTypes = {
+  data: PropTypes.arrayOf(PropTypes.object),
+  dataKey: PropTypes.string,
+  label: PropTypes.string,
+};
+
+MilestoneFunnel.propTypes = {
+  campaignId: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+};
+
+export default function Dashboard() {
+  const { user, ready, updateUser } = useAuth();
+  const { t } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const activeTab =
+    tabParam === 'contributions'
+      ? 'contributions'
+      : tabParam === 'referrals'
+        ? 'referrals'
+        : 'campaigns';
+
+  const [stats, setStats] = useState(null);
+  const [campaigns, setCampaigns] = useState([]);
+  const [loadingCampaigns, setLoadingCampaigns] = useState(true);
+  const [loadingContributions, setLoadingContributions] = useState(false);
+  const [error, setError] = useState('');
+  const [balance, setBalance] = useState(null);
+  const [balanceLoading, setBalanceLoading] = useState(true);
+  const [showDepositModal, setShowDepositModal] = useState(false);
+  const [dashAnalytics, setDashAnalytics] = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [selectedCampaignId, setSelectedCampaignId] = useState(null);
+  const [campaignAnalytics, setCampaignAnalytics] = useState(null);
+  const [campaignContributors, setCampaignContributors] = useState(null);
+  const [referralData, setReferralData] = useState({});
+  const [referralLoading, setReferralLoading] = useState(false);
+
+  const isCreator = user?.role === 'creator' || user?.role === 'admin';
+
+  const visibleTabs = isCreator
+    ? [...TABS, { id: 'referrals', labelKey: 'dashboard.tabs.referrals' }]
+    : TABS.filter((t) => t.id !== 'analytics');
+
+  const kycRequired =
+    user?.kyc_required_for_campaigns ??
+    String(import.meta.env.VITE_KYC_REQUIRED_FOR_CAMPAIGNS ?? 'true').toLowerCase() !== 'false';
+
+  useEffect(() => {
+    if (!user) return;
+    setLoadingCampaigns(true);
+    setError('');
+
+    api
+      .getMyBalance()
+      .then((d) => setBalance(d.balance))
+      .catch(() => {})
+      .finally(() => setBalanceLoading(false));
+
+    if (isCreator) {
+      Promise.all([api.getMe(), api.getMyStats(), api.getMyCampaigns()])
+        .then(([me, s, c]) => {
+          updateUser(me);
+          setStats(s);
+          setCampaigns(c);
+          // pre-fetch dashboard analytics for the analytics tab
+          api
+            .getUserDashboardAnalytics()
+            .then(setDashAnalytics)
+            .catch(() => {});
+        })
+        .catch((err) => setError(err.message || 'Could not load dashboard'))
+        .finally(() => {
+          setLoadingCampaigns(false);
+        });
+    } else {
+      setLoadingCampaigns(false);
+      setLoadingContributions(false);
+    }
+  }, [isCreator, user, updateUser]);
+
+  const loadCampaignAnalytics = useCallback((id) => {
+    setSelectedCampaignId(id);
+    setCampaignAnalytics(null);
+    setCampaignContributors(null);
+    setAnalyticsLoading(true);
+    Promise.all([api.getCampaignAnalytics(id), api.getCampaignAnalyticsContributors(id)])
+      .then(([a, c]) => {
+        setCampaignAnalytics(a);
+        setCampaignContributors(c);
+      })
+      .catch(() => {})
+      .finally(() => setAnalyticsLoading(false));
+  }, []);
+  useEffect(() => {
+    if (!isCreator || activeTab !== 'referrals' || !campaigns.length) return;
+    setReferralLoading(true);
+    Promise.all(
+      campaigns.map((c) =>
+        api
+          .getReferralLeaderboard(c.id)
+          .then((rows) => [c.id, rows])
+          .catch(() => [c.id, []])
+      )
+    )
+      .then((results) => {
+        const data = {};
+        results.forEach(([id, rows]) => {
+          data[id] = rows;
+        });
+        setReferralData(data);
+      })
+      .catch(() => {})
+      .finally(() => setReferralLoading(false));
+  }, [isCreator, activeTab, campaigns]);
+
+  useEffect(() => {
+    const kycParam = searchParams.get('kyc');
+    if (!user || (kycParam !== 'returned' && kycParam !== 'started')) return undefined;
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 40;
+
+    async function pollKycStatus() {
+      while (!cancelled && attempts < maxAttempts) {
+        attempts += 1;
+        try {
+          const status = await api.getKycStatus();
+          if (status.status === 'verified' || status.status === 'rejected') {
+            const me = await api.getMe();
+            updateUser(me);
+            setSearchParams(
+              (params) => {
+                params.delete('kyc');
+                params.delete('reference');
+                return params;
+              },
+              { replace: true }
+            );
+            break;
+          }
+        } catch {
+          // keep polling until Persona webhook lands
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
     }
 
-    setMilestoneBusyId(milestoneId);
-    setError('');
-    try {
-      await api.submitMilestoneEvidence(
-        milestoneId,
-        {
-          evidence_url: payload.evidence_url.trim(),
-          destination_key: payload.destination_key.trim(),
-        },
-        token
-      );
-      const milestones = await api.getMilestones(payload.campaignId);
-      setMilestonesByCampaign((current) => ({ ...current, [payload.campaignId]: milestones }));
-    } catch (err) {
-      setError(err.message || 'Could not submit milestone evidence');
-    } finally {
-      setMilestoneBusyId(null);
+    pollKycStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, searchParams, updateUser, setSearchParams]);
+
+  function setTab(tabId) {
+    if (tabId === 'contributions') {
+      setSearchParams({ tab: 'contributions' });
+    } else if (tabId === 'analytics') {
+      setSearchParams({ tab: 'analytics' });
+    } else if (tabId === 'referrals') {
+      setSearchParams({ tab: 'referrals' });
+    } else if (tabId === 'api-keys') {
+      setSearchParams({ tab: 'api-keys' });
+    } else {
+      setSearchParams({});
     }
   }
 
   if (!ready) {
     return (
       <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
-        <p style={{ color: 'var(--color-text-hint)' }}>Restoring your session...</p>
+        <p style={{ color: 'var(--color-text-hint)' }}>{t('dashboard.restoringSession')}</p>
       </main>
     );
   }
-  if (!token) return <Navigate to="/login" replace />;
-  if (user?.role !== 'creator' && user?.role !== 'admin') return <Navigate to="/" replace />;
-  const kycRequired = user?.kyc_required_for_campaigns ?? (
-    String(import.meta.env.VITE_KYC_REQUIRED_FOR_CAMPAIGNS ?? 'true').toLowerCase() !== 'false'
-  );
+  if (!user) return <Navigate to="/login" replace />;
+
+  const loading = activeTab === 'campaigns' ? loadingCampaigns : loadingContributions;
 
   return (
     <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
-      <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>Creator Dashboard</h1>
+      <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>{t('dashboard.title')}</h1>
+
+      <div className="campaign-card" style={{ marginBottom: '1rem', minHeight: 'auto' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: '0.75rem',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+          }}
+        >
+          <div>
+            <strong>{t('dashboard.walletBalance')}</strong>
+            <div
+              style={{ color: 'var(--color-text-hint)', fontSize: '0.88rem', marginTop: '0.2rem' }}
+            >
+              {balanceLoading
+                ? t('common.loading')
+                : balance
+                  ? Object.entries(balance)
+                      .filter(([, v]) => Number(v) > 0)
+                      .map(([code, val]) => `${Number(val).toLocaleString()} ${code}`)
+                      .join(' · ') || t('dashboard.noFunds')
+                  : t('dashboard.noFunds')}
+              {user?.wallet_public_key && (
+                <span style={{ marginLeft: '0.5rem' }}>
+                  ·{' '}
+                  <a
+                    href={stellarExpertAccountUrl(user.wallet_public_key)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: 'var(--color-accent)' }}
+                  >
+                    {t('dashboard.viewOnStellarExpert')}
+                  </a>
+                </span>
+              )}
+            </div>
+          </div>
+          <button type="button" className="btn-primary" onClick={() => setShowDepositModal(true)}>
+            {t('dashboard.addFunds')}
+          </button>
+        </div>
+      </div>
+
+      <div
+        role="tablist"
+        aria-label={t('dashboard.sectionsLabel')}
+        style={{
+          display: 'flex',
+          gap: '0.5rem',
+          marginBottom: '1.25rem',
+          borderBottom: '1px solid var(--color-border)',
+          paddingBottom: '0.5rem',
+        }}
+      >
+        {visibleTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            onClick={() => setTab(tab.id)}
+            style={{
+              padding: '0.5rem 1rem',
+              borderRadius: '8px',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '0.9rem',
+              background: activeTab === tab.id ? 'var(--color-accent)' : 'transparent',
+              color: activeTab === tab.id ? '#fff' : 'var(--color-text-secondary)',
+            }}
+          >
+          {tab.label
+            ? tab.label
+            : t(tab.labelKey)}
+          </button>
+        ))}
+      </div>
+
       {error && <p className="alert alert--error">{error}</p>}
-      {loading ? (
-        <p style={{ color: 'var(--color-text-hint)' }}>Loading dashboard...</p>
-      ) : (
-        <>
-          <div className="campaign-card" style={{ marginBottom: '1rem', minHeight: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-              <div>
-                <strong>Identity verification</strong>
-                <div style={{ color: 'var(--color-text-hint)', fontSize: '0.88rem', marginTop: '0.2rem' }}>
-                  Status: {user?.kyc_status || 'unverified'}
-                  {user?.kyc_completed_at ? ` • Completed ${new Date(user.kyc_completed_at).toLocaleDateString()}` : ''}
+
+      {activeTab === 'campaigns' && (
+        <section role="tabpanel" aria-labelledby="tab-campaigns">
+          {loading ? (
+            <p style={{ color: 'var(--color-text-hint)' }}>{t('dashboard.loadingCampaigns')}</p>
+          ) : !isCreator ? (
+            <p className="alert alert--info">
+              {t('dashboard.noCreatedCampaigns')}{' '}
+              <Link to="/campaigns/new" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
+                {t('home.startCampaign')}
+              </Link>{' '}
+              {t('dashboard.noCreatedCampaignsHint')}
+            </p>
+          ) : (
+            <>
+              <div className="campaign-card" style={{ marginBottom: '1rem', minHeight: 'auto' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: '0.75rem',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                  }}
+                >
+                  <div>
+                    <strong>{t('dashboard.identityVerification')}</strong>
+                    <div
+                      style={{
+                        color: 'var(--color-text-hint)',
+                        fontSize: '0.88rem',
+                        marginTop: '0.2rem',
+                      }}
+                    >
+                      {t('dashboard.status')}: {user?.kyc_status || t('dashboard.unverified')}
+                      {user?.kyc_completed_at
+                        ? ` • ${t('dashboard.completedOn', { date: new Date(user.kyc_completed_at).toLocaleDateString() })}`
+                        : ''}
+                    </div>
+                  </div>
+                  <VerificationBadge status={user?.kyc_status} />
+                </div>
+                {kycRequired && user?.kyc_status !== 'verified' && (
+                  <div style={{ marginTop: '0.85rem' }}>
+                    <KycPrompt onUserUpdate={updateUser} />
+                  </div>
+                )}
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))',
+                  gap: '0.75rem',
+                  marginBottom: '1rem',
+                }}
+              >
+                <div className="campaign-card">
+                  <strong>{stats?.total_campaigns || 0}</strong>
+                  <div>{t('dashboard.totalCampaigns')}</div>
+                </div>
+                <div className="campaign-card">
+                  <strong>{Number(stats?.total_raised || 0).toLocaleString()}</strong>
+                  <div>{t('dashboard.totalRaised')}</div>
+                </div>
+                <div className="campaign-card">
+                  <strong>{stats?.active_campaigns || 0}</strong>
+                  <div>{t('dashboard.active')}</div>
+                </div>
+                <div className="campaign-card">
+                  <strong>{stats?.funded_campaigns || 0}</strong>
+                  <div>{t('dashboard.funded')}</div>
                 </div>
               </div>
-              <VerificationBadge status={user?.kyc_status} />
+
+              <div style={{ marginBottom: '1rem' }}>
+                <Link to="/campaigns/new" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
+                  {t('dashboard.createNewCampaign')}
+                </Link>
+              </div>
+
+              {campaigns.length === 0 ? (
+                <p className="alert alert--info">{t('dashboard.noCampaigns')}</p>
+              ) : (
+                <div style={{ display: 'grid', gap: '0.75rem' }}>
+                  {campaigns.map((campaign) => {
+                    const pct = progressPct(campaign).toFixed(1);
+                    return (
+                      <div key={campaign.id} className="campaign-card">
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            gap: '0.5rem',
+                            flexWrap: 'wrap',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <strong>{campaign.title}</strong>
+                          <CampaignStatusBadge status={campaign.status} />
+                        </div>
+                        <div style={{ marginTop: '0.35rem', fontSize: '0.9rem' }}>
+                          {Number(campaign.raised_amount).toLocaleString()} /{' '}
+                          {Number(campaign.target_amount).toLocaleString()} {campaign.asset_type}
+                        </div>
+                        <div
+                          style={{
+                            background: 'var(--color-surface)',
+                            borderRadius: '99px',
+                            height: '6px',
+                            marginTop: '0.35rem',
+                          }}
+                        >
+                          <div
+                            style={{
+                              background: 'var(--color-accent)',
+                              height: '6px',
+                              borderRadius: '99px',
+                              width: `${pct}%`,
+                            }}
+                          />
+                        </div>
+                        <div
+                          style={{
+                            marginTop: '0.35rem',
+                            color: 'var(--color-text-hint)',
+                            fontSize: '0.85rem',
+                          }}
+                        >
+                          {t('dashboard.contributorsCount', { count: campaign.contributor_count })}
+                          {campaign.deadline
+                            ? ` • ${t('dashboard.deadline', { date: new Date(campaign.deadline).toLocaleDateString() })}`
+                            : ''}
+                        </div>
+                        <div
+                          style={{
+                            marginTop: '0.6rem',
+                            display: 'flex',
+                            gap: '0.75rem',
+                            flexWrap: 'wrap',
+                          }}
+                        >
+                          <Link
+                            to={`/campaigns/${campaign.id}`}
+                            style={{ color: 'var(--color-accent)', fontWeight: 600 }}
+                          >
+                            {t('dashboard.viewCampaign')}
+                          </Link>
+                          {campaign.status === 'funded' && (
+                            <Link
+                              to={`/campaigns/${campaign.id}#withdrawals`}
+                              style={{ color: 'var(--color-accent)', fontWeight: 600 }}
+                            >
+                              {campaign.has_milestones
+                                ? t('dashboard.manageMilestoneReleases')
+                                : t('dashboard.requestWithdrawal')}
+                            </Link>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
+      {activeTab === 'contributions' && (
+        <section role="tabpanel" aria-labelledby="tab-contributions">
+          <ContributorDashboard />
+        </section>
+      )}
+
+      {activeTab === 'analytics' && isCreator && (
+        <section role="tabpanel" aria-labelledby="tab-analytics">
+          {/* Dashboard-wide trend */}
+          <div className="campaign-card" style={{ marginBottom: '1rem', minHeight: 'auto' }}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '0.5rem',
+                marginBottom: '0.75rem',
+              }}
+            >
+              <strong>{t('dashboard.contributionsLast30Days')}</strong>
+              {dashAnalytics?.recent_trend?.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                  onClick={() => exportCSV(dashAnalytics.recent_trend, 'contributions_trend.csv')}
+                >
+                  {t('dashboard.exportCsv')}
+                </button>
+              )}
             </div>
-            {kycRequired && user?.kyc_status !== 'verified' && (
-              <div style={{ marginTop: '0.85rem' }}>
-                <KycPrompt token={token} onUserUpdate={updateUser} />
+            <MiniLineChart
+              data={dashAnalytics?.recent_trend}
+              dataKey="total_amount"
+              label={t('dashboard.amount')}
+            />
+            {dashAnalytics?.overview && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))',
+                  gap: '0.5rem',
+                  marginTop: '0.75rem',
+                }}
+              >
+                {[
+                  [t('dashboard.analyticsOverview.totalRaised'), Number(dashAnalytics.overview.total_raised).toLocaleString()],
+                  [t('dashboard.analyticsOverview.contributions'), dashAnalytics.overview.total_contributions],
+                  [t('dashboard.analyticsOverview.uniqueContributors'), dashAnalytics.overview.unique_contributors],
+                  [
+                    t('dashboard.analyticsOverview.avgContribution'),
+                    Number(dashAnalytics.overview.avg_contribution).toLocaleString(undefined, {
+                      maximumFractionDigits: 2,
+                    }),
+                  ],
+                ].map(([label, val]) => (
+                  <div
+                    key={label}
+                    className="campaign-card"
+                    style={{ minHeight: 'auto', padding: '0.6rem 0.75rem' }}
+                  >
+                    <strong style={{ fontSize: '1rem' }}>{val}</strong>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--color-text-hint)' }}>
+                      {label}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
-            <div className="campaign-card"><strong>{stats?.total_campaigns || 0}</strong><div>Total campaigns</div></div>
-            <div className="campaign-card"><strong>{Number(stats?.total_raised || 0).toLocaleString()}</strong><div>Total raised</div></div>
-            <div className="campaign-card"><strong>{stats?.active_campaigns || 0}</strong><div>Active campaigns</div></div>
-            <div className="campaign-card"><strong>{stats?.in_progress_campaigns || 0}</strong><div>In progress</div></div>
+
+          {/* Per-campaign drill-down */}
+          <div className="campaign-card" style={{ minHeight: 'auto' }}>
+            <strong style={{ display: 'block', marginBottom: '0.6rem' }}>
+              {t('dashboard.perCampaignAnalytics')}
+            </strong>
+            {campaigns.length === 0 ? (
+              <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
+                {t('dashboard.noCampaigns')}
+              </p>
+            ) : (
+              <div
+                style={{
+                  display: 'flex',
+                  gap: '0.5rem',
+                  flexWrap: 'wrap',
+                  marginBottom: '0.75rem',
+                }}
+              >
+                {campaigns.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => loadCampaignAnalytics(c.id)}
+                    style={{
+                      padding: '0.3rem 0.75rem',
+                      borderRadius: 8,
+                      border: '1px solid var(--color-border)',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      fontSize: '0.82rem',
+                      background:
+                        selectedCampaignId === c.id ? 'var(--color-accent)' : 'transparent',
+                      color: selectedCampaignId === c.id ? '#fff' : 'var(--color-text-secondary)',
+                    }}
+                  >
+                    {c.title}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {analyticsLoading && (
+              <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>{t('common.loading')}</p>
+            )}
+
+            {campaignAnalytics && !analyticsLoading && (
+              <>
+                {/* Summary row */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))',
+                    gap: '0.5rem',
+                    marginBottom: '0.75rem',
+                  }}
+                >
+                  {[
+                    [
+                      t('dashboard.analyticsOverview.totalRaised'),
+                      `${Number(campaignAnalytics.campaign.raised_amount).toLocaleString()} ${campaignAnalytics.campaign.asset_type}`,
+                    ],
+                    [t('dashboard.analyticsOverview.contributions'), campaignAnalytics.summary.total_contributions],
+                    [t('dashboard.analyticsOverview.uniqueContributors'), campaignAnalytics.summary.unique_contributors],
+                    [
+                      t('dashboard.analyticsOverview.avgContribution'),
+                      Number(campaignAnalytics.summary.avg_contribution).toLocaleString(undefined, {
+                        maximumFractionDigits: 2,
+                      }),
+                    ],
+                  ].map(([label, val]) => (
+                    <div
+                      key={label}
+                      className="campaign-card"
+                      style={{ minHeight: 'auto', padding: '0.6rem 0.75rem' }}
+                    >
+                      <strong style={{ fontSize: '1rem' }}>{val}</strong>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--color-text-hint)' }}>
+                        {label}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Contributor stats card */}
+                {campaignContributors && (
+                  <div
+                    className="campaign-card"
+                    style={{ minHeight: 'auto', marginBottom: '0.75rem', padding: '0.75rem' }}
+                  >
+                    <strong style={{ fontSize: '0.9rem' }}>{t('dashboard.contributorStats')}</strong>
+                    <div
+                      style={{
+                        marginTop: '0.4rem',
+                        display: 'flex',
+                        gap: '1.5rem',
+                        flexWrap: 'wrap',
+                        fontSize: '0.88rem',
+                      }}
+                    >
+                      <span>
+                        {t('dashboard.firstTime')}:{' '}
+                        <strong>{campaignContributors.first_time_contributors ?? 0}</strong>
+                      </span>
+                      <span>
+                        {t('dashboard.returning')}: <strong>{campaignContributors.repeat_contributors ?? 0}</strong>
+                      </span>
+                      {campaignContributors.repeat_contributors > 0 && (
+                        <span>
+                          {t('dashboard.returnRate')}:{' '}
+                          <strong>
+                            {(
+                              (campaignContributors.repeat_contributors /
+                                ((campaignContributors.repeat_contributors || 0) +
+                                  (campaignContributors.first_time_contributors || 0))) *
+                              100
+                            ).toFixed(0)}
+                            %
+                          </strong>
+                        </span>
+                      )}
+                    </div>
+                    {campaignContributors.country_breakdown?.length > 0 && (
+                      <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--color-text-hint)' }}>{t('dashboard.topCountry')}: </span>
+                        <strong>{campaignContributors.country_breakdown[0].country}</strong>
+                        <span style={{ color: 'var(--color-text-hint)' }}>
+                          {' '}
+                          (
+                          {campaignContributors.country_breakdown
+                            .map((c) => `${c.country} ${c.contributor_count}`)
+                            .slice(0, 3)
+                            .join(' · ')}
+                          )
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Time-series chart */}
+                <strong style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.9rem' }}>
+                  {t('dashboard.contributionsOverTime')}
+                </strong>
+                <MiniLineChart
+                  data={campaignAnalytics.daily_buckets}
+                  dataKey="total_amount"
+                  label={t('dashboard.amount')}
+                />
+
+                {/* Milestone funnel */}
+                <MilestoneFunnel campaignId={selectedCampaignId} />
+
+                {/* CSV export */}
+                {campaignAnalytics.daily_buckets?.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    style={{ marginTop: '0.75rem', fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                    onClick={() =>
+                      exportCSV(
+                        campaignAnalytics.daily_buckets.map((r) => ({
+                          date: r.day,
+                          contributions: r.contribution_count,
+                          amount: r.total_amount,
+                        })),
+                        `campaign_${selectedCampaignId}_analytics.csv`
+                      )
+                    }
+                  >
+                    {t('dashboard.exportCsv')}
+                  </button>
+                )}
+              </>
+            )}
           </div>
-          <div style={{ marginBottom: '1rem' }}>
-            <Link to="/campaigns/new" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>+ Create new campaign</Link>
-          </div>
-          {campaigns.length === 0 ? (
-            <p className="alert alert--info">No campaigns yet. Create your first campaign to get started.</p>
+        </section>
+      )}
+
+      {activeTab === 'referrals' && isCreator && (
+        <section role="tabpanel" aria-labelledby="tab-referrals">
+          {referralLoading ? (
+            <p style={{ color: 'var(--color-text-hint)' }}>{t('dashboard.loadingReferrals')}</p>
+          ) : campaigns.length === 0 ? (
+            <p className="alert alert--info">
+              {t('dashboard.noReferralCampaigns')}{' '}
+              <Link to="/campaigns/new" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
+                {t('dashboard.createCampaign')}
+              </Link>{' '}
+              {t('dashboard.startTrackingReferrals')}
+            </p>
           ) : (
             <div style={{ display: 'grid', gap: '0.75rem' }}>
               {campaigns.map((campaign) => {
-                const pct = progressPct(campaign).toFixed(1);
-                const milestones = milestonesByCampaign[campaign.id] || [];
+                const refs = referralData[campaign.id] || [];
+                const totalClicks = refs.reduce((s, r) => s + r.click_count, 0);
+                const totalContributions = refs.reduce((s, r) => s + r.contribution_count, 0);
                 return (
                   <div key={campaign.id} className="campaign-card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <strong>{campaign.title}</strong>
-                      <span>{campaign.status}</span>
-                    </div>
-                    <div style={{ marginTop: '0.35rem', fontSize: '0.9rem' }}>
-                      {Number(campaign.raised_amount).toLocaleString()} / {Number(campaign.target_amount).toLocaleString()} {campaign.asset_type}
-                    </div>
-                    <div style={{ background: 'var(--color-surface)', borderRadius: '99px', height: '6px', marginTop: '0.35rem' }}>
-                      <div style={{ background: 'var(--color-accent)', height: '6px', borderRadius: '99px', width: `${pct}%` }} />
-                    </div>
-                    <div style={{ marginTop: '0.35rem', color: 'var(--color-text-hint)', fontSize: '0.85rem' }}>
-                      {campaign.contributor_count} contributors {campaign.deadline ? `• Deadline ${new Date(campaign.deadline).toLocaleDateString()}` : ''}
-                    </div>
-                    <div style={{ marginTop: '0.45rem', display: 'flex', gap: '0.75rem' }}>
-                      <Link to={`/campaigns/${campaign.id}`} style={{ color: 'var(--color-accent)' }}>View</Link>
-                      <Link to={`/campaigns/${campaign.id}`} style={{ color: 'var(--color-accent)' }}>
-                        {milestones.length ? 'View milestone releases' : 'Manage withdrawals'}
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        gap: '0.5rem',
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                        marginBottom: '0.75rem',
+                      }}
+                    >
+                      <Link
+                        to={`/campaigns/${campaign.id}`}
+                        style={{ color: 'var(--color-accent)', fontWeight: 700 }}
+                      >
+                        {campaign.title}
                       </Link>
+                      <CampaignStatusBadge status={campaign.status} />
                     </div>
-                    {(disputesByCampaign[campaign.id] || []).length > 0 && (
-                      <div className="alert alert--error" style={{ marginTop: '0.75rem', fontSize: '0.88rem' }} role="alert">
-                        ⚠ <strong>{disputesByCampaign[campaign.id].length} open dispute{disputesByCampaign[campaign.id].length > 1 ? 's' : ''}</strong> raised against this campaign.
-                        Withdrawals are frozen until the platform resolves the dispute.
-                      </div>
-                    )}
-                    {milestones.length > 0 && (
-                      <div style={{ marginTop: '1rem' }}>
-                        <MilestoneTracker milestones={milestones} assetType={campaign.asset_type} />
-                        <div style={{ display: 'grid', gap: '0.75rem', marginTop: '1rem' }}>
-                          {milestones
-                            .filter((milestone) => milestone.status !== 'released')
-                            .map((milestone) => (
-                              <div key={milestone.id} style={{ border: '1px solid var(--color-border-lighter)', borderRadius: '12px', padding: '0.85rem', background: 'var(--color-surface)' }}>
-                                <strong>{milestone.title}</strong>
-                                <div style={{ fontSize: '0.84rem', color: 'var(--color-text-hint)', marginTop: '0.25rem' }}>
-                                  Submit proof and destination so CrowdPay can release this tranche after approval.
-                                </div>
-                                {milestone.review_note && (
-                                  <div className="alert alert--info" style={{ marginTop: '0.6rem', fontSize: '0.82rem' }}>
-                                    {milestone.review_note}
-                                  </div>
-                                )}
-                                <input
-                                  style={{ marginTop: '0.6rem' }}
-                                  placeholder="Evidence URL"
-                                  value={milestoneForms[milestone.id]?.evidence_url || ''}
-                                  onChange={(e) => setMilestoneField(milestone.id, 'evidence_url', e.target.value)}
-                                />
-                                <input
-                                  style={{ marginTop: '0.6rem' }}
-                                  placeholder="Payout destination (G...)"
-                                  value={milestoneForms[milestone.id]?.destination_key || ''}
-                                  onChange={(e) => setMilestoneField(milestone.id, 'destination_key', e.target.value)}
-                                />
-                                <button
-                                  type="button"
-                                  className="btn-primary"
-                                  style={{ marginTop: '0.6rem', width: '100%' }}
-                                  disabled={milestoneBusyId === milestone.id}
-                                  onClick={() => submitMilestone(milestone.id)}
-                                >
-                                  {milestoneBusyId === milestone.id ? 'Submitting…' : 'Submit milestone evidence'}
-                                </button>
-                              </div>
-                            ))}
+                    {refs.length === 0 ? (
+                      <p style={{ color: 'var(--color-text-hint)', fontSize: '0.85rem' }}>
+                        {t('dashboard.noReferralActivity')}
+                      </p>
+                    ) : (
+                      <>
+                        <div
+                          style={{
+                            display: 'flex',
+                            gap: '1rem',
+                            marginBottom: '0.75rem',
+                            fontSize: '0.85rem',
+                          }}
+                        >
+                          <span>
+                            <strong>{totalClicks}</strong> {t('dashboard.totalClicks')}
+                          </span>
+                          <span>
+                            <strong>{totalContributions}</strong> {t('dashboard.totalConversions')}
+                          </span>
                         </div>
-                      </div>
+                        <table
+                          style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}
+                        >
+                          <thead>
+                            <tr
+                              style={{
+                                borderBottom: '2px solid var(--color-border)',
+                                textAlign: 'left',
+                              }}
+                            >
+                              <th style={{ padding: '0.35rem 0.5rem' }}>{t('dashboard.referrer')}</th>
+                              <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
+                                {t('dashboard.clicks')}
+                              </th>
+                              <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
+                                {t('dashboard.conversions')}
+                              </th>
+                              <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
+                                {t('dashboard.rate')}
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {refs.map((r) => (
+                              <tr
+                                key={r.referral_code}
+                                style={{ borderBottom: '1px solid var(--color-border-lighter)' }}
+                              >
+                                <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600 }}>
+                                  {r.referrer_name}
+                                </td>
+                                <td style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
+                                  {r.click_count}
+                                </td>
+                                <td style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
+                                  {r.contribution_count}
+                                </td>
+                                <td style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
+                                  {r.click_count > 0
+                                    ? `${((r.contribution_count / r.click_count) * 100).toFixed(0)}%`
+                                    : '-'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </>
                     )}
                   </div>
                 );
               })}
             </div>
           )}
-        </>
+        </section>
+      )}
+
+      {activeTab === 'api-keys' && <ApiKeysPanel />}
+
+      {showDepositModal && (
+        <DepositModal
+          onClose={() => setShowDepositModal(false)}
+          onSuccess={() => {
+            api
+              .getMyBalance()
+              .then((d) => setBalance(d.balance))
+              .catch(() => {});
+          }}
+        />
       )}
     </main>
   );

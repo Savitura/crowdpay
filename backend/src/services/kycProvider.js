@@ -108,13 +108,25 @@ function extractWebhookResult(payload = {}) {
     payload.user_id ||
     null;
 
+  const reason =
+    nestedAttrs['decline-reason'] ||
+    nestedAttrs.decline_reason ||
+    nestedAttrs['failure-reason'] ||
+    nestedAttrs.failure_reason ||
+    attrs['decline-reason'] ||
+    attrs.decline_reason ||
+    attrs.note ||
+    payload.reason ||
+    null;
+
   const normalized = String(status || eventName).toLowerCase();
   let kycStatus = 'pending';
   if (
     normalized.includes('approved') ||
     normalized.includes('completed') ||
     normalized.includes('verified') ||
-    normalized === 'success'
+    normalized === 'success' ||
+    normalized.includes('passed')
   ) {
     kycStatus = 'verified';
   } else if (
@@ -126,11 +138,50 @@ function extractWebhookResult(payload = {}) {
     kycStatus = 'rejected';
   }
 
-  return { providerReference: reference, userId, kycStatus };
+  return { providerReference: reference, userId, kycStatus, reason };
+}
+
+function verifyPersonaWebhookSignature(rawBody, signatureHeader) {
+  const secret = process.env.PERSONA_WEBHOOK_SECRET;
+  if (!secret) {
+    return process.env.NODE_ENV === 'test' || String(process.env.KYC_PROVIDER || '').toLowerCase() === 'dev';
+  }
+
+  if (!signatureHeader || typeof signatureHeader !== 'string') {
+    return false;
+  }
+
+  const parts = signatureHeader.split(',');
+  let timestamp = null;
+  const signatures = [];
+  for (const part of parts) {
+    const [key, value] = part.split('=');
+    if (key === 't') timestamp = value;
+    if (key === 'v1' && value) signatures.push(value);
+  }
+
+  if (!timestamp || !signatures.length) {
+    return false;
+  }
+
+  const bodyStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody || '');
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(`${timestamp}.${bodyStr}`)
+    .digest('hex');
+
+  return signatures.some((sig) => {
+    try {
+      return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+    } catch {
+      return false;
+    }
+  });
 }
 
 module.exports = {
   createKycSession,
   extractWebhookResult,
   isKycRequiredForCampaigns,
+  verifyPersonaWebhookSignature,
 };

@@ -1,4 +1,27 @@
 node_modules/
 .env
+backend/.env
+frontend/.env
 dist/
 *.local
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Agent / tool local config
+.claude/
+.kiro/
+
+# Docker
+.dockerignore.soroban/

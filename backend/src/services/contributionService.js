@@ -7,8 +7,7 @@ const {
   getPathPaymentQuote,
   ensureCustodialAccountFundedAndTrusted,
 } = require('./stellarService');
-
-const SLIPPAGE_BPS = 500; // 5.00%
+const { SLIPPAGE_BPS } = require('../config/constants');
 
 function buildContributionMemo(campaignId) {
   return `cp-${String(campaignId).replace(/-/g, '').slice(0, 25)}`.slice(0, 28);
@@ -86,6 +85,7 @@ async function submitCustodialContribution({
   intentOverride,
   anchorMetadata,
   displayName,
+  referralCode,
 }) {
   const intent =
     intentOverride ||
@@ -142,6 +142,7 @@ async function submitCustodialContribution({
   }
   const metadata = {
     ...intent.flowMetadata,
+    ...(referralCode ? { referral_code: referralCode } : {}),
     ...(anchorMetadata
       ? {
           anchor: {
@@ -175,7 +176,6 @@ async function submitCustodialContribution({
 }
 
 module.exports = {
-  SLIPPAGE_BPS,
   buildContributionIntent,
   buildContributionMemo,
   submitCustodialContribution,

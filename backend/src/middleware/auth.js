@@ -1,9 +1,11 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const db = require('../config/database');
+const Sentry = require('@sentry/node');
+const { authenticateCpkApiKey } = require('../services/apiKeyService');
 
 function apiKeyPepper() {
-  return process.env.API_KEY_PEPPER || process.env.JWT_SECRET || 'dev-api-key-pepper';
+  return process.env.API_KEY_PEPPER;
 }
 
 function hashApiKey(rawKey) {
@@ -12,11 +14,20 @@ function hashApiKey(rawKey) {
 
 async function authenticate(req) {
   const header = req.headers.authorization;
-  if (!header || !header.startsWith('Bearer ')) {
-    throw new Error('Missing token');
-  }
-  const token = header.slice(7).trim();
+  const token = req.cookies?.cp_token || (header && header.startsWith('Bearer ') ? header.slice(7).trim() : null);
   if (!token) throw new Error('Missing token');
+
+  if (token.startsWith('cpk_')) {
+    const auth = await authenticateCpkApiKey(token);
+    if (!auth) throw new Error('Invalid API key');
+    req.user = {
+      userId: auth.userId,
+      role: auth.role,
+      is_admin: auth.is_admin,
+    };
+    req.auth = { kind: 'api_key', apiKeyId: auth.apiKeyId, scopes: auth.scopes };
+    return;
+  }
 
   if (token.startsWith('cp_live_')) {
     const keyHash = hashApiKey(token);
@@ -26,7 +37,16 @@ async function authenticate(req) {
     );
     if (!rows.length) throw new Error('Invalid API key');
     await db.query(`UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`, [rows[0].id]);
-    req.user = { userId: rows[0].user_id };
+    const { rows: userRows } = await db.query(
+      'SELECT id, role, is_admin FROM users WHERE id = $1',
+      [rows[0].user_id]
+    );
+    const user = userRows[0] || {};
+    req.user = {
+      userId: rows[0].user_id,
+      role: user.is_admin ? 'admin' : user.role || 'contributor',
+      is_admin: user.is_admin,
+    };
     req.auth = { kind: 'api_key', apiKeyId: rows[0].id, scopes: rows[0].scopes || [] };
     return;
   }
@@ -35,14 +55,29 @@ async function authenticate(req) {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     req.user = payload;
     req.auth = { kind: 'jwt', scopes: null };
+    
+    // Load admin status from database
+    if (req.user.userId) {
+      const { rows } = await db.query(
+        'SELECT is_admin, is_banned FROM users WHERE id = $1',
+        [req.user.userId]
+      );
+      if (rows.length) {
+        req.user.is_admin = rows[0].is_admin;
+        req.user.is_banned = rows[0].is_banned;
+        if (rows[0].is_admin) {
+          req.user.role = 'admin';
+        }
+      }
+    }
   } catch {
     throw new Error('Invalid token');
   }
 }
 
 function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Requires admin role' });
+  if (!req.user || !req.user.is_admin) {
+    return res.status(403).json({ error: 'Requires admin privileges' });
   }
   next();
 }
@@ -72,7 +107,19 @@ function assertApiKeyScopes(req, res) {
   const path = req.originalUrl.split('?')[0];
   const method = req.method;
 
-  if (path.startsWith('/api/api-keys') || path.startsWith('/api/webhooks')) {
+  if (path.startsWith('/api/v1') || path.startsWith('/v1/')) {
+    if (!scopes.includes('read')) {
+      res.status(403).json({ error: 'API key requires read scope' });
+      return false;
+    }
+    if (method !== 'GET' && method !== 'HEAD' && !scopes.includes('write')) {
+      res.status(403).json({ error: 'API key requires write scope' });
+      return false;
+    }
+    return true;
+  }
+
+  if (path.startsWith('/api/api-keys') || path.startsWith('/api/users/api-keys') || path.startsWith('/api/webhooks')) {
     if (!scopes.includes('developer')) {
       res.status(403).json({ error: 'API key requires developer scope for this resource' });
       return false;
@@ -114,6 +161,7 @@ function requireAuth(req, res, next) {
   authenticate(req)
     .then(() => {
       if (!assertApiKeyScopes(req, res)) return;
+      if (req.user?.userId) Sentry.setUser({ id: req.user.userId });
       next();
     })
     .catch((err) => {

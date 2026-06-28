@@ -1,10 +1,14 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { api } from '../services/api';
+import { getNetwork, signTransaction } from '@stellar/freighter-api';
 import { stellarExpertTxUrl } from '../config/stellar';
+import { useToast } from '../context/ToastContext';
+import RelativeTime from './RelativeTime';
 
 const ELIGIBLE = ['active', 'funded'];
 
-function statusLabel(row) {
+function statusLabel(row, isExpired) {
+  if (isExpired) return 'Expired — please re-request';
   if (row.status === 'pending') {
     if (!row.creator_signed) return 'Awaiting creator signature';
     if (!row.platform_signed) return 'Awaiting platform release';
@@ -16,6 +20,7 @@ function statusLabel(row) {
 }
 
 export default function WithdrawalsSection({ campaign, milestones = [], user, token, onReleased }) {
+  const toast = useToast();
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -26,6 +31,13 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
   const [eventsById, setEventsById] = useState({});
   const [openAudit, setOpenAudit] = useState(null);
   const [milestoneForms, setMilestoneForms] = useState({});
+  const [uploadingMilestoneId, setUploadingMilestoneId] = useState(null);
+  const [expiredIds, setExpiredIds] = useState(() => new Set());
+  const [liveBalance, setLiveBalance] = useState(null);
+  const [loadingBalance, setLoadingBalance] = useState(false);
+  const [rejectingId, setRejectingId] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [confirmingSignId, setConfirmingSignId] = useState(null);
 
   const isCreator = user?.id && campaign.creator_id === user.id;
   const isAdmin = user?.role === 'admin';
@@ -44,6 +56,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
         if (!next[milestone.id]) {
           next[milestone.id] = {
             evidence_url: milestone.evidence_url || '',
+            evidence_description: milestone.evidence_description || '',
             destination_key: milestone.destination_key || '',
           };
           changed = true;
@@ -52,6 +65,21 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
       return changed ? next : current;
     });
   }, [pendingMilestones]);
+
+  useEffect(() => {
+    if (!canOpenRequest) {
+      setLiveBalance(null);
+      return;
+    }
+    setLoadingBalance(true);
+    api
+      .getCampaignBalance(campaign.id)
+      .then((b) => {
+        setLiveBalance(parseFloat(b[campaign.asset_type] || '0'));
+        setLoadingBalance(false);
+      })
+      .catch(() => setLoadingBalance(false));
+  }, [canOpenRequest, campaign.id, campaign.asset_type]);
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -106,14 +134,11 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
     setBusyId('new');
     setError('');
     try {
-      await api.requestWithdrawal(
-        {
-          campaign_id: campaign.id,
-          destination_key: form.destination_key.trim(),
-          amount: form.amount.trim(),
-        },
-        token
-      );
+      await api.requestWithdrawal({
+        campaign_id: campaign.id,
+        destination_key: form.destination_key.trim(),
+        amount: form.amount.trim(),
+      });
       setForm({ destination_key: '', amount: '' });
       await refresh();
       onReleased?.();
@@ -124,15 +149,47 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
     }
   }
 
-  async function runAction(id, fn) {
+  async function runAction(id, fn, successMessage) {
     setBusyId(id);
     setError('');
     try {
       await fn();
       await refresh();
       onReleased?.();
+      if (successMessage) toast?.(successMessage, 'success');
     } catch (err) {
-      setError(err.message || 'Action failed.');
+      if (err.status === 410) {
+        setExpiredIds((prev) => new Set([...prev, id]));
+      } else {
+        setError(err.message || 'Action failed.');
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function signAsFreighter(id) {
+    setBusyId(id);
+    setError('');
+    try {
+      const wr = await api.getWithdrawal(id, token);
+      const unsignedXdr = wr.unsigned_xdr;
+      if (!unsignedXdr) throw new Error('Missing unsigned transaction');
+
+      const network = await getNetwork();
+      if (network?.error) throw new Error('Could not read Freighter network');
+
+      const signed = await signTransaction(unsignedXdr, {
+        networkPassphrase: network?.networkPassphrase,
+        address: user?.wallet_public_key,
+      });
+      if (signed?.error) throw new Error(signed.error?.message || 'Freighter signing failed');
+      if (!signed?.signedTxXdr) throw new Error('Freighter did not return a signed transaction');
+
+      await api.approveWithdrawalCreator(id, { signed_xdr: signed.signedTxXdr });
+      await refresh();
+    } catch (err) {
+      setError(err.message || 'Could not sign with Freighter');
     } finally {
       setBusyId(null);
     }
@@ -141,11 +198,23 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
   function setMilestoneField(milestoneId, field, value) {
     setMilestoneForms((current) => ({
       ...current,
-      [milestoneId]: {
-        ...(current[milestoneId] || {}),
-        [field]: value,
-      },
+      [milestoneId]: { ...(current[milestoneId] || {}), [field]: value },
     }));
+  }
+
+  async function uploadMilestoneFile(milestoneId, file) {
+    if (!file) return;
+    setUploadingMilestoneId(milestoneId);
+    setError('');
+    try {
+      const result = await api.uploadMilestoneEvidence(milestoneId, file);
+      setMilestoneField(milestoneId, 'evidence_url', result.evidence_url);
+      toast?.('Evidence file uploaded', 'success');
+    } catch (err) {
+      setError(err.message || 'Evidence upload failed.');
+    } finally {
+      setUploadingMilestoneId(null);
+    }
   }
 
   async function requestMilestoneRelease(milestoneId) {
@@ -157,20 +226,26 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
     setBusyId(`milestone-${milestoneId}`);
     setError('');
     try {
-      await api.submitMilestoneEvidence(
-        milestoneId,
-        {
-          evidence_url: payload.evidence_url.trim(),
-          destination_key: payload.destination_key.trim(),
-        },
-        token
-      );
+      await api.submitMilestoneEvidence(milestoneId, {
+        evidence_url: payload.evidence_url.trim(),
+        evidence_description: payload.evidence_description?.trim() || undefined,
+        destination_key: payload.destination_key.trim(),
+      });
+      await refresh();
       onReleased?.();
+      toast?.('Evidence submitted for platform review', 'success');
     } catch (err) {
       setError(err.message || 'Milestone release request failed.');
     } finally {
       setBusyId(null);
     }
+  }
+
+  function milestoneStatusLabel(status) {
+    if (status === 'pending_review') return 'Awaiting platform review';
+    if (status === 'rejected') return 'Rejected — update evidence and resubmit';
+    if (status === 'released') return 'Released';
+    return 'Not submitted';
   }
 
   if (!token || forbidden) return null;
@@ -185,69 +260,137 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
   if (!canView) return null;
 
   return (
-    <section style={styles.section} aria-label="Fund release">
+    <section style={styles.section} aria-label="Fund release" data-no-print>
       <h2 style={styles.h2}>Manual fund release</h2>
       <p style={styles.intro}>
-        Funds leave the campaign wallet only after <strong>you</strong> (creator) and <strong>CrowdPay</strong>{' '}
-        (platform) both approve the same transaction. Every step is logged for review.
+        Funds leave the campaign wallet only after <strong>you</strong> (creator) and{' '}
+        <strong>CrowdPay</strong> (platform) both approve the same transaction. Every step is logged
+        for review.
       </p>
 
       {hasMilestonePlan && (
         <p className="alert alert--info" role="status">
-          This campaign uses milestone-based releases. Manual one-shot withdrawal requests are disabled; approvals happen through milestone review.
+          This campaign uses milestone-based releases. Manual one-shot withdrawal requests are
+          disabled; approvals happen through milestone review.
         </p>
       )}
 
       {hasMilestonePlan && isCreator && (
         <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '1rem' }}>
-          {pendingMilestones.map((milestone) => (
-            <div key={milestone.id} style={styles.card}>
-              <h3 style={styles.h3}>Request milestone release</h3>
-              <p style={styles.hint}>
-                {milestone.title} · {Number(milestone.release_percentage).toLocaleString()}% of raised funds
-              </p>
-              {milestone.review_note && (
-                <div className="alert alert--info" style={{ marginBottom: '0.55rem' }}>
-                  {milestone.review_note}
-                </div>
-              )}
-              <label className="label-strong" htmlFor={`milestone-evidence-${milestone.id}`}>
-                Evidence URL
-              </label>
-              <input
-                id={`milestone-evidence-${milestone.id}`}
-                value={milestoneForms[milestone.id]?.evidence_url || ''}
-                onChange={(e) => setMilestoneField(milestone.id, 'evidence_url', e.target.value)}
-                placeholder="https://"
-                style={{ marginBottom: '0.65rem' }}
-              />
-              <label className="label-strong" htmlFor={`milestone-destination-${milestone.id}`}>
-                Destination address
-              </label>
-              <input
-                id={`milestone-destination-${milestone.id}`}
-                value={milestoneForms[milestone.id]?.destination_key || ''}
-                onChange={(e) => setMilestoneField(milestone.id, 'destination_key', e.target.value)}
-                placeholder="G..."
-                style={{ marginBottom: '0.65rem' }}
-              />
-              <button
-                type="button"
-                className="btn-primary"
-                disabled={busyId === `milestone-${milestone.id}` || milestone.status === 'released'}
-                onClick={() => requestMilestoneRelease(milestone.id)}
-                style={{ width: '100%' }}
-              >
-                {busyId === `milestone-${milestone.id}` ? 'Submitting…' : 'Request milestone release'}
-              </button>
-            </div>
-          ))}
+          {pendingMilestones.map((milestone) => {
+            const canSubmit = ['pending', 'rejected'].includes(milestone.status);
+            const isPendingReview = milestone.status === 'pending_review';
+            return (
+              <div key={milestone.id} style={styles.card}>
+                <h3 style={styles.h3}>Request milestone release</h3>
+                <p style={styles.hint}>
+                  {milestone.title} · {Number(milestone.release_percentage).toLocaleString()}% of
+                  raised funds
+                </p>
+                <p
+                  style={{ ...styles.hint, fontWeight: 600, color: 'var(--color-text-secondary)' }}
+                >
+                  Status: {milestoneStatusLabel(milestone.status)}
+                </p>
+                {milestone.status === 'rejected' && milestone.review_note && (
+                  <div className="alert alert--error" style={{ marginBottom: '0.55rem' }}>
+                    Rejection reason: {milestone.review_note}
+                  </div>
+                )}
+                {isPendingReview && (
+                  <div className="alert alert--info" style={{ marginBottom: '0.55rem' }}>
+                    Your evidence is under review. You will be notified when the platform approves
+                    or rejects this milestone.
+                  </div>
+                )}
+                {milestone.review_note && milestone.status !== 'rejected' && (
+                  <div className="alert alert--info" style={{ marginBottom: '0.55rem' }}>
+                    {milestone.review_note}
+                  </div>
+                )}
+                <label className="label-strong" htmlFor={`milestone-evidence-file-${milestone.id}`}>
+                  Upload evidence file
+                </label>
+                <input
+                  id={`milestone-evidence-file-${milestone.id}`}
+                  type="file"
+                  accept="image/*,.pdf,.doc,.docx,.txt"
+                  disabled={!canSubmit || uploadingMilestoneId === milestone.id}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) uploadMilestoneFile(milestone.id, file);
+                    e.target.value = '';
+                  }}
+                  style={{ marginBottom: '0.65rem' }}
+                />
+                <label className="label-strong" htmlFor={`milestone-evidence-${milestone.id}`}>
+                  Evidence URL
+                </label>
+                <input
+                  id={`milestone-evidence-${milestone.id}`}
+                  value={milestoneForms[milestone.id]?.evidence_url || ''}
+                  onChange={(e) => setMilestoneField(milestone.id, 'evidence_url', e.target.value)}
+                  placeholder="https:// or upload a file above"
+                  disabled={!canSubmit}
+                  style={{ marginBottom: '0.65rem' }}
+                />
+                <label className="label-strong" htmlFor={`milestone-description-${milestone.id}`}>
+                  Evidence description
+                </label>
+                <textarea
+                  id={`milestone-description-${milestone.id}`}
+                  value={milestoneForms[milestone.id]?.evidence_description || ''}
+                  onChange={(e) =>
+                    setMilestoneField(milestone.id, 'evidence_description', e.target.value)
+                  }
+                  placeholder="Describe what you delivered (demo link summary, deliverable notes, etc.)"
+                  rows={3}
+                  disabled={!canSubmit}
+                  style={{ marginBottom: '0.65rem', resize: 'vertical', fontFamily: 'inherit' }}
+                />
+                <label className="label-strong" htmlFor={`milestone-destination-${milestone.id}`}>
+                  Destination address
+                </label>
+                <input
+                  id={`milestone-destination-${milestone.id}`}
+                  value={milestoneForms[milestone.id]?.destination_key || ''}
+                  onChange={(e) =>
+                    setMilestoneField(milestone.id, 'destination_key', e.target.value)
+                  }
+                  placeholder="G..."
+                  disabled={!canSubmit}
+                  style={{ marginBottom: '0.65rem' }}
+                />
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={
+                    !canSubmit ||
+                    busyId === `milestone-${milestone.id}` ||
+                    uploadingMilestoneId === milestone.id ||
+                    milestone.status === 'released'
+                  }
+                  onClick={() => requestMilestoneRelease(milestone.id)}
+                  style={{ width: '100%' }}
+                >
+                  {busyId === `milestone-${milestone.id}`
+                    ? 'Submitting…'
+                    : uploadingMilestoneId === milestone.id
+                      ? 'Uploading…'
+                      : isPendingReview
+                        ? 'Awaiting review'
+                        : 'Submit evidence for review'}
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
       {!ELIGIBLE.includes(campaign.status) && (
         <p className="alert alert--info" role="status">
-          New withdrawal requests are disabled while campaign status is <strong>{campaign.status}</strong>.
+          New withdrawal requests are disabled while campaign status is{' '}
+          <strong>{campaign.status}</strong>.
         </p>
       )}
 
@@ -260,7 +403,49 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
       {canOpenRequest && (
         <form onSubmit={handleRequest} style={styles.card}>
           <h3 style={styles.h3}>Request a release</h3>
-          <p style={styles.hint}>Destination must be a valid Stellar public key. Amount is in {campaign.asset_type}.</p>
+          <p style={styles.hint}>
+            Destination must be a valid Stellar public key. Amount is in {campaign.asset_type}.
+          </p>
+          {liveBalance !== null && (
+            <p
+              style={{
+                fontSize: '0.82rem',
+                color: 'var(--color-text-secondary)',
+                marginBottom: '0.5rem',
+              }}
+            >
+              Available on-chain:{' '}
+              <strong>
+                {liveBalance.toLocaleString()} {campaign.asset_type}
+              </strong>{' '}
+              <button
+                type="button"
+                style={{
+                  fontSize: '0.8rem',
+                  color: 'var(--color-accent)',
+                  background: 'none',
+                  padding: 0,
+                  border: 'none',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                }}
+                onClick={() => setForm((f) => ({ ...f, amount: String(liveBalance) }))}
+              >
+                Use max
+              </button>
+            </p>
+          )}
+          {loadingBalance && (
+            <p
+              style={{
+                fontSize: '0.82rem',
+                color: 'var(--color-text-hint)',
+                marginBottom: '0.5rem',
+              }}
+            >
+              Loading balance…
+            </p>
+          )}
           <label className="label-strong" htmlFor="wd-dest">
             Destination address
           </label>
@@ -287,21 +472,44 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
             required
             style={{ marginBottom: '0.75rem' }}
           />
-          <button type="submit" className="btn-primary" disabled={busyId === 'new'} style={{ width: '100%' }}>
-            {busyId === 'new' ? 'Submitting…' : 'Submit request'}
+          {liveBalance !== null && Number(form.amount) > liveBalance && (
+            <p
+              className="alert alert--error"
+              style={{ fontSize: '0.82rem', marginBottom: '0.75rem' }}
+              role="alert"
+            >
+              Amount exceeds available balance
+            </p>
+          )}
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={
+              busyId === 'new' || (liveBalance !== null && Number(form.amount) > liveBalance)
+            }
+            style={{ width: '100%' }}
+          >
+            {liveBalance !== null && Number(form.amount) > liveBalance
+              ? 'Amount exceeds balance'
+              : busyId === 'new'
+                ? 'Submitting…'
+                : 'Submit request'}
           </button>
         </form>
       )}
 
       {isCreator && hasPending && (
         <p className="alert alert--info" style={{ marginTop: '1rem' }} role="status">
-          You have a pending release. Complete signatures, cancel before you sign, or wait for platform decision.
+          You have a pending release. Complete signatures, cancel before you sign, or wait for
+          platform decision.
         </p>
       )}
 
       <h3 style={{ ...styles.h3, marginTop: '1.5rem' }}>Requests & audit</h3>
       {rows.length === 0 ? (
-        <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>No withdrawal activity yet.</p>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
+          No withdrawal activity yet.
+        </p>
       ) : (
         <ul style={styles.list}>
           {rows.map((row) => (
@@ -309,11 +517,26 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={styles.rowTitle}>
                   {Number(row.amount).toLocaleString()} {campaign.asset_type} →{' '}
-                  <code style={styles.code}>{row.destination_key.slice(0, 6)}…{row.destination_key.slice(-4)}</code>
+                  <code style={styles.code}>
+                    {row.destination_key.slice(0, 6)}…{row.destination_key.slice(-4)}
+                  </code>
                 </div>
-                <div style={styles.meta}>{statusLabel(row)}</div>
+                <div style={styles.meta}>{statusLabel(row, expiredIds.has(row.id))}</div>
+                {expiredIds.has(row.id) && (
+                  <div
+                    className="alert alert--warning"
+                    style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}
+                    role="alert"
+                  >
+                    This withdrawal XDR has expired. Please cancel this request and submit a new
+                    one.
+                  </div>
+                )}
                 {row.denial_reason && (
-                  <div className="alert alert--error" style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>
+                  <div
+                    className="alert alert--error"
+                    style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}
+                  >
                     {row.denial_reason}
                   </div>
                 )}
@@ -335,17 +558,25 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                         {ev.note ? ` — ${ev.note}` : ''}
                         <span style={{ color: 'var(--color-text-muted)' }}>
                           {' '}
-                          ({new Date(ev.created_at).toLocaleString()})
+                          (<RelativeTime date={ev.created_at} />)
                         </span>
                       </li>
                     ))}
                   </ol>
                 )}
               </div>
+
               <div style={styles.actions}>
-                <button type="button" className="btn-secondary" onClick={() => loadEvents(row.id)} style={{ fontSize: '0.8rem' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => loadEvents(row.id)}
+                  style={{ fontSize: '0.8rem' }}
+                >
                   {openAudit === row.id ? 'Hide audit' : 'Audit trail'}
                 </button>
+
+                {/* Creator actions — before signing */}
                 {row.status === 'pending' && !row.creator_signed && isCreator && (
                   <>
                     <button
@@ -353,56 +584,179 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                       className="btn-secondary"
                       disabled={busyId === row.id}
                       onClick={() =>
-                        runAction(row.id, () =>
-                          api.cancelWithdrawal(row.id, { reason: 'Cancelled by creator' }, token)
+                        runAction(
+                          row.id,
+                          () => api.cancelWithdrawal(row.id, { reason: 'Cancelled by creator' }),
+                          'Withdrawal cancelled'
                         )
                       }
                       style={{ fontSize: '0.8rem' }}
                     >
                       Cancel
                     </button>
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      disabled={busyId === row.id}
-                      onClick={() => runAction(row.id, () => api.approveWithdrawalCreator(row.id, token))}
-                      style={{ fontSize: '0.8rem' }}
-                    >
-                      Sign as creator
-                    </button>
+                    {confirmingSignId === row.id ? (
+                      <div style={styles.confirmPanel}>
+                        <p style={{ fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.4rem' }}>
+                          Confirm release of{' '}
+                          <strong>
+                            {Number(row.amount).toLocaleString()} {campaign.asset_type}
+                          </strong>{' '}
+                          to:
+                        </p>
+                        <code style={{ fontSize: '0.75rem', wordBreak: 'break-all', color: '#555' }}>
+                          {row.destination_key}
+                        </code>
+                        <p style={{ fontSize: '0.78rem', color: '#b45309', marginTop: '0.4rem' }}>
+                          This signature cannot be undone.
+                        </p>
+                        <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.6rem' }}>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ fontSize: '0.8rem' }}
+                            disabled={busyId === row.id}
+                            onClick={() => {
+                              setConfirmingSignId(null);
+                              if (user?.wallet_type === 'freighter') {
+                                signAsFreighter(row.id);
+                              } else {
+                                runAction(
+                                  row.id,
+                                  () => api.approveWithdrawalCreator(row.id),
+                                  'Withdrawal signed',
+                                );
+                              }
+                            }}
+                          >
+                            {busyId === row.id ? 'Signing…' : 'Yes, sign now'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: '0.8rem' }}
+                            onClick={() => setConfirmingSignId(null)}
+                          >
+                            Go back
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={busyId === row.id}
+                        onClick={() =>
+                          runAction(
+                            row.id,
+                            () => api.approveWithdrawalCreator(row.id),
+                            'Withdrawal signed'
+                          )
+                        }
+                        style={{ fontSize: '0.8rem' }}
+                        onClick={() => setConfirmingSignId(row.id)}
+                      >
+                        {user?.wallet_type === 'freighter' ? 'Sign in Freighter' : 'Sign as creator'}
+                      </button>
+                    )}
                   </>
                 )}
-                {row.status === 'pending' && row.creator_signed && !row.platform_signed && cap.can_approve_platform && (
-                  <>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      disabled={busyId === row.id}
-                      onClick={async () => {
-                        const reason = window.prompt(
-                          'Rejection reason (visible in audit log):',
-                          'Rejected by platform'
-                        );
-                        if (reason === null) return;
-                        await runAction(row.id, () =>
-                          api.rejectWithdrawal(row.id, { reason: reason || 'Rejected' }, token)
-                        );
-                      }}
-                      style={{ fontSize: '0.8rem' }}
-                    >
-                      Reject
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      disabled={busyId === row.id}
-                      onClick={() => runAction(row.id, () => api.approveWithdrawalPlatform(row.id, token))}
-                      style={{ fontSize: '0.8rem' }}
-                    >
-                      Admin approve & submit
-                    </button>
-                  </>
-                )}
+
+                {/* Platform admin actions — after creator signed */}
+                {row.status === 'pending' &&
+                  row.creator_signed &&
+                  !row.platform_signed &&
+                  cap.can_approve_platform &&
+                  !expiredIds.has(row.id) && (
+                    <>
+                      {rejectingId === row.id ? (
+                        <div
+                          style={{
+                            marginTop: '0.5rem',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '0.4rem',
+                            width: '100%',
+                          }}
+                        >
+                          <textarea
+                            value={rejectReason}
+                            onChange={(e) => setRejectReason(e.target.value)}
+                            placeholder="Reason for rejection (saved to audit log)"
+                            rows={2}
+                            style={{
+                              fontSize: '0.85rem',
+                              resize: 'vertical',
+                              padding: '0.5rem',
+                              borderRadius: '6px',
+                              border: '1px solid var(--color-border-light)',
+                              fontFamily: 'inherit',
+                            }}
+                            autoFocus
+                          />
+                          <div style={{ display: 'flex', gap: '0.4rem' }}>
+                            <button
+                              type="button"
+                              className="btn-primary"
+                              style={{ fontSize: '0.8rem', flex: 1 }}
+                              disabled={busyId === row.id}
+                              onClick={() => {
+                                runAction(
+                                  row.id,
+                                  () =>
+                                    api.rejectWithdrawal(row.id, {
+                                      reason: rejectReason || 'Rejected by platform',
+                                    }),
+                                  'Withdrawal rejected'
+                                );
+                                setRejectingId(null);
+                                setRejectReason('');
+                              }}
+                            >
+                              Confirm reject
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{ fontSize: '0.8rem', flex: 1 }}
+                              onClick={() => {
+                                setRejectingId(null);
+                                setRejectReason('');
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            disabled={busyId === row.id}
+                            onClick={() => setRejectingId(row.id)}
+                            style={{ fontSize: '0.8rem' }}
+                          >
+                            Reject
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            disabled={busyId === row.id}
+                            onClick={() =>
+                              runAction(
+                                row.id,
+                                () => api.approveWithdrawalPlatform(row.id),
+                                'Withdrawal approved'
+                              )
+                            }
+                            style={{ fontSize: '0.8rem' }}
+                          >
+                            {busyId === row.id ? 'Approving…' : 'Admin approve & submit'}
+                          </button>
+                        </>
+                      )}
+                    </>
+                  )}
               </div>
             </li>
           ))}
@@ -411,8 +765,8 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
 
       {cap.can_approve_platform && isAdmin && (
         <p style={{ ...styles.hint, marginTop: '1rem' }}>
-          Admin actions sign using the platform server key after creator approval. Every transition is written to audit
-          history.
+          Admin actions sign using the platform server key after creator approval. Every transition
+          is written to audit history.
         </p>
       )}
     </section>
@@ -420,11 +774,25 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
 }
 
 const styles = {
-  section: { marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--color-border-light)' },
+  section: {
+    marginTop: '2rem',
+    paddingTop: '1.5rem',
+    borderTop: '1px solid var(--color-border-light)',
+  },
   h2: { fontSize: '1.15rem', fontWeight: 800, marginBottom: '0.5rem' },
   h3: { fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' },
-  intro: { color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.55, marginBottom: '1rem' },
-  hint: { color: 'var(--color-text-hint)', fontSize: '0.82rem', lineHeight: 1.45, marginBottom: '0.65rem' },
+  intro: {
+    color: 'var(--color-text-secondary)',
+    fontSize: '0.9rem',
+    lineHeight: 1.55,
+    marginBottom: '1rem',
+  },
+  hint: {
+    color: 'var(--color-text-hint)',
+    fontSize: '0.82rem',
+    lineHeight: 1.45,
+    marginBottom: '0.65rem',
+  },
   card: {
     background: 'var(--color-bg)',
     border: '1px solid var(--color-border-light)',
@@ -434,7 +802,14 @@ const styles = {
     flexDirection: 'column',
     gap: '0.25rem',
   },
-  list: { listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.75rem', margin: 0, padding: 0 },
+  list: {
+    listStyle: 'none',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.75rem',
+    margin: 0,
+    padding: 0,
+  },
   row: {
     display: 'flex',
     flexDirection: 'column',

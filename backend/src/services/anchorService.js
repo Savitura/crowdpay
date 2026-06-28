@@ -8,14 +8,17 @@ const { configuredAssets } = require('../config/stellar');
 
 function moneyGramEnvironmentConfig() {
   const env = process.env.ANCHOR_MONEYGRAM_ENV || (process.env.STELLAR_NETWORK === 'mainnet' ? 'production' : 'sandbox');
+  const getDomain = (defaultDomain) => process.env.STELLAR_ANCHOR_DOMAIN || defaultDomain;
+
   if (env === 'sandbox') {
+    const domain = getDomain('extstellar.moneygram.com');
     return {
       id: 'moneygram',
       name: 'MoneyGram Ramps',
       environment: 'sandbox',
-      homeDomain: 'extstellar.moneygram.com',
-      webAuthEndpoint: 'https://extstellar.moneygram.com/stellaradapterservice/auth',
-      sep24Endpoint: 'https://extstellar.moneygram.com/stellaradapterservice/sep24',
+      homeDomain: domain,
+      webAuthEndpoint: `https://${domain}/stellaradapterservice/auth`,
+      sep24Endpoint: `https://${domain}/stellaradapterservice/sep24`,
       signingKey: 'GCUZ6YLL5RQBTYLTTQLPCM73C5XAIUGK2TIMWQH7HPSGWVS2KJ2F3CHS',
       networkPassphrase: Networks.TESTNET,
       assetCode: 'USDC',
@@ -27,13 +30,14 @@ function moneyGramEnvironmentConfig() {
     };
   }
   if (env === 'preview') {
+    const domain = getDomain('previewstellar.moneygram.com');
     return {
       id: 'moneygram',
       name: 'MoneyGram Ramps',
       environment: 'preview',
-      homeDomain: 'previewstellar.moneygram.com',
-      webAuthEndpoint: 'https://previewstellar.moneygram.com/stellaradapterservicepreview/auth',
-      sep24Endpoint: 'https://previewstellar.moneygram.com/stellaradapterservicepreview/sep24',
+      homeDomain: domain,
+      webAuthEndpoint: `https://${domain}/stellaradapterservicepreview/auth`,
+      sep24Endpoint: `https://${domain}/stellaradapterservicepreview/sep24`,
       signingKey: 'GD5NUMEX7LYHXGXCAD4PGW7JDMOUY2DKRGY5XZHJS5IONVHDKCJYGVCL',
       networkPassphrase: Networks.PUBLIC,
       assetCode: 'USDC',
@@ -44,13 +48,14 @@ function moneyGramEnvironmentConfig() {
       productionAvailable: true,
     };
   }
+  const domain = getDomain('stellar.moneygram.com');
   return {
     id: 'moneygram',
     name: 'MoneyGram Ramps',
     environment: 'production',
-    homeDomain: 'stellar.moneygram.com',
-    webAuthEndpoint: 'https://stellar.moneygram.com/stellaradapterservice/auth',
-    sep24Endpoint: 'https://stellar.moneygram.com/stellaradapterservice/sep24',
+    homeDomain: domain,
+    webAuthEndpoint: `https://${domain}/stellaradapterservice/auth`,
+    sep24Endpoint: `https://${domain}/stellaradapterservice/sep24`,
     signingKey: 'GD5NUMEX7LYHXGXCAD4PGW7JDMOUY2DKRGY5XZHJS5IONVHDKCJYGVCL',
     networkPassphrase: Networks.PUBLIC,
     assetCode: 'USDC',
@@ -157,7 +162,11 @@ function publicAnchorInfo(anchor) {
 }
 
 async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
+  const headers = { ...options.headers };
+  if (process.env.MONEYGRAM_API_KEY && !headers['x-api-key']) {
+    headers['x-api-key'] = process.env.MONEYGRAM_API_KEY;
+  }
+  const response = await fetch(url, { ...options, headers });
   const text = await response.text();
   let data = {};
   if (text) {

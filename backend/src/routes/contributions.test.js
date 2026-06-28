@@ -12,6 +12,13 @@ const {
   Operation,
   TransactionBuilder,
 } = require('@stellar/stellar-sdk');
+const { TX_TIMEOUT_CONTRIBUTION_S } = require('../config/constants');
+
+// Provide a dummy USDC issuer so stellar.js does not throw at module load time
+// in environments (e.g. CI, unit tests) where USDC_ISSUER is not set.
+process.env.USDC_ISSUER = process.env.USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+// Provide a dummy JWT_SECRET for token signing/verification in unit tests.
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-for-unit-tests';
 
 const TESTNET_PASSPHRASE = Networks.TESTNET;
 const VALID_G = 'GASXEYHSSVN3WSHD4WSZ4O37HC2AG4JH2EB6UPHM6IXDXDRJRDJD4RZK';
@@ -29,7 +36,7 @@ function buildUnsignedPaymentXdr({ senderPublicKey, destinationPublicKey, amount
       })
     )
     .addMemo(require('@stellar/stellar-sdk').Memo.text('cp-c-1'))
-    .setTimeout(30)
+    .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
     .build()
     .toXDR();
 }
@@ -49,9 +56,11 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
       feeAmount: 0,
     }),
     submitPreparedTransaction: async () => 'tx-from-submit',
+    submitWithFeeBumpFallback: async (...args) => stellarStub.submitPreparedTransaction(...args),
     getPathPaymentQuote: async () => [],
     getSupportedAssetCodes: () => ['XLM', 'USDC'],
     ensureCustodialAccountFundedAndTrusted: async () => null,
+    isBadSequenceError: () => false,
     ...stellarImpl,
   };
 
@@ -194,11 +203,25 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
       withDecryptedWalletSecret: async (_ciphertext, _context, fn) => fn('SDECRYPTED'),
     },
     '../services/contributionService': contributionServiceStub,
+    '../services/sorobanService': {
+      triggerRefund: async () => null,
+    },
+    '../services/kycService': {
+      assertUserKycVerified: async () => {},
+    },
+    '../services/emailService': {
+      sendEmail: async () => {},
+    },
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
         req.user = { userId: 'user-1' };
         next();
       },
+    },
+    '../middleware/validation': {
+      contributionValidation: [],
+      contributionQuoteValidation: [],
+      validateRequest: (_req, _res, next) => next(),
     },
   });
 
@@ -770,4 +793,219 @@ test('POST /api/contributions includes platform_fee_amount in response and metad
   assert.equal(response.status, 202);
   assert.equal(response.body.platform_fee_amount, 0.15);
   assert.equal(capturedMetadata.platform_fee_amount, 0.15);
+});
+
+test('POST /api/contributions validates min_contribution limit', async () => {
+  const app = buildApp({
+    queryImpl: async (text) => {
+      if (text.includes('FROM campaigns')) {
+        return {
+          rows: [{
+            id: '11111111-1111-1111-1111-111111111111',
+            status: 'active',
+            asset_type: 'USDC',
+            wallet_public_key: VALID_G,
+            min_contribution: '15.0000000',
+          }],
+        };
+      }
+      if (text.includes('FROM users')) {
+        return { rows: [{ wallet_secret_encrypted: 'SSECRET', wallet_public_key: 'GSENDER' }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions')
+    .set('Authorization', 'Bearer token')
+    .send({ campaign_id: '11111111-1111-1111-1111-111111111111', amount: '10.0000000', send_asset: 'USDC' });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, 'Minimum contribution is 15.0000000 USDC');
+});
+
+test('POST /api/contributions validates max_contribution limit', async () => {
+  const app = buildApp({
+    queryImpl: async (text) => {
+      if (text.includes('FROM campaigns')) {
+        return {
+          rows: [{
+            id: '11111111-1111-1111-1111-111111111111',
+            status: 'active',
+            asset_type: 'USDC',
+            wallet_public_key: VALID_G,
+            max_contribution: '50.0000000',
+          }],
+        };
+      }
+      if (text.includes('FROM users')) {
+        return { rows: [{ wallet_secret_encrypted: 'SSECRET', wallet_public_key: 'GSENDER' }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions')
+    .set('Authorization', 'Bearer token')
+    .send({ campaign_id: '11111111-1111-1111-1111-111111111111', amount: '60.0000000', send_asset: 'USDC' });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, 'Maximum contribution is 50.0000000 USDC');
+});
+
+test('POST /api/contributions validates cumulative max_per_user cap', async () => {
+  const app = buildApp({
+    queryImpl: async (text) => {
+      if (text.includes('FROM campaigns')) {
+        return {
+          rows: [{
+            id: '11111111-1111-1111-1111-111111111111',
+            status: 'active',
+            asset_type: 'USDC',
+            wallet_public_key: VALID_G,
+            max_per_user: '100.0000000',
+          }],
+        };
+      }
+      if (text.includes('FROM users')) {
+        return { rows: [{ wallet_secret_encrypted: 'SSECRET', wallet_public_key: 'GSENDER' }] };
+      }
+      if (text.includes('COALESCE(SUM(amount)')) {
+        return {
+          rows: [{ total: '80.0000000' }],
+        };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions')
+    .set('Authorization', 'Bearer token')
+    .send({ campaign_id: '11111111-1111-1111-1111-111111111111', amount: '30.0000000', send_asset: 'USDC' });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, 'You have already contributed 80 USDC. The per-contributor limit is 100.0000000.');
+});
+
+function buildRefundApp({ contributionRow, refundImpl }) {
+  const stellarStub = { getSupportedAssetCodes: () => ['XLM', 'USDC'] };
+  const updates = [];
+
+  const router = proxyquire('./contributions', {
+    '../config/stellar': { networkPassphrase: TESTNET_PASSPHRASE, isTestnet: true },
+    '../config/database': {
+      query: async (text, params) => {
+        if (text.includes('FROM contributions')) {
+          return { rows: contributionRow ? [contributionRow] : [] };
+        }
+        if (text.includes('FROM users')) {
+          return { rows: [{ wallet_public_key: 'GOWNER' }] };
+        }
+        if (text.includes('UPDATE contributions')) {
+          updates.push(params);
+          return { rows: [] };
+        }
+        return { rows: [] };
+      },
+    },
+    '../services/stellarService': stellarStub,
+    '../services/contributionService': {
+      SLIPPAGE_BPS: 500,
+      buildContributionMemo: () => 'cp-c-1',
+      buildContributionIntent: async () => ({}),
+      submitCustodialContribution: async () => ({}),
+    },
+    '../services/sorobanService': {
+      triggerRefund: refundImpl || (async () => 'refund-tx-hash'),
+    },
+    '../middleware/auth': {
+      requireAuth: (req, _res, next) => {
+        req.user = { userId: 'user-1' };
+        next();
+      },
+    },
+    '../middleware/validation': {
+      contributionValidation: [],
+      contributionQuoteValidation: [],
+      validateRequest: (_req, _res, next) => next(),
+    },
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/contributions', router);
+  return { app, updates };
+}
+
+const FAILED_CONTRIBUTION = {
+  id: 'c-1',
+  sender_public_key: 'GOWNER',
+  escrow_contract_id: 'CESCROW',
+  campaign_status: 'failed',
+  contract_refunded_at: null,
+  contract_refund_tx_hash: null,
+};
+
+test('POST /api/contributions/:id/refund returns 400 for a funded campaign', async () => {
+  const { app } = buildRefundApp({
+    contributionRow: { ...FAILED_CONTRIBUTION, campaign_status: 'funded' },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions/c-1/refund')
+    .set('Authorization', 'Bearer token')
+    .send({});
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /only available for failed campaigns/i);
+  assert.equal(response.body.campaign_status, 'funded');
+  assert.ok(response.body.eligibility);
+});
+
+test('POST /api/contributions/:id/refund returns 400 for an active campaign', async () => {
+  const { app } = buildRefundApp({
+    contributionRow: { ...FAILED_CONTRIBUTION, campaign_status: 'active' },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions/c-1/refund')
+    .set('Authorization', 'Bearer token')
+    .send({});
+
+  assert.equal(response.status, 400);
+});
+
+test('POST /api/contributions/:id/refund rejects a duplicate refund with 409', async () => {
+  const { app } = buildRefundApp({
+    contributionRow: {
+      ...FAILED_CONTRIBUTION,
+      contract_refunded_at: '2026-06-01T00:00:00.000Z',
+      contract_refund_tx_hash: 'existing-tx',
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions/c-1/refund')
+    .set('Authorization', 'Bearer token')
+    .send({});
+
+  assert.equal(response.status, 409);
+  assert.match(response.body.error, /already been refunded/i);
+  assert.equal(response.body.tx_hash, 'existing-tx');
+});
+
+test('POST /api/contributions/:id/refund processes an eligible failed-campaign refund', async () => {
+  const { app, updates } = buildRefundApp({ contributionRow: FAILED_CONTRIBUTION });
+
+  const response = await request(app)
+    .post('/api/contributions/c-1/refund')
+    .set('Authorization', 'Bearer token')
+    .send({});
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.tx_hash, 'refund-tx-hash');
+  assert.equal(updates.length, 1);
 });

@@ -25,6 +25,14 @@ vi.mock('../context/ThemeContext', () => ({
 
 import { useAuth } from '../context/AuthContext';
 
+function renderNavbar() {
+  return render(
+    <MemoryRouter>
+      <Navbar />
+    </MemoryRouter>
+  );
+}
+
 describe('Navbar', () => {
   beforeEach(() => {
     mockNavigate.mockClear();
@@ -33,26 +41,19 @@ describe('Navbar', () => {
 
   it('shows login and sign up when unauthenticated', () => {
     useAuth.mockReturnValue({ user: null, logout: mockLogout });
-    render(
-      <MemoryRouter>
-        <Navbar />
-      </MemoryRouter>
-    );
+    renderNavbar();
     expect(screen.getByRole('link', { name: /log in/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /sign up/i })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /select language/i })).toBeInTheDocument();
   });
 
-  it('shows dashboard and logout when authenticated as creator', () => {
+  it('shows start campaign and logout when authenticated', () => {
     useAuth.mockReturnValue({
       user: { name: 'Bola', role: 'creator' },
       logout: mockLogout,
     });
-    render(
-      <MemoryRouter>
-        <Navbar />
-      </MemoryRouter>
-    );
-    expect(screen.getByRole('link', { name: /dashboard/i })).toBeInTheDocument();
+    renderNavbar();
+    expect(screen.getByRole('link', { name: /start campaign/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /logout/i })).toBeInTheDocument();
     expect(screen.getByText('Bola')).toBeInTheDocument();
   });
@@ -63,11 +64,7 @@ describe('Navbar', () => {
       logout: mockLogout,
     });
     const user = userEvent.setup();
-    render(
-      <MemoryRouter>
-        <Navbar />
-      </MemoryRouter>
-    );
+    renderNavbar();
     await user.click(screen.getByRole('button', { name: /logout/i }));
     expect(mockLogout).toHaveBeenCalled();
     expect(mockNavigate).toHaveBeenCalledWith('/');

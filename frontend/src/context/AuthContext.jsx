@@ -1,49 +1,33 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import * as Sentry from '@sentry/react';
 import { api } from '../services/api';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => {
-    try {
-      const stored = localStorage.getItem('cp_user');
-      if (!stored) return null;
-      const parsed = JSON.parse(stored);
-      if (!parsed.role) {
-        parsed.role = parsed.is_admin ? 'admin' : 'contributor';
-      }
-      return parsed;
-    } catch {
-      localStorage.removeItem('cp_user');
-      return null;
-    }
-  });
-  const [token, setToken] = useState(() => api.getToken());
+  const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     let active = true;
 
-    async function restoreSession() {
-      if (!user) {
-        setReady(true);
-        return;
-      }
-
+    async function validateAndRefreshUser() {
+      // Check if user has a valid session (token is in httpOnly cookie)
       try {
-        const data = await api.refresh();
+        // Always fetch fresh user data from server — never trust client-stored role/admin flags
+        const userData = await api.getMe();
         if (!active) return;
-        setToken(data.token);
-        if (data.user) {
-          setUser(data.user);
-          localStorage.setItem('cp_user', JSON.stringify(data.user));
+        if (userData && userData.id) {
+          setUser(userData);
+        } else {
+          setUser(null);
         }
-      } catch {
+      } catch (err) {
         if (!active) return;
-        setUser(null);
-        setToken(null);
-        api.setToken(null);
-        localStorage.removeItem('cp_user');
+        // If token is invalid, expired, or user was deleted, log out
+        if (err.status === 401 || err.status === 404) {
+          setUser(null);
+        }
       } finally {
         if (active) {
           setReady(true);
@@ -51,41 +35,36 @@ export function AuthProvider({ children }) {
       }
     }
 
-    restoreSession();
+    validateAndRefreshUser();
 
     return () => {
       active = false;
     };
   }, []);
 
-  const login = useCallback(async (userData, jwt) => {
-    const normalized = { ...userData, role: userData.role || (userData.is_admin ? 'admin' : 'contributor') };
-    setUser(normalized);
-    setToken(jwt);
-    api.setToken(jwt);
-    localStorage.setItem('cp_user', JSON.stringify(normalized));
+  const login = useCallback(async (userData) => {
+    setUser(userData);
+    Sentry.setUser({ id: userData.id, email: userData.email, role: userData.role });
     setReady(true);
   }, []);
 
   const logout = useCallback(async () => {
     try {
       await api.logout();
-    } catch {
+    } catch (_err) {
+      /* ignore */
     }
     setUser(null);
-    setToken(null);
-    api.setToken(null);
-    localStorage.removeItem('cp_user');
+    Sentry.setUser(null);
     setReady(true);
   }, []);
 
   const updateUser = useCallback((userData) => {
     setUser(userData);
-    localStorage.setItem('cp_user', JSON.stringify(userData));
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, ready, login, logout, updateUser }}>
+    <AuthContext.Provider value={{ user, ready, login, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,9 +1,9 @@
-const crypto = require('crypto');
 const router = require('express').Router();
+const crypto = require('crypto');
 const db = require('../config/database');
+const logger = require('../config/logger');
 const { requireAuth } = require('../middleware/auth');
-const { ALL_WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
-const { extractWebhookResult } = require('../services/kycProvider');
+const { ALL_WEBHOOK_EVENTS, processDelivery } = require('../services/webhookDispatcher');
 
 function isValidWebhookUrl(urlString) {
   try {
@@ -27,44 +27,7 @@ function normalizeEvents(events) {
   return [...new Set(events.filter((e) => typeof e === 'string' && allowed.has(e)))];
 }
 
-router.post('/kyc', async (req, res) => {
-  const result = extractWebhookResult(req.body || {});
-  if (!result.providerReference && !result.userId) {
-    return res.status(400).json({ error: 'KYC webhook payload missing provider reference' });
-  }
-
-  if (!['verified', 'rejected', 'pending'].includes(result.kycStatus)) {
-    return res.status(400).json({ error: 'Unsupported KYC status' });
-  }
-
-  const params = [result.kycStatus, result.providerReference || null];
-  let lookup = 'kyc_provider_reference = $2';
-  if (result.userId) {
-    params.push(result.userId);
-    lookup = `(kyc_provider_reference = $2 OR id = $3)`;
-  }
-
-  const { rows } = await db.query(
-    `UPDATE users
-     SET kyc_status = $1::kyc_status,
-         kyc_provider_reference = COALESCE($2, kyc_provider_reference),
-         kyc_completed_at = CASE WHEN $1::kyc_status = 'verified' THEN NOW() ELSE NULL END
-     WHERE ${lookup}
-     RETURNING id, kyc_status, kyc_completed_at`,
-    params
-  );
-
-  if (!rows.length) {
-    return res.status(404).json({ error: 'KYC subject not found' });
-  }
-
-  res.json({
-    received: true,
-    user_id: rows[0].id,
-    kyc_status: rows[0].kyc_status,
-    kyc_completed_at: rows[0].kyc_completed_at,
-  });
-});
+// KYC webhooks are handled at POST /api/webhooks/kyc (raw body + Persona signature verification).
 
 router.get('/', requireAuth, async (req, res) => {
   const { rows } = await db.query(
@@ -140,6 +103,32 @@ router.get('/deliveries', requireAuth, async (req, res) => {
     params
   );
   res.json(rows);
+});
+
+router.post('/deliveries/:id/replay', requireAuth, async (req, res) => {
+  const { rows } = await db.query(
+    `UPDATE webhook_deliveries d
+     SET status = 'pending', attempt_count = 0, last_error = NULL,
+         response_status = NULL, response_body_snippet = NULL,
+         next_retry_at = NULL, delivered_at = NULL, updated_at = NOW()
+     FROM webhooks w
+     WHERE d.id = $1 AND d.webhook_id = w.id AND w.user_id = $2
+       AND d.status IN ('failed', 'retrying')
+     RETURNING d.id`,
+    [req.params.id, req.user.userId]
+  );
+
+  if (!rows.length) {
+    return res.status(404).json({ error: 'Failed delivery not found or not replayable' });
+  }
+
+  setImmediate(() => {
+    processDelivery(rows[0].id).catch((err) => {
+      logger.error('Failed to replay webhook delivery', { err });
+    });
+  });
+
+  res.json({ message: 'Replay queued', id: rows[0].id });
 });
 
 module.exports = router;

@@ -1,5 +1,12 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, token};
+use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol};
+
+/// Maximum platform fee the contract will ever accept, in basis points (10% = 1000 BPS).
+///
+/// This guards against configuration typos (e.g. `1000` instead of `100`, or `10000`
+/// instead of `100`) that would otherwise route an unreasonable share — or all — of a
+/// campaign's funds to the platform. Any fee above this cap is rejected outright.
+pub const MAX_FEE_BPS: u32 = 1000;
 
 #[derive(Clone)]
 #[contracttype]
@@ -13,6 +20,9 @@ pub enum DataKey {
     TotalRaised,
     ApprovedWithdrawal,
     IsInitialized,
+    PlatformFeeBps,
+    PlatformFeeRecipient,
+    PendingFeeBps,
 }
 
 #[contract]
@@ -20,9 +30,21 @@ pub struct EscrowContract;
 
 #[contractimpl]
 impl EscrowContract {
-    pub fn initialize(env: Env, admin: Address, campaign_id: u64, target: i128, deadline: u64, asset: Address) {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        campaign_id: u64,
+        target: i128,
+        deadline: u64,
+        asset: Address,
+        platform_fee_bps: u32,
+        platform_fee_recipient: Address,
+    ) {
         if env.storage().instance().has(&DataKey::IsInitialized) {
             panic!("Contract is already initialized");
+        }
+        if platform_fee_bps > MAX_FEE_BPS {
+            panic!("Platform fee BPS must not exceed MAX_FEE_BPS");
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::CampaignId, &campaign_id);
@@ -32,14 +54,17 @@ impl EscrowContract {
         env.storage().instance().set(&DataKey::TotalRaised, &0i128);
         env.storage().instance().set(&DataKey::ApprovedWithdrawal, &0i128);
         env.storage().instance().set(&DataKey::IsInitialized, &true);
+        env.storage().instance().set(&DataKey::PlatformFeeBps, &platform_fee_bps);
+        env.storage().instance().set(&DataKey::PlatformFeeRecipient, &platform_fee_recipient);
     }
 
     pub fn deposit(env: Env, from: Address, amount: i128) {
         from.require_auth();
 
         let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();
-        if env.ledger().timestamp() >= deadline {
-            panic!("Deadline has passed");
+        let current_time = env.ledger().timestamp();
+        if current_time > deadline {
+            panic!("Campaign deadline has passed");
         }
 
         let asset: Address = env.storage().instance().get(&DataKey::Asset).unwrap();
@@ -52,6 +77,11 @@ impl EscrowContract {
 
         let total_raised: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0);
         env.storage().instance().set(&DataKey::TotalRaised, &(total_raised + amount));
+
+        env.events().publish(
+            (Symbol::new(&env, "deposit"), from),
+            amount,
+        );
     }
 
     pub fn approve_withdrawal(env: Env, release_amount: i128) {
@@ -62,8 +92,77 @@ impl EscrowContract {
         env.storage().instance().set(&DataKey::ApprovedWithdrawal, &(approved + release_amount));
     }
 
+    /// Step 1 of 2: the admin proposes a new platform fee.
+    ///
+    /// The proposal is validated against [`MAX_FEE_BPS`] and stored as pending, but it
+    /// does **not** take effect until [`Self::confirm_fee_change`] is called in a separate
+    /// transaction. Requiring two explicit admin actions makes an accidental, fund-draining
+    /// fee change far harder to trigger by a single typo.
+    pub fn propose_fee_change(env: Env, new_fee_bps: u32) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        if new_fee_bps > MAX_FEE_BPS {
+            panic!("Platform fee BPS must not exceed MAX_FEE_BPS");
+        }
+
+        env.storage().instance().set(&DataKey::PendingFeeBps, &new_fee_bps);
+
+        env.events().publish(
+            (Symbol::new(&env, "fee_proposed"), admin),
+            new_fee_bps,
+        );
+    }
+
+    /// Step 2 of 2: the admin confirms the pending fee, applying it.
+    ///
+    /// Panics if there is no pending proposal. The pending value is re-validated against
+    /// [`MAX_FEE_BPS`] as a defense-in-depth measure before it becomes the active fee.
+    pub fn confirm_fee_change(env: Env) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        let new_fee_bps: u32 = match env.storage().instance().get(&DataKey::PendingFeeBps) {
+            Some(bps) => bps,
+            None => panic!("No pending fee change to confirm"),
+        };
+
+        if new_fee_bps > MAX_FEE_BPS {
+            panic!("Platform fee BPS must not exceed MAX_FEE_BPS");
+        }
+
+        env.storage().instance().set(&DataKey::PlatformFeeBps, &new_fee_bps);
+        env.storage().instance().remove(&DataKey::PendingFeeBps);
+
+        env.events().publish(
+            (Symbol::new(&env, "fee_changed"), admin),
+            new_fee_bps,
+        );
+    }
+
+    /// Cancels any pending fee proposal without applying it.
+    pub fn cancel_fee_change(env: Env) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        if !env.storage().instance().has(&DataKey::PendingFeeBps) {
+            panic!("No pending fee change to cancel");
+        }
+
+        env.storage().instance().remove(&DataKey::PendingFeeBps);
+
+        env.events().publish(
+            (Symbol::new(&env, "fee_cancelled"), admin),
+            (),
+        );
+    }
+
+    /// Returns the pending proposed fee in BPS, or `None` if no change is pending.
+    pub fn get_pending_fee(env: Env) -> Option<u32> {
+        env.storage().instance().get(&DataKey::PendingFeeBps)
+    }
+
     pub fn execute_withdrawal(env: Env, to: Address, release_amount: i128) {
-        // Ensure caller is verified, could be admin or anyone as long as withdrawal is approved
         let mut approved: i128 = env.storage().instance().get(&DataKey::ApprovedWithdrawal).unwrap_or(0);
         if approved < release_amount {
             panic!("Insufficient approved amount");
@@ -71,10 +170,27 @@ impl EscrowContract {
 
         let asset: Address = env.storage().instance().get(&DataKey::Asset).unwrap();
         let client = token::Client::new(&env, &asset);
-        client.transfer(&env.current_contract_address(), &to, &release_amount);
+
+        let fee_bps: u32 = env.storage().instance().get(&DataKey::PlatformFeeBps).unwrap_or(0);
+        let fee_amount = (release_amount * (fee_bps as i128)) / 10000;
+        let net_amount = release_amount - fee_amount;
+
+        if net_amount > 0 {
+            client.transfer(&env.current_contract_address(), &to, &net_amount);
+        }
+
+        if fee_amount > 0 {
+            let fee_recipient: Address = env.storage().instance().get(&DataKey::PlatformFeeRecipient).unwrap();
+            client.transfer(&env.current_contract_address(), &fee_recipient, &fee_amount);
+        }
 
         approved -= release_amount;
         env.storage().instance().set(&DataKey::ApprovedWithdrawal, &approved);
+
+        env.events().publish(
+            (Symbol::new(&env, "withdrawal"), to),
+            (release_amount, net_amount, fee_amount),
+        );
     }
 
     pub fn refund(env: Env, contributor: Address) {
@@ -101,6 +217,15 @@ impl EscrowContract {
         client.transfer(&env.current_contract_address(), &contributor, &amount);
 
         env.storage().persistent().set(&balance_key, &0i128);
+
+        let total_raised_current: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0);
+        let new_total = total_raised_current - amount;
+        env.storage().instance().set(&DataKey::TotalRaised, &new_total);
+
+        env.events().publish(
+            (Symbol::new(&env, "refund"), contributor),
+            amount,
+        );
     }
 
     pub fn get_total_raised(env: Env) -> i128 {
@@ -109,5 +234,11 @@ impl EscrowContract {
 
     pub fn get_asset(env: Env) -> Address {
         env.storage().instance().get(&DataKey::Asset).unwrap()
+    }
+
+    pub fn get_platform_fee_config(env: Env) -> (u32, Address) {
+        let bps: u32 = env.storage().instance().get(&DataKey::PlatformFeeBps).unwrap_or(0);
+        let recipient: Address = env.storage().instance().get(&DataKey::PlatformFeeRecipient).unwrap();
+        (bps, recipient)
     }
 }

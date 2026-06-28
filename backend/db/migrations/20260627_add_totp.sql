@@ -1,0 +1,4 @@
+ALTER TABLE users
+ADD COLUMN totp_secret TEXT,
+ADD COLUMN totp_enabled BOOLEAN DEFAULT FALSE,
+ADD COLUMN backup_codes TEXT[];

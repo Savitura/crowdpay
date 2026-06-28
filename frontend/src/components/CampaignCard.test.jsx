@@ -32,8 +32,8 @@ describe('CampaignCard', () => {
   it('shows progress bar width from raised_amount / target_amount', () => {
     const { container } = renderCard();
     const fill = container.querySelector('[style*="width"]');
-    const progress = Array.from(container.querySelectorAll('div')).find(
-      (el) => el.getAttribute('style')?.includes('width: 25%')
+    const progress = Array.from(container.querySelectorAll('div')).find((el) =>
+      el.getAttribute('style')?.includes('width: 25%')
     );
     expect(progress || fill).toBeTruthy();
     expect(screen.getByText(/25\.0%/)).toBeInTheDocument();
@@ -52,5 +52,24 @@ describe('CampaignCard', () => {
   it('shows campaign ended badge when status is failed', () => {
     renderCard({ ...baseCampaign, status: 'failed' });
     expect(screen.getByText('Campaign ended')).toBeInTheDocument();
+  });
+
+  it('renders trending badge when recentContributions is present', () => {
+    renderCard({ ...baseCampaign, recentContributions: 5 });
+    expect(screen.getByText('5 contributions in 48h')).toBeInTheDocument();
+  });
+
+  it('does not render trending badge when recentContributions is 0 or missing', () => {
+    renderCard({ ...baseCampaign });
+    expect(screen.queryByText(/in 48h/)).toBeNull();
+  });
+  it('shows category chip when category is present', () => {
+    renderCard({ ...baseCampaign, category: 'technology' });
+    expect(screen.getByText('Technology')).toBeInTheDocument();
+  });
+
+  it('does not show category chip when category is absent', () => {
+    renderCard({ ...baseCampaign, category: null });
+    expect(screen.queryByText('Technology')).toBeNull();
   });
 });

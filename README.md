@@ -1,76 +1,53 @@
 # CrowdPay
 
-**Global funding infrastructure built on Stellar.**
+[![CI](https://github.com/Savitura/crowdpay/actions/workflows/ci.yml/badge.svg)](https://github.com/Savitura/crowdpay/actions/workflows/ci.yml)
 
-CrowdPay is not a crowdfunding website — it is a payments protocol with a product layer on top. Contributors anywhere in the world can fund campaigns in any currency. Stellar handles the conversion, settlement, and custody automatically.
+**Blockchain-powered crowdfunding for the internet.**
 
----
+CrowdPay lets creators, startups, and communities raise funds globally. Each campaign gets its own Stellar multisig wallet. Contributions are tracked on-chain, milestone payouts are governed by Soroban smart contracts, and contributors can deposit fiat via MoneyGram's Stellar anchor.
 
-## Why Stellar
-
-Most crowdfunding platforms are limited by payment rails. Bank transfers are slow, cross-border fees are high, and currency conversion is opaque. CrowdPay eliminates all three by settling everything on Stellar.
-
-| Problem | How Stellar solves it |
-|---|---|
-| Cross-border payments | Path payments auto-convert any asset to the campaign's target currency |
-| Escrow / trust | Multi-signature accounts require both creator and platform to approve withdrawals |
-| Fiat on/off ramp | Stellar anchors bridge NGN, USD, EUR to on-chain assets |
-| Fees | Stellar transactions cost fractions of a cent |
-| Speed | Transactions finalize in 3–5 seconds |
+> **Status**: Active development — testnet only.
 
 ---
 
-## How It Works
+## How it works
 
-### Campaign wallets
+1. Creator launches a campaign with a funding goal, deadline, and optional milestones
+2. Contributors send USDC (or any Stellar asset — path payments handle conversion)
+3. Funds sit in a campaign escrow wallet; the Soroban contract tracks milestone completion
+4. Creator requests withdrawal → platform co-signs → funds released to creator
+5. If the campaign fails to hit its goal, contributors can claim refunds
 
-Every campaign gets its own Stellar account — not a database row, an actual on-chain account. That account is controlled by two signers:
+---
 
-```
-Campaign Account
-  Signers:
-    Creator key  (weight 1)
-    Platform key (weight 1)
-  Threshold:
-    Medium: 2   ← both must sign to move funds
-```
-
-This means funds are locked in escrow by default. No code, no smart contract, no trust — just cryptographic multisig enforced by the Stellar network.
-
-### Contribution flow
+## Architecture
 
 ```
-User clicks "Contribute"
-  → Backend builds Stellar transaction
-      (Payment or Path Payment depending on asset)
-  → User signs (custodial: backend signs; non-custodial: user's wallet)
-  → Transaction submitted to Stellar testnet / mainnet
-  → Horizon streams ledger events
-
-
-### Wallet Architecture & Security
-
-Each campaign wallet is secured with:
-
-- **AES-256-GCM encryption** for private key storage
-- **Multisig control** requiring both creator and platform signatures
-- **Disabled master keys** after initial setup
-- **Full audit trail** of all transactions and payments
-- **Recovery procedures** for encrypted wallet secrets
-
-See [WALLET_ARCHITECTURE.md](WALLET_ARCHITECTURE.md) for complete technical details.
-
-
-  → Backend confirms + indexes in PostgreSQL
-  → Campaign progress updates in real time
-```
-
-### Path payments (the edge)
-
-A contributor in Nigeria with XLM can fund a USD-denominated campaign. Stellar's DEX finds the best conversion path automatically. The campaign receives USDC. The contributor never thinks about exchange rates.
-
-```
-XLM (contributor) → [Stellar DEX] → USDC (campaign wallet)
+Browser  ──────────────────────────────────────────────────────────────
+  React 18 + Vite │ React Router │ Freighter wallet │ i18next (en, fr)
+────────────────────────────────────────────────────────────────────────
+                            │ HTTPS
+                            ▼
+Backend  ──────────────────────────────────────────────────────────────
+  Express │ JWT auth │ Winston │ Sentry │ rate-limit │ Swagger docs
+  ┌────────────────────────────────────────────────────────────────┐
+  │ routes: campaigns · contributions · withdrawals · milestones   │
+  │         disputes · users · wallets · notifications · webhooks  │
+  │         anchor · admin · api-keys                              │
+  └────────────────────────────────────────────────────────────────┘
+  ┌────────────────────────────────────────────────────────────────┐
+  │ services: stellarService · sorobanService · anchorService      │
+  │           ledgerMonitor · reconciliation · contributionService │
+  │           emailService · kycProvider · webhookDispatcher       │
+  │           walletSecrets · campaignStatusService                │
+  └────────────────────────────────────────────────────────────────┘
+          │                    │                      │
+          ▼                    ▼                      ▼
+    PostgreSQL          Stellar Horizon         AWS S3 / R2
+    (pgv8/pg)          + Soroban RPC        (campaign images)
+                             │
+                   MoneyGram SEP-24 Anchor
+                   (fiat ↔ USDC rails)
 ```
 
 ---
@@ -79,189 +56,128 @@ XLM (contributor) → [Stellar DEX] → USDC (campaign wallet)
 
 ```
 crowdpay/
-├── README.md
-├── backend/              # Node.js API — campaign logic, wallet management, Horizon listener
+├── backend/
 │   ├── src/
-│   │   ├── config/       # Stellar + database configuration
-│   │   ├── routes/       # REST API routes
-│   │   ├── services/     # Stellar SDK interactions, ledger monitoring
-│   │   └── middleware/   # Auth
-│   ├── API.md            # Contribution/path-payment API reference
+│   │   ├── config/          # env, database, stellar client, logger, constants
+│   │   ├── routes/          # one file per resource (campaigns, contributions, ...)
+│   │   ├── services/        # all business logic and third-party integrations
+│   │   ├── middleware/      # auth, validation, error handler, request ID
+│   │   └── index.js         # Express app entry point
 │   └── db/
-│       └── schema.sql    # PostgreSQL schema
-├── frontend/             # React (Vite) — campaign UI
+│       ├── schema.sql       # base schema
+│       ├── migrate.js       # migration runner
+│       └── migrations/      # date-prefixed SQL files
+├── frontend/
 │   └── src/
-│       ├── pages/
-│       ├── components/
-│       └── services/     # API client
-└── contracts/            # Stellar transaction templates
-    └── stellar/
-        ├── campaignWallet.js   # Multisig account creation
-        ├── trustlines.js       # Asset trustline management
-        ├── pathPayment.js      # Cross-currency contribution
-        └── multiSig.js         # Threshold signing helpers
+│       ├── pages/           # 18 route-level page components
+│       ├── components/      # reusable UI (CampaignCard, ContributeModal, ...)
+│       ├── context/         # AuthContext, ThemeContext, ToastContext
+│       ├── services/        # typed API client functions
+│       ├── locales/         # i18n JSON (en, fr)
+│       └── config/          # Stellar/Freighter config
+└── contracts/
+    └── soroban/             # Rust Soroban contracts (escrow, milestone release)
 ```
 
 ---
 
-## Tech Stack
+## Quick Start
 
-| Layer | Technology |
-|---|---|
-| Blockchain | Stellar (testnet for development, mainnet for production) |
-| Backend | Node.js, Express |
-| Database | PostgreSQL |
-| Frontend | React, Vite |
-| Stellar SDK | `@stellar/stellar-sdk` |
-| Auth | JWT |
-
----
-
-## MVP Scope
-
-- Create campaigns with a target amount and asset (USDC or XLM)
-- Auto-generate a multisig campaign wallet on Stellar
-- Accept contributions in any Stellar asset (path payment handles conversion)
-- Display real-time funding progress (Horizon event stream)
-- Withdraw funds (requires both creator + platform signature)
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 18+
-- PostgreSQL 14+
-- A Stellar testnet account (free via [Stellar Laboratory](https://laboratory.stellar.org))
-
-### 1. Clone and install
+### With Docker (recommended)
 
 ```bash
-git clone <repo>
+git clone https://github.com/Savitura/crowdpay
 cd crowdpay
+cp backend/.env.example backend/.env
+docker compose up
+```
 
-# Backend
-cd backend && npm install
+| Service  | URL |
+|---|---|
+| Frontend | http://localhost:5173 |
+| Backend  | http://localhost:3001 |
+| API docs | http://localhost:3001/api/docs |
 
-# Frontend
+The database schema is applied automatically. Hot-reload is active for both processes.
+
+### Without Docker
+
+```bash
+# Prerequisites: Node.js 20+, PostgreSQL 15+
+
+cd backend && npm install && cp .env.example .env
+# Fill in .env (see Environment Variables below)
+npm run migrate:fresh
+
 cd ../frontend && npm install
+
+# Two terminals:
+cd backend  && npm run dev   # http://localhost:3001
+cd frontend && npm run dev   # http://localhost:5173
 ```
 
-### 2. Configure environment
+### Environment Variables
 
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `JWT_SECRET` | Random 32+ char secret |
+| `STELLAR_NETWORK` | `testnet` or `mainnet` |
+| `STELLAR_HORIZON_URL` | Horizon endpoint URL |
+| `PLATFORM_SECRET_KEY` | Stellar secret key for the platform co-signer wallet |
+| `USDC_ISSUER` | USDC issuer (`GBBD47...` on testnet) |
+| `WALLET_SECRET_LOCAL_KEK` | Base64-encoded key-encryption key for stored secrets |
+| `FRONTEND_URL` | Allowed CORS origin (dev: `http://localhost:5173`) |
+| `SMTP_HOST` / `EMAIL_SERVICE_API_KEY` | Email delivery (optional in dev) |
+| `PERSONA_API_KEY` / `PERSONA_TEMPLATE_ID` | KYC provider (optional in dev) |
+| `AWS_ACCESS_KEY_ID` + S3 vars | Image uploads (optional in dev) |
+
+Generate a platform keypair:
 ```bash
-cd backend
-cp .env.example .env
-# Edit .env — add your Stellar platform keypair and DB credentials
+node -e "const {Keypair} = require('@stellar/stellar-sdk'); const kp = Keypair.random(); console.log('Public:', kp.publicKey()); console.log('Secret:', kp.secret());"
 ```
 
-Creator identity verification is enforced by default before campaign launch. For local testnet development, set `KYC_REQUIRED_FOR_CAMPAIGNS=false` in the backend environment; optionally mirror it with `VITE_KYC_REQUIRED_FOR_CAMPAIGNS=false` so the frontend knows before the profile request returns. For Persona-hosted verification, configure `KYC_PROVIDER=persona`, `PERSONA_API_KEY`, `PERSONA_TEMPLATE_ID`, and `APP_BASE_URL`.
-
-### 3. Set up the database
-
+Fund it on testnet:
 ```bash
-psql -U postgres -c "CREATE DATABASE crowdpay;"
-psql -U postgres -d crowdpay -f db/schema.sql
-# For existing deployments, apply migration files in backend/db/migrations in order.
-```
-
-### 4. Fund your platform account on testnet
-
-```bash
-# Run the account setup script
-node contracts/stellar/campaignWallet.js --setup-platform
-```
-
-This creates and funds a testnet platform account using Friendbot.
-
-### 5. Run
-
-```bash
-# Terminal 1 — Backend
-cd backend && npm run dev
-
-# Terminal 2 — Frontend
-cd frontend && npm run dev
-```
-
-Backend runs on `http://localhost:3001`  
-Frontend runs on `http://localhost:5173`
-
-### Testing
-
-```bash
-# Backend unit + route tests
-cd backend && npm test
-
-# Frontend component tests (Vitest + React Testing Library)
-cd frontend && npm test
-
-# End-to-end tests (Playwright — starts backend + frontend dev servers)
-# Requires PostgreSQL with schema + seed applied (see docker-compose on port 5433)
-npm install
-npx playwright install
-npm run test:e2e
+curl "https://friendbot.stellar.org?addr=<PLATFORM_PUBLIC_KEY>"
 ```
 
 ---
 
-## Core Stellar Concepts Used
+## Testing
 
-### Multisig escrow
-Every campaign wallet is created with `setOptions` to add two signers (creator + platform) and set medium threshold to 2. Funds cannot be withdrawn without both parties signing.
-
-### Trustlines
-Before a campaign wallet can receive USDC, it must establish a trustline to the USDC issuer. The backend automates this during campaign creation — users never see it.
-
-### Path payments
-Contributions use `pathPaymentStrictReceive` so the campaign always receives the exact asset it expects, regardless of what the contributor sends.
-
+```bash
+cd backend  && npm test       # Node test runner + Supertest
+cd frontend && npm test       # Vitest
+```
 
 ---
 
-## Documentation
+## Key Concepts
 
-- **[DEPLOYMENT.md](DEPLOYMENT.md)** - How to deploy CrowdPay on Railway, Render, or a self-hosted Ubuntu VPS, including a full environment variable reference
-- **[WALLET_ARCHITECTURE.md](WALLET_ARCHITECTURE.md)** - Complete technical architecture for campaign wallets, including key management, lifecycle phases, security considerations, and API reference
-- **[OPERATOR_GUIDE.md](OPERATOR_GUIDE.md)** - Step-by-step guide for platform operators covering setup, daily operations, maintenance, troubleshooting, and emergency procedures
-- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Summary of the wallet architecture implementation with quick start guides
-- **[backend/API.md](backend/API.md)** - REST API documentation with endpoint details and examples
+**Campaign wallet**: Each campaign has a dedicated Stellar account with a 2-of-2 multisig threshold — contributions go directly to it. The platform co-signer key is required for withdrawals.
 
+**Soroban escrow**: The Rust contract at `contracts/soroban/` holds contribution records on-chain. Milestone release calls invoke the contract before the backend builds the withdrawal transaction.
 
+**Anchor deposits**: `anchorService.js` implements SEP-10 (web auth) + SEP-24 (interactive deposit) with MoneyGram. Users can deposit cash or USD and receive USDC in their CrowdPay wallet.
 
-### Horizon streaming
-The backend opens a streaming connection to Horizon to watch each campaign wallet for incoming payments. When a payment lands, it is indexed in PostgreSQL and the campaign total updates.
+**Reconciliation**: `reconciliation.js` runs periodically to compare `raised_amount` in PostgreSQL against the live Stellar account balance. Discrepancies are logged and resolved.
 
----
-
-## Custody Model
-
-**MVP: Custodial**
-
-The platform holds all private keys in encrypted storage. This gives the best UX — contributors do not need wallets. Users sign in with email. The platform cosigns all transactions.
-
-**Phase 2: Non-custodial**
-
-Integrate Freighter (browser wallet) or WalletConnect. Users hold their own keys. Platform key is still required for campaign withdrawals (enforces milestone gates).
+**Campaign status cron**: `campaignStatusService.js` runs hourly (via `node-cron` in `backend/src/index.js`) to transition active campaigns to `funded` or `failed` when goals or deadlines are met. Set `ENABLE_CAMPAIGN_STATUS_CRON=false` to disable the in-process scheduler (e.g. when using an external cron that calls `POST /api/campaigns/cron/fail-expired` instead). On each transition, `campaignStatusActions.js` sends emails, fires webhooks, creates in-app notifications, logs the change in `campaign_status_events`, and queues contributor refunds for failed campaigns.
 
 ---
 
-## Phase 2 Roadmap
+## Part of Savitura
 
-- [ ] Milestone-based fund releases (release tranches, not full balance)
-- [ ] Fiat on-ramp via Stellar anchors (NGN, USD)
-- [ ] Multi-currency campaigns
-- [ ] Freighter wallet integration
-- [ ] Public API for third-party campaign embeds
+- **[Fluxa](https://github.com/Savitura/Fluxa)** — the payment infrastructure layer
+- **[SaviTools](https://github.com/Savitura/Savitools)** — developer tools for Stellar builders
 
 ---
 
-## Network
+## Contributing
 
-| Environment | Stellar network | Horizon URL |
-|---|---|---|
-| Development | Testnet | `https://horizon-testnet.stellar.org` |
-| Production | Mainnet | `https://horizon.stellar.org` |
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Switch via `STELLAR_NETWORK=testnet\|mainnet` in `.env`.
+## License
+
+MIT
