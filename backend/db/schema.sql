@@ -31,6 +31,7 @@ CREATE TABLE users (
 CREATE TABLE campaigns (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   creator_id          UUID NOT NULL REFERENCES users(id),
+  category            TEXT,
   title               TEXT NOT NULL,
   description         TEXT,
   target_amount       NUMERIC(20, 7) NOT NULL,

@@ -49,6 +49,11 @@ export default function Home() {
   const search = searchParams.get('search') || '';
   const status = searchParams.get('status') || '';
   const asset = searchParams.get('asset') || '';
+  const category = searchParams.get('category') || '';
+  const minProgress = searchParams.get('min_progress') || '';
+  const sort = searchParams.get('sort') || 'newest';
+  const limit = Number(searchParams.get('limit') || 20);
+  const offset = Number(searchParams.get('offset') || 0);
 
   useEffect(() => {
     const urlSort = searchParams.get('sort') || 'newest';
@@ -100,7 +105,7 @@ export default function Home() {
     setListError('');
     setLoading(true);
     api
-      .getCampaigns({ search, status, asset, category, sort, limit: 20, offset: 0 })
+      .getCampaigns({ search, status, asset, category, min_progress: minProgress, sort, limit, offset })
       .then((data) => {
         const nextCampaigns = data.campaigns || [];
         const nextTotal = data.total || 0;
@@ -302,6 +307,28 @@ export default function Home() {
           </select>
         </label>
         <label style={styles.filterItem}>
+          Category
+          <input
+            value={category}
+            onChange={(e) => setFilters({ category: e.target.value })}
+            placeholder="e.g. tech, art"
+            style={styles.filterInput}
+          />
+        </label>
+        <label style={styles.filterItem}>
+          Min Progress (%)
+          <input
+            type="number"
+            min="0"
+            max="100"
+            value={minProgress}
+            onChange={(e) => setFilters({ min_progress: e.target.value })}
+            placeholder="e.g. 50"
+            style={styles.filterInput}
+          />
+        </label>
+        <label style={styles.filterItem}>
+          Sort by
           {t('home.sortLabel')}
           <select
             value={sort}
@@ -317,6 +344,37 @@ export default function Home() {
         </label>
       </div>
 
+      {(search || status || asset || category || minProgress) && (
+        <div style={styles.activeFilters}>
+          {search && (
+            <button className="filter-chip" onClick={() => setFilters({ search: '' })}>
+              Search: {search} ✕
+            </button>
+          )}
+          {status && (
+            <button className="filter-chip" onClick={() => setFilters({ status: '' })}>
+              Status: {status} ✕
+            </button>
+          )}
+          {asset && (
+            <button className="filter-chip" onClick={() => setFilters({ asset: '' })}>
+              Asset: {asset} ✕
+            </button>
+          )}
+          {category && (
+            <button className="filter-chip" onClick={() => setFilters({ category: '' })}>
+              Category: {category} ✕
+            </button>
+          )}
+          {minProgress && (
+            <button className="filter-chip" onClick={() => setFilters({ min_progress: '' })}>
+              Min Progress: {minProgress}% ✕
+            </button>
+          )}
+        </div>
+      )}
+
+      <h2 style={styles.sectionTitle}>Active campaigns</h2>
       <h2 style={styles.sectionTitle}>{t('home.activeCampaigns')}</h2>
       <div style={styles.sortBar}>
         <button

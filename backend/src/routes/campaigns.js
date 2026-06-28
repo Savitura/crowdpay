@@ -231,6 +231,15 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
     params.push(category);
     filters.push(`c.category = $${params.length}`);
   }
+  if (category) {
+    params.push(category);
+    filters.push(`category = $${params.length}`);
+  }
+  if (min_progress) {
+    params.push(Number(min_progress));
+    // Progress is (raised_amount / target_amount) * 100
+    filters.push(`(raised_amount / target_amount) * 100 >= $${params.length}`);
+  }
   if (search) {
     params.push(search);
     filters.push(`c.search_vector @@ websearch_to_tsquery('english', $${params.length})`);
@@ -876,6 +885,7 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
    *               milestones: { type: array, items: { type: object }, nullable: true }
    *               min_contribution: { type: string, nullable: true }
    *               max_contribution: { type: string, nullable: true }
+   *               category: { type: string, nullable: true }
    *     responses:
    *       201:
    *         description: Created

@@ -60,6 +60,7 @@ export default function CreateCampaign() {
     target_amount: location.state?.prefill?.target_amount || '',
     asset_type: location.state?.prefill?.asset_type || 'USDC',
     deadline: '',
+    category: '',
     min_contribution: location.state?.prefill?.min_contribution || '',
     max_contribution: location.state?.prefill?.max_contribution || '',
     max_per_user: location.state?.prefill?.max_per_user || '',
@@ -507,17 +508,21 @@ export default function CreateCampaign() {
               />
             </div>
 
-            <div
-              style={{
-                marginTop: '1.25rem',
-                border: '1px dashed var(--color-border)',
-                padding: '1rem',
-                borderRadius: '8px',
-              }}
-            >
-              <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' }}>
-                {t('createCampaign.contributionLimits')}
-              </h3>
+            <div className="form-stack" style={{ marginTop: '1rem' }}>
+              <label className="label-strong" htmlFor="cc-category">
+                Category (Optional)
+              </label>
+              <input
+                id="cc-category"
+                value={form.category}
+                onChange={setField('category')}
+                placeholder="e.g. tech, art, community"
+                autoComplete="off"
+              />
+            </div>
+
+            <div style={{ marginTop: '1.25rem', border: '1px dashed var(--color-border)', padding: '1rem', borderRadius: '8px' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' }}>Contribution limits (Optional)</h3>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 <div className="form-stack">
                   <label className="label-strong" htmlFor="cc-min-contrib">
