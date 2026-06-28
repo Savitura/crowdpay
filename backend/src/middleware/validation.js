@@ -160,6 +160,8 @@ const createCampaignValidation = [
       if (value == null) return true; // eslint-disable-line eqeqeq
       if (!Array.isArray(value)) throw new Error('Milestones must be an array');
       if (value.length > 10) throw new Error('Campaigns can define at most 10 milestones');
+      
+      // Validate individual milestones
       for (const [index, milestone] of value.entries()) {
         if (!milestone || typeof milestone !== 'object') {
           throw new Error(`Milestone ${index + 1} must be an object`);
@@ -172,6 +174,20 @@ const createCampaignValidation = [
           throw new Error(`Milestone ${index + 1} release percentage must be greater than zero`);
         }
       }
+      
+      // Validate total percentage doesn't exceed 100%
+      if (value.length > 0) {
+        const totalPercentage = value.reduce((sum, milestone) => {
+          const release = Number(milestone.release_percentage);
+          return sum + (Number.isFinite(release) ? release : 0);
+        }, 0);
+        
+        // Use a small epsilon for floating point comparison
+        if (totalPercentage > 100.001) { // Allow small rounding errors (0.001% tolerance)
+          throw new Error('Milestone percentages must not exceed 100%');
+        }
+      }
+      
       return true;
     }),
   body('milestones.*.title').optional().customSanitizer(stripHtml),
