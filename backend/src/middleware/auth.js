@@ -289,6 +289,10 @@ function assertApiKeyScopes(req, res) {
 
 function requireAuth(req, res, next) {
   authenticate(req)
+    .then(() => {
+      if (req.user?.is_banned) {
+        return res.status(403).json({ error: 'Account suspended' });
+      }
     .then(async () => {
       if (!assertApiKeyScopes(req, res)) return;
       if (req.user?.userId) Sentry.setUser({ id: req.user.userId });
