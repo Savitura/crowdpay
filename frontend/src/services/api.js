@@ -14,13 +14,15 @@ export function retryQueuedRequests() {
   retryQueue.length = 0;
   for (const item of queue) {
     const { method, path, body, options, resolve, reject } = item;
-    request(method, path, body, options).then(resolve).catch((err) => {
-      if (isNetworkError(err)) {
-        retryQueue.push(item);
-      } else {
-        reject(err);
-      }
-    });
+    request(method, path, body, options)
+      .then(resolve)
+      .catch((err) => {
+        if (isNetworkError(err)) {
+          retryQueue.push(item);
+        } else {
+          reject(err);
+        }
+      });
   }
 }
 
@@ -209,6 +211,77 @@ async function refresh() {
   return refreshPromise;
 }
 
+function parseDownloadFilename(disposition, fallback) {
+  if (!disposition) return fallback;
+
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match) {
+    try {
+      return decodeURIComponent(utf8Match[1].replace(/^"|"$/g, ''));
+    } catch {
+      return utf8Match[1].replace(/^"|"$/g, '') || fallback;
+    }
+  }
+
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  return match?.[1] || fallback;
+}
+
+async function downloadFile(path, fallbackFilename, options = {}) {
+  const { _retry = false } = options || {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60_000);
+
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method: 'GET',
+      credentials: 'include',
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error('Download timed out. Check your connection and try again.');
+    }
+    if (isNetworkError(err)) {
+      throw new Error('You appear to be offline. Please check your connection and try again.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (res.status === 401 && !_retry) {
+    try {
+      await refresh();
+      return downloadFile(path, fallbackFilename, { _retry: true });
+    } catch {
+      throw new Error('Session expired. Please log in again.');
+    }
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    let message = `Download failed (${res.status})`;
+    try {
+      const data = JSON.parse(text);
+      const errorBody = data.error;
+      message = typeof errorBody === 'string' ? errorBody : errorBody?.message || message;
+    } catch {
+      if (text) message = text;
+    }
+
+    const err = new Error(message);
+    err.status = res.status;
+    throw err;
+  }
+
+  return {
+    blob: await res.blob(),
+    filename: parseDownloadFilename(res.headers.get('content-disposition'), fallbackFilename),
+  };
+}
+
 async function logout() {
   const res = await fetch(`${BASE}/auth/logout`, {
     method: 'POST',
@@ -257,6 +330,11 @@ export const api = {
   getCampaignAnalytics: (id) => request('GET', `/campaigns/${id}/analytics`),
   getCampaignAnalyticsContributors: (id) =>
     request('GET', `/campaigns/${id}/analytics/contributors`),
+  exportCampaignContributions: (id) =>
+    downloadFile(
+      `/campaigns/${encodeURIComponent(id)}/contributions/export`,
+      `campaign-${id}-contributors.csv`
+    ),
   getUserDashboardAnalytics: () => request('GET', '/users/me/dashboard/analytics'),
   getCampaignEmbed: (id) => request('GET', `/campaigns/${id}/embed`),
   getCampaignBackers: (id) => request('GET', `/campaigns/${id}/backers`),

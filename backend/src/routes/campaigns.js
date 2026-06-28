@@ -14,7 +14,13 @@ const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../servi
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
 const { refreshCampaignStatus, refreshActiveCampaignStatuses } = require('../services/campaignStatusService');
 const { queueFailedCampaignRefunds } = require('../services/campaignStatusActions');
-const { invokeContract, encodeMilestone, nativeToScVal, deployCampaignContracts } = require('../services/sorobanService');
+const {
+  invokeContract,
+  encodeMilestone,
+  nativeToScVal,
+  deployCampaignContracts,
+  getContractStatus,
+} = require('../services/sorobanService');
 const { sendEmail, sendTeamMemberInvitedEmail } = require('../services/emailService');
 const { uploadCampaignCoverImage } = require('../services/storage');
 const { isKycRequiredForCampaigns } = require('../services/kycProvider');
@@ -25,6 +31,7 @@ const {
   insertTiers,
   listTiersWithAvailability,
 } = require('../services/rewardTierService');
+const { streamCampaignContributionExport } = require('../services/contributionExportService');
 const {
   createCampaignValidation,
   createCampaignUpdateValidation,
@@ -212,7 +219,7 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
    *                   items:
    *                     type: object
    */
-  const { search, status, asset, category, sort = 'newest' } = req.query;
+  const { search, status, asset, category, min_progress, sort = 'newest' } = req.query;
   const limit = Math.min(Number(req.query.limit || 20), 100);
   const offset = Math.max(Number(req.query.offset || 0), 0);
   const filters = [];
@@ -235,14 +242,10 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
     params.push(category);
     filters.push(`c.category = $${params.length}`);
   }
-  if (category) {
-    params.push(category);
-    filters.push(`category = $${params.length}`);
-  }
   if (min_progress) {
     params.push(Number(min_progress));
     // Progress is (raised_amount / target_amount) * 100
-    filters.push(`(raised_amount / target_amount) * 100 >= $${params.length}`);
+    filters.push(`(c.raised_amount / c.target_amount) * 100 >= $${params.length}`);
   }
   if (search) {
     params.push(search);
@@ -740,6 +743,15 @@ router.get('/:id/backers', asyncHandler(async (req, res) => {
   `;
   const { rows } = await db.query(query, [campaignId]);
   res.json(rows);
+}));
+
+// Download contributor fulfillment data for campaign owners/admins.
+router.get('/:id/contributions/export', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  await streamCampaignContributionExport({
+    campaignId: req.params.id,
+    res,
+    runner: db,
+  });
 }));
 
 // SSE stream for real-time campaign funding updates

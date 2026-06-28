@@ -1,5 +1,4 @@
 import { useEffect, useState, useCallback } from 'react';
-import PropTypes from 'prop-types';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
@@ -104,7 +103,8 @@ function MilestoneFunnel({ campaignId }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem' }}>
               <span>{m.title}</span>
               <span style={{ color: 'var(--color-text-hint)' }}>
-                {m.release_percentage}% · {t('dashboard.percentFunded', { percent: pct.toFixed(0) })}
+                {m.release_percentage}% ·{' '}
+                {t('dashboard.percentFunded', { percent: pct.toFixed(0) })}
               </span>
             </div>
             <div
@@ -130,16 +130,6 @@ function MilestoneFunnel({ campaignId }) {
     </div>
   );
 }
-
-MiniLineChart.propTypes = {
-  data: PropTypes.arrayOf(PropTypes.object),
-  dataKey: PropTypes.string,
-  label: PropTypes.string,
-};
-
-MilestoneFunnel.propTypes = {
-  campaignId: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
-};
 
 export default function Dashboard() {
   const { user, ready, updateUser } = useAuth();
@@ -168,6 +158,7 @@ export default function Dashboard() {
   const [campaignContributors, setCampaignContributors] = useState(null);
   const [referralData, setReferralData] = useState({});
   const [referralLoading, setReferralLoading] = useState(false);
+  const [exportingCampaignId, setExportingCampaignId] = useState(null);
 
   const isCreator = user?.role === 'creator' || user?.role === 'admin';
 
@@ -225,6 +216,27 @@ export default function Dashboard() {
       .catch(() => {})
       .finally(() => setAnalyticsLoading(false));
   }, []);
+
+  const handleExportContributions = useCallback(async (campaign) => {
+    setError('');
+    setExportingCampaignId(campaign.id);
+    try {
+      const { blob, filename } = await api.exportCampaignContributions(campaign.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || 'Could not export campaign contributors');
+    } finally {
+      setExportingCampaignId(null);
+    }
+  }, []);
+
   useEffect(() => {
     if (!isCreator || activeTab !== 'referrals' || !campaigns.length) return;
     setReferralLoading(true);
@@ -313,7 +325,9 @@ export default function Dashboard() {
 
   return (
     <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
-      <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>{t('dashboard.title')}</h1>
+      <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>
+        {t('dashboard.title')}
+      </h1>
 
       <div className="campaign-card" style={{ marginBottom: '1rem', minHeight: 'auto' }}>
         <div
@@ -388,9 +402,7 @@ export default function Dashboard() {
               color: activeTab === tab.id ? '#fff' : 'var(--color-text-secondary)',
             }}
           >
-          {tab.label
-            ? tab.label
-            : t(tab.labelKey)}
+            {tab.label ? tab.label : t(tab.labelKey)}
           </button>
         ))}
       </div>
@@ -544,6 +556,18 @@ export default function Dashboard() {
                           >
                             {t('dashboard.viewCampaign')}
                           </Link>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            disabled={exportingCampaignId !== null}
+                            aria-busy={exportingCampaignId === campaign.id}
+                            onClick={() => handleExportContributions(campaign)}
+                            style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                          >
+                            {exportingCampaignId === campaign.id
+                              ? t('common.loading')
+                              : t('dashboard.exportCsv')}
+                          </button>
                           {campaign.status === 'funded' && (
                             <Link
                               to={`/campaigns/${campaign.id}#withdrawals`}
@@ -612,9 +636,18 @@ export default function Dashboard() {
                 }}
               >
                 {[
-                  [t('dashboard.analyticsOverview.totalRaised'), Number(dashAnalytics.overview.total_raised).toLocaleString()],
-                  [t('dashboard.analyticsOverview.contributions'), dashAnalytics.overview.total_contributions],
-                  [t('dashboard.analyticsOverview.uniqueContributors'), dashAnalytics.overview.unique_contributors],
+                  [
+                    t('dashboard.analyticsOverview.totalRaised'),
+                    Number(dashAnalytics.overview.total_raised).toLocaleString(),
+                  ],
+                  [
+                    t('dashboard.analyticsOverview.contributions'),
+                    dashAnalytics.overview.total_contributions,
+                  ],
+                  [
+                    t('dashboard.analyticsOverview.uniqueContributors'),
+                    dashAnalytics.overview.unique_contributors,
+                  ],
                   [
                     t('dashboard.analyticsOverview.avgContribution'),
                     Number(dashAnalytics.overview.avg_contribution).toLocaleString(undefined, {
@@ -679,7 +712,9 @@ export default function Dashboard() {
             )}
 
             {analyticsLoading && (
-              <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>{t('common.loading')}</p>
+              <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
+                {t('common.loading')}
+              </p>
             )}
 
             {campaignAnalytics && !analyticsLoading && (
@@ -698,8 +733,14 @@ export default function Dashboard() {
                       t('dashboard.analyticsOverview.totalRaised'),
                       `${Number(campaignAnalytics.campaign.raised_amount).toLocaleString()} ${campaignAnalytics.campaign.asset_type}`,
                     ],
-                    [t('dashboard.analyticsOverview.contributions'), campaignAnalytics.summary.total_contributions],
-                    [t('dashboard.analyticsOverview.uniqueContributors'), campaignAnalytics.summary.unique_contributors],
+                    [
+                      t('dashboard.analyticsOverview.contributions'),
+                      campaignAnalytics.summary.total_contributions,
+                    ],
+                    [
+                      t('dashboard.analyticsOverview.uniqueContributors'),
+                      campaignAnalytics.summary.unique_contributors,
+                    ],
                     [
                       t('dashboard.analyticsOverview.avgContribution'),
                       Number(campaignAnalytics.summary.avg_contribution).toLocaleString(undefined, {
@@ -726,7 +767,9 @@ export default function Dashboard() {
                     className="campaign-card"
                     style={{ minHeight: 'auto', marginBottom: '0.75rem', padding: '0.75rem' }}
                   >
-                    <strong style={{ fontSize: '0.9rem' }}>{t('dashboard.contributorStats')}</strong>
+                    <strong style={{ fontSize: '0.9rem' }}>
+                      {t('dashboard.contributorStats')}
+                    </strong>
                     <div
                       style={{
                         marginTop: '0.4rem',
@@ -741,7 +784,8 @@ export default function Dashboard() {
                         <strong>{campaignContributors.first_time_contributors ?? 0}</strong>
                       </span>
                       <span>
-                        {t('dashboard.returning')}: <strong>{campaignContributors.repeat_contributors ?? 0}</strong>
+                        {t('dashboard.returning')}:{' '}
+                        <strong>{campaignContributors.repeat_contributors ?? 0}</strong>
                       </span>
                       {campaignContributors.repeat_contributors > 0 && (
                         <span>
@@ -760,7 +804,9 @@ export default function Dashboard() {
                     </div>
                     {campaignContributors.country_breakdown?.length > 0 && (
                       <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
-                        <span style={{ color: 'var(--color-text-hint)' }}>{t('dashboard.topCountry')}: </span>
+                        <span style={{ color: 'var(--color-text-hint)' }}>
+                          {t('dashboard.topCountry')}:{' '}
+                        </span>
                         <strong>{campaignContributors.country_breakdown[0].country}</strong>
                         <span style={{ color: 'var(--color-text-hint)' }}>
                           {' '}
@@ -884,7 +930,9 @@ export default function Dashboard() {
                                 textAlign: 'left',
                               }}
                             >
-                              <th style={{ padding: '0.35rem 0.5rem' }}>{t('dashboard.referrer')}</th>
+                              <th style={{ padding: '0.35rem 0.5rem' }}>
+                                {t('dashboard.referrer')}
+                              </th>
                               <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
                                 {t('dashboard.clicks')}
                               </th>

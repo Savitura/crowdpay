@@ -179,6 +179,105 @@ test('POST /api/campaigns blocks unverified creators when KYC gate is enabled', 
   assert.equal(response.body.code, 'KYC_REQUIRED');
 });
 
+test('GET /api/campaigns/:id/contributions/export streams owner CSV and hides anonymous wallets', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id = $1')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('FROM contributions ctr')) {
+        if (params[2] > 0) return { rows: [] };
+        return {
+          rows: [
+            {
+              contributor_name: 'Alice User',
+              display_name: 'Alice',
+              amount: '25.5000000',
+              asset: 'USDC',
+              source_amount: null,
+              source_asset: null,
+              tier: 'Sponsor',
+              created_at: new Date('2026-06-28T01:02:03Z'),
+              sender_public_key: 'GALICE',
+            },
+            {
+              contributor_name: 'Private User',
+              display_name: '',
+              amount: '10',
+              asset: 'XLM',
+              source_amount: null,
+              source_asset: null,
+              tier: null,
+              created_at: new Date('2026-06-28T02:00:00Z'),
+              sender_public_key: 'GPRIVATE',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .get('/api/campaigns/campaign-1/contributions/export')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers['content-type'], /text\/csv/);
+  assert.match(
+    response.headers['content-disposition'],
+    /campaign-campaign-1-contributors\.csv/
+  );
+  assert.equal(
+    response.text,
+    [
+      'contributor_name,display_name,amount_usd,amount_xlm,tier,contributed_at,wallet_address',
+      'Alice User,Alice,25.5000000,,Sponsor,2026-06-28T01:02:03.000Z,GALICE',
+      ',,,10,,2026-06-28T02:00:00.000Z,',
+      '',
+    ].join('\n')
+  );
+  assert.ok(queries.some(({ params }) => params?.[1] === 500 && params?.[2] === 0));
+});
+
+test('GET /api/campaigns/:id/contributions/export rejects non-owners', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'user-2', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id = $1')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('FROM contributions ctr')) {
+        throw new Error('export query should not run for unauthorized users');
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .get('/api/campaigns/campaign-1/contributions/export')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 403);
+  assert.equal(response.body.error, 'Insufficient permissions for this campaign');
+  assert.equal(queries.some(({ text }) => text.includes('FROM contributions ctr')), false);
+});
+
 test('POST /api/campaigns allows creation when KYC gate is disabled', async (t) => {
   const previous = process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
   t.after(() => {
