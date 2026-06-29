@@ -56,6 +56,7 @@ const {
   canChangeRoles,
 } = require('../lib/campaignPermissions');
 const { stripHtml } = require('../lib/sanitize');
+const { getSimhash, simhashSimilarity } = require('../utils/simhash');
 
 const crypto = require('crypto');
 
@@ -227,6 +228,7 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
 
   // Exclude deleted campaigns from public listing
   filters.push(`c.deleted_at IS NULL`);
+  filters.push(`c.is_flagged_duplicate = FALSE`);
 
   if (status) {
     params.push(status);
@@ -430,7 +432,7 @@ router.get('/featured', asyncHandler(async (req, res) => {
            (SELECT COUNT(*) FROM contributions WHERE campaign_id = c.id) AS contributor_count
     FROM campaigns c
     JOIN users u ON u.id = c.creator_id
-    WHERE c.featured = TRUE AND c.status = 'active' AND c.deleted_at IS NULL
+    WHERE c.featured = TRUE AND c.status = 'active' AND c.deleted_at IS NULL AND c.is_flagged_duplicate = FALSE
     ORDER BY c.featured_at DESC
     LIMIT 3
   `);
@@ -441,7 +443,7 @@ router.get('/categories', asyncHandler(async (req, res) => {
   const { rows } = await db.query(`
     SELECT category, COUNT(*)::int AS count
     FROM campaigns
-    WHERE status = 'active' AND deleted_at IS NULL
+    WHERE status = 'active' AND deleted_at IS NULL AND is_flagged_duplicate = FALSE
     GROUP BY category
     ORDER BY category ASC
   `);
@@ -875,6 +877,26 @@ router.post('/:id/trigger-refunds', requireAuth, requireRole('admin'), asyncHand
   }
 }));
 
+// Check if draft campaign is a duplicate
+router.post('/check-duplicate', requireAuth, requireRole('creator', 'admin'), asyncHandler(async (req, res) => {
+  const { title, description } = req.body;
+  if (!title) return res.json({ isDuplicate: false });
+
+  const contentFingerprint = getSimhash(`${title} ${description || ''}`);
+  const { rows: existingCampaigns } = await db.query(
+    'SELECT id, title, content_fingerprint FROM campaigns WHERE content_fingerprint IS NOT NULL AND status != $1',
+    ['failed']
+  );
+
+  for (const c of existingCampaigns) {
+    if (simhashSimilarity(contentFingerprint, c.content_fingerprint) > 0.9) {
+      return res.json({ isDuplicate: true, similarTo: c.title });
+    }
+  }
+
+  res.json({ isDuplicate: false });
+}));
+
 // Create campaign (authenticated)
 router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignValidation, validateRequest, asyncHandler(async (req, res) => {
   /**
@@ -945,6 +967,21 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
   const creatorPublicKey = userRows[0].wallet_public_key;
   const creatorEmail = userRows[0].email;
 
+  const contentFingerprint = getSimhash(`${title} ${description || ''}`);
+  let isFlaggedDuplicate = false;
+
+  const { rows: existingCampaigns } = await db.query(
+    'SELECT content_fingerprint FROM campaigns WHERE content_fingerprint IS NOT NULL AND status != $1',
+    ['failed']
+  );
+
+  for (const c of existingCampaigns) {
+    if (simhashSimilarity(contentFingerprint, c.content_fingerprint) > 0.9) {
+      isFlaggedDuplicate = true;
+      break;
+    }
+  }
+
   // 1. Create the on-chain campaign wallet
   const wallet = await createCampaignWallet(creatorPublicKey);
 
@@ -993,12 +1030,12 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
       `INSERT INTO campaigns
          (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, 
           min_contribution, max_contribution, escrow_contract_id, milestones_contract_id, platform_fee_bps,
-          contract_address, contract_deployed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+          contract_address, contract_deployed_at, content_fingerprint, is_flagged_duplicate)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14, $15)
        RETURNING *`,
       [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline, 
        min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId, platformFeeBps,
-       contractAddress]
+       contractAddress, contentFingerprint, isFlaggedDuplicate]
     );
     campaign = rows[0];
 

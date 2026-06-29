@@ -18,6 +18,7 @@ const TABS = [
   { id: 'disputes', label: 'Disputes' },
   { id: 'kyc', label: 'KYC' },
   { id: 'campaigns', label: 'Campaigns' },
+  { id: 'milestones', label: 'Milestones' },
 ];
 
 const cardStyle = {
@@ -781,8 +782,8 @@ function KycOversight() {
   );
 }
 
-function CampaignsQueue() {
-  const [campaigns, setCampaigns] = useState([]);
+function MilestonesQueue() {
+  const [milestones, setMilestones] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [rejectingId, setRejectingId] = useState(null);
@@ -1019,13 +1020,26 @@ function CampaignsQueue() {
 function CampaignsQueue() {
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
 
   useEffect(() => {
+    setLoading(true);
     api
-      .getAdminCampaigns()
+      .getAdminCampaigns({ flagged_only: flaggedOnly })
       .then(setCampaigns)
       .finally(() => setLoading(false));
-  }, []);
+  }, [flaggedOnly]);
+
+  async function unflag(id) {
+    if (!window.confirm('Remove duplicate flag and allow publishing?')) return;
+    try {
+      await api.adminUnflagCampaign(id);
+      const updated = await api.getAdminCampaigns({ flagged_only: flaggedOnly });
+      setCampaigns(updated);
+    } catch (err) {
+      window.alert(err.message || 'Could not unflag campaign');
+    }
+  }
 
   async function feature(id) {
     const note = window.prompt('Featured note (optional):', '');
@@ -1053,7 +1067,18 @@ function CampaignsQueue() {
   if (loading) return <p style={{ color: 'var(--color-text-hint)' }}>Loading campaigns…</p>;
 
   return (
-    <div style={{ display: 'grid', gap: '0.9rem', marginBottom: '2.5rem' }}>
+    <div>
+      <div style={{ marginBottom: '1rem' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>
+          <input 
+            type="checkbox" 
+            checked={flaggedOnly} 
+            onChange={(e) => setFlaggedOnly(e.target.checked)} 
+          />
+          Show flagged potential duplicates only
+        </label>
+      </div>
+      <div style={{ display: 'grid', gap: '0.9rem', marginBottom: '2.5rem' }}>
       {campaigns.map((c) => (
         <div key={c.id} style={cardStyle}>
           <div
@@ -1067,6 +1092,20 @@ function CampaignsQueue() {
           >
             <div>
               <strong>{c.title}</strong>
+              {c.is_flagged_duplicate && (
+                <span
+                  style={{
+                    marginLeft: '0.5rem',
+                    fontSize: '0.75rem',
+                    padding: '0.1rem 0.4rem',
+                    borderRadius: '4px',
+                    background: 'var(--color-error-bg)',
+                    color: 'var(--color-error-text)',
+                  }}
+                >
+                  Flagged Duplicate
+                </span>
+              )}
               <span
                 style={{
                   marginLeft: '0.5rem',
@@ -1078,34 +1117,55 @@ function CampaignsQueue() {
               </span>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button
-                type="button"
-                onClick={() => feature(c.id)}
-                style={{
-                  fontSize: '0.75rem',
-                  padding: '0.25rem 0.7rem',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                }}
-              >
-                Feature
-              </button>
-              <button
-                type="button"
-                onClick={() => unfeature(c.id)}
-                style={{
-                  fontSize: '0.75rem',
-                  padding: '0.25rem 0.7rem',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                }}
-              >
-                Unfeature
-              </button>
+              {c.is_flagged_duplicate ? (
+                <button
+                  type="button"
+                  onClick={() => unflag(c.id)}
+                  style={{
+                    fontSize: '0.75rem',
+                    padding: '0.25rem 0.7rem',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    background: '#10b981',
+                    color: '#fff',
+                    border: 'none',
+                  }}
+                >
+                  Unflag
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => feature(c.id)}
+                    style={{
+                      fontSize: '0.75rem',
+                      padding: '0.25rem 0.7rem',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Feature
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => unfeature(c.id)}
+                    style={{
+                      fontSize: '0.75rem',
+                      padding: '0.25rem 0.7rem',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Unfeature
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
       ))}
+      </div>
     </div>
   );
 }
@@ -1151,6 +1211,7 @@ export default function AdminDashboard() {
       {tab === 'disputes' && <DisputeManagement />}
       {tab === 'kyc' && <KycOversight />}
       {tab === 'campaigns' && <CampaignsQueue />}
+      {tab === 'milestones' && <MilestonesQueue />}
     </div>
   );
 }

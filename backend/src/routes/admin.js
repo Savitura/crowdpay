@@ -161,12 +161,16 @@ router.get('/stats', async (req, res) => {
  */
 router.get('/campaigns', async (req, res) => {
   try {
-    const { status, include_deleted } = req.query;
+    const { status, include_deleted, flagged_only } = req.query;
     const params = [];
     let where = 'WHERE 1=1';
 
     if (include_deleted !== 'true') {
       where += ' AND c.deleted_at IS NULL';
+    }
+
+    if (flagged_only === 'true') {
+      where += ' AND c.is_flagged_duplicate = TRUE';
     }
 
     if (status) {
@@ -176,7 +180,7 @@ router.get('/campaigns', async (req, res) => {
 
     const { rows } = await db.query(
       `SELECT c.id, c.title, c.status, c.raised_amount, c.target_amount, 
-              c.asset_type, c.created_at, c.deleted_at,
+              c.asset_type, c.created_at, c.deleted_at, c.is_flagged_duplicate,
               u.id as creator_id, u.name as creator_name, u.email as creator_email,
               (SELECT COUNT(*) FROM contributions WHERE campaign_id = c.id) as contribution_count
        FROM campaigns c 
@@ -189,6 +193,39 @@ router.get('/campaigns', async (req, res) => {
   } catch (err) {
     logger.error('Error fetching campaigns for admin', { error: err.message });
     res.status(500).json({ error: 'Failed to fetch campaigns' });
+  }
+});
+
+/**
+ * PATCH /api/admin/campaigns/:id/unflag
+ * Remove duplicate flag from a campaign
+ */
+router.patch('/campaigns/:id/unflag', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { rows: campaignRows } = await db.query(
+      'SELECT id, is_flagged_duplicate FROM campaigns WHERE id = $1 AND deleted_at IS NULL',
+      [id]
+    );
+
+    if (!campaignRows.length) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const { rows: updated } = await db.query(
+      `UPDATE campaigns SET is_flagged_duplicate = FALSE WHERE id = $1 RETURNING id, title, is_flagged_duplicate`,
+      [id]
+    );
+
+    await logAdminAction(req.user.userId, 'unflag', 'campaign', id, {});
+
+    cache.invalidate(`campaigns:id:${id}`);
+    cache.invalidatePrefix('campaigns:list:');
+    res.json({ message: 'Campaign unflagged', campaign: updated[0] });
+  } catch (err) {
+    logger.error('Error unflagging campaign', { error: err.message, campaignId: req.params.id });
+    res.status(500).json({ error: 'Failed to unflag campaign' });
   }
 });
 

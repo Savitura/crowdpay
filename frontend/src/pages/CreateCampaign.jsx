@@ -66,13 +66,14 @@ export default function CreateCampaign() {
     max_per_user: location.state?.prefill?.max_per_user || '',
     show_backer_amounts: location.state?.prefill?.show_backer_amounts ?? true,
     milestones: [],
-    category: '',
+
   });
   const [coverImageFile, setCoverImageFile] = useState(null);
   const [coverImagePreview, setCoverImagePreview] = useState('');
   const [isDragOverCover, setIsDragOverCover] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [duplicateWarning, setDuplicateWarning] = useState(null);
   const today = new Date().toISOString().split('T')[0];
   const [showCreatorTips, setShowCreatorTips] = useState(isCreatorOnboardingVisible);
 
@@ -313,6 +314,21 @@ export default function CreateCampaign() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!validateStep1() || !validateStep2() || !validateMilestones() || !validateTiers()) return;
+
+    if (!duplicateWarning) {
+      setLoading(true);
+      try {
+        const checkRes = await api.checkDuplicateCampaign({ title: form.title.trim(), description: form.description.trim() });
+        if (checkRes.isDuplicate) {
+          setDuplicateWarning(`This campaign resembles an existing campaign: "${checkRes.similarTo}". It will be flagged for admin review.`);
+          setLoading(false);
+          return;
+        }
+      } catch (err) {
+        // ignore error and proceed
+      }
+    }
+
     setLoading(true);
     setError('');
     try {
@@ -1079,6 +1095,13 @@ export default function CreateCampaign() {
               <p className="alert alert--error" style={{ marginTop: '1rem' }} role="alert">
                 {error}
               </p>
+            )}
+
+            {duplicateWarning && (
+              <div className="alert alert--warning" style={{ marginTop: '1rem' }} role="alert">
+                <p><strong>Warning:</strong> {duplicateWarning}</p>
+                <p style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>You can still launch it, but it will be hidden until reviewed by an admin.</p>
+              </div>
             )}
 
             <div
