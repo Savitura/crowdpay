@@ -212,6 +212,8 @@ const v1OpenApiSpec = swaggerJsdoc({
 const v1Router = require("./routes/v1");
 app.use("/api/v1", v1Router);
 app.use("/v1", v1Router);
+app.use("/api/v1/dev", require("./routes/dev"));
+app.use("/v1/dev", require("./routes/dev"));
 app.get("/api/v1/docs/openapi.json", (_req, res) => res.json(v1OpenApiSpec));
 app.get("/v1/docs/openapi.json", (_req, res) => res.json(v1OpenApiSpec));
 app.use("/api/v1/docs", swaggerUi.serve, swaggerUi.setup(v1OpenApiSpec));
