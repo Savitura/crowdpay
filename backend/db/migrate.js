@@ -1,7 +1,12 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+
+// Match backend/.env.example and docker-compose db service defaults.
+process.env.DATABASE_URL =
+  process.env.DATABASE_URL || 'postgres://crowdpay:crowdpay@localhost:5432/crowdpay';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 

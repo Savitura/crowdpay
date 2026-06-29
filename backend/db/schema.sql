@@ -121,6 +121,9 @@ CREATE TABLE withdrawal_approval_events (
 
 -- Indexes
 CREATE INDEX ON contributions (campaign_id);
+CREATE INDEX idx_contributions_campaign_unrefunded
+  ON contributions (campaign_id)
+  WHERE refunded = FALSE;
 CREATE INDEX ON contributions (tx_hash);
 CREATE UNIQUE INDEX contributions_anchor_transaction_idx
   ON contributions (anchor_id, anchor_transaction_id)
