@@ -1427,7 +1427,7 @@ router.post('/:id/members/accept', requireAuth, asyncHandler(async (req, res) =>
   res.json(member);
 }));
 
-const { getCampaignAnalytics, getCampaignContributors } = require('../services/analyticsService');
+const { getCampaignAnalytics, getCampaignContributors, getCampaignBackers } = require('../services/analyticsService');
 
 // GET /campaigns/:id/analytics — full contribution analytics
 router.get('/:id/analytics', asyncHandler(async (req, res) => {
@@ -1445,6 +1445,17 @@ router.get('/:id/analytics/contributors', requireAuth, asyncHandler(async (req, 
     return res.status(403).json({ error: 'Forbidden' });
   }
   const data = await getCampaignContributors(req.params.id);
+  res.json(data);
+}));
+
+// GET /campaigns/:id/analytics/backers — backer growth, leaderboard, repeat rate
+router.get('/:id/analytics/backers', requireAuth, asyncHandler(async (req, res) => {
+  const { rows } = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+  if (req.user.role !== 'admin' && rows[0].creator_id !== req.user.userId) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const data = await getCampaignBackers(req.params.id);
   res.json(data);
 }));
 

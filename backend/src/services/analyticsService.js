@@ -100,6 +100,67 @@ async function getCampaignContributors(campaignId) {
   };
 }
 
+async function getCampaignBackers(campaignId) {
+  const [backerRows, topBackerRows] = await Promise.all([
+    db.query(
+      `SELECT DATE(created_at) AS day,
+              COUNT(DISTINCT sender_public_key)::int AS new_backers
+       FROM contributions
+       WHERE campaign_id = $1
+       GROUP BY DATE(created_at)
+       ORDER BY day ASC`,
+      [campaignId]
+    ),
+    db.query(
+      `SELECT sender_public_key,
+              COUNT(*)::int AS contribution_count,
+              SUM(amount) AS total_amount
+       FROM contributions
+       WHERE campaign_id = $1
+       GROUP BY sender_public_key
+       ORDER BY total_amount DESC, contribution_count DESC
+       LIMIT 10`,
+      [campaignId]
+    ),
+  ]);
+
+  const totalBackers = await db.query(
+    `SELECT COUNT(DISTINCT sender_public_key)::int AS total_backers
+     FROM contributions
+     WHERE campaign_id = $1`,
+    [campaignId]
+  );
+
+  const repeatRate = await db.query(
+    `SELECT
+       CASE
+         WHEN COUNT(*) = 0 THEN 0
+         ELSE ROUND(
+           SUM(CASE WHEN times > 1 THEN 1 ELSE 0 END)::numeric / COUNT(*) * 100,
+           2
+         )
+       END AS repeat_rate
+     FROM (
+       SELECT sender_public_key, COUNT(*) AS times
+       FROM contributions
+       WHERE campaign_id = $1
+       GROUP BY sender_public_key
+     ) sub`,
+    [campaignId]
+  );
+
+  return {
+    total_backers: totalBackers.rows[0]?.total_backers ?? 0,
+    new_backers_by_day: backerRows.rows,
+    top_backers: topBackerRows.rows.map((row) => ({
+      sender_public_key: row.sender_public_key,
+      contribution_count: row.contribution_count,
+      total_amount: row.total_amount,
+    })),
+    repeat_rate: Number(repeatRate.rows[0]?.repeat_rate ?? 0),
+  };
+}
+
 /**
  * Aggregate analytics across all campaigns owned by a creator.
  */
@@ -149,4 +210,9 @@ async function getUserDashboardAnalytics(userId) {
   };
 }
 
-module.exports = { getCampaignAnalytics, getCampaignContributors, getUserDashboardAnalytics };
+module.exports = {
+  getCampaignAnalytics,
+  getCampaignContributors,
+  getCampaignBackers,
+  getUserDashboardAnalytics,
+};

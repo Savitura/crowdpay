@@ -17,6 +17,8 @@ import { stellarExpertTxUrl } from '../config/stellar';
 import CampaignQRCode from '../components/CampaignQRCode';
 import { getNetwork, signTransaction } from '@stellar/freighter-api';
 import { isConnected, getPublicKey } from '@stellar/freighter-api';
+import BackerInsightsCard from '../components/BackerInsightsCard';
+
 
 function escapeHtml(text) {
   return text
@@ -171,7 +173,12 @@ export default function Campaign() {
   const [activeTab, setActiveTab] = useState('contributions');
   const [editingUpdateId, setEditingUpdateId] = useState(null);
   const [analytics, setAnalytics] = useState(null);
+  const [analyticsTab, setAnalyticsTab] = useState('overview');
+  const [backersAnalytics, setBackersAnalytics] = useState(null);
+  const [analyticsBackersLoading, setAnalyticsBackersLoading] = useState(false);
+
   const [refundBusy, setRefundBusy] = useState(false);
+
   const [refundError, setRefundError] = useState('');
   const [refundSuccess, setRefundSuccess] = useState('');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -240,8 +247,14 @@ export default function Campaign() {
           setAnalytics(null);
           setAnalyticsLoading(false);
         }
+
+        // Reset analytics sub-tab per load
+        setAnalyticsTab('overview');
+        setBackersAnalytics(null);
+        setAnalyticsBackersLoading(false);
       })
       .catch((err) => setLoadError(err.message || 'Could not load campaign.'));
+
     api
       .getContributions(id, { limit: showAll ? 100 : 10, offset: 0 })
       .then((data) => {
@@ -1960,17 +1973,66 @@ export default function Campaign() {
       ))}
 
       {/* Analytics Section */}
-      {canViewAnalytics && analytics && (canManageTeam ? activeTab === 'analytics' : true) && (
+      {canViewAnalytics && (canManageTeam ? activeTab === 'analytics' : true) && (
         <div style={{ marginBottom: '2rem' }}>
           <h2 style={styles.sectionTitle}>Analytics</h2>
-          {!analytics.dailyTotals || analytics.dailyTotals.length === 0 ? (
-            <p style={{ color: 'var(--color-text-muted)' }}>No analytics data available yet.</p>
-          ) : (
-            <div style={{ display: 'grid', gap: '1.5rem' }}>
-              <div className="campaign-card">
-                <strong style={{ display: 'block', marginBottom: '1rem' }}>
-                  Contributions (Last 30 Days)
-                </strong>
+
+          <div
+            style={{
+              display: 'flex',
+              gap: '0.5rem',
+              marginBottom: '1rem',
+              borderBottom: '1px solid var(--color-border-light)',
+              paddingBottom: '0.75rem',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setAnalyticsTab('overview')}
+              style={{
+                background: analyticsTab === 'overview' ? 'var(--color-accent)' : 'transparent',
+                color: analyticsTab === 'overview' ? '#fff' : 'var(--color-text-primary)',
+                border: '1px solid var(--color-border-light)',
+                borderRadius: '6px',
+                padding: '0.4rem 0.9rem',
+                fontWeight: 600,
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+              }}
+            >
+              Overview
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAnalyticsTab('backers')}
+              style={{
+                background: analyticsTab === 'backers' ? 'var(--color-accent)' : 'transparent',
+                color: analyticsTab === 'backers' ? '#fff' : 'var(--color-text-primary)',
+                border: '1px solid var(--color-border-light)',
+                borderRadius: '6px',
+                padding: '0.4rem 0.9rem',
+                fontWeight: 600,
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+              }}
+            >
+              Backers
+            </button>
+          </div>
+
+          {analyticsTab === 'overview' && (
+            <>
+              {!analytics?.dailyTotals || analytics.dailyTotals.length === 0 ? (
+                <p style={{ color: 'var(--color-text-muted)' }}>No analytics data available yet.</p>
+              ) : (
+                <div style={{ display: 'grid', gap: '1.5rem' }}>
+                  <div className="campaign-card">
+                    <strong style={{ display: 'block', marginBottom: '1rem' }}>
+                      Contributions (Last 30 Days)
+                    </strong>
+
+
                 <svg width="100%" height={150} viewBox={`0 0 600 150`} preserveAspectRatio="none">
                   {analytics.dailyTotals.map((day, i) => {
                     const maxAmount = Math.max(
@@ -2655,3 +2717,4 @@ const styles = {
     justifyContent: 'center',
   },
 };
+

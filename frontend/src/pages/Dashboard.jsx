@@ -8,6 +8,7 @@ import CampaignStatusBadge from '../components/CampaignStatusBadge';
 import ContributorDashboard from '../components/ContributorDashboard';
 import DepositModal from '../components/DepositModal';
 import ApiKeysPanel from '../components/ApiKeysPanel';
+import BackerInsightsCard from '../components/BackerInsightsCard';
 import { stellarExpertTxUrl, stellarExpertAccountUrl } from '../config/stellar';
 import {
   LineChart,
@@ -146,7 +147,11 @@ export default function Dashboard() {
       ? 'contributions'
       : tabParam === 'referrals'
         ? 'referrals'
-        : 'campaigns';
+        : tabParam === 'analytics'
+          ? 'analytics'
+          : tabParam === 'api-keys'
+            ? 'api-keys'
+            : 'campaigns';
 
   const [stats, setStats] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
@@ -160,6 +165,8 @@ export default function Dashboard() {
   const [selectedCampaignId, setSelectedCampaignId] = useState(null);
   const [campaignAnalytics, setCampaignAnalytics] = useState(null);
   const [campaignContributors, setCampaignContributors] = useState(null);
+  const [campaignBackers, setCampaignBackers] = useState(null);
+  const [loadingContributions, setLoadingContributions] = useState(true);
   const [referralData, setReferralData] = useState({});
   const [referralLoading, setReferralLoading] = useState(false);
 
@@ -174,6 +181,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (!user) return;
     setLoadingCampaigns(true);
+    setLoadingContributions(true);
     setError('');
 
     api
@@ -188,32 +196,37 @@ export default function Dashboard() {
           updateUser(me);
           setStats(s);
           setCampaigns(c);
-          setContributions(contrib);
-          // pre-fetch dashboard analytics for the analytics tab
           api
             .getUserDashboardAnalytics()
             .then(setDashAnalytics)
             .catch(() => {});
-        } else {
-          setContributions(results[0]);
-        }
-      })
-      .catch((err) => setError(err.message || 'Could not load dashboard'))
-      .finally(() => {
-        setLoadingCampaigns(false);
-        setLoadingContributions(false);
-      });
-  }, [user?.role, updateUser]);
+        })
+        .catch((err) => setError(err.message || 'Could not load dashboard'))
+        .finally(() => {
+          setLoadingCampaigns(false);
+          setLoadingContributions(false);
+        });
+    } else {
+      setLoadingCampaigns(false);
+      setLoadingContributions(false);
+    }
+  }, [isCreator, user, updateUser]);
 
   const loadCampaignAnalytics = useCallback((id) => {
     setSelectedCampaignId(id);
     setCampaignAnalytics(null);
     setCampaignContributors(null);
+    setCampaignBackers(null);
     setAnalyticsLoading(true);
-    Promise.all([api.getCampaignAnalytics(id), api.getCampaignAnalyticsContributors(id)])
-      .then(([a, c]) => {
+    Promise.all([
+      api.getCampaignAnalytics(id),
+      api.getCampaignAnalyticsContributors(id),
+      api.getCampaignAnalyticsBackers(id),
+    ])
+      .then(([a, c, b]) => {
         setCampaignAnalytics(a);
         setCampaignContributors(c);
+        setCampaignBackers(b);
       })
       .catch(() => {})
       .finally(() => setAnalyticsLoading(false));
@@ -768,6 +781,13 @@ export default function Dashboard() {
                       </div>
                     )}
                   </div>
+                )}
+
+                {campaignBackers && (
+                  <BackerInsightsCard
+                    data={campaignBackers}
+                    assetType={campaignAnalytics?.campaign?.asset_type || 'XLM'}
+                  />
                 )}
 
                 {/* Time-series chart */}
