@@ -398,6 +398,8 @@
     "totalConversions": "conversions au total",
     "contributionsLast30Days": "Contributions — 30 derniers jours (toutes les campagnes)",
     "exportCsv": "Exporter CSV",
+    "hideCampaign": "Masquer",
+    "showCampaign": "Afficher",
     "perCampaignAnalytics": "Analytique par campagne",
     "contributorStats": "Statistiques des contributeurs",
     "contributionsOverTime": "Contributions dans le temps",

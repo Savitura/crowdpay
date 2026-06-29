@@ -3,7 +3,7 @@ const db = require('../config/database');
 async function listCreatorCampaigns(userId) {
   const { rows } = await db.query(
     `SELECT c.id, c.title, c.status, c.asset_type, c.target_amount, c.raised_amount,
-            c.deadline, c.created_at,
+            c.deadline, c.created_at, c.is_hidden,
             COALESCE(stats.contributor_count, 0) AS contributor_count,
             EXISTS (
               SELECT 1 FROM milestones m WHERE m.campaign_id = c.id LIMIT 1

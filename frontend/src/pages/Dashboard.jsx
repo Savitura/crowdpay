@@ -159,6 +159,7 @@ export default function Dashboard() {
   const [referralData, setReferralData] = useState({});
   const [referralLoading, setReferralLoading] = useState(false);
   const [exportingCampaignId, setExportingCampaignId] = useState(null);
+  const [togglingVisibility, setTogglingVisibility] = useState(null);
 
   const isCreator = user?.role === 'creator' || user?.role === 'admin';
 
@@ -234,6 +235,24 @@ export default function Dashboard() {
       setError(err.message || 'Could not export campaign contributors');
     } finally {
       setExportingCampaignId(null);
+    }
+  }, []);
+
+  const handleToggleVisibility = useCallback(async (campaign) => {
+    setError('');
+    setTogglingVisibility(campaign.id);
+    try {
+      const newHidden = !campaign.is_hidden;
+      await api.toggleCampaignVisibility(campaign.id, newHidden);
+      setCampaigns((prev) =>
+        prev.map((c) =>
+          c.id === campaign.id ? { ...c, is_hidden: newHidden } : c
+        )
+      );
+    } catch (err) {
+      setError(err.message || 'Could not change campaign visibility');
+    } finally {
+      setTogglingVisibility(null);
     }
   }, []);
 
@@ -496,7 +515,11 @@ export default function Dashboard() {
                   {campaigns.map((campaign) => {
                     const pct = progressPct(campaign).toFixed(1);
                     return (
-                      <div key={campaign.id} className="campaign-card">
+                      <div
+                        key={campaign.id}
+                        className="campaign-card"
+                        style={campaign.is_hidden ? { opacity: 0.6 } : undefined}
+                      >
                         <div
                           style={{
                             display: 'flex',
@@ -507,7 +530,26 @@ export default function Dashboard() {
                           }}
                         >
                           <strong>{campaign.title}</strong>
-                          <CampaignStatusBadge status={campaign.status} />
+                          <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                            {campaign.is_hidden && (
+                              <span
+                                style={{
+                                  fontSize: '0.72rem',
+                                  fontWeight: 700,
+                                  textTransform: 'uppercase',
+                                  letterSpacing: '0.04em',
+                                  padding: '0.15rem 0.5rem',
+                                  borderRadius: '99px',
+                                  background: 'var(--color-surface)',
+                                  color: 'var(--color-text-hint)',
+                                  opacity: 0.6,
+                                }}
+                              >
+                                Hidden
+                              </span>
+                            )}
+                            <CampaignStatusBadge status={campaign.status} />
+                          </div>
                         </div>
                         <div style={{ marginTop: '0.35rem', fontSize: '0.9rem' }}>
                           {Number(campaign.raised_amount).toLocaleString()} /{' '}
@@ -567,6 +609,20 @@ export default function Dashboard() {
                             {exportingCampaignId === campaign.id
                               ? t('common.loading')
                               : t('dashboard.exportCsv')}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            disabled={togglingVisibility !== null}
+                            aria-busy={togglingVisibility === campaign.id}
+                            onClick={() => handleToggleVisibility(campaign)}
+                            style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                          >
+                            {togglingVisibility === campaign.id
+                              ? t('common.loading')
+                              : campaign.is_hidden
+                                ? t('dashboard.showCampaign')
+                                : t('dashboard.hideCampaign')}
                           </button>
                           {campaign.status === 'funded' && (
                             <Link
