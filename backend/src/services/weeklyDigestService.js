@@ -1,0 +1,282 @@
+const db = require("../config/database");
+const logger = require("../config/logger");
+const { sendWeeklyDigestEmail } = require("./emailService");
+
+const DIGEST_CATEGORY = "weekly_digest";
+
+function frontendBaseUrl() {
+  return (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
+}
+
+function toIsoDate(value) {
+  if (!value) return null;
+  return new Date(value).toISOString().slice(0, 10);
+}
+
+function formatMoney(value, asset = "") {
+  const numeric = Number(value || 0);
+  const formatted = Number.isFinite(numeric)
+    ? numeric.toLocaleString("en-US", { maximumFractionDigits: 2 })
+    : String(value || 0);
+  return asset ? `${formatted} ${asset}` : formatted;
+}
+
+function progressPercent(raisedAmount, targetAmount) {
+  const raised = Number(raisedAmount || 0);
+  const target = Number(targetAmount || 0);
+  if (!Number.isFinite(raised) || !Number.isFinite(target) || target <= 0) return 0;
+  return Math.min(100, (raised / target) * 100);
+}
+
+function buildWindowLabel(windowStart, windowEnd) {
+  const start = toIsoDate(windowStart);
+  const end = toIsoDate(windowEnd);
+  return start === end ? start : `${start} to ${end}`;
+}
+
+async function listDigestRecipients(runAt) {
+  const { rows } = await db.query(
+    `SELECT u.id,
+            u.email,
+            u.name,
+            COALESCE(MAX(edd.window_ended_at), $1::timestamptz - INTERVAL '7 days') AS window_start
+     FROM contributions ctr
+     JOIN users u
+       ON u.wallet_public_key = ctr.sender_public_key
+     LEFT JOIN email_digest_deliveries edd
+       ON edd.user_id = u.id
+      AND edd.category = $2
+     LEFT JOIN email_unsubscribes eu
+       ON eu.email = LOWER(u.email)
+      AND eu.category = $2
+     WHERE u.email IS NOT NULL
+       AND eu.email IS NULL
+     GROUP BY u.id, u.email, u.name`,
+    [runAt.toISOString(), DIGEST_CATEGORY],
+  );
+  return rows;
+}
+
+async function listBackedCampaigns({ userId, email }) {
+  const { rows } = await db.query(
+    `SELECT DISTINCT ON (c.id)
+            c.id,
+            c.title,
+            c.status,
+            c.deadline,
+            c.target_amount,
+            c.raised_amount,
+            c.asset_type
+     FROM contributions ctr
+     JOIN users u
+       ON u.wallet_public_key = ctr.sender_public_key
+     JOIN campaigns c
+       ON c.id = ctr.campaign_id
+     LEFT JOIN campaign_update_unsubscribes cuu
+       ON cuu.email = LOWER($2)
+      AND cuu.campaign_id = c.id
+     WHERE u.id = $1
+       AND cuu.email IS NULL
+     ORDER BY c.id, ctr.created_at ASC`,
+    [userId, email],
+  );
+  return rows;
+}
+
+async function listCampaignUpdates(campaignIds, windowStart, windowEnd) {
+  if (!campaignIds.length) return [];
+  const { rows } = await db.query(
+    `SELECT campaign_id, title, created_at
+     FROM campaign_updates
+     WHERE campaign_id = ANY($1::uuid[])
+       AND created_at > $2
+       AND created_at <= $3
+     ORDER BY created_at DESC`,
+    [campaignIds, windowStart.toISOString(), windowEnd.toISOString()],
+  );
+  return rows;
+}
+
+async function listReleasedMilestones(campaignIds, windowStart, windowEnd) {
+  if (!campaignIds.length) return [];
+  const { rows } = await db.query(
+    `SELECT campaign_id, title, released_at
+     FROM milestones
+     WHERE campaign_id = ANY($1::uuid[])
+       AND released_at > $2
+       AND released_at <= $3
+     ORDER BY released_at DESC`,
+    [campaignIds, windowStart.toISOString(), windowEnd.toISOString()],
+  );
+  return rows;
+}
+
+async function listStatusChanges(campaignIds, windowStart, windowEnd) {
+  if (!campaignIds.length) return [];
+  const { rows } = await db.query(
+    `SELECT campaign_id, new_status, created_at
+     FROM campaign_status_events
+     WHERE campaign_id = ANY($1::uuid[])
+       AND created_at > $2
+       AND created_at <= $3
+     ORDER BY created_at DESC`,
+    [campaignIds, windowStart.toISOString(), windowEnd.toISOString()],
+  );
+  return rows;
+}
+
+function buildCampaignDigest({ campaigns, updates, milestones, statuses, windowEnd }) {
+  const updatesByCampaign = new Map();
+  const milestonesByCampaign = new Map();
+  const statusesByCampaign = new Map();
+
+  for (const row of updates) {
+    if (!updatesByCampaign.has(row.campaign_id)) updatesByCampaign.set(row.campaign_id, []);
+    updatesByCampaign.get(row.campaign_id).push(`${row.title} (${toIsoDate(row.created_at)})`);
+  }
+
+  for (const row of milestones) {
+    if (!milestonesByCampaign.has(row.campaign_id)) milestonesByCampaign.set(row.campaign_id, []);
+    milestonesByCampaign.get(row.campaign_id).push(`${row.title} released (${toIsoDate(row.released_at)})`);
+  }
+
+  for (const row of statuses) {
+    if (!statusesByCampaign.has(row.campaign_id)) statusesByCampaign.set(row.campaign_id, []);
+    const statusLabel = row.new_status === "funded" ? "Campaign funded" : "Campaign failed";
+    statusesByCampaign.get(row.campaign_id).push(`${statusLabel} (${toIsoDate(row.created_at)})`);
+  }
+
+  const deadlineCutoff = new Date(windowEnd);
+  deadlineCutoff.setUTCDate(deadlineCutoff.getUTCDate() + 7);
+
+  return campaigns
+    .map((campaign) => {
+      const deadlineDate = campaign.deadline ? new Date(campaign.deadline) : null;
+      const upcomingDeadlines = [];
+
+      if (deadlineDate && deadlineDate >= windowEnd && deadlineDate <= deadlineCutoff) {
+        upcomingDeadlines.push(`Deadline on ${toIsoDate(deadlineDate)}`);
+      }
+
+      return {
+        id: campaign.id,
+        title: campaign.title,
+        campaignUrl: `${frontendBaseUrl()}/campaigns/${campaign.id}`,
+        raisedLabel: formatMoney(campaign.raised_amount, campaign.asset_type),
+        targetLabel: formatMoney(campaign.target_amount, campaign.asset_type),
+        progressPercent: progressPercent(campaign.raised_amount, campaign.target_amount),
+        updates: updatesByCampaign.get(campaign.id) || [],
+        milestones: milestonesByCampaign.get(campaign.id) || [],
+        statusChanges: statusesByCampaign.get(campaign.id) || [],
+        upcomingDeadlines,
+      };
+    })
+    .filter(
+      (campaign) =>
+        campaign.updates.length ||
+        campaign.milestones.length ||
+        campaign.statusChanges.length ||
+        campaign.upcomingDeadlines.length,
+    );
+}
+
+async function recordDigestDelivery({ userId, windowStart, windowEnd, campaignCount, itemCount }) {
+  await db.query(
+    `INSERT INTO email_digest_deliveries
+       (user_id, category, window_started_at, window_ended_at, campaign_count, item_count)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (user_id, category, window_ended_at) DO NOTHING`,
+    [
+      userId,
+      DIGEST_CATEGORY,
+      windowStart.toISOString(),
+      windowEnd.toISOString(),
+      campaignCount,
+      itemCount,
+    ],
+  );
+}
+
+async function sendWeeklyContributorDigests({ runAt = new Date() } = {}) {
+  const recipients = await listDigestRecipients(runAt);
+  const digestUrl = `${frontendBaseUrl()}/my-contributions`;
+
+  let sent = 0;
+  let skipped = 0;
+
+  for (const recipient of recipients) {
+    const windowStart = new Date(recipient.window_start);
+    const windowEnd = new Date(runAt);
+    const campaigns = await listBackedCampaigns({ userId: recipient.id, email: recipient.email });
+    const campaignIds = campaigns.map((campaign) => campaign.id);
+
+    if (!campaignIds.length) {
+      skipped += 1;
+      continue;
+    }
+
+    const [updates, milestones, statuses] = await Promise.all([
+      listCampaignUpdates(campaignIds, windowStart, windowEnd),
+      listReleasedMilestones(campaignIds, windowStart, windowEnd),
+      listStatusChanges(campaignIds, windowStart, windowEnd),
+    ]);
+
+    const digestCampaigns = buildCampaignDigest({
+      campaigns,
+      updates,
+      milestones,
+      statuses,
+      windowEnd,
+    });
+
+    if (!digestCampaigns.length) {
+      skipped += 1;
+      continue;
+    }
+
+    const itemCount = digestCampaigns.reduce(
+      (total, campaign) =>
+        total +
+        campaign.updates.length +
+        campaign.milestones.length +
+        campaign.statusChanges.length +
+        campaign.upcomingDeadlines.length,
+      0,
+    );
+
+    await sendWeeklyDigestEmail({
+      to: recipient.email,
+      userId: recipient.id,
+      windowEnd,
+      name: recipient.name,
+      windowLabel: buildWindowLabel(windowStart, windowEnd),
+      digestUrl,
+      campaigns: digestCampaigns,
+    });
+
+    await recordDigestDelivery({
+      userId: recipient.id,
+      windowStart,
+      windowEnd,
+      campaignCount: digestCampaigns.length,
+      itemCount,
+    });
+
+    sent += 1;
+  }
+
+  logger.info("Weekly contributor digest run completed", {
+    sent,
+    skipped,
+    run_at: runAt.toISOString(),
+  });
+
+  return { sent, skipped };
+}
+
+module.exports = {
+  DIGEST_CATEGORY,
+  sendWeeklyContributorDigests,
+  buildCampaignDigest,
+  buildWindowLabel,
+};

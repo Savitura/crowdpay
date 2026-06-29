@@ -29,6 +29,9 @@ const {
 const {
   refreshActiveCampaignStatuses,
 } = require("./services/campaignStatusService");
+const {
+  sendWeeklyContributorDigests,
+} = require("./services/weeklyDigestService");
 const { sendAlert } = require("./services/alerting");
 const {
   assertNoLegacyPlaintextUserWalletSecrets,
@@ -357,6 +360,18 @@ function startReconciliationCron() {
   logger.info("Reconciliation cron scheduled (every 15 minutes)");
 }
 
+function startWeeklyDigestCron() {
+  if (process.env.ENABLE_WEEKLY_DIGEST_CRON === "false") return;
+  const cron = require("node-cron");
+  const schedule = process.env.WEEKLY_DIGEST_CRON || "0 18 * * 0";
+  cron.schedule(schedule, () => {
+    sendWeeklyContributorDigests().catch((err) => {
+      logger.error("Weekly digest cron failed", { error: err.message });
+    });
+  });
+  logger.info("Weekly digest cron scheduled", { schedule });
+}
+
 async function bootstrap() {
   if (process.env.NODE_ENV === "production") {
     await assertNoLegacyPlaintextUserWalletSecrets();
@@ -371,6 +386,7 @@ async function bootstrap() {
     startWebhookRetryPoller();
     startCampaignStatusCron();
     startReconciliationCron();
+    startWeeklyDigestCron();
   });
 }
 
