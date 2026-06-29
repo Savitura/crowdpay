@@ -114,3 +114,38 @@ test('sendCampaignUpdatePostedEmail skips recipients who unsubscribed from campa
   assert.equal(sent[0].to, 'subscribed@test.com');
   assert.ok(sent[0].html.includes('Unsubscribe'));
 });
+
+test('sendWeeklyDigestEmail skips recipients who unsubscribed from weekly_digest', async () => {
+  process.env.SMTP_HOST = 'smtp.test';
+  const { service, sent } = buildService({
+    queryImpl: (text, params) => {
+      if (text.includes('FROM email_unsubscribes')) {
+        return { rows: params[1] === 'weekly_digest' ? [{ x: 1 }] : [] };
+      }
+      return undefined;
+    },
+  });
+
+  await service.sendWeeklyDigestEmail({
+    to: 'digest@test.com',
+    userId: 'user-1',
+    windowEnd: new Date('2026-06-29T18:00:00.000Z'),
+    name: 'Digest User',
+    windowLabel: '2026-06-22 to 2026-06-29',
+    campaigns: [
+      {
+        title: 'My Campaign',
+        campaignUrl: 'https://app/campaigns/camp-1',
+        raisedLabel: '75 USDC',
+        targetLabel: '100 USDC',
+        progressPercent: 75,
+        updates: ['New update'],
+        milestones: [],
+        statusChanges: [],
+        upcomingDeadlines: [],
+      },
+    ],
+  });
+
+  assert.equal(sent.length, 0);
+});

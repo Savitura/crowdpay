@@ -1,7 +1,7 @@
 const { body, query, validationResult } = require('express-validator');
 const { Keypair } = require('@stellar/stellar-sdk');
 const { getSupportedAssetCodes } = require('../services/stellarService');
-const { stripHtml } = require('../lib/sanitize');
+const { stripHtml, sanitizeRichText } = require('../lib/sanitize');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const VALID_CAMPAIGN_STATUSES = ['active', 'funded', 'closed', 'failed'];
@@ -100,7 +100,7 @@ const createCampaignValidation = [
     .withMessage('Category must be at most 50 characters'),
   body('description')
     .optional({ nullable: true })
-    .customSanitizer(stripHtml)
+    .customSanitizer(sanitizeRichText)
     .isLength({ max: 1000 })
     .withMessage('Description must be at most 1000 characters'),
   body('target_amount')

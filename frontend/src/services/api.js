@@ -385,6 +385,9 @@ export const api = {
     request('GET', `/contributions/campaign/${campaignId}`, null, {
       query: options,
     }),
+  toggleCampaignVisibility: (id, is_hidden) =>
+    request('PATCH', `/campaigns/${id}/visibility`, { is_hidden }),
+
   getMilestones: (campaignId) => request('GET', `/campaigns/${campaignId}/milestones`),
   setCampaignMilestones: (campaignId, milestones) =>
     request('POST', `/campaigns/${campaignId}/milestones`, { milestones }),

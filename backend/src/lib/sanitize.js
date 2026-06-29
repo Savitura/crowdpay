@@ -6,6 +6,8 @@
  * hardening applied here takes effect everywhere at once.
  */
 
+const sanitizeHtml = require('sanitize-html');
+
 /**
  * Remove HTML tags from a value and trim surrounding whitespace.
  *
@@ -16,7 +18,27 @@
  * @returns {string} the value with HTML tags stripped and ends trimmed
  */
 function stripHtml(value = '') {
-  return String(value).replace(/<[^>]*>/g, '').trim();
+  return sanitizeHtml(String(value), {
+    allowedTags: [],
+    allowedAttributes: {}
+  }).trim();
 }
 
-module.exports = { stripHtml };
+/**
+ * Sanitize rich text/markdown input, allowing safe HTML tags.
+ * 
+ * @param {*} value - the markdown or HTML string to sanitize
+ * @returns {string} safely sanitized string
+ */
+function sanitizeRichText(value = '') {
+  return sanitizeHtml(String(value), {
+    allowedTags: sanitizeHtml.defaults.allowedTags.concat(['img']),
+    allowedAttributes: {
+      ...sanitizeHtml.defaults.allowedAttributes,
+      img: ['src', 'alt', 'width', 'height']
+    },
+    allowedSchemes: ['http', 'https', 'mailto']
+  }).trim();
+}
+
+module.exports = { stripHtml, sanitizeRichText };

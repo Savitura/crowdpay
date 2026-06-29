@@ -958,7 +958,12 @@ export default function Campaign() {
         </div>
         <h1 style={styles.title}>{campaign.title}</h1>
         {campaign.creator_name && <p style={styles.creator}>by {campaign.creator_name}</p>}
-        <p style={styles.desc}>{campaign.description}</p>
+        <div
+          style={{ ...styles.desc, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+          dangerouslySetInnerHTML={{
+            __html: DOMPurify.sanitize(markdownToHtml(campaign.description)),
+          }}
+        />
       </div>
 
       {tiers.length > 0 && (
