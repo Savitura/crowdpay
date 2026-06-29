@@ -202,6 +202,15 @@ const createCampaignValidation = [
     .withMessage(`category must be one of: ${VALID_CATEGORIES.join(', ')}`),
 ];
 
+const thankYouValidation = [
+  body('message')
+    .customSanitizer(stripHtml)
+    .notEmpty()
+    .withMessage('Message is required')
+    .isLength({ min: 1, max: 500 })
+    .withMessage('Message must be between 1 and 500 characters'),
+];
+
 const createCampaignUpdateValidation = [
   body('title')
     .customSanitizer(stripHtml)
@@ -351,6 +360,7 @@ module.exports = {
   validateRequestAsError,
   createCampaignValidation,
   createCampaignUpdateValidation,
+  thankYouValidation,
   contributionValidation,
   contributionQuoteValidation,
   withdrawalValidation,

@@ -483,4 +483,9 @@ export const api = {
 
   getReferralCode: (campaignId) => request('GET', `/campaigns/${campaignId}/referral`),
   getReferralLeaderboard: (campaignId) => request('GET', `/campaigns/${campaignId}/referrals`),
+
+  sendBulkThankYou: (campaignId, message) =>
+    request('POST', `/campaigns/${campaignId}/thank-you`, { message }),
+  sendContributionThankYou: (contributionId, message) =>
+    request('POST', `/contributions/${contributionId}/thank-you`, { message }),
 };

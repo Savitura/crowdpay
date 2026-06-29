@@ -18,6 +18,7 @@ const disputeOpenedEmail = require("../emails/disputeOpened");
 const disputeResolvedEmail = require("../emails/disputeResolved");
 const campaignUpdatePostedEmail = require("../emails/campaignUpdatePosted");
 const teamMemberInvitedEmail = require("../emails/teamMemberInvited");
+const thankYouEmail = require("../emails/thankYou");
 
 let transporter;
 
@@ -267,6 +268,25 @@ async function sendTeamMemberInvitedEmail({ to, memberId, ...params }) {
   await sendIdempotent({ dedupeKey: `team_member_invited:${memberId}`, to, subject, text, html });
 }
 
+async function isThankYouUnsubscribed(email, campaignId) {
+  const { rows } = await db.query(
+    `SELECT 1 FROM thank_you_unsubscribes
+     WHERE email = $1 AND (campaign_id IS NULL OR campaign_id = $2)
+     LIMIT 1`,
+    [email.toLowerCase(), campaignId]
+  );
+  return rows.length > 0;
+}
+
+async function sendThankYouEmail({ to, messageId, campaignId, ...params }) {
+  if (!to) return;
+  if (await isThankYouUnsubscribed(to, campaignId)) return;
+
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: "thank_you", campaignId });
+  const { subject, text, html } = thankYouEmail.build({ ...params, unsubscribeUrl });
+  await sendIdempotent({ dedupeKey: `thank_you:${messageId}:${to}`, to, subject, text, html });
+}
+
 module.exports = {
   sendEmail,
   sendIdempotent,
@@ -292,4 +312,6 @@ module.exports = {
   sendDisputeResolvedContributorEmail,
   sendCampaignUpdatePostedEmail,
   sendTeamMemberInvitedEmail,
+  isThankYouUnsubscribed,
+  sendThankYouEmail,
 };
