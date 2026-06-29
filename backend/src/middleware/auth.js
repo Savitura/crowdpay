@@ -293,6 +293,8 @@ function requireAuth(req, res, next) {
       if (req.user?.is_banned) {
         return res.status(403).json({ error: 'Account suspended' });
       }
+      return Promise.resolve();
+    })
     .then(async () => {
       if (!assertApiKeyScopes(req, res)) return;
       if (req.user?.userId) Sentry.setUser({ id: req.user.userId });
