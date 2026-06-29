@@ -21,6 +21,7 @@ function buildApp({
   campaignStatusImpl,
   sorobanDeployImpl,
   sorobanInvokeImpl,
+  listCreatorCampaignsImpl,
 }) {
   const router = proxyquire('./campaigns', {
     '../services/campaignStatusService': campaignStatusImpl || {
@@ -95,7 +96,7 @@ function buildApp({
       isKycRequiredForCampaigns: () => process.env.KYC_REQUIRED_FOR_CAMPAIGNS !== 'false',
     },
     '../services/userDashboardService': {
-      listCreatorCampaigns: async () => [],
+      listCreatorCampaigns: listCreatorCampaignsImpl || (async () => []),
     },
     '../middleware/validation': {
       createCampaignValidation: [],
@@ -436,4 +437,29 @@ test('GET /api/campaigns supports search, asset filter, and sort', async () => {
   assert.match(listQuery.text, /raised_amount \/ NULLIF/i);
   assert.ok(listQuery.params.includes('solar'));
   assert.ok(listQuery.params.includes('USDC'));
+});
+
+test('GET /api/campaigns/mine parses page and limit parameters', async () => {
+  let passedOptions = {};
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    listCreatorCampaignsImpl: async (userId, options) => {
+      passedOptions = options;
+      return {
+        data: [{ id: 'c-1', title: 'Test Campaign' }],
+        pagination: { page: 2, limit: 10, total: 1, totalPages: 1 },
+      };
+    },
+  });
+
+  const response = await request(app)
+    .get('/api/campaigns/mine?page=2&limit=10')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.equal(passedOptions.page, '2');
+  assert.equal(passedOptions.limit, '10');
+  assert.equal(response.body.data.length, 1);
+  assert.equal(response.body.pagination.page, 2);
+  assert.equal(response.body.pagination.limit, 10);
 });

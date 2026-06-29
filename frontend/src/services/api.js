@@ -323,7 +323,7 @@ export const api = {
   startKyc: () => request('POST', '/auth/kyc/start'),
   getKycStatus: () => request('GET', '/auth/kyc/status'),
 
-  getMyCampaigns: () => request('GET', '/campaigns/mine'),
+  getMyCampaigns: (options = {}) => request('GET', '/campaigns/mine', null, { query: options }),
   getFeaturedCampaigns: () => request('GET', '/campaigns/featured'),
   getCampaigns: (options = {}) => request('GET', '/campaigns', null, { query: options }),
   getCampaign: (id, options = {}) => request('GET', `/campaigns/${id}`, null, { query: options }),

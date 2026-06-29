@@ -286,8 +286,9 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
 }));
 
 router.get('/mine', requireAuth, asyncHandler(async (req, res) => {
-  const campaigns = await listCreatorCampaigns(req.user.userId);
-  res.json(campaigns);
+  const { page, limit } = req.query;
+  const result = await listCreatorCampaigns(req.user.userId, { page, limit });
+  res.json(result);
 }));
 
 router.get('/:id/milestones', asyncHandler(async (req, res) => {
