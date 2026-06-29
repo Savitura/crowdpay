@@ -223,6 +223,10 @@ app.use("/v1/docs", swaggerUi.serve, swaggerUi.setup(v1OpenApiSpec));
 app.use("/api/auth", require("./routes/auth"));
 // Backwards/alternate compatibility for docs + clients expecting /api/users/register|login.
 app.use("/api/users", require("./routes/auth"));
+// Session management routes
+app.use("/api/auth", require("./routes/sessions"));
+// Referral routes
+app.use("/api/referrals", require("./routes/referrals"));
 app.use("/api/users", require("./routes/users"));
 app.use("/api/invites", require("./routes/invites"));
 app.use("/api/campaigns", require("./routes/campaignUpdates"));

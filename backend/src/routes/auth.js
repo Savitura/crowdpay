@@ -14,6 +14,11 @@ const { requireAuth } = require('../middleware/auth');
 const { encryptWalletSecret } = require('../services/walletSecrets');
 const { isKycRequiredForCampaigns } = require('../services/kycProvider');
 const { startKycForUser, getKycStatusForUser } = require('../services/kycService');
+const {
+  createUserSession,
+  recordLoginAttempt,
+  checkLoginAnomalies,
+} = require('../services/sessionService');
 const asyncHandler = require('../utils/asyncHandler');
 const {
   registerValidation,
@@ -326,6 +331,27 @@ router.post('/register', registerLimiter, registerEmailLimiter, registerValidati
   const { accessToken } = generateTokens(user);
   const { token: refreshToken, expiresAt } = await createRefreshToken(user.id);
 
+  // Get the refresh token ID for session tracking
+  const { rows: rtRows } = await db.query(
+    'SELECT id FROM refresh_tokens WHERE token_hash = $1',
+    [hashToken(refreshToken)]
+  );
+  const refreshTokenId = rtRows[0]?.id;
+
+  // Create user session
+  if (refreshTokenId) {
+    await createUserSession(user.id, refreshTokenId, req);
+  }
+
+  // Record successful login attempt
+  await recordLoginAttempt({
+    userId: user.id,
+    email: normalizedEmail,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+    success: true,
+  });
+
   setRefreshTokenCookie(res, refreshToken, expiresAt);
   setAccessTokenCookie(res, accessToken);
 
@@ -422,6 +448,14 @@ router.post('/login', loginLimiter, loginValidation, validateRequest, async (req
   const { rows } = await db.query('SELECT * FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
 
   if (!rows.length || !(await bcrypt.compare(password, rows[0].password_hash))) {
+    // Record failed login attempt
+    await recordLoginAttempt({
+      email: normalizedEmail,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+      success: false,
+      failureReason: 'Invalid credentials',
+    });
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
@@ -433,6 +467,28 @@ router.post('/login', loginLimiter, loginValidation, validateRequest, async (req
 
   const { accessToken } = generateTokens(user);
   const { token: refreshToken, expiresAt } = await createRefreshToken(user.id);
+
+  // Get the refresh token ID for session tracking
+  const { rows: rtRows } = await db.query(
+    'SELECT id FROM refresh_tokens WHERE token_hash = $1',
+    [hashToken(refreshToken)]
+  );
+  const refreshTokenId = rtRows[0]?.id;
+
+  // Create user session
+  if (refreshTokenId) {
+    await createUserSession(user.id, refreshTokenId, req);
+  }
+
+  // Check for login anomalies and record attempt
+  await checkLoginAnomalies(user.id, user.email, req);
+  await recordLoginAttempt({
+    userId: user.id,
+    email: normalizedEmail,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+    success: true,
+  });
 
   setRefreshTokenCookie(res, refreshToken, expiresAt);
   setAccessTokenCookie(res, accessToken);
