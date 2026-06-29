@@ -225,8 +225,9 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
   const filters = [];
   const params = [];
 
-  // Exclude deleted campaigns from public listing
+  // Exclude deleted and hidden campaigns from public listing
   filters.push(`c.deleted_at IS NULL`);
+  filters.push(`c.is_hidden = FALSE`);
 
   if (status) {
     params.push(status);
@@ -430,7 +431,7 @@ router.get('/featured', asyncHandler(async (req, res) => {
            (SELECT COUNT(*) FROM contributions WHERE campaign_id = c.id) AS contributor_count
     FROM campaigns c
     JOIN users u ON u.id = c.creator_id
-    WHERE c.featured = TRUE AND c.status = 'active' AND c.deleted_at IS NULL
+    WHERE c.featured = TRUE AND c.status = 'active' AND c.deleted_at IS NULL AND c.is_hidden = FALSE
     ORDER BY c.featured_at DESC
     LIMIT 3
   `);
@@ -441,7 +442,7 @@ router.get('/categories', asyncHandler(async (req, res) => {
   const { rows } = await db.query(`
     SELECT category, COUNT(*)::int AS count
     FROM campaigns
-    WHERE status = 'active' AND deleted_at IS NULL
+    WHERE status = 'active' AND deleted_at IS NULL AND is_hidden = FALSE
     GROUP BY category
     ORDER BY category ASC
   `);
@@ -563,7 +564,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   if (campaign.deleted_at) {
     return res.status(404).json({ error: 'Campaign not found' });
   }
-  
+
   let userRole = null;
 
   const header = req.headers.authorization;
@@ -592,6 +593,11 @@ router.get('/:id', asyncHandler(async (req, res) => {
     }
   }
 
+  // Hidden campaigns only accessible by owner or admin
+  if (campaign.is_hidden && userRole !== 'owner') {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+
   // Add notice if campaign is suspended
   const response = { ...campaign, user_role: userRole };
   if (campaign.status === 'suspended') {
@@ -612,7 +618,7 @@ async function loadPublicCampaignSummary(campaignId) {
   const { rows } = await db.query(
     `SELECT id, title, description, target_amount, raised_amount, asset_type, status, deadline,
             (SELECT COUNT(*)::int FROM contributions c WHERE c.campaign_id = campaigns.id) AS backer_count
-     FROM campaigns WHERE id = $1 AND deleted_at IS NULL`,
+     FROM campaigns WHERE id = $1 AND deleted_at IS NULL AND is_hidden = FALSE`,
     [campaignId]
   );
   if (!rows.length) return null;
@@ -1448,6 +1454,62 @@ router.post('/:id/members/accept', requireAuth, asyncHandler(async (req, res) =>
     userEmail: userRows[0]?.email,
   });
   res.json(member);
+}));
+
+// PATCH /campaigns/:id/visibility — toggle is_hidden for a campaign (owner or admin only)
+router.patch('/:id/visibility', requireAuth, asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+
+  const { rows: campaignRows } = await db.query(
+    'SELECT * FROM campaigns WHERE id = $1',
+    [campaignId]
+  );
+  if (!campaignRows.length) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+
+  const campaign = campaignRows[0];
+  const userRole = await resolveUserCampaignRole(campaignId, req.user.userId, req.user.role === 'admin');
+
+  if (userRole !== 'owner') {
+    return res.status(403).json({ error: 'Only the campaign owner can change visibility' });
+  }
+
+  const newHidden = req.body.is_hidden;
+  if (typeof newHidden !== 'boolean') {
+    return res.status(422).json({ error: 'is_hidden must be a boolean' });
+  }
+
+  const { rows: updatedRows } = await db.query(
+    'UPDATE campaigns SET is_hidden = $1 WHERE id = $2 RETURNING *',
+    [newHidden, campaignId]
+  );
+
+  // Log to admin_actions for audit trail
+  try {
+    await db.query(
+      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, details)
+       VALUES ($1, $2, $3, $4, $5::jsonb)`,
+      [
+        req.user.userId,
+        newHidden ? 'campaign_hidden' : 'campaign_unhidden',
+        'campaign',
+        campaignId,
+        JSON.stringify({
+          campaign_title: campaign.title,
+          previous_is_hidden: campaign.is_hidden,
+          new_is_hidden: newHidden,
+        }),
+      ]
+    );
+  } catch (err) {
+    logger.warn('Failed to log visibility change to admin_actions', {
+      campaign_id: campaignId,
+      error: err.message,
+    });
+  }
+
+  res.json({ is_hidden: updatedRows[0].is_hidden });
 }));
 
 const { getCampaignAnalytics, getCampaignContributors } = require('../services/analyticsService');
