@@ -33,6 +33,7 @@ const {
   sendWeeklyContributorDigests,
 } = require("./services/weeklyDigestService");
 const { sendAlert } = require("./services/alerting");
+const ff = require("./services/featureFlags");
 const {
   assertNoLegacyPlaintextUserWalletSecrets,
 } = require("./services/walletSecrets");
@@ -324,7 +325,7 @@ app.get("/health/ledger", async (_req, res) => {
   }
 });
 
-if (process.env.SERVE_FRONTEND === "true") {
+if (ff.isEnabled("serve-frontend")) {
   const dist = path.join(__dirname, "../../frontend/dist");
   app.use(express.static(dist));
   app.get("*", (req, res, next) => {
@@ -342,7 +343,7 @@ const { startWebhookRetryPoller } = require("./services/webhookDispatcher");
 const PORT = process.env.PORT || 3001;
 
 function startCampaignStatusCron() {
-  if (process.env.ENABLE_CAMPAIGN_STATUS_CRON === "false") return;
+  if (!ff.isEnabled("campaign-status-cron")) return;
   const cron = require("node-cron");
   cron.schedule("0 * * * *", () => {
     refreshActiveCampaignStatuses().catch((err) => {
@@ -353,7 +354,7 @@ function startCampaignStatusCron() {
 }
 
 function startReconciliationCron() {
-  if (process.env.ENABLE_RECONCILIATION_CRON === "false") return;
+  if (!ff.isEnabled("reconciliation-cron")) return;
   const cron = require("node-cron");
   const { reconcileCampaignBalances } = require("./services/reconciliation");
   cron.schedule("*/15 * * * *", () => {
@@ -365,7 +366,7 @@ function startReconciliationCron() {
 }
 
 function startWeeklyDigestCron() {
-  if (process.env.ENABLE_WEEKLY_DIGEST_CRON === "false") return;
+  if (!ff.isEnabled("weekly-digest-cron")) return;
   const cron = require("node-cron");
   const schedule = process.env.WEEKLY_DIGEST_CRON || "0 18 * * 0";
   cron.schedule(schedule, () => {
