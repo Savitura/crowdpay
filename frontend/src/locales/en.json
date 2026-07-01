@@ -419,7 +419,7 @@
       "uniqueContributors": "Unique contributors",
       "avgContribution": "Avg contribution"
     }
-    ,
+  },
   "offline": {
     "banner": "You're offline — changes may not be saved"
   },

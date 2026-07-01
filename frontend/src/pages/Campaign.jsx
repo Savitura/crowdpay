@@ -181,7 +181,14 @@ export default function Campaign() {
   const [referralCode, setReferralCode] = useState(null);
   const [referralUrl, setReferralUrl] = useState(null);
   const [referralLeaderboard, setReferralLeaderboard] = useState(null);
-
+  const [milestonesLoading, setMilestonesLoading] = useState(false);
+  const [contractStatus, setContractStatus] = useState(null);
+  const [contractStatusError, setContractStatusError] = useState('');
+  const [tiers, setTiers] = useState([]);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [contributorRefundBusy, setContributorRefundBusy] = useState(false);
+  const [contributorRefundError, setContributorRefundError] = useState('');
+  const [contributorRefundSuccess, setContributorRefundSuccess] = useState('');
   const refParam = new URLSearchParams(location.search).get('ref');
 
   useEffect(() => {
@@ -450,17 +457,17 @@ export default function Campaign() {
         prev.map((m) => (m.user_id === userId ? { ...m, role: updated.role } : m))
       );
     } catch (err) {
-      alert(err.message || 'Failed to update role');
+      window.alert(err.message || 'Failed to update role');
     }
   }
 
   async function handleRemoveMember(userId) {
-    if (!confirm('Are you sure you want to remove this member?')) return;
+    if (!window.confirm('Are you sure you want to remove this member?')) return;
     try {
       await api.removeCampaignMember(id, userId);
       setMembers((prev) => prev.filter((m) => m.user_id !== userId));
     } catch (err) {
-      alert(err.message || 'Failed to remove member');
+      window.alert(err.message || 'Failed to remove member');
     }
   }
 
@@ -469,17 +476,17 @@ export default function Campaign() {
       const updated = await api.resendCampaignInvite(id, memberId);
       setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, ...updated } : m)));
     } catch (err) {
-      alert(err.message || 'Failed to resend invitation');
+      window.alert(err.message || 'Failed to resend invitation');
     }
   }
 
   async function handleCancelInvite(memberId) {
-    if (!confirm('Cancel this pending invitation?')) return;
+    if (!window.confirm('Cancel this pending invitation?')) return;
     try {
       await api.cancelCampaignInvite(id, memberId);
       setMembers((prev) => prev.filter((m) => m.id !== memberId));
     } catch (err) {
-      alert(err.message || 'Failed to cancel invitation');
+      window.alert(err.message || 'Failed to cancel invitation');
     }
   }
 
@@ -930,7 +937,7 @@ export default function Campaign() {
           <span style={styles.asset}>{campaign.asset_type}</span>
           <CampaignStatusBadge status={campaign.status} />
           <VerificationBadge status={campaign.creator_kyc_status} />
-          {contractAddress && (
+          {campaign.contract_address && (
             <span
               title="This campaign is backed by a Soroban smart contract"
               style={{
@@ -1296,7 +1303,7 @@ export default function Campaign() {
 
       <details style={{ ...styles.card, marginTop: '-0.75rem' }}>
         <summary style={styles.embedSummary}>Embed on your site</summary>
-        <pre style={{ ...styles.embedCode, marginTop: '0.75rem' }}>{embedCode}</pre>
+        <pre style={{ ...styles.embedCode, marginTop: '0.75rem' }}>{widgetEmbedCode}</pre>
         <button
           type="button"
           onClick={() => {

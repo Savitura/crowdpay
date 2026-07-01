@@ -340,6 +340,7 @@ export const api = {
   getCampaignBackers: (id) => request('GET', `/campaigns/${id}/backers`),
   getCampaignBalance: (id) => request('GET', `/campaigns/${id}/balance`),
   getCloneData: (id) => request('GET', `/campaigns/${id}/clone-data`),
+  checkDuplicateCampaign: (body) => request('POST', '/campaigns/check-duplicate', body),
   createCampaign: (body) => request('POST', '/campaigns', body),
   updateCampaign: (id, body) => request('PATCH', `/campaigns/${id}`, body),
   deleteCampaign: (id) => request('DELETE', `/campaigns/${id}`),
@@ -437,7 +438,14 @@ export const api = {
 
   getAdminStats: () => request('GET', '/admin/stats'),
   getAdminHealth: () => request('GET', '/admin/health'),
-  getAdminCampaigns: () => request('GET', '/admin/campaigns'),
+  getAdminCampaigns: (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.include_deleted) qs.append('include_deleted', 'true');
+    if (params.flagged_only) qs.append('flagged_only', 'true');
+    if (params.status) qs.append('status', params.status);
+    const query = qs.toString();
+    return request('GET', `/admin/campaigns${query ? `?${query}` : ''}`);
+  },
   getAdminWithdrawals: (options = {}) =>
     request('GET', '/admin/withdrawals', null, { query: options }),
   getAdminDisputes: (options = {}) => request('GET', '/admin/disputes', null, { query: options }),
@@ -466,6 +474,7 @@ export const api = {
   adminRestoreCampaign: (id) => request('PATCH', `/admin/campaigns/${id}/restore`, {}),
   adminFeatureCampaign: (id, body) => request('PATCH', `/admin/campaigns/${id}/feature`, body),
   adminUnfeatureCampaign: (id) => request('PATCH', `/admin/campaigns/${id}/unfeature`, {}),
+  adminUnflagCampaign: (id) => request('PATCH', `/admin/campaigns/${id}/unflag`),
   adminDeleteCampaign: (id, body) => request('DELETE', `/admin/campaigns/${id}`, body),
   adminBanUser: (id, body) => request('PATCH', `/admin/users/${id}/ban`, body),
   adminUnbanUser: (id) => request('PATCH', `/admin/users/${id}/unban`, {}),

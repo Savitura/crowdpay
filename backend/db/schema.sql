@@ -52,6 +52,8 @@ CREATE TABLE campaigns (
   featured            BOOLEAN DEFAULT FALSE,
   featured_at         TIMESTAMPTZ,
   featured_note       TEXT,
+  content_fingerprint TEXT,
+  is_flagged_duplicate BOOLEAN DEFAULT FALSE,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE TABLE IF NOT EXISTS campaign_updates (

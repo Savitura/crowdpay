@@ -51,7 +51,7 @@ export default function Home() {
   const asset = searchParams.get('asset') || '';
   const category = searchParams.get('category') || '';
   const minProgress = searchParams.get('min_progress') || '';
-  const sort = searchParams.get('sort') || 'newest';
+
   const limit = Number(searchParams.get('limit') || 20);
   const offset = Number(searchParams.get('offset') || 0);
 
@@ -66,7 +66,7 @@ export default function Home() {
     setSort(newSort);
     setFilters({ sort: newSort });
   };
-  const category = searchParams.get('category') || '';
+
 
   const hasActiveFilters =
     Boolean(search.trim()) ||
@@ -145,7 +145,7 @@ export default function Home() {
       setTotal(nextTotal);
       setPage((p) => p + 1);
 
-      requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
         window.scrollTo({ top: scrollPosition });
       });
     } catch (err) {

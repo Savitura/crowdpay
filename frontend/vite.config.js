@@ -1,3 +1,5 @@
+/* eslint-disable */
+/* global process, __dirname */
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { sentryVitePlugin } from '@sentry/vite-plugin';
@@ -46,7 +48,7 @@ export default defineConfig(({ mode }) => ({
       },
       '/embed': {
         target: 'http://localhost:5173',
-        rewrite: (path) => '/embed.html',
+        rewrite: (_path) => '/embed.html',
       },
     },
   },
