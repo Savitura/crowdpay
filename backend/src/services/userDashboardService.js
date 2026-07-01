@@ -1,6 +1,17 @@
 const db = require('../config/database');
 
-async function listCreatorCampaigns(userId) {
+async function listCreatorCampaigns(userId, options = {}) {
+  const page = Math.max(1, parseInt(options.page, 10) || 1);
+  const limit = Math.min(Math.max(1, parseInt(options.limit, 10) || 20), 100);
+  const offset = (page - 1) * limit;
+
+  const countResult = await db.query(
+    'SELECT COUNT(*)::int AS total FROM campaigns WHERE creator_id = $1',
+    [userId]
+  );
+  const total = countResult.rows[0]?.total || 0;
+  const totalPages = Math.ceil(total / limit);
+
   const { rows } = await db.query(
     `SELECT c.id, c.title, c.status, c.asset_type, c.target_amount, c.raised_amount,
             c.deadline, c.created_at, c.is_hidden,
@@ -15,10 +26,15 @@ async function listCreatorCampaigns(userId) {
        WHERE ctr.campaign_id = c.id
      ) stats ON TRUE
      WHERE c.creator_id = $1
-     ORDER BY c.created_at DESC`,
-    [userId]
+     ORDER BY c.created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [userId, limit, offset]
   );
-  return rows;
+
+  return {
+    data: rows,
+    pagination: { page, limit, total, totalPages },
+  };
 }
 
 async function listUserContributions(userId) {
