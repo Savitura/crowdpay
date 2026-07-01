@@ -330,6 +330,7 @@ export const api = {
   getCampaignAnalytics: (id) => request('GET', `/campaigns/${id}/analytics`),
   getCampaignAnalyticsContributors: (id) =>
     request('GET', `/campaigns/${id}/analytics/contributors`),
+  getCampaignAnalyticsBackers: (id) => request('GET', `/campaigns/${id}/analytics/backers`),
   exportCampaignContributions: (id) =>
     downloadFile(
       `/campaigns/${encodeURIComponent(id)}/contributions/export`,

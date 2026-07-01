@@ -9,6 +9,8 @@ import CampaignStatusBadge from '../components/CampaignStatusBadge';
 import ContributorDashboard from '../components/ContributorDashboard';
 import DepositModal from '../components/DepositModal';
 import ApiKeysPanel from '../components/ApiKeysPanel';
+import BackerInsightsCard from '../components/BackerInsightsCard';
+import { stellarExpertTxUrl, stellarExpertAccountUrl } from '../config/stellar';
 import { stellarExpertAccountUrl } from '../config/stellar';
 import ThankYouModal from '../components/ThankYouModal';
 import {
@@ -142,7 +144,11 @@ export default function Dashboard() {
       ? 'contributions'
       : tabParam === 'referrals'
         ? 'referrals'
-        : 'campaigns';
+        : tabParam === 'analytics'
+          ? 'analytics'
+          : tabParam === 'api-keys'
+            ? 'api-keys'
+            : 'campaigns';
 
   const [stats, setStats] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
@@ -161,6 +167,8 @@ export default function Dashboard() {
   const [selectedCampaignId, setSelectedCampaignId] = useState(null);
   const [campaignAnalytics, setCampaignAnalytics] = useState(null);
   const [campaignContributors, setCampaignContributors] = useState(null);
+  const [campaignBackers, setCampaignBackers] = useState(null);
+  const [loadingContributions, setLoadingContributions] = useState(true);
   const [referralData, setReferralData] = useState({});
   const [referralLoading, setReferralLoading] = useState(false);
   const [exportingCampaignId, setExportingCampaignId] = useState(null);
@@ -184,6 +192,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (!user) return;
     setLoadingCampaigns(true);
+    setLoadingContributions(true);
     setError('');
 
     api
@@ -197,12 +206,18 @@ export default function Dashboard() {
         .then(([me, s]) => {
           updateUser(me);
           setStats(s);
+          setCampaigns(c);
           // pre-fetch dashboard analytics for the analytics tab
           api
             .getUserDashboardAnalytics()
             .then(setDashAnalytics)
             .catch(() => {});
         })
+        .catch((err) => setError(err.message || 'Could not load dashboard'))
+        .finally(() => {
+          setLoadingCampaigns(false);
+          setLoadingContributions(false);
+        });
         .catch((err) => setError(err.message || 'Could not load dashboard'));
     } else {
       setLoadingCampaigns(false);
@@ -949,6 +964,13 @@ export default function Dashboard() {
                       </div>
                     )}
                   </div>
+                )}
+
+                {campaignBackers && (
+                  <BackerInsightsCard
+                    data={campaignBackers}
+                    assetType={campaignAnalytics?.campaign?.asset_type || 'XLM'}
+                  />
                 )}
 
                 {/* Time-series chart */}
