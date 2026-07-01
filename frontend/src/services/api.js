@@ -323,7 +323,7 @@ export const api = {
   startKyc: () => request('POST', '/auth/kyc/start'),
   getKycStatus: () => request('GET', '/auth/kyc/status'),
 
-  getMyCampaigns: () => request('GET', '/campaigns/mine'),
+  getMyCampaigns: (options = {}) => request('GET', '/campaigns/mine', null, { query: options }),
   getFeaturedCampaigns: () => request('GET', '/campaigns/featured'),
   getCampaigns: (options = {}) => request('GET', '/campaigns', null, { query: options }),
   getCampaign: (id, options = {}) => request('GET', `/campaigns/${id}`, null, { query: options }),
@@ -495,4 +495,9 @@ export const api = {
 
   getReferralCode: (campaignId) => request('GET', `/campaigns/${campaignId}/referral`),
   getReferralLeaderboard: (campaignId) => request('GET', `/campaigns/${campaignId}/referrals`),
+
+  sendBulkThankYou: (campaignId, message) =>
+    request('POST', `/campaigns/${campaignId}/thank-you`, { message }),
+  sendContributionThankYou: (contributionId, message) =>
+    request('POST', `/contributions/${contributionId}/thank-you`, { message }),
 };

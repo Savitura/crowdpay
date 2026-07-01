@@ -10,6 +10,7 @@ import ContributorDashboard from '../components/ContributorDashboard';
 import DepositModal from '../components/DepositModal';
 import ApiKeysPanel from '../components/ApiKeysPanel';
 import { stellarExpertAccountUrl } from '../config/stellar';
+import ThankYouModal from '../components/ThankYouModal';
 import {
   LineChart,
   Line,
@@ -146,6 +147,10 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
   const [loadingCampaigns, setLoadingCampaigns] = useState(true);
+  const [campaignsPage, setCampaignsPage] = useState(1);
+  const [campaignsTotalPages, setCampaignsTotalPages] = useState(1);
+  const [campaignsTotal, setCampaignsTotal] = useState(0);
+  const [isCampaignsPageLoading, setIsCampaignsPageLoading] = useState(false);
   const [loadingContributions, setLoadingContributions] = useState(false);
   const [error, setError] = useState('');
   const [balance, setBalance] = useState(null);
@@ -159,6 +164,11 @@ export default function Dashboard() {
   const [referralData, setReferralData] = useState({});
   const [referralLoading, setReferralLoading] = useState(false);
   const [exportingCampaignId, setExportingCampaignId] = useState(null);
+  const [bulkThankYouCampaignId, setBulkThankYouCampaignId] = useState(null);
+  const [individualThankYouContribution, setIndividualThankYouContribution] = useState(null);
+  const [campaignContributions, setCampaignContributions] = useState([]);
+  const [contributionsLoading, setContributionsLoading] = useState(false);
+  const [thankYouSent, setThankYouSent] = useState('');
   const [togglingVisibility, setTogglingVisibility] = useState(null);
 
   const isCreator = user?.role === 'creator' || user?.role === 'admin';
@@ -183,39 +193,68 @@ export default function Dashboard() {
       .finally(() => setBalanceLoading(false));
 
     if (isCreator) {
-      Promise.all([api.getMe(), api.getMyStats(), api.getMyCampaigns()])
-        .then(([me, s, c]) => {
+      Promise.all([api.getMe(), api.getMyStats()])
+        .then(([me, s]) => {
           updateUser(me);
           setStats(s);
-          setCampaigns(c);
           // pre-fetch dashboard analytics for the analytics tab
           api
             .getUserDashboardAnalytics()
             .then(setDashAnalytics)
             .catch(() => {});
         })
-        .catch((err) => setError(err.message || 'Could not load dashboard'))
-        .finally(() => {
-          setLoadingCampaigns(false);
-        });
+        .catch((err) => setError(err.message || 'Could not load dashboard'));
     } else {
       setLoadingCampaigns(false);
       setLoadingContributions(false);
     }
   }, [isCreator, user, updateUser]);
 
+  useEffect(() => {
+    if (!user || !isCreator) return;
+    setIsCampaignsPageLoading(true);
+    api
+      .getMyCampaigns({ page: campaignsPage, limit: 20 })
+      .then((res) => {
+        if (res.data && res.pagination) {
+          setCampaigns(res.data);
+          setCampaignsTotalPages(res.pagination.totalPages);
+          setCampaignsTotal(res.pagination.total);
+        } else {
+          setCampaigns(res);
+          setCampaignsTotalPages(1);
+          setCampaignsTotal(res.length || 0);
+        }
+      })
+      .catch((err) => setError(err.message || 'Could not load campaigns'))
+      .finally(() => {
+        setLoadingCampaigns(false);
+        setIsCampaignsPageLoading(false);
+      });
+  }, [isCreator, user, campaignsPage]);
+
   const loadCampaignAnalytics = useCallback((id) => {
     setSelectedCampaignId(id);
     setCampaignAnalytics(null);
     setCampaignContributors(null);
+    setCampaignContributions([]);
     setAnalyticsLoading(true);
-    Promise.all([api.getCampaignAnalytics(id), api.getCampaignAnalyticsContributors(id)])
-      .then(([a, c]) => {
+    setContributionsLoading(true);
+    Promise.all([
+      api.getCampaignAnalytics(id),
+      api.getCampaignAnalyticsContributors(id),
+      api.getContributions(id, { limit: 100 }),
+    ])
+      .then(([a, c, ctr]) => {
         setCampaignAnalytics(a);
         setCampaignContributors(c);
+        setCampaignContributions(ctr.contributions || []);
       })
       .catch(() => {})
-      .finally(() => setAnalyticsLoading(false));
+      .finally(() => {
+        setAnalyticsLoading(false);
+        setContributionsLoading(false);
+      });
   }, []);
 
   const handleExportContributions = useCallback(async (campaign) => {
@@ -511,7 +550,7 @@ export default function Dashboard() {
               {campaigns.length === 0 ? (
                 <p className="alert alert--info">{t('dashboard.noCampaigns')}</p>
               ) : (
-                <div style={{ display: 'grid', gap: '0.75rem' }}>
+                <div style={{ display: 'grid', gap: '0.75rem', opacity: isCampaignsPageLoading ? 0.5 : 1, transition: 'opacity 0.2s' }}>
                   {campaigns.map((campaign) => {
                     const pct = progressPct(campaign).toFixed(1);
                     return (
@@ -613,6 +652,10 @@ export default function Dashboard() {
                           <button
                             type="button"
                             className="btn-secondary"
+                            onClick={() => setBulkThankYouCampaignId(campaign.id)}
+                            style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                          >
+                            {t('dashboard.sendThankYou')}
                             disabled={togglingVisibility !== null}
                             aria-busy={togglingVisibility === campaign.id}
                             onClick={() => handleToggleVisibility(campaign)}
@@ -639,6 +682,36 @@ export default function Dashboard() {
                     );
                   })}
                 </div>
+                {campaignsTotalPages > 1 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+                    <span style={{ fontSize: '0.9rem', color: 'var(--color-text-hint)' }}>
+                      Showing {campaigns.length} of {campaignsTotal} campaigns
+                    </span>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <button 
+                        type="button"
+                        className="btn-secondary" 
+                        disabled={campaignsPage === 1 || isCampaignsPageLoading} 
+                        onClick={() => setCampaignsPage(p => Math.max(1, p - 1))}
+                        style={{ padding: '0.3rem 0.8rem', fontSize: '0.85rem' }}
+                      >
+                        Previous
+                      </button>
+                      <span style={{ fontSize: '0.9rem' }}>
+                        Page {campaignsPage} of {campaignsTotalPages}
+                      </span>
+                      <button 
+                        type="button"
+                        className="btn-secondary" 
+                        disabled={campaignsPage === campaignsTotalPages || isCampaignsPageLoading} 
+                        onClick={() => setCampaignsPage(p => Math.min(campaignsTotalPages, p + 1))}
+                        style={{ padding: '0.3rem 0.8rem', fontSize: '0.85rem' }}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               )}
             </>
           )}
@@ -910,6 +983,49 @@ export default function Dashboard() {
                   >
                     {t('dashboard.exportCsv')}
                   </button>
+                {/* Contributions list with individual thank-you */}
+                {campaignContributions.length > 0 && !contributionsLoading && (
+                  <div className="campaign-card" style={{ minHeight: 'auto', marginTop: '0.75rem' }}>
+                    <strong style={{ display: 'block', marginBottom: '0.6rem', fontSize: '0.9rem' }}>
+                      {t('dashboard.contributors')}
+                    </strong>
+                    <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                      {campaignContributions.map((ct) => (
+                        <div
+                          key={ct.id}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '0.4rem 0',
+                            borderBottom: '1px solid var(--color-border-lighter)',
+                            fontSize: '0.85rem',
+                          }}
+                        >
+                          <span>
+                            {ct.display_name || ct.sender_public_key?.slice(0, 8) + '…'}{' '}
+                            <span style={{ color: 'var(--color-text-hint)' }}>
+                              · {Number(ct.amount).toLocaleString()} {ct.asset} ·{' '}
+                              {new Date(ct.created_at).toLocaleDateString()}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() =>
+                              setIndividualThankYouContribution({
+                                id: ct.id,
+                                display_name: ct.display_name || 'contributor',
+                              })
+                            }
+                            style={{ fontSize: '0.78rem', padding: '0.2rem 0.6rem' }}
+                          >
+                            {t('dashboard.sendThankYou')}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </>
             )}
@@ -1045,6 +1161,57 @@ export default function Dashboard() {
               .then((d) => setBalance(d.balance))
               .catch(() => {});
           }}
+        />
+      )}
+
+      {thankYouSent && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '1.5rem',
+            right: '1.5rem',
+            background: '#22c55e',
+            color: '#fff',
+            padding: '0.75rem 1.25rem',
+            borderRadius: '8px',
+            fontSize: '0.9rem',
+            fontWeight: 600,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            zIndex: 1001,
+          }}
+        >
+          {thankYouSent}
+          <button
+            onClick={() => setThankYouSent('')}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#fff',
+              marginLeft: '0.75rem',
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: '1rem',
+            }}
+          >
+            x
+          </button>
+        </div>
+      )}
+
+      {bulkThankYouCampaignId && (
+        <ThankYouModal
+          campaignId={bulkThankYouCampaignId}
+          onClose={() => setBulkThankYouCampaignId(null)}
+          onSent={() => setThankYouSent(t('thankYou.sent'))}
+        />
+      )}
+
+      {individualThankYouContribution && (
+        <ThankYouModal
+          campaignId={selectedCampaignId}
+          contribution={individualThankYouContribution}
+          onClose={() => setIndividualThankYouContribution(null)}
+          onSent={() => setThankYouSent(t('thankYou.sent'))}
         />
       )}
     </main>

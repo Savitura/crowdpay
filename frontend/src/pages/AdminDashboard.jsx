@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import RelativeTime from '../components/RelativeTime';
+import DisputeResolveModal from '../components/DisputeResolveModal';
 
 const DISPUTE_STATUSES = [
   'open',
@@ -414,8 +415,7 @@ function DisputeManagement() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState('');
+  const [resolveOpen, setResolveOpen] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -431,7 +431,6 @@ function DisputeManagement() {
 
   async function openDispute(dispute) {
     setSelected(dispute);
-    setNote('');
     try {
       const data = await api.getAdminDispute(dispute.id);
       setDetail(data);
@@ -443,27 +442,28 @@ function DisputeManagement() {
   function closeDispute() {
     setSelected(null);
     setDetail(null);
-    setNote('');
+    setResolveOpen(false);
   }
 
-  async function resolve(status) {
-    if (!selected) return;
-    setBusy(true);
+  async function handleResolve({ status, resolution_note }) {
+    const updated = await api.updateDispute(selected.id, { status, resolution_note });
+    setDisputes((prev) =>
+      prev
+        .map((d) => (d.id === updated.id ? { ...d, ...updated } : d))
+        .filter((d) => ['open', 'under_review'].includes(d.status))
+    );
+    closeDispute();
+  }
+
+  async function escalate() {
     try {
-      const updated = await api.updateDispute(selected.id, {
-        status,
-        resolution_note: note.trim() || undefined,
-      });
+      const updated = await api.updateDispute(selected.id, { status: 'under_review' });
       setDisputes((prev) =>
-        prev
-          .map((d) => (d.id === updated.id ? { ...d, ...updated } : d))
-          .filter((d) => ['open', 'under_review'].includes(d.status))
+        prev.map((d) => (d.id === updated.id ? { ...d, ...updated } : d))
       );
       closeDispute();
     } catch (err) {
-      alert(err.message || 'Could not update dispute');
-    } finally {
-      setBusy(false);
+      alert(err.message || 'Could not escalate dispute');
     }
   }
 
@@ -579,44 +579,34 @@ function DisputeManagement() {
               </div>
             </div>
 
-            <label className="label-strong" htmlFor="dispute-note">
-              Resolution note
-            </label>
-            <textarea
-              id="dispute-note"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              rows={3}
-            />
-
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
               <button
                 type="button"
-                disabled={busy}
-                onClick={() => resolve('resolved_contributor')}
-                style={{ fontSize: '0.8rem' }}
+                className="btn-primary"
+                onClick={() => setResolveOpen(true)}
+                style={{ fontSize: '0.85rem' }}
               >
-                Resolve for contributor (refund)
+                Resolve dispute…
               </button>
               <button
                 type="button"
-                disabled={busy}
-                onClick={() => resolve('resolved_creator')}
-                style={{ fontSize: '0.8rem' }}
-              >
-                Resolve for creator
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => resolve('under_review')}
-                style={{ fontSize: '0.8rem' }}
+                onClick={escalate}
+                style={{ fontSize: '0.8rem', cursor: 'pointer' }}
               >
                 Escalate (under review)
               </button>
             </div>
           </div>
         </Drawer>
+      )}
+
+      {resolveOpen && detail && (
+        <DisputeResolveModal
+          dispute={detail.dispute}
+          thread={detail.thread}
+          onClose={() => setResolveOpen(false)}
+          onResolve={handleResolve}
+        />
       )}
     </>
   );
