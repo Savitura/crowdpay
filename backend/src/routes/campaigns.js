@@ -14,7 +14,13 @@ const { watchCampaignWallet, addSSEClient, removeSSEClient } = require('../servi
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
 const { refreshCampaignStatus, refreshActiveCampaignStatuses } = require('../services/campaignStatusService');
 const { queueFailedCampaignRefunds } = require('../services/campaignStatusActions');
-const { invokeContract, encodeMilestone, nativeToScVal, deployCampaignContracts } = require('../services/sorobanService');
+const {
+  invokeContract,
+  encodeMilestone,
+  nativeToScVal,
+  deployCampaignContracts,
+  getContractStatus,
+} = require('../services/sorobanService');
 const { sendEmail, sendTeamMemberInvitedEmail } = require('../services/emailService');
 const { uploadCampaignCoverImage } = require('../services/storage');
 const { isKycRequiredForCampaigns } = require('../services/kycProvider');
@@ -25,6 +31,7 @@ const {
   insertTiers,
   listTiersWithAvailability,
 } = require('../services/rewardTierService');
+const { streamCampaignContributionExport } = require('../services/contributionExportService');
 const {
   createCampaignValidation,
   createCampaignUpdateValidation,
@@ -48,12 +55,10 @@ const {
   canManageMembers,
   canChangeRoles,
 } = require('../lib/campaignPermissions');
+const { stripHtml } = require('../lib/sanitize');
+const { getSimhash, simhashSimilarity } = require('../utils/simhash');
 
 const crypto = require('crypto');
-
-function stripHtml(value = '') {
-  return String(value).replace(/<[^>]*>/g, '').trim();
-}
 
 function generateReferralCode() {
   return crypto.randomBytes(6).toString('base64url').slice(0, 8);
@@ -137,8 +142,8 @@ function normalizeMilestonesInput(input) {
   }
 
   const normalized = input.map((milestone, index) => {
-    const title = String(milestone?.title || '').trim();
-    const description = String(milestone?.description || '').trim();
+    const title = stripHtml(milestone?.title || '');
+    const description = stripHtml(milestone?.description || '');
     if (!title) {
       throw new Error(`Milestone ${index + 1} title is required`);
     }
@@ -161,8 +166,12 @@ function normalizeMilestonesInput(input) {
   });
 
   const totalUnits = normalized.reduce((sum, milestone) => sum + milestone.release_percentage_units, 0);
-  if (totalUnits !== 100 * MILESTONE_PERCENT_SCALE) {
-    throw new Error('Milestone release percentages must sum to exactly 100%');
+  const expectedUnits = 100 * MILESTONE_PERCENT_SCALE;
+  if (totalUnits > expectedUnits) {
+    throw new Error('Milestone percentages must not exceed 100%');
+  }
+  if (totalUnits < expectedUnits) {
+    throw new Error('Milestone percentages must sum to at least 100%');
   }
 
   return normalized;
@@ -211,14 +220,16 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
    *                   items:
    *                     type: object
    */
-  const { search, status, asset, category, sort = 'newest' } = req.query;
+  const { search, status, asset, category, min_progress, sort = 'newest' } = req.query;
   const limit = Math.min(Number(req.query.limit || 20), 100);
   const offset = Math.max(Number(req.query.offset || 0), 0);
   const filters = [];
   const params = [];
 
-  // Exclude deleted campaigns from public listing
+  // Exclude deleted and hidden campaigns from public listing
   filters.push(`c.deleted_at IS NULL`);
+  filters.push(`c.is_flagged_duplicate = FALSE`);
+  filters.push(`c.is_hidden = FALSE`);
 
   if (status) {
     params.push(status);
@@ -233,6 +244,11 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
   if (category) {
     params.push(category);
     filters.push(`c.category = $${params.length}`);
+  }
+  if (min_progress) {
+    params.push(Number(min_progress));
+    // Progress is (raised_amount / target_amount) * 100
+    filters.push(`(c.raised_amount / c.target_amount) * 100 >= $${params.length}`);
   }
   if (search) {
     params.push(search);
@@ -273,8 +289,9 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
 }));
 
 router.get('/mine', requireAuth, asyncHandler(async (req, res) => {
-  const campaigns = await listCreatorCampaigns(req.user.userId);
-  res.json(campaigns);
+  const { page, limit } = req.query;
+  const result = await listCreatorCampaigns(req.user.userId, { page, limit });
+  res.json(result);
 }));
 
 router.get('/:id/milestones', asyncHandler(async (req, res) => {
@@ -417,7 +434,7 @@ router.get('/featured', asyncHandler(async (req, res) => {
            (SELECT COUNT(*) FROM contributions WHERE campaign_id = c.id) AS contributor_count
     FROM campaigns c
     JOIN users u ON u.id = c.creator_id
-    WHERE c.featured = TRUE AND c.status = 'active' AND c.deleted_at IS NULL
+    WHERE c.featured = TRUE AND c.status = 'active' AND c.deleted_at IS NULL AND c.is_flagged_duplicate = FALSE AND c.is_hidden = FALSE
     ORDER BY c.featured_at DESC
     LIMIT 3
   `);
@@ -428,7 +445,7 @@ router.get('/categories', asyncHandler(async (req, res) => {
   const { rows } = await db.query(`
     SELECT category, COUNT(*)::int AS count
     FROM campaigns
-    WHERE status = 'active' AND deleted_at IS NULL
+    WHERE status = 'active' AND deleted_at IS NULL AND is_flagged_duplicate = FALSE AND is_hidden = FALSE
     GROUP BY category
     ORDER BY category ASC
   `);
@@ -550,7 +567,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   if (campaign.deleted_at) {
     return res.status(404).json({ error: 'Campaign not found' });
   }
-  
+
   let userRole = null;
 
   const header = req.headers.authorization;
@@ -579,6 +596,11 @@ router.get('/:id', asyncHandler(async (req, res) => {
     }
   }
 
+  // Hidden campaigns only accessible by owner or admin
+  if (campaign.is_hidden && userRole !== 'owner') {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+
   // Add notice if campaign is suspended
   const response = { ...campaign, user_role: userRole };
   if (campaign.status === 'suspended') {
@@ -599,7 +621,7 @@ async function loadPublicCampaignSummary(campaignId) {
   const { rows } = await db.query(
     `SELECT id, title, description, target_amount, raised_amount, asset_type, status, deadline,
             (SELECT COUNT(*)::int FROM contributions c WHERE c.campaign_id = campaigns.id) AS backer_count
-     FROM campaigns WHERE id = $1 AND deleted_at IS NULL`,
+     FROM campaigns WHERE id = $1 AND deleted_at IS NULL AND is_hidden = FALSE`,
     [campaignId]
   );
   if (!rows.length) return null;
@@ -732,6 +754,15 @@ router.get('/:id/backers', asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
+// Download contributor fulfillment data for campaign owners/admins.
+router.get('/:id/contributions/export', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  await streamCampaignContributionExport({
+    campaignId: req.params.id,
+    res,
+    runner: db,
+  });
+}));
+
 // SSE stream for real-time campaign funding updates
 router.get('/:id/stream', asyncHandler(async (req, res) => {
   const campaignId = parseInt(req.params.id, 10);
@@ -853,6 +884,26 @@ router.post('/:id/trigger-refunds', requireAuth, requireRole('admin'), asyncHand
   }
 }));
 
+// Check if draft campaign is a duplicate
+router.post('/check-duplicate', requireAuth, requireRole('creator', 'admin'), asyncHandler(async (req, res) => {
+  const { title, description } = req.body;
+  if (!title) return res.json({ isDuplicate: false });
+
+  const contentFingerprint = getSimhash(`${title} ${description || ''}`);
+  const { rows: existingCampaigns } = await db.query(
+    'SELECT id, title, content_fingerprint FROM campaigns WHERE content_fingerprint IS NOT NULL AND status != $1',
+    ['failed']
+  );
+
+  for (const c of existingCampaigns) {
+    if (simhashSimilarity(contentFingerprint, c.content_fingerprint) > 0.9) {
+      return res.json({ isDuplicate: true, similarTo: c.title });
+    }
+  }
+
+  res.json({ isDuplicate: false });
+}));
+
 // Create campaign (authenticated)
 router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignValidation, validateRequest, asyncHandler(async (req, res) => {
   /**
@@ -879,6 +930,7 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
    *               milestones: { type: array, items: { type: object }, nullable: true }
    *               min_contribution: { type: string, nullable: true }
    *               max_contribution: { type: string, nullable: true }
+   *               category: { type: string, nullable: true }
    *     responses:
    *       201:
    *         description: Created
@@ -921,6 +973,21 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
 
   const creatorPublicKey = userRows[0].wallet_public_key;
   const creatorEmail = userRows[0].email;
+
+  const contentFingerprint = getSimhash(`${title} ${description || ''}`);
+  let isFlaggedDuplicate = false;
+
+  const { rows: existingCampaigns } = await db.query(
+    'SELECT content_fingerprint FROM campaigns WHERE content_fingerprint IS NOT NULL AND status != $1',
+    ['failed']
+  );
+
+  for (const c of existingCampaigns) {
+    if (simhashSimilarity(contentFingerprint, c.content_fingerprint) > 0.9) {
+      isFlaggedDuplicate = true;
+      break;
+    }
+  }
 
   // 1. Create the on-chain campaign wallet
   const wallet = await createCampaignWallet(creatorPublicKey);
@@ -970,12 +1037,12 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
       `INSERT INTO campaigns
          (title, description, target_amount, asset_type, wallet_public_key, creator_id, deadline, 
           min_contribution, max_contribution, escrow_contract_id, milestones_contract_id, platform_fee_bps,
-          contract_address, contract_deployed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+          contract_address, contract_deployed_at, content_fingerprint, is_flagged_duplicate)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14, $15)
        RETURNING *`,
       [title, description, target_amount, asset_type, wallet.publicKey, req.user.userId, deadline, 
        min_contribution || null, max_contribution || null, escrowContractId, milestonesContractId, platformFeeBps,
-       contractAddress]
+       contractAddress, contentFingerprint, isFlaggedDuplicate]
     );
     campaign = rows[0];
 
@@ -1428,6 +1495,63 @@ router.post('/:id/members/accept', requireAuth, asyncHandler(async (req, res) =>
 }));
 
 const { getCampaignAnalytics, getCampaignContributors, getCampaignBackers } = require('../services/analyticsService');
+// PATCH /campaigns/:id/visibility — toggle is_hidden for a campaign (owner or admin only)
+router.patch('/:id/visibility', requireAuth, asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+
+  const { rows: campaignRows } = await db.query(
+    'SELECT * FROM campaigns WHERE id = $1',
+    [campaignId]
+  );
+  if (!campaignRows.length) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+
+  const campaign = campaignRows[0];
+  const userRole = await resolveUserCampaignRole(campaignId, req.user.userId, req.user.role === 'admin');
+
+  if (userRole !== 'owner') {
+    return res.status(403).json({ error: 'Only the campaign owner can change visibility' });
+  }
+
+  const newHidden = req.body.is_hidden;
+  if (typeof newHidden !== 'boolean') {
+    return res.status(422).json({ error: 'is_hidden must be a boolean' });
+  }
+
+  const { rows: updatedRows } = await db.query(
+    'UPDATE campaigns SET is_hidden = $1 WHERE id = $2 RETURNING *',
+    [newHidden, campaignId]
+  );
+
+  // Log to admin_actions for audit trail
+  try {
+    await db.query(
+      `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, details)
+       VALUES ($1, $2, $3, $4, $5::jsonb)`,
+      [
+        req.user.userId,
+        newHidden ? 'campaign_hidden' : 'campaign_unhidden',
+        'campaign',
+        campaignId,
+        JSON.stringify({
+          campaign_title: campaign.title,
+          previous_is_hidden: campaign.is_hidden,
+          new_is_hidden: newHidden,
+        }),
+      ]
+    );
+  } catch (err) {
+    logger.warn('Failed to log visibility change to admin_actions', {
+      campaign_id: campaignId,
+      error: err.message,
+    });
+  }
+
+  res.json({ is_hidden: updatedRows[0].is_hidden });
+}));
+
+const { getCampaignAnalytics, getCampaignContributors } = require('../services/analyticsService');
 
 // GET /campaigns/:id/analytics — full contribution analytics
 router.get('/:id/analytics', asyncHandler(async (req, res) => {

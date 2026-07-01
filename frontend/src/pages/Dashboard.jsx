@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import KycPrompt from '../components/KycPrompt';
@@ -10,6 +11,8 @@ import DepositModal from '../components/DepositModal';
 import ApiKeysPanel from '../components/ApiKeysPanel';
 import BackerInsightsCard from '../components/BackerInsightsCard';
 import { stellarExpertTxUrl, stellarExpertAccountUrl } from '../config/stellar';
+import { stellarExpertAccountUrl } from '../config/stellar';
+import ThankYouModal from '../components/ThankYouModal';
 import {
   LineChart,
   Line,
@@ -21,25 +24,15 @@ import {
 } from 'recharts';
 
 const TABS = [
-  { id: 'campaigns', label: 'My Campaigns' },
-  { id: 'contributions', label: 'My Contributions' },
-  { id: 'analytics', label: 'Analytics' },
-  { id: 'api-keys', label: 'API Keys' },
+  { id: 'campaigns', labelKey: 'dashboard.tabs.campaigns' },
+  { id: 'contributions', labelKey: 'dashboard.tabs.contributions' },
+  { id: 'analytics', labelKey: 'dashboard.tabs.analytics' },
+  { id: 'api-keys', labelKey: 'dashboard.tabs.apiKeys' },
 ];
 
 function progressPct(campaign) {
   if (!Number(campaign.target_amount)) return 0;
   return Math.min(100, (Number(campaign.raised_amount) / Number(campaign.target_amount)) * 100);
-}
-
-function formatConversionRate(row) {
-  if (row.conversion_rate === null) return null;
-  const rate = Number(row.conversion_rate);
-  if (!Number.isFinite(rate)) return null;
-  if (row.source_asset && row.source_amount !== null) {
-    return `1 ${row.source_asset} ≈ ${rate.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${row.asset}`;
-  }
-  return rate.toLocaleString(undefined, { maximumFractionDigits: 6 });
 }
 
 function exportCSV(rows, filename) {
@@ -55,11 +48,12 @@ function exportCSV(rows, filename) {
   a.click();
 }
 
-function MiniLineChart({ data, dataKey = 'total_amount', label = 'Amount' }) {
+function MiniLineChart({ data, dataKey = 'total_amount', label = '' }) {
+  const { t } = useTranslation();
   if (!data || data.length === 0) {
     return (
       <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
-        No contribution data yet.
+        {t('dashboard.noContributionData')}
       </p>
     );
   }
@@ -83,6 +77,7 @@ function MiniLineChart({ data, dataKey = 'total_amount', label = 'Amount' }) {
 }
 
 function MilestoneFunnel({ campaignId }) {
+  const { t } = useTranslation();
   const [milestones, setMilestones] = useState(null);
   const [campaign, setCampaign] = useState(null);
 
@@ -102,7 +97,7 @@ function MilestoneFunnel({ campaignId }) {
 
   return (
     <div style={{ marginTop: '0.75rem' }}>
-      <strong style={{ fontSize: '0.9rem' }}>Milestone Funnel</strong>
+      <strong style={{ fontSize: '0.9rem' }}>{t('dashboard.milestoneFunnel')}</strong>
       {milestones.map((m) => {
         const threshold = (Number(m.release_percentage) / 100) * target;
         const pct = Math.min(100, (raised / threshold) * 100);
@@ -111,7 +106,8 @@ function MilestoneFunnel({ campaignId }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem' }}>
               <span>{m.title}</span>
               <span style={{ color: 'var(--color-text-hint)' }}>
-                {m.release_percentage}% · {pct.toFixed(0)}% funded
+                {m.release_percentage}% ·{' '}
+                {t('dashboard.percentFunded', { percent: pct.toFixed(0) })}
               </span>
             </div>
             <div
@@ -139,7 +135,8 @@ function MilestoneFunnel({ campaignId }) {
 }
 
 export default function Dashboard() {
-  const { user, token, ready, updateUser } = useAuth();
+  const { user, ready, updateUser } = useAuth();
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
   const activeTab =
@@ -156,6 +153,11 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
   const [loadingCampaigns, setLoadingCampaigns] = useState(true);
+  const [campaignsPage, setCampaignsPage] = useState(1);
+  const [campaignsTotalPages, setCampaignsTotalPages] = useState(1);
+  const [campaignsTotal, setCampaignsTotal] = useState(0);
+  const [isCampaignsPageLoading, setIsCampaignsPageLoading] = useState(false);
+  const [loadingContributions, setLoadingContributions] = useState(false);
   const [error, setError] = useState('');
   const [balance, setBalance] = useState(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
@@ -169,10 +171,19 @@ export default function Dashboard() {
   const [loadingContributions, setLoadingContributions] = useState(true);
   const [referralData, setReferralData] = useState({});
   const [referralLoading, setReferralLoading] = useState(false);
+  const [exportingCampaignId, setExportingCampaignId] = useState(null);
+  const [bulkThankYouCampaignId, setBulkThankYouCampaignId] = useState(null);
+  const [individualThankYouContribution, setIndividualThankYouContribution] = useState(null);
+  const [campaignContributions, setCampaignContributions] = useState([]);
+  const [contributionsLoading, setContributionsLoading] = useState(false);
+  const [thankYouSent, setThankYouSent] = useState('');
+  const [togglingVisibility, setTogglingVisibility] = useState(null);
 
   const isCreator = user?.role === 'creator' || user?.role === 'admin';
 
-  const tabs = isCreator ? [...TABS, { id: 'referrals', label: 'Referrals' }] : TABS;
+  const visibleTabs = isCreator
+    ? [...TABS, { id: 'referrals', labelKey: 'dashboard.tabs.referrals' }]
+    : TABS.filter((t) => t.id !== 'analytics');
 
   const kycRequired =
     user?.kyc_required_for_campaigns ??
@@ -191,11 +202,12 @@ export default function Dashboard() {
       .finally(() => setBalanceLoading(false));
 
     if (isCreator) {
-      Promise.all([api.getMe(), api.getMyStats(), api.getMyCampaigns()])
-        .then(([me, s, c]) => {
+      Promise.all([api.getMe(), api.getMyStats()])
+        .then(([me, s]) => {
           updateUser(me);
           setStats(s);
           setCampaigns(c);
+          // pre-fetch dashboard analytics for the analytics tab
           api
             .getUserDashboardAnalytics()
             .then(setDashAnalytics)
@@ -206,31 +218,98 @@ export default function Dashboard() {
           setLoadingCampaigns(false);
           setLoadingContributions(false);
         });
+        .catch((err) => setError(err.message || 'Could not load dashboard'));
     } else {
       setLoadingCampaigns(false);
       setLoadingContributions(false);
     }
   }, [isCreator, user, updateUser]);
 
+  useEffect(() => {
+    if (!user || !isCreator) return;
+    setIsCampaignsPageLoading(true);
+    api
+      .getMyCampaigns({ page: campaignsPage, limit: 20 })
+      .then((res) => {
+        if (res.data && res.pagination) {
+          setCampaigns(res.data);
+          setCampaignsTotalPages(res.pagination.totalPages);
+          setCampaignsTotal(res.pagination.total);
+        } else {
+          setCampaigns(res);
+          setCampaignsTotalPages(1);
+          setCampaignsTotal(res.length || 0);
+        }
+      })
+      .catch((err) => setError(err.message || 'Could not load campaigns'))
+      .finally(() => {
+        setLoadingCampaigns(false);
+        setIsCampaignsPageLoading(false);
+      });
+  }, [isCreator, user, campaignsPage]);
+
   const loadCampaignAnalytics = useCallback((id) => {
     setSelectedCampaignId(id);
     setCampaignAnalytics(null);
     setCampaignContributors(null);
-    setCampaignBackers(null);
+    setCampaignContributions([]);
     setAnalyticsLoading(true);
+    setContributionsLoading(true);
     Promise.all([
       api.getCampaignAnalytics(id),
       api.getCampaignAnalyticsContributors(id),
-      api.getCampaignAnalyticsBackers(id),
+      api.getContributions(id, { limit: 100 }),
     ])
-      .then(([a, c, b]) => {
+      .then(([a, c, ctr]) => {
         setCampaignAnalytics(a);
         setCampaignContributors(c);
-        setCampaignBackers(b);
+        setCampaignContributions(ctr.contributions || []);
       })
       .catch(() => {})
-      .finally(() => setAnalyticsLoading(false));
+      .finally(() => {
+        setAnalyticsLoading(false);
+        setContributionsLoading(false);
+      });
   }, []);
+
+  const handleExportContributions = useCallback(async (campaign) => {
+    setError('');
+    setExportingCampaignId(campaign.id);
+    try {
+      const { blob, filename } = await api.exportCampaignContributions(campaign.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || 'Could not export campaign contributors');
+    } finally {
+      setExportingCampaignId(null);
+    }
+  }, []);
+
+  const handleToggleVisibility = useCallback(async (campaign) => {
+    setError('');
+    setTogglingVisibility(campaign.id);
+    try {
+      const newHidden = !campaign.is_hidden;
+      await api.toggleCampaignVisibility(campaign.id, newHidden);
+      setCampaigns((prev) =>
+        prev.map((c) =>
+          c.id === campaign.id ? { ...c, is_hidden: newHidden } : c
+        )
+      );
+    } catch (err) {
+      setError(err.message || 'Could not change campaign visibility');
+    } finally {
+      setTogglingVisibility(null);
+    }
+  }, []);
+
   useEffect(() => {
     if (!isCreator || activeTab !== 'referrals' || !campaigns.length) return;
     setReferralLoading(true);
@@ -309,18 +388,19 @@ export default function Dashboard() {
   if (!ready) {
     return (
       <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
-        <p style={{ color: 'var(--color-text-hint)' }}>Restoring your session...</p>
+        <p style={{ color: 'var(--color-text-hint)' }}>{t('dashboard.restoringSession')}</p>
       </main>
     );
   }
   if (!user) return <Navigate to="/login" replace />;
 
   const loading = activeTab === 'campaigns' ? loadingCampaigns : loadingContributions;
-  const visibleTabs = isCreator ? TABS : TABS.filter((t) => t.id !== 'analytics');
 
   return (
     <main className="container" style={{ paddingTop: '2rem', paddingBottom: '3rem' }}>
-      <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>Dashboard</h1>
+      <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>
+        {t('dashboard.title')}
+      </h1>
 
       <div className="campaign-card" style={{ marginBottom: '1rem', minHeight: 'auto' }}>
         <div
@@ -333,18 +413,18 @@ export default function Dashboard() {
           }}
         >
           <div>
-            <strong>Wallet balance</strong>
+            <strong>{t('dashboard.walletBalance')}</strong>
             <div
               style={{ color: 'var(--color-text-hint)', fontSize: '0.88rem', marginTop: '0.2rem' }}
             >
               {balanceLoading
-                ? 'Loading…'
+                ? t('common.loading')
                 : balance
                   ? Object.entries(balance)
                       .filter(([, v]) => Number(v) > 0)
                       .map(([code, val]) => `${Number(val).toLocaleString()} ${code}`)
-                      .join(' · ') || 'No funds'
-                  : 'No funds'}
+                      .join(' · ') || t('dashboard.noFunds')
+                  : t('dashboard.noFunds')}
               {user?.wallet_public_key && (
                 <span style={{ marginLeft: '0.5rem' }}>
                   ·{' '}
@@ -354,21 +434,21 @@ export default function Dashboard() {
                     rel="noopener noreferrer"
                     style={{ color: 'var(--color-accent)' }}
                   >
-                    View on Stellar Expert ↗
+                    {t('dashboard.viewOnStellarExpert')}
                   </a>
                 </span>
               )}
             </div>
           </div>
           <button type="button" className="btn-primary" onClick={() => setShowDepositModal(true)}>
-            Add Funds
+            {t('dashboard.addFunds')}
           </button>
         </div>
       </div>
 
       <div
         role="tablist"
-        aria-label="Dashboard sections"
+        aria-label={t('dashboard.sectionsLabel')}
         style={{
           display: 'flex',
           gap: '0.5rem',
@@ -377,7 +457,7 @@ export default function Dashboard() {
           paddingBottom: '0.5rem',
         }}
       >
-        {tabs.map((tab) => (
+        {visibleTabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
@@ -395,7 +475,7 @@ export default function Dashboard() {
               color: activeTab === tab.id ? '#fff' : 'var(--color-text-secondary)',
             }}
           >
-            {tab.label}
+            {tab.label ? tab.label : t(tab.labelKey)}
           </button>
         ))}
       </div>
@@ -405,14 +485,14 @@ export default function Dashboard() {
       {activeTab === 'campaigns' && (
         <section role="tabpanel" aria-labelledby="tab-campaigns">
           {loading ? (
-            <p style={{ color: 'var(--color-text-hint)' }}>Loading your campaigns...</p>
+            <p style={{ color: 'var(--color-text-hint)' }}>{t('dashboard.loadingCampaigns')}</p>
           ) : !isCreator ? (
             <p className="alert alert--info">
-              You have not created any campaigns.{' '}
+              {t('dashboard.noCreatedCampaigns')}{' '}
               <Link to="/campaigns/new" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
-                Start a campaign
+                {t('home.startCampaign')}
               </Link>{' '}
-              or view your backing history in My Contributions.
+              {t('dashboard.noCreatedCampaignsHint')}
             </p>
           ) : (
             <>
@@ -427,7 +507,7 @@ export default function Dashboard() {
                   }}
                 >
                   <div>
-                    <strong>Identity verification</strong>
+                    <strong>{t('dashboard.identityVerification')}</strong>
                     <div
                       style={{
                         color: 'var(--color-text-hint)',
@@ -435,9 +515,9 @@ export default function Dashboard() {
                         marginTop: '0.2rem',
                       }}
                     >
-                      Status: {user?.kyc_status || 'unverified'}
+                      {t('dashboard.status')}: {user?.kyc_status || t('dashboard.unverified')}
                       {user?.kyc_completed_at
-                        ? ` • Completed ${new Date(user.kyc_completed_at).toLocaleDateString()}`
+                        ? ` • ${t('dashboard.completedOn', { date: new Date(user.kyc_completed_at).toLocaleDateString() })}`
                         : ''}
                     </div>
                   </div>
@@ -460,38 +540,40 @@ export default function Dashboard() {
               >
                 <div className="campaign-card">
                   <strong>{stats?.total_campaigns || 0}</strong>
-                  <div>Total campaigns</div>
+                  <div>{t('dashboard.totalCampaigns')}</div>
                 </div>
                 <div className="campaign-card">
                   <strong>{Number(stats?.total_raised || 0).toLocaleString()}</strong>
-                  <div>Total raised</div>
+                  <div>{t('dashboard.totalRaised')}</div>
                 </div>
                 <div className="campaign-card">
                   <strong>{stats?.active_campaigns || 0}</strong>
-                  <div>Active</div>
+                  <div>{t('dashboard.active')}</div>
                 </div>
                 <div className="campaign-card">
                   <strong>{stats?.funded_campaigns || 0}</strong>
-                  <div>Funded</div>
+                  <div>{t('dashboard.funded')}</div>
                 </div>
               </div>
 
               <div style={{ marginBottom: '1rem' }}>
                 <Link to="/campaigns/new" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
-                  + Create new campaign
+                  {t('dashboard.createNewCampaign')}
                 </Link>
               </div>
 
               {campaigns.length === 0 ? (
-                <p className="alert alert--info">
-                  No campaigns yet. Create your first campaign to get started.
-                </p>
+                <p className="alert alert--info">{t('dashboard.noCampaigns')}</p>
               ) : (
-                <div style={{ display: 'grid', gap: '0.75rem' }}>
+                <div style={{ display: 'grid', gap: '0.75rem', opacity: isCampaignsPageLoading ? 0.5 : 1, transition: 'opacity 0.2s' }}>
                   {campaigns.map((campaign) => {
                     const pct = progressPct(campaign).toFixed(1);
                     return (
-                      <div key={campaign.id} className="campaign-card">
+                      <div
+                        key={campaign.id}
+                        className="campaign-card"
+                        style={campaign.is_hidden ? { opacity: 0.6 } : undefined}
+                      >
                         <div
                           style={{
                             display: 'flex',
@@ -502,7 +584,26 @@ export default function Dashboard() {
                           }}
                         >
                           <strong>{campaign.title}</strong>
-                          <CampaignStatusBadge status={campaign.status} />
+                          <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                            {campaign.is_hidden && (
+                              <span
+                                style={{
+                                  fontSize: '0.72rem',
+                                  fontWeight: 700,
+                                  textTransform: 'uppercase',
+                                  letterSpacing: '0.04em',
+                                  padding: '0.15rem 0.5rem',
+                                  borderRadius: '99px',
+                                  background: 'var(--color-surface)',
+                                  color: 'var(--color-text-hint)',
+                                  opacity: 0.6,
+                                }}
+                              >
+                                Hidden
+                              </span>
+                            )}
+                            <CampaignStatusBadge status={campaign.status} />
+                          </div>
                         </div>
                         <div style={{ marginTop: '0.35rem', fontSize: '0.9rem' }}>
                           {Number(campaign.raised_amount).toLocaleString()} /{' '}
@@ -532,9 +633,9 @@ export default function Dashboard() {
                             fontSize: '0.85rem',
                           }}
                         >
-                          {campaign.contributor_count} contributors
+                          {t('dashboard.contributorsCount', { count: campaign.contributor_count })}
                           {campaign.deadline
-                            ? ` • Deadline ${new Date(campaign.deadline).toLocaleDateString()}`
+                            ? ` • ${t('dashboard.deadline', { date: new Date(campaign.deadline).toLocaleDateString() })}`
                             : ''}
                         </div>
                         <div
@@ -549,16 +650,46 @@ export default function Dashboard() {
                             to={`/campaigns/${campaign.id}`}
                             style={{ color: 'var(--color-accent)', fontWeight: 600 }}
                           >
-                            View campaign
+                            {t('dashboard.viewCampaign')}
                           </Link>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            disabled={exportingCampaignId !== null}
+                            aria-busy={exportingCampaignId === campaign.id}
+                            onClick={() => handleExportContributions(campaign)}
+                            style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                          >
+                            {exportingCampaignId === campaign.id
+                              ? t('common.loading')
+                              : t('dashboard.exportCsv')}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => setBulkThankYouCampaignId(campaign.id)}
+                            style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                          >
+                            {t('dashboard.sendThankYou')}
+                            disabled={togglingVisibility !== null}
+                            aria-busy={togglingVisibility === campaign.id}
+                            onClick={() => handleToggleVisibility(campaign)}
+                            style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                          >
+                            {togglingVisibility === campaign.id
+                              ? t('common.loading')
+                              : campaign.is_hidden
+                                ? t('dashboard.showCampaign')
+                                : t('dashboard.hideCampaign')}
+                          </button>
                           {campaign.status === 'funded' && (
                             <Link
                               to={`/campaigns/${campaign.id}#withdrawals`}
                               style={{ color: 'var(--color-accent)', fontWeight: 600 }}
                             >
                               {campaign.has_milestones
-                                ? 'Manage milestone releases'
-                                : 'Request withdrawal'}
+                                ? t('dashboard.manageMilestoneReleases')
+                                : t('dashboard.requestWithdrawal')}
                             </Link>
                           )}
                         </div>
@@ -566,6 +697,36 @@ export default function Dashboard() {
                     );
                   })}
                 </div>
+                {campaignsTotalPages > 1 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+                    <span style={{ fontSize: '0.9rem', color: 'var(--color-text-hint)' }}>
+                      Showing {campaigns.length} of {campaignsTotal} campaigns
+                    </span>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <button 
+                        type="button"
+                        className="btn-secondary" 
+                        disabled={campaignsPage === 1 || isCampaignsPageLoading} 
+                        onClick={() => setCampaignsPage(p => Math.max(1, p - 1))}
+                        style={{ padding: '0.3rem 0.8rem', fontSize: '0.85rem' }}
+                      >
+                        Previous
+                      </button>
+                      <span style={{ fontSize: '0.9rem' }}>
+                        Page {campaignsPage} of {campaignsTotalPages}
+                      </span>
+                      <button 
+                        type="button"
+                        className="btn-secondary" 
+                        disabled={campaignsPage === campaignsTotalPages || isCampaignsPageLoading} 
+                        onClick={() => setCampaignsPage(p => Math.min(campaignsTotalPages, p + 1))}
+                        style={{ padding: '0.3rem 0.8rem', fontSize: '0.85rem' }}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               )}
             </>
           )}
@@ -592,7 +753,7 @@ export default function Dashboard() {
                 marginBottom: '0.75rem',
               }}
             >
-              <strong>Contributions — last 30 days (all campaigns)</strong>
+              <strong>{t('dashboard.contributionsLast30Days')}</strong>
               {dashAnalytics?.recent_trend?.length > 0 && (
                 <button
                   type="button"
@@ -600,14 +761,14 @@ export default function Dashboard() {
                   style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
                   onClick={() => exportCSV(dashAnalytics.recent_trend, 'contributions_trend.csv')}
                 >
-                  Export CSV
+                  {t('dashboard.exportCsv')}
                 </button>
               )}
             </div>
             <MiniLineChart
               data={dashAnalytics?.recent_trend}
               dataKey="total_amount"
-              label="Amount"
+              label={t('dashboard.amount')}
             />
             {dashAnalytics?.overview && (
               <div
@@ -619,11 +780,20 @@ export default function Dashboard() {
                 }}
               >
                 {[
-                  ['Total raised', Number(dashAnalytics.overview.total_raised).toLocaleString()],
-                  ['Contributions', dashAnalytics.overview.total_contributions],
-                  ['Unique contributors', dashAnalytics.overview.unique_contributors],
                   [
-                    'Avg contribution',
+                    t('dashboard.analyticsOverview.totalRaised'),
+                    Number(dashAnalytics.overview.total_raised).toLocaleString(),
+                  ],
+                  [
+                    t('dashboard.analyticsOverview.contributions'),
+                    dashAnalytics.overview.total_contributions,
+                  ],
+                  [
+                    t('dashboard.analyticsOverview.uniqueContributors'),
+                    dashAnalytics.overview.unique_contributors,
+                  ],
+                  [
+                    t('dashboard.analyticsOverview.avgContribution'),
                     Number(dashAnalytics.overview.avg_contribution).toLocaleString(undefined, {
                       maximumFractionDigits: 2,
                     }),
@@ -647,11 +817,11 @@ export default function Dashboard() {
           {/* Per-campaign drill-down */}
           <div className="campaign-card" style={{ minHeight: 'auto' }}>
             <strong style={{ display: 'block', marginBottom: '0.6rem' }}>
-              Per-campaign analytics
+              {t('dashboard.perCampaignAnalytics')}
             </strong>
             {campaigns.length === 0 ? (
               <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
-                No campaigns yet.
+                {t('dashboard.noCampaigns')}
               </p>
             ) : (
               <div
@@ -686,7 +856,9 @@ export default function Dashboard() {
             )}
 
             {analyticsLoading && (
-              <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>Loading…</p>
+              <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
+                {t('common.loading')}
+              </p>
             )}
 
             {campaignAnalytics && !analyticsLoading && (
@@ -702,13 +874,19 @@ export default function Dashboard() {
                 >
                   {[
                     [
-                      'Total raised',
+                      t('dashboard.analyticsOverview.totalRaised'),
                       `${Number(campaignAnalytics.campaign.raised_amount).toLocaleString()} ${campaignAnalytics.campaign.asset_type}`,
                     ],
-                    ['Contributions', campaignAnalytics.summary.total_contributions],
-                    ['Unique contributors', campaignAnalytics.summary.unique_contributors],
                     [
-                      'Avg contribution',
+                      t('dashboard.analyticsOverview.contributions'),
+                      campaignAnalytics.summary.total_contributions,
+                    ],
+                    [
+                      t('dashboard.analyticsOverview.uniqueContributors'),
+                      campaignAnalytics.summary.unique_contributors,
+                    ],
+                    [
+                      t('dashboard.analyticsOverview.avgContribution'),
                       Number(campaignAnalytics.summary.avg_contribution).toLocaleString(undefined, {
                         maximumFractionDigits: 2,
                       }),
@@ -733,7 +911,9 @@ export default function Dashboard() {
                     className="campaign-card"
                     style={{ minHeight: 'auto', marginBottom: '0.75rem', padding: '0.75rem' }}
                   >
-                    <strong style={{ fontSize: '0.9rem' }}>Contributor stats</strong>
+                    <strong style={{ fontSize: '0.9rem' }}>
+                      {t('dashboard.contributorStats')}
+                    </strong>
                     <div
                       style={{
                         marginTop: '0.4rem',
@@ -744,15 +924,16 @@ export default function Dashboard() {
                       }}
                     >
                       <span>
-                        First-time:{' '}
+                        {t('dashboard.firstTime')}:{' '}
                         <strong>{campaignContributors.first_time_contributors ?? 0}</strong>
                       </span>
                       <span>
-                        Returning: <strong>{campaignContributors.repeat_contributors ?? 0}</strong>
+                        {t('dashboard.returning')}:{' '}
+                        <strong>{campaignContributors.repeat_contributors ?? 0}</strong>
                       </span>
                       {campaignContributors.repeat_contributors > 0 && (
                         <span>
-                          Return rate:{' '}
+                          {t('dashboard.returnRate')}:{' '}
                           <strong>
                             {(
                               (campaignContributors.repeat_contributors /
@@ -767,7 +948,9 @@ export default function Dashboard() {
                     </div>
                     {campaignContributors.country_breakdown?.length > 0 && (
                       <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
-                        <span style={{ color: 'var(--color-text-hint)' }}>Top country: </span>
+                        <span style={{ color: 'var(--color-text-hint)' }}>
+                          {t('dashboard.topCountry')}:{' '}
+                        </span>
                         <strong>{campaignContributors.country_breakdown[0].country}</strong>
                         <span style={{ color: 'var(--color-text-hint)' }}>
                           {' '}
@@ -792,12 +975,12 @@ export default function Dashboard() {
 
                 {/* Time-series chart */}
                 <strong style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.9rem' }}>
-                  Contributions over time
+                  {t('dashboard.contributionsOverTime')}
                 </strong>
                 <MiniLineChart
                   data={campaignAnalytics.daily_buckets}
                   dataKey="total_amount"
-                  label="Amount"
+                  label={t('dashboard.amount')}
                 />
 
                 {/* Milestone funnel */}
@@ -820,8 +1003,51 @@ export default function Dashboard() {
                       )
                     }
                   >
-                    Export CSV
+                    {t('dashboard.exportCsv')}
                   </button>
+                {/* Contributions list with individual thank-you */}
+                {campaignContributions.length > 0 && !contributionsLoading && (
+                  <div className="campaign-card" style={{ minHeight: 'auto', marginTop: '0.75rem' }}>
+                    <strong style={{ display: 'block', marginBottom: '0.6rem', fontSize: '0.9rem' }}>
+                      {t('dashboard.contributors')}
+                    </strong>
+                    <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                      {campaignContributions.map((ct) => (
+                        <div
+                          key={ct.id}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '0.4rem 0',
+                            borderBottom: '1px solid var(--color-border-lighter)',
+                            fontSize: '0.85rem',
+                          }}
+                        >
+                          <span>
+                            {ct.display_name || ct.sender_public_key?.slice(0, 8) + '…'}{' '}
+                            <span style={{ color: 'var(--color-text-hint)' }}>
+                              · {Number(ct.amount).toLocaleString()} {ct.asset} ·{' '}
+                              {new Date(ct.created_at).toLocaleDateString()}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() =>
+                              setIndividualThankYouContribution({
+                                id: ct.id,
+                                display_name: ct.display_name || 'contributor',
+                              })
+                            }
+                            style={{ fontSize: '0.78rem', padding: '0.2rem 0.6rem' }}
+                          >
+                            {t('dashboard.sendThankYou')}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </>
             )}
@@ -832,14 +1058,14 @@ export default function Dashboard() {
       {activeTab === 'referrals' && isCreator && (
         <section role="tabpanel" aria-labelledby="tab-referrals">
           {referralLoading ? (
-            <p style={{ color: 'var(--color-text-hint)' }}>Loading referral data...</p>
+            <p style={{ color: 'var(--color-text-hint)' }}>{t('dashboard.loadingReferrals')}</p>
           ) : campaigns.length === 0 ? (
             <p className="alert alert--info">
-              No campaigns yet.{' '}
+              {t('dashboard.noReferralCampaigns')}{' '}
               <Link to="/campaigns/new" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
-                Create a campaign
+                {t('dashboard.createCampaign')}
               </Link>{' '}
-              to start tracking referrals.
+              {t('dashboard.startTrackingReferrals')}
             </p>
           ) : (
             <div style={{ display: 'grid', gap: '0.75rem' }}>
@@ -869,7 +1095,7 @@ export default function Dashboard() {
                     </div>
                     {refs.length === 0 ? (
                       <p style={{ color: 'var(--color-text-hint)', fontSize: '0.85rem' }}>
-                        No referral activity yet.
+                        {t('dashboard.noReferralActivity')}
                       </p>
                     ) : (
                       <>
@@ -882,10 +1108,10 @@ export default function Dashboard() {
                           }}
                         >
                           <span>
-                            <strong>{totalClicks}</strong> total clicks
+                            <strong>{totalClicks}</strong> {t('dashboard.totalClicks')}
                           </span>
                           <span>
-                            <strong>{totalContributions}</strong> total conversions
+                            <strong>{totalContributions}</strong> {t('dashboard.totalConversions')}
                           </span>
                         </div>
                         <table
@@ -898,20 +1124,22 @@ export default function Dashboard() {
                                 textAlign: 'left',
                               }}
                             >
-                              <th style={{ padding: '0.35rem 0.5rem' }}>Referrer</th>
-                              <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
-                                Clicks
+                              <th style={{ padding: '0.35rem 0.5rem' }}>
+                                {t('dashboard.referrer')}
                               </th>
                               <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
-                                Conversions
+                                {t('dashboard.clicks')}
                               </th>
                               <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
-                                Rate
+                                {t('dashboard.conversions')}
+                              </th>
+                              <th style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
+                                {t('dashboard.rate')}
                               </th>
                             </tr>
                           </thead>
                           <tbody>
-                            {refs.map((r, i) => (
+                            {refs.map((r) => (
                               <tr
                                 key={r.referral_code}
                                 style={{ borderBottom: '1px solid var(--color-border-lighter)' }}
@@ -955,6 +1183,57 @@ export default function Dashboard() {
               .then((d) => setBalance(d.balance))
               .catch(() => {});
           }}
+        />
+      )}
+
+      {thankYouSent && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '1.5rem',
+            right: '1.5rem',
+            background: '#22c55e',
+            color: '#fff',
+            padding: '0.75rem 1.25rem',
+            borderRadius: '8px',
+            fontSize: '0.9rem',
+            fontWeight: 600,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            zIndex: 1001,
+          }}
+        >
+          {thankYouSent}
+          <button
+            onClick={() => setThankYouSent('')}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#fff',
+              marginLeft: '0.75rem',
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: '1rem',
+            }}
+          >
+            x
+          </button>
+        </div>
+      )}
+
+      {bulkThankYouCampaignId && (
+        <ThankYouModal
+          campaignId={bulkThankYouCampaignId}
+          onClose={() => setBulkThankYouCampaignId(null)}
+          onSent={() => setThankYouSent(t('thankYou.sent'))}
+        />
+      )}
+
+      {individualThankYouContribution && (
+        <ThankYouModal
+          campaignId={selectedCampaignId}
+          contribution={individualThankYouContribution}
+          onClose={() => setIndividualThankYouContribution(null)}
+          onSent={() => setThankYouSent(t('thankYou.sent'))}
         />
       )}
     </main>

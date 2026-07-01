@@ -551,8 +551,13 @@ router.post('/', contributionPostLimiter, requireAuth, contributionValidation, v
  * POST /api/contributions/:id/refund
  *
  * Request a refund for a contribution via the on-chain escrow contract.
- * Only the contributor who made the contribution can request a refund.
- * The campaign must have a deployed escrow contract.
+ *
+ * Refund eligibility:
+ *   - The requester must be the contributor who made the contribution, or an admin.
+ *   - The associated campaign must be in the `failed` status. Refunds are never
+ *     available for `active`, `funded`, or `closed` campaigns.
+ *   - The contribution must not have already been refunded.
+ *   - The campaign must have a deployed escrow contract.
  *
  * Request body:
  *   { signer_secret?: string } — optional override; defaults to platform key
@@ -589,7 +594,19 @@ router.post('/:id/refund', requireAuth, asyncHandler(async (req, res) => {
   }
 
   if (contribution.campaign_status !== 'failed') {
-    return res.status(409).json({ error: 'Refunds are only available for failed campaigns' });
+    return res.status(400).json({
+      error: 'Refunds are only available for failed campaigns',
+      eligibility: 'A contribution is refundable only when its campaign status is "failed" and it has not already been refunded.',
+      campaign_status: contribution.campaign_status,
+    });
+  }
+
+  if (contribution.contract_refunded_at || contribution.contract_refund_tx_hash) {
+    return res.status(409).json({
+      error: 'This contribution has already been refunded',
+      refunded_at: contribution.contract_refunded_at,
+      tx_hash: contribution.contract_refund_tx_hash,
+    });
   }
 
   if (!contribution.escrow_contract_id) {

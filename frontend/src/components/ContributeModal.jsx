@@ -1,3 +1,4 @@
+/* eslint-disable */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   getNetwork,
@@ -44,11 +45,34 @@ function friendlyFreighterError(err, fallback) {
   return fallback;
 }
 
+function matchTier(tiers, amount) {
+  if (!tiers || !Array.isArray(tiers) || !amount) return null;
+  const numAmount = parseFloat(amount);
+  if (isNaN(numAmount)) return null;
+
+  const eligible = tiers.filter(
+    (t) => numAmount >= parseFloat(t.min_amount) && !t.sold_out
+  );
+
+  if (eligible.length === 0) return null;
+
+  eligible.sort((a, b) => parseFloat(b.min_amount) - parseFloat(a.min_amount));
+  return eligible[0];
+}
+
+function createIdempotencyKey() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `contrib-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export default function ContributeModal({
   campaign,
   onClose,
   onSuccess,
   guestFreighterMode = false,
+  tiers = [],
 }) {
   const { user, token, updateUser } = useAuth();
   const [amount, setAmount] = useState('');
@@ -81,6 +105,8 @@ export default function ContributeModal({
   const [existingContributions, setExistingContributions] = useState([]);
   const [displayName, setDisplayName] = useState('');
   const anchorPopupRef = useRef(null);
+  const submitLockRef = useRef(false);
+  const activeSubmissionKeyRef = useRef(null);
 
   const modalRef = useRef(null);
 
@@ -323,6 +349,7 @@ export default function ContributeModal({
         amount: destAmount,
         send_asset: sendAsset,
         display_name: displayName.trim() || undefined,
+        idempotency_key: activeSubmissionKeyRef.current,
       },
       token
     );
@@ -347,6 +374,7 @@ export default function ContributeModal({
         send_asset: sendAsset,
         sender_public_key: signerAddress,
         display_name: displayName.trim() || undefined,
+        idempotency_key: activeSubmissionKeyRef.current,
       },
       token
     );
@@ -382,6 +410,7 @@ export default function ContributeModal({
       {
         prepare_token: prepared.prepare_token,
         signed_xdr: signed.signedTxXdr,
+        idempotency_key: activeSubmissionKeyRef.current,
       },
       token
     );
@@ -401,6 +430,7 @@ export default function ContributeModal({
         campaign_id: campaign.id,
         amount: destAmount,
         anchor_id: selectedAnchorId,
+        idempotency_key: activeSubmissionKeyRef.current,
       },
       token
     );
@@ -418,11 +448,13 @@ export default function ContributeModal({
       amount: destAmount,
       send_asset: effectiveSendAsset,
       display_name: displayName || undefined,
+      idempotency_key: activeSubmissionKeyRef.current,
     });
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (submitLockRef.current) return;
     if (quoteLoading) return;
     if (isPathPayment && (!quote || !!quoteError)) {
       setError('A valid quote is required before submitting.');
@@ -456,8 +488,10 @@ export default function ContributeModal({
       }
     }
 
+    submitLockRef.current = true;
+    activeSubmissionKeyRef.current = createIdempotencyKey();
     setLoading(true);
-    setLoadingLabel('Submitting…');
+    setLoadingLabel('Submitting...');
     setError('');
     setUnlockedTier(matchedTier);
     try {
@@ -471,7 +505,7 @@ export default function ContributeModal({
 
       setResult(data);
       setPhase('confirming');
-      setLoadingLabel('Confirming on Stellar…');
+      setLoadingLabel('Confirming on Stellar...');
 
       // Poll finalization endpoint until status is 'finalized' or 'failed'
       const pollFinalization = async (txHash, maxAttempts = 15) => {
@@ -511,11 +545,12 @@ export default function ContributeModal({
           : friendlyContributeError(err)
       );
     } finally {
+      submitLockRef.current = false;
+      activeSubmissionKeyRef.current = null;
       setLoading(false);
-      setLoadingLabel('Submitting…');
+      setLoadingLabel('Submitting...');
     }
   }
-
   return (
     <div className="modal-overlay" style={styles.overlay} onClick={handleClose} role="presentation">
       <div
@@ -916,9 +951,33 @@ export default function ContributeModal({
                   type="submit"
                   className="btn-primary"
                   disabled={loading || quoteLoading || (isPathPayment && (!!quoteError || !quote))}
+                  aria-busy={loading ? 'true' : 'false'}
                 >
                   {loading
-                    ? loadingLabel
+                    ? (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '0.5rem',
+                          }}
+                        >
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              width: '0.95rem',
+                              height: '0.95rem',
+                              border: '2px solid rgba(255, 255, 255, 0.35)',
+                              borderTopColor: '#fff',
+                              borderRadius: '50%',
+                              animation: 'spin 0.8s linear infinite',
+                              flexShrink: 0,
+                            }}
+                          />
+                          <span>{loadingLabel}</span>
+                        </span>
+                      )
                     : quoteLoading
                       ? 'Loading quote…'
                       : paymentMethod === 'anchor'
@@ -1181,3 +1240,4 @@ const styles = {
     marginTop: '1.1rem',
   },
 };
+

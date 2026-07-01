@@ -8,6 +8,16 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
 
+  const refreshUser = useCallback(async () => {
+    const userData = await api.getMe();
+    if (userData && userData.id) {
+      setUser(userData);
+    } else {
+      setUser(null);
+    }
+    return userData;
+  }, []);
+
   useEffect(() => {
     let active = true;
 
@@ -63,8 +73,15 @@ export function AuthProvider({ children }) {
     setUser(userData);
   }, []);
 
+  const exitImpersonation = useCallback(async () => {
+    await api.adminExitImpersonation();
+    return refreshUser();
+  }, [refreshUser]);
+
   return (
-    <AuthContext.Provider value={{ user, ready, login, logout, updateUser }}>
+    <AuthContext.Provider
+      value={{ user, ready, login, logout, updateUser, refreshUser, exitImpersonation }}
+    >
       {children}
     </AuthContext.Provider>
   );

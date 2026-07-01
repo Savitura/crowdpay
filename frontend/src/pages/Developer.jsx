@@ -124,7 +124,9 @@ export default function Developer() {
         setExplorerPathParams(parsed.pathParams || {});
         setExplorerQuery(parsed.query || {});
         setExplorerBody(parsed.body || '');
-      } catch {}
+      } catch (err) {
+        // ignore JSON parse error
+      }
     } else {
       const ep = v1Endpoints.find((e) => e.id === explorerEndpoint);
       setExplorerPathParams({});
@@ -214,7 +216,7 @@ export default function Developer() {
     setNewKeyScopes((cur) => (cur.includes(sc) ? cur.filter((x) => x !== sc) : [...cur, sc]));
   }
 
-  const selectedEndpoint = V1_ENDPOINTS.find((e) => e.id === explorerEndpoint) || V1_ENDPOINTS[0];
+  const selectedEndpoint = v1Endpoints.find((e) => e.id === explorerEndpoint) || v1Endpoints[0];
 
   function buildExplorerUrl() {
     if (!selectedEndpoint) return '';
@@ -333,7 +335,7 @@ export default function Developer() {
               onChange={(e) => setExplorerEndpoint(e.target.value)}
               style={{ display: 'block', width: '100%', marginTop: '0.35rem' }}
             >
-              {V1_ENDPOINTS.map((ep) => (
+              {v1Endpoints.map((ep) => (
                 <option key={ep.id} value={ep.id}>
                   {ep.label}
                 </option>

@@ -3,6 +3,15 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ContributeModal from './ContributeModal';
 
+const randomUUID = vi.fn(() => 'idem-key-123');
+
+Object.defineProperty(globalThis, 'crypto', {
+  value: {
+    randomUUID,
+  },
+  configurable: true,
+});
+
 vi.mock('@stellar/freighter-api', () => ({
   getNetwork: vi.fn(),
   isConnected: vi.fn().mockResolvedValue({ isConnected: false }),
@@ -50,6 +59,7 @@ const campaign = {
 
 describe('ContributeModal', () => {
   beforeEach(() => {
+    randomUUID.mockClear();
     mockContribute.mockReset();
     mockQuote.mockReset();
     mockOnClose.mockReset();
@@ -116,10 +126,43 @@ describe('ContributeModal', () => {
           campaign_id: campaign.id,
           amount: '15',
           send_asset: 'USDC',
+          idempotency_key: 'idem-key-123',
         }),
         'test-token'
       );
     });
+  });
+
+  it('disables submit immediately and blocks duplicate rapid submissions', async () => {
+    let resolveContribution;
+    mockContribute.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveContribution = resolve;
+        })
+    );
+
+    const user = userEvent.setup();
+    renderModal();
+    await user.clear(screen.getByLabelText(/amount campaign receives/i));
+    await user.type(screen.getByLabelText(/amount campaign receives/i), '15');
+
+    const submitButton = screen.getByRole('button', { name: /confirm payment/i });
+    await user.click(submitButton);
+
+    await waitFor(() => {
+      expect(mockContribute).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('button', { name: /submitting/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /submitting/i })).toHaveAttribute(
+        'aria-busy',
+        'true'
+      );
+    });
+
+    await user.click(screen.getByRole('button', { name: /submitting/i }));
+    expect(mockContribute).toHaveBeenCalledTimes(1);
+
+    resolveContribution({ tx_hash: 'abc123' });
   });
 
   it('validates minimum contribution limit', async () => {

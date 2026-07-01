@@ -1,6 +1,7 @@
 const { body, query, validationResult } = require('express-validator');
 const { Keypair } = require('@stellar/stellar-sdk');
 const { getSupportedAssetCodes } = require('../services/stellarService');
+const { stripHtml, sanitizeRichText } = require('../lib/sanitize');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const VALID_CAMPAIGN_STATUSES = ['active', 'funded', 'closed', 'failed'];
@@ -13,10 +14,6 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 function isUuid(value) {
   return typeof value === 'string' && UUID_PATTERN.test(value);
-}
-
-function stripHtml(value = '') {
-  return String(value).replace(/<[^>]*>/g, '').trim();
 }
 
 const passwordValidation = [
@@ -96,9 +93,14 @@ const createCampaignValidation = [
     .withMessage('Title is required')
     .isLength({ max: 100 })
     .withMessage('Title must be at most 100 characters'),
-  body('description')
+  body('category')
     .optional({ nullable: true })
     .customSanitizer(stripHtml)
+    .isLength({ max: 50 })
+    .withMessage('Category must be at most 50 characters'),
+  body('description')
+    .optional({ nullable: true })
+    .customSanitizer(sanitizeRichText)
     .isLength({ max: 1000 })
     .withMessage('Description must be at most 1000 characters'),
   body('target_amount')
@@ -158,6 +160,8 @@ const createCampaignValidation = [
       if (value == null) return true; // eslint-disable-line eqeqeq
       if (!Array.isArray(value)) throw new Error('Milestones must be an array');
       if (value.length > 10) throw new Error('Campaigns can define at most 10 milestones');
+      
+      // Validate individual milestones
       for (const [index, milestone] of value.entries()) {
         if (!milestone || typeof milestone !== 'object') {
           throw new Error(`Milestone ${index + 1} must be an object`);
@@ -170,6 +174,20 @@ const createCampaignValidation = [
           throw new Error(`Milestone ${index + 1} release percentage must be greater than zero`);
         }
       }
+      
+      // Validate total percentage doesn't exceed 100%
+      if (value.length > 0) {
+        const totalPercentage = value.reduce((sum, milestone) => {
+          const release = Number(milestone.release_percentage);
+          return sum + (Number.isFinite(release) ? release : 0);
+        }, 0);
+        
+        // Use a small epsilon for floating point comparison
+        if (totalPercentage > 100.001) { // Allow small rounding errors (0.001% tolerance)
+          throw new Error('Milestone percentages must not exceed 100%');
+        }
+      }
+      
       return true;
     }),
   body('milestones.*.title').optional().customSanitizer(stripHtml),
@@ -182,6 +200,15 @@ const createCampaignValidation = [
     .optional({ nullable: true, checkFalsy: true })
     .isIn(VALID_CATEGORIES)
     .withMessage(`category must be one of: ${VALID_CATEGORIES.join(', ')}`),
+];
+
+const thankYouValidation = [
+  body('message')
+    .customSanitizer(stripHtml)
+    .notEmpty()
+    .withMessage('Message is required')
+    .isLength({ min: 1, max: 500 })
+    .withMessage('Message must be between 1 and 500 characters'),
 ];
 
 const createCampaignUpdateValidation = [
@@ -266,6 +293,11 @@ const withdrawalValidation = [
 
 const getCampaignsValidation = [
   query('search').optional().customSanitizer(stripHtml),
+  query('category').optional().customSanitizer(stripHtml),
+  query('min_progress')
+    .optional()
+    .isFloat({ min: 0, max: 100 })
+    .withMessage('min_progress must be between 0 and 100'),
   query('status')
     .optional()
     .isIn(VALID_CAMPAIGN_STATUSES)
@@ -298,7 +330,18 @@ function validateRequest(req, res, next) {
   const result = validationResult(req);
   if (result.isEmpty()) return next();
 
-  return res.status(400).json({ errors: result.array() });
+  const fields = result.array().map((e) => ({
+    field: e.path || e.param,
+    message: e.msg,
+  }));
+
+  return res.status(400).json({
+    error: {
+      code: 'VALIDATION_ERROR',
+      message: fields[0]?.message || 'Validation failed',
+      fields,
+    },
+  });
 }
 
 function validateRequestAsError(req, res, next) {
@@ -317,6 +360,7 @@ module.exports = {
   validateRequestAsError,
   createCampaignValidation,
   createCampaignUpdateValidation,
+  thankYouValidation,
   contributionValidation,
   contributionQuoteValidation,
   withdrawalValidation,

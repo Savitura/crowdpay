@@ -106,3 +106,86 @@ test('createCampaign validation passes with valid limit parameters', async () =>
   });
   assert.equal(result.ok, true);
 });
+
+
+// Milestone percentage total validation tests
+test('createCampaign validation rejects milestone percentages exceeding 100%', async () => {
+  const result = await runValidation(createCampaignValidation, {
+    title: 'Test Campaign',
+    target_amount: '100',
+    asset_type: 'USDC',
+    milestones: [
+      { title: 'Milestone 1', release_percentage: 80 },
+      { title: 'Milestone 2', release_percentage: 80 }
+    ]
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.msg === 'Milestone percentages must not exceed 100%'));
+});
+
+test('createCampaign validation accepts milestone percentages totalling exactly 100%', async () => {
+  const result = await runValidation(createCampaignValidation, {
+    title: 'Test Campaign',
+    target_amount: '100',
+    asset_type: 'USDC',
+    milestones: [
+      { title: 'Milestone 1', release_percentage: 40 },
+      { title: 'Milestone 2', release_percentage: 60 }
+    ]
+  });
+  assert.equal(result.ok, true);
+});
+
+test('createCampaign validation accepts milestone percentages totalling less than 100%', async () => {
+  const result = await runValidation(createCampaignValidation, {
+    title: 'Test Campaign',
+    target_amount: '100',
+    asset_type: 'USDC',
+    milestones: [
+      { title: 'Milestone 1', release_percentage: 40 },
+      { title: 'Milestone 2', release_percentage: 30 }
+    ]
+  });
+  assert.equal(result.ok, true);
+});
+
+test('createCampaign validation accepts single milestone with 100%', async () => {
+  const result = await runValidation(createCampaignValidation, {
+    title: 'Test Campaign',
+    target_amount: '100',
+    asset_type: 'USDC',
+    milestones: [
+      { title: 'Milestone 1', release_percentage: 100 }
+    ]
+  });
+  assert.equal(result.ok, true);
+});
+
+test('createCampaign validation accepts four milestones with 25% each', async () => {
+  const result = await runValidation(createCampaignValidation, {
+    title: 'Test Campaign',
+    target_amount: '100',
+    asset_type: 'USDC',
+    milestones: [
+      { title: 'Milestone 1', release_percentage: 25 },
+      { title: 'Milestone 2', release_percentage: 25 },
+      { title: 'Milestone 3', release_percentage: 25 },
+      { title: 'Milestone 4', release_percentage: 25 }
+    ]
+  });
+  assert.equal(result.ok, true);
+});
+
+test('createCampaign validation rejects milestone percentages with floating point exceeding 100%', async () => {
+  const result = await runValidation(createCampaignValidation, {
+    title: 'Test Campaign',
+    target_amount: '100',
+    asset_type: 'USDC',
+    milestones: [
+      { title: 'Milestone 1', release_percentage: 50.1 },
+      { title: 'Milestone 2', release_percentage: 50.1 }
+    ]
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.msg === 'Milestone percentages must not exceed 100%'));
+});

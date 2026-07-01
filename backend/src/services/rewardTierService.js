@@ -1,4 +1,5 @@
 const db = require('../config/database');
+const { stripHtml } = require('../lib/sanitize');
 
 const MAX_TIERS_PER_CAMPAIGN = 10;
 
@@ -24,7 +25,7 @@ function validateTiersInput(tiers, campaignAssetType) {
   return tiers.map((tier, index) => {
     const label = `reward_tiers[${index}]`;
 
-    const title = typeof tier.title === 'string' ? tier.title.trim() : '';
+    const title = stripHtml(tier.title || '');
     if (!title) throw new Error(`${label}: title is required`);
 
     const minAmount = Number(tier.min_amount);
@@ -57,7 +58,7 @@ function validateTiersInput(tiers, campaignAssetType) {
 
     return {
       title,
-      description: typeof tier.description === 'string' ? tier.description.trim() : null,
+      description: typeof tier.description === 'string' ? stripHtml(tier.description) || null : null,
       min_amount: minAmount,
       asset_type: assetType,
       tier_limit: tierLimit,

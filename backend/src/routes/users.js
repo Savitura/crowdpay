@@ -14,7 +14,17 @@ router.get('/me', requireAuth, asyncHandler(async (req, res) => {
     [req.user.userId]
   );
   if (!rows.length) return res.status(404).json({ error: 'User not found' });
-  res.json({ ...rows[0], kyc_required_for_campaigns: isKycRequiredForCampaigns() });
+  res.json({
+    ...rows[0],
+    kyc_required_for_campaigns: isKycRequiredForCampaigns(),
+    impersonation: req.impersonation
+      ? {
+          active: true,
+          admin_user_id: req.impersonation.adminUserId,
+        }
+      : null,
+    impersonated_by: req.impersonation?.adminUserId || null,
+  });
 }));
 
 router.post('/me/kyc/start', requireAuth, asyncHandler(async (req, res) => {
@@ -70,6 +80,78 @@ router.get('/me/contributions', requireAuth, asyncHandler(async (req, res) => {
   const rows = await listUserContributions(req.user.userId);
   if (rows === null) return res.status(404).json({ error: 'User not found' });
   res.json(rows);
+}));
+
+router.get('/me/notification-preferences', requireAuth, asyncHandler(async (req, res) => {
+  const { rows: users } = await db.query(
+    'SELECT email FROM users WHERE id = $1',
+    [req.user.userId]
+  );
+  if (!users.length) return res.status(404).json({ error: 'User not found' });
+
+  const email = String(users[0].email).toLowerCase();
+  const { rows } = await db.query(
+    `SELECT category
+     FROM email_unsubscribes
+     WHERE email = $1
+       AND category IN ('campaign_update', 'weekly_digest')`,
+    [email]
+  );
+  const unsubscribed = new Set(rows.map((row) => row.category));
+
+  res.json({
+    campaign_update_emails: !unsubscribed.has('campaign_update'),
+    weekly_digest_emails: !unsubscribed.has('weekly_digest'),
+  });
+}));
+
+router.patch('/me/notification-preferences', requireAuth, asyncHandler(async (req, res) => {
+  const { rows: users } = await db.query(
+    'SELECT email FROM users WHERE id = $1',
+    [req.user.userId]
+  );
+  if (!users.length) return res.status(404).json({ error: 'User not found' });
+
+  const email = String(users[0].email).toLowerCase();
+  const updates = [];
+  if (typeof req.body?.campaign_update_emails === 'boolean') {
+    updates.push({ category: 'campaign_update', enabled: req.body.campaign_update_emails });
+  }
+  if (typeof req.body?.weekly_digest_emails === 'boolean') {
+    updates.push({ category: 'weekly_digest', enabled: req.body.weekly_digest_emails });
+  }
+  if (!updates.length) {
+    return res.status(400).json({ error: 'At least one notification preference must be provided' });
+  }
+
+  for (const update of updates) {
+    if (update.enabled) {
+      await db.query(
+        'DELETE FROM email_unsubscribes WHERE email = $1 AND category = $2',
+        [email, update.category]
+      );
+    } else {
+      await db.query(
+        `INSERT INTO email_unsubscribes (email, category)
+         VALUES ($1, $2)
+         ON CONFLICT (email, category) DO NOTHING`,
+        [email, update.category]
+      );
+    }
+  }
+
+  const { rows: currentRows } = await db.query(
+    `SELECT category
+     FROM email_unsubscribes
+     WHERE email = $1
+       AND category IN ('campaign_update', 'weekly_digest')`,
+    [email]
+  );
+  const unsubscribed = new Set(currentRows.map((row) => row.category));
+  res.json({
+    campaign_update_emails: !unsubscribed.has('campaign_update'),
+    weekly_digest_emails: !unsubscribed.has('weekly_digest'),
+  });
 }));
 
 const { getUserDashboardAnalytics } = require('../services/analyticsService');

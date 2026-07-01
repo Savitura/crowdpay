@@ -1,8 +1,10 @@
+/* eslint-disable */
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import RelativeTime from '../components/RelativeTime';
+import DisputeResolveModal from '../components/DisputeResolveModal';
 
 const DISPUTE_STATUSES = [
   'open',
@@ -18,6 +20,7 @@ const TABS = [
   { id: 'disputes', label: 'Disputes' },
   { id: 'kyc', label: 'KYC' },
   { id: 'campaigns', label: 'Campaigns' },
+  { id: 'milestones', label: 'Milestones' },
 ];
 
 const cardStyle = {
@@ -412,8 +415,7 @@ function DisputeManagement() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState('');
+  const [resolveOpen, setResolveOpen] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -429,7 +431,6 @@ function DisputeManagement() {
 
   async function openDispute(dispute) {
     setSelected(dispute);
-    setNote('');
     try {
       const data = await api.getAdminDispute(dispute.id);
       setDetail(data);
@@ -441,27 +442,28 @@ function DisputeManagement() {
   function closeDispute() {
     setSelected(null);
     setDetail(null);
-    setNote('');
+    setResolveOpen(false);
   }
 
-  async function resolve(status) {
-    if (!selected) return;
-    setBusy(true);
+  async function handleResolve({ status, resolution_note }) {
+    const updated = await api.updateDispute(selected.id, { status, resolution_note });
+    setDisputes((prev) =>
+      prev
+        .map((d) => (d.id === updated.id ? { ...d, ...updated } : d))
+        .filter((d) => ['open', 'under_review'].includes(d.status))
+    );
+    closeDispute();
+  }
+
+  async function escalate() {
     try {
-      const updated = await api.updateDispute(selected.id, {
-        status,
-        resolution_note: note.trim() || undefined,
-      });
+      const updated = await api.updateDispute(selected.id, { status: 'under_review' });
       setDisputes((prev) =>
-        prev
-          .map((d) => (d.id === updated.id ? { ...d, ...updated } : d))
-          .filter((d) => ['open', 'under_review'].includes(d.status))
+        prev.map((d) => (d.id === updated.id ? { ...d, ...updated } : d))
       );
       closeDispute();
     } catch (err) {
-      alert(err.message || 'Could not update dispute');
-    } finally {
-      setBusy(false);
+      alert(err.message || 'Could not escalate dispute');
     }
   }
 
@@ -577,38 +579,19 @@ function DisputeManagement() {
               </div>
             </div>
 
-            <label className="label-strong" htmlFor="dispute-note">
-              Resolution note
-            </label>
-            <textarea
-              id="dispute-note"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              rows={3}
-            />
-
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
               <button
                 type="button"
-                disabled={busy}
-                onClick={() => resolve('resolved_contributor')}
-                style={{ fontSize: '0.8rem' }}
+                className="btn-primary"
+                onClick={() => setResolveOpen(true)}
+                style={{ fontSize: '0.85rem' }}
               >
-                Resolve for contributor (refund)
+                Resolve dispute…
               </button>
               <button
                 type="button"
-                disabled={busy}
-                onClick={() => resolve('resolved_creator')}
-                style={{ fontSize: '0.8rem' }}
-              >
-                Resolve for creator
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => resolve('under_review')}
-                style={{ fontSize: '0.8rem' }}
+                onClick={escalate}
+                style={{ fontSize: '0.8rem', cursor: 'pointer' }}
               >
                 Escalate (under review)
               </button>
@@ -616,11 +599,22 @@ function DisputeManagement() {
           </div>
         </Drawer>
       )}
+
+      {resolveOpen && detail && (
+        <DisputeResolveModal
+          dispute={detail.dispute}
+          thread={detail.thread}
+          onClose={() => setResolveOpen(false)}
+          onResolve={handleResolve}
+        />
+      )}
     </>
   );
 }
 
 function KycOversight() {
+  const { updateUser } = useAuth();
+  const navigate = useNavigate();
   const [kycFilter, setKycFilter] = useState('pending');
   const [users, setUsers] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
@@ -650,6 +644,20 @@ function KycOversight() {
       load();
     } catch (err) {
       alert(err.message || 'KYC update failed');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function impersonateUser(user) {
+    setBusyId(user.id);
+    try {
+      await api.adminImpersonateUser(user.id);
+      const userData = await api.getMe();
+      updateUser(userData);
+      navigate('/dashboard');
+    } catch (err) {
+      alert(err.message || 'Could not start impersonation');
     } finally {
       setBusyId(null);
     }
@@ -709,6 +717,14 @@ function KycOversight() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    disabled={busyId === u.id}
+                    onClick={() => impersonateUser(u)}
+                    style={{ fontSize: '0.75rem' }}
+                  >
+                    View as user
+                  </button>
                   {u.kyc_status !== 'verified' && (
                     <button
                       type="button"
@@ -757,8 +773,8 @@ function KycOversight() {
   );
 }
 
-function CampaignsQueue() {
-  const [campaigns, setCampaigns] = useState([]);
+function MilestonesQueue() {
+  const [milestones, setMilestones] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [rejectingId, setRejectingId] = useState(null);
@@ -995,12 +1011,25 @@ function CampaignsQueue() {
 function CampaignsQueue() {
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
 
   useEffect(() => {
+    setLoading(true);
     api
-      .getAdminCampaigns()
+      .getAdminCampaigns({ flagged_only: flaggedOnly })
       .then(setCampaigns)
       .finally(() => setLoading(false));
+  }, [flaggedOnly]);
+
+  async function unflag(id) {
+    if (!window.confirm('Remove duplicate flag and allow publishing?')) return;
+    try {
+      await api.adminUnflagCampaign(id);
+      const updated = await api.getAdminCampaigns({ flagged_only: flaggedOnly });
+      setCampaigns(updated);
+    } catch (err) {
+      window.alert(err.message || 'Could not unflag campaign');
+    }
   }
 
   async function feature(id) {
@@ -1029,7 +1058,18 @@ function CampaignsQueue() {
   if (loading) return <p style={{ color: 'var(--color-text-hint)' }}>Loading campaigns…</p>;
 
   return (
-    <div style={{ display: 'grid', gap: '0.9rem', marginBottom: '2.5rem' }}>
+    <div>
+      <div style={{ marginBottom: '1rem' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>
+          <input 
+            type="checkbox" 
+            checked={flaggedOnly} 
+            onChange={(e) => setFlaggedOnly(e.target.checked)} 
+          />
+          Show flagged potential duplicates only
+        </label>
+      </div>
+      <div style={{ display: 'grid', gap: '0.9rem', marginBottom: '2.5rem' }}>
       {campaigns.map((c) => (
         <div key={c.id} style={cardStyle}>
           <div
@@ -1043,6 +1083,20 @@ function CampaignsQueue() {
           >
             <div>
               <strong>{c.title}</strong>
+              {c.is_flagged_duplicate && (
+                <span
+                  style={{
+                    marginLeft: '0.5rem',
+                    fontSize: '0.75rem',
+                    padding: '0.1rem 0.4rem',
+                    borderRadius: '4px',
+                    background: 'var(--color-error-bg)',
+                    color: 'var(--color-error-text)',
+                  }}
+                >
+                  Flagged Duplicate
+                </span>
+              )}
               <span
                 style={{
                   marginLeft: '0.5rem',
@@ -1054,34 +1108,55 @@ function CampaignsQueue() {
               </span>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button
-                type="button"
-                onClick={() => feature(c.id)}
-                style={{
-                  fontSize: '0.75rem',
-                  padding: '0.25rem 0.7rem',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                }}
-              >
-                Feature
-              </button>
-              <button
-                type="button"
-                onClick={() => unfeature(c.id)}
-                style={{
-                  fontSize: '0.75rem',
-                  padding: '0.25rem 0.7rem',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                }}
-              >
-                Unfeature
-              </button>
+              {c.is_flagged_duplicate ? (
+                <button
+                  type="button"
+                  onClick={() => unflag(c.id)}
+                  style={{
+                    fontSize: '0.75rem',
+                    padding: '0.25rem 0.7rem',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    background: '#10b981',
+                    color: '#fff',
+                    border: 'none',
+                  }}
+                >
+                  Unflag
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => feature(c.id)}
+                    style={{
+                      fontSize: '0.75rem',
+                      padding: '0.25rem 0.7rem',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Feature
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => unfeature(c.id)}
+                    style={{
+                      fontSize: '0.75rem',
+                      padding: '0.25rem 0.7rem',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Unfeature
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
       ))}
+      </div>
     </div>
   );
 }
@@ -1127,6 +1202,7 @@ export default function AdminDashboard() {
       {tab === 'disputes' && <DisputeManagement />}
       {tab === 'kyc' && <KycOversight />}
       {tab === 'campaigns' && <CampaignsQueue />}
+      {tab === 'milestones' && <MilestonesQueue />}
     </div>
   );
 }

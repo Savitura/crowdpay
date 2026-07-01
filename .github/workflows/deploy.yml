@@ -6,52 +6,66 @@ on:
     branches: [main]
     types:
       - completed
+  workflow_dispatch: {}
 
 jobs:
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    environment: production
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+      - name: Write production env file and deploy via docker compose
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: DATABASE_URL,JWT_SECRET,API_KEY_PEPPER,PLATFORM_SECRET_KEY,USDC_ISSUER,STELLAR_NETWORK,STELLAR_HORIZON_URL,FRONTEND_URL,DEPLOY_PATH
+          env:
+            DATABASE_URL: ${{ secrets.DATABASE_URL }}
+            JWT_SECRET: ${{ secrets.JWT_SECRET }}
+            API_KEY_PEPPER: ${{ secrets.API_KEY_PEPPER }}
+            PLATFORM_SECRET_KEY: ${{ secrets.PLATFORM_SECRET_KEY }}
+            USDC_ISSUER: ${{ secrets.USDC_ISSUER }}
+            STELLAR_NETWORK: ${{ secrets.STELLAR_NETWORK }}
+            STELLAR_HORIZON_URL: ${{ secrets.STELLAR_HORIZON_URL }}
+            FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+            DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          script: |
+            set -euo pipefail
+            cd "$DEPLOY_PATH"
+            git fetch origin main
+            git reset --hard origin/main
 
-      - name: Build and push backend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./backend
-          push: true
-          tags: ghcr.io/${{ github.repository }}/backend:latest
+            cat > backend/.env <<EOF
+            NODE_ENV=production
+            DATABASE_URL=${DATABASE_URL}
+            JWT_SECRET=${JWT_SECRET}
+            API_KEY_PEPPER=${API_KEY_PEPPER}
+            PLATFORM_SECRET_KEY=${PLATFORM_SECRET_KEY}
+            USDC_ISSUER=${USDC_ISSUER}
+            STELLAR_NETWORK=${STELLAR_NETWORK}
+            STELLAR_HORIZON_URL=${STELLAR_HORIZON_URL}
+            FRONTEND_URL=${FRONTEND_URL}
+            EOF
 
-      - name: Deploy backend
-        run: echo "Deploying backend to hosting provider..."
-        # Replace with actual deploy command, e.g., Fly.io:
-        # flyctl deploy --image ghcr.io/${{ github.repository }}/backend:latest
-        env:
-          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+            docker compose -f docker-compose.prod.yml up -d --build
+            docker compose -f docker-compose.prod.yml exec -T backend node db/migrate.js
 
-      - name: Setup Node.js for migrations
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Run DB migrations
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: node migrate.js
-
-      - name: Deploy frontend
-        run: echo "Deploying frontend to static hosting..."
-        # Replace with actual deploy action, e.g., Vercel:
-        # npx vercel --prod --token ${{ secrets.VERCEL_TOKEN }}
+      - name: Wait for backend to become healthy
+        run: |
+          for i in $(seq 1 10); do
+            if curl -fsS "${{ secrets.DEPLOY_HEALTH_URL }}/health"; then
+              echo "Health check passed"
+              exit 0
+            fi
+            echo "Health check attempt $i failed, retrying in 5s..."
+            sleep 5
+          done
+          echo "Health check failed after 10 attempts"
+          exit 1
 
       - name: Post deploy status to Slack
         uses: 8398a7/action-slack@v3

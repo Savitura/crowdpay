@@ -288,7 +288,6 @@ async function prepareSignedContributionPayment({
     amount,
     memo,
   });
-  const { feeAmount } = calcFee(amount);
   const tx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
   tx.sign(senderKeypair);
   const signedXdr = tx.toXDR();
@@ -381,7 +380,6 @@ async function prepareSignedContributionPathPayment({
     destAssetCode,
     memo,
   });
-  const { feeAmount } = calcFee(destAmount);
   const tx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
   tx.sign(senderKeypair);
   const signedXdr = tx.toXDR();

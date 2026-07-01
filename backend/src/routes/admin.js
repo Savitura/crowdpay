@@ -1,7 +1,12 @@
 const router = require('express').Router();
+const jwt = require('jsonwebtoken');
 const db = require('../config/database');
 const logger = require('../config/logger');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const {
+  requireAuth,
+  requireAdmin,
+  IMPERSONATION_TOKEN_COOKIE_NAME,
+} = require('../middleware/auth');
 const { reconcileSingleCampaign, getRecentReconciliationRuns } = require('../services/reconciliation');
 const { server } = require('../config/stellar');
 const {
@@ -10,8 +15,7 @@ const {
 } = require('../services/webhookDispatcher');
 const cache = require('../utils/cache');
 
-router.use(requireAuth);
-router.use(requireAdmin);
+const IMPERSONATION_TTL_SECONDS = 15 * 60;
 
 /**
  * Log admin action to audit table
@@ -27,6 +31,102 @@ async function logAdminAction(adminUserId, actionType, targetType, targetId, det
     logger.error('Failed to log admin action', { error: err.message, actionType, targetType });
   }
 }
+
+function setImpersonationCookie(res, token) {
+  res.cookie(IMPERSONATION_TOKEN_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: IMPERSONATION_TTL_SECONDS * 1000,
+  });
+}
+
+function clearImpersonationCookie(res) {
+  res.clearCookie(IMPERSONATION_TOKEN_COOKIE_NAME, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+  });
+}
+
+/**
+ * POST /api/admin/impersonate/exit
+ * Clear impersonation mode and return to the admin session.
+ */
+router.post('/impersonate/exit', requireAuth, async (req, res) => {
+  try {
+    const adminUserId = req.impersonation?.adminUserId || req.user?.impersonated_by;
+    const targetUserId = req.impersonation?.targetUserId || req.user?.userId;
+
+    clearImpersonationCookie(res);
+
+    if (adminUserId && targetUserId) {
+      await logAdminAction(adminUserId, 'impersonate_end', 'user', targetUserId, {});
+    }
+
+    res.json({ message: 'Impersonation ended' });
+  } catch (err) {
+    logger.error('Error ending impersonation', { error: err.message });
+    res.status(500).json({ error: 'Failed to end impersonation' });
+  }
+});
+
+router.use(requireAuth);
+router.use(requireAdmin);
+
+/**
+ * POST /api/admin/impersonate/:userId
+ * Issue a short-lived token for debugging as another user.
+ */
+router.post('/impersonate/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { rows } = await db.query(
+      `SELECT id, email, name, role, is_admin, is_banned
+       FROM users
+       WHERE id = $1`,
+      [userId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const target = rows[0];
+    const expiresAt = new Date(Date.now() + IMPERSONATION_TTL_SECONDS * 1000);
+    const token = jwt.sign(
+      {
+        userId: target.id,
+        role: target.role || 'contributor',
+        impersonated_by: req.user.userId,
+        impersonation: true,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: IMPERSONATION_TTL_SECONDS }
+    );
+
+    setImpersonationCookie(res, token);
+
+    await logAdminAction(req.user.userId, 'impersonate_start', 'user', target.id, {
+      target_email: target.email,
+      target_role: target.role,
+      target_is_admin: Boolean(target.is_admin),
+      expires_at: expiresAt.toISOString(),
+      expires_in_seconds: IMPERSONATION_TTL_SECONDS,
+    });
+
+    res.status(201).json({
+      token,
+      expires_in: IMPERSONATION_TTL_SECONDS,
+      expires_at: expiresAt.toISOString(),
+      user: target,
+      impersonated_by: req.user.userId,
+    });
+  } catch (err) {
+    logger.error('Error starting impersonation', { error: err.message, targetUserId: req.params.userId });
+    res.status(500).json({ error: 'Failed to start impersonation' });
+  }
+});
 
 /**
  * GET /api/admin/stats
@@ -61,12 +161,16 @@ router.get('/stats', async (req, res) => {
  */
 router.get('/campaigns', async (req, res) => {
   try {
-    const { status, include_deleted } = req.query;
+    const { status, include_deleted, flagged_only } = req.query;
     const params = [];
     let where = 'WHERE 1=1';
 
     if (include_deleted !== 'true') {
       where += ' AND c.deleted_at IS NULL';
+    }
+
+    if (flagged_only === 'true') {
+      where += ' AND c.is_flagged_duplicate = TRUE';
     }
 
     if (status) {
@@ -76,7 +180,7 @@ router.get('/campaigns', async (req, res) => {
 
     const { rows } = await db.query(
       `SELECT c.id, c.title, c.status, c.raised_amount, c.target_amount, 
-              c.asset_type, c.created_at, c.deleted_at,
+              c.asset_type, c.created_at, c.deleted_at, c.is_flagged_duplicate,
               u.id as creator_id, u.name as creator_name, u.email as creator_email,
               (SELECT COUNT(*) FROM contributions WHERE campaign_id = c.id) as contribution_count
        FROM campaigns c 
@@ -89,6 +193,39 @@ router.get('/campaigns', async (req, res) => {
   } catch (err) {
     logger.error('Error fetching campaigns for admin', { error: err.message });
     res.status(500).json({ error: 'Failed to fetch campaigns' });
+  }
+});
+
+/**
+ * PATCH /api/admin/campaigns/:id/unflag
+ * Remove duplicate flag from a campaign
+ */
+router.patch('/campaigns/:id/unflag', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { rows: campaignRows } = await db.query(
+      'SELECT id, is_flagged_duplicate FROM campaigns WHERE id = $1 AND deleted_at IS NULL',
+      [id]
+    );
+
+    if (!campaignRows.length) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const { rows: updated } = await db.query(
+      `UPDATE campaigns SET is_flagged_duplicate = FALSE WHERE id = $1 RETURNING id, title, is_flagged_duplicate`,
+      [id]
+    );
+
+    await logAdminAction(req.user.userId, 'unflag', 'campaign', id, {});
+
+    cache.invalidate(`campaigns:id:${id}`);
+    cache.invalidatePrefix('campaigns:list:');
+    res.json({ message: 'Campaign unflagged', campaign: updated[0] });
+  } catch (err) {
+    logger.error('Error unflagging campaign', { error: err.message, campaignId: req.params.id });
+    res.status(500).json({ error: 'Failed to unflag campaign' });
   }
 });
 

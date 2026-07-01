@@ -64,7 +64,23 @@
     "onboardingTitle": "Comment contribuer",
     "onboardingItem1": "Chaque campagne se règle en USDC ou en XLM - c'est ce qui fait avancer la barre de progression.",
     "onboardingItem2": "Vous pouvez payer en XLM ou en USDC ; si les actifs diffèrent, Stellar convertit automatiquement lorsqu'un chemin existe.",
-    "onboardingItem3": "Surveillez les devis en direct dans la fenêtre de contribution avant de confirmer."
+    "onboardingItem3": "Surveillez les devis en direct dans la fenêtre de contribution avant de confirmer.",
+    "featuredCampaigns": "⭐️ Campagnes à la une",
+    "allCategories": "Tout",
+    "categories": {
+      "technology": "Technologie",
+      "community": "Communauté",
+      "arts": "Arts & Culture",
+      "education": "Éducation",
+      "environment": "Environnement",
+      "health": "Santé",
+      "business": "Business",
+      "open_source": "Open Source",
+      "other": "Autre"
+    },
+    "sortNewest": "Plus récent",
+    "sortTrending": "🔥 Tendance",
+    "sortMostFunded": "Le plus financé"
   },
   "campaignCard": {
     "noImage": "Aucune image de campagne",
@@ -330,11 +346,75 @@
     "error": "Impossible de démarrer la vérification d'identité."
   },
   "campaignStatus": {
-    "goalReached": "Goal reached",
-    "campaignEnded": "Campaign ended",
-    "campaignClosed": "Campaign closed"
+    "goalReached": "Objectif atteint",
+    "campaignEnded": "Campagne terminée",
+    "campaignClosed": "Campagne fermée"
   },
-  "offline": {
-    "banner": "Vous êtes hors ligne — les modifications risquent de ne pas être enregistrées"
+  "dashboard": {
+    "title": "Tableau de bord",
+    "restoringSession": "Restauration de votre session...",
+    "walletBalance": "Solde du portefeuille",
+    "addFunds": "Ajouter des fonds",
+    "identityVerification": "Vérification d'identité",
+    "totalCampaigns": "Campagnes totales",
+    "totalRaised": "Total collecté",
+    "active": "Actives",
+    "funded": "Financées",
+    "createNewCampaign": "+ Créer une nouvelle campagne",
+    "createCampaign": "Créer une campagne",
+    "noCampaigns": "Aucune campagne pour le moment. Créez votre première campagne pour commencer.",
+    "loadingCampaigns": "Chargement de vos campagnes...",
+    "noCreatedCampaigns": "Vous n'avez créé aucune campagne.",
+    "noCreatedCampaignsHint": "Lancez une campagne ou consultez l'historique de vos soutiens dans Mes contributions.",
+    "loadingReferrals": "Chargement des données de parrainage...",
+    "noReferralActivity": "Aucune activité de parrainage pour le moment.",
+    "noReferralCampaigns": "Aucune campagne pour le moment.",
+    "startTrackingReferrals": "pour commencer à suivre les parrainages.",
+    "amount": "Montant",
+    "noContributionData": "Aucune donnée de contribution pour le moment.",
+    "milestoneFunnel": "Entonnoir des jalons",
+    "percentFunded": "{{percent}} % financé",
+    "sectionsLabel": "Sections du tableau de bord",
+    "viewOnStellarExpert": "Voir sur Stellar Expert ↗",
+    "noFunds": "Aucun fonds",
+    "status": "Statut",
+    "unverified": "non vérifié",
+    "completedOn": "Terminé le {{date}}",
+    "viewCampaign": "Voir la campagne",
+    "manageMilestoneReleases": "Gérer les déblocages par jalons",
+    "requestWithdrawal": "Demander un retrait",
+    "firstTime": "Première fois",
+    "returning": "Retour",
+    "returnRate": "Taux de retour",
+    "topCountry": "Pays principal",
+    "contributorsCount": "{{count}} contributeur",
+    "contributorsCount_plural": "{{count}} contributeurs",
+    "deadline": "Date limite {{date}}",
+    "referrer": "Parrain",
+    "clicks": "Clics",
+    "conversions": "Conversions",
+    "rate": "Taux",
+    "totalClicks": "clics au total",
+    "totalConversions": "conversions au total",
+    "contributionsLast30Days": "Contributions — 30 derniers jours (toutes les campagnes)",
+    "exportCsv": "Exporter CSV",
+    "hideCampaign": "Masquer",
+    "showCampaign": "Afficher",
+    "perCampaignAnalytics": "Analytique par campagne",
+    "contributorStats": "Statistiques des contributeurs",
+    "contributionsOverTime": "Contributions dans le temps",
+    "tabs": {
+      "campaigns": "Mes campagnes",
+      "contributions": "Mes contributions",
+      "analytics": "Analytique",
+      "apiKeys": "Clés API",
+      "referrals": "Parrainages"
+    },
+    "analyticsOverview": {
+      "totalRaised": "Total collecté",
+      "contributions": "Contributions",
+      "uniqueContributors": "Contributeurs uniques",
+      "avgContribution": "Contribution moyenne"
+    }
   }
 }

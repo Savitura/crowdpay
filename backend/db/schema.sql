@@ -31,6 +31,7 @@ CREATE TABLE users (
 CREATE TABLE campaigns (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   creator_id          UUID NOT NULL REFERENCES users(id),
+  category            TEXT,
   title               TEXT NOT NULL,
   description         TEXT,
   target_amount       NUMERIC(20, 7) NOT NULL,
@@ -51,6 +52,8 @@ CREATE TABLE campaigns (
   featured            BOOLEAN DEFAULT FALSE,
   featured_at         TIMESTAMPTZ,
   featured_note       TEXT,
+  content_fingerprint TEXT,
+  is_flagged_duplicate BOOLEAN DEFAULT FALSE,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE TABLE IF NOT EXISTS campaign_updates (
@@ -124,6 +127,9 @@ CREATE TABLE withdrawal_approval_events (
 
 -- Indexes
 CREATE INDEX ON contributions (campaign_id);
+CREATE INDEX idx_contributions_campaign_unrefunded
+  ON contributions (campaign_id)
+  WHERE refunded = FALSE;
 CREATE INDEX ON contributions (tx_hash);
 CREATE UNIQUE INDEX contributions_anchor_transaction_idx
   ON contributions (anchor_id, anchor_transaction_id)
@@ -356,3 +362,20 @@ CREATE TABLE campaign_referrals (
 CREATE INDEX idx_campaign_referrals_campaign_id ON campaign_referrals(campaign_id);
 CREATE UNIQUE INDEX idx_campaign_referrals_code ON campaign_referrals(referral_code);
 CREATE UNIQUE INDEX idx_campaign_referrals_user_campaign ON campaign_referrals(campaign_id, referrer_user_id);
+
+-- Feature flags for gradual rollouts, A/B tests, and kill switches
+CREATE TABLE feature_flags (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name              TEXT UNIQUE NOT NULL,
+  description       TEXT NOT NULL DEFAULT '',
+  enabled           BOOLEAN NOT NULL DEFAULT false,
+  rollout_pct       INTEGER CHECK (rollout_pct >= 0 AND rollout_pct <= 100),
+  target_roles      TEXT[],
+  target_user_ids   UUID[],
+  variants          JSONB NOT NULL DEFAULT '{}',
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX feature_flags_name_idx ON feature_flags (name);
+CREATE INDEX feature_flags_enabled_idx ON feature_flags (enabled) WHERE enabled = true;

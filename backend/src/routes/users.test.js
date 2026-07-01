@@ -106,8 +106,9 @@ test('POST /api/auth/register returns 400 with validation errors for invalid inp
     .send({ email: 'not-an-email', password: 'short', name: '' });
 
   assert.equal(res.status, 400);
-  assert.ok(Array.isArray(res.body.errors));
-  assert.ok(res.body.errors.length >= 1);
+  assert.equal(res.body.error.code, 'VALIDATION_ERROR');
+  assert.ok(Array.isArray(res.body.error.fields));
+  assert.ok(res.body.error.fields.length >= 1);
 });
 
 test('POST /api/auth/login returns 400 with validation errors for invalid email', async () => {
@@ -120,7 +121,8 @@ test('POST /api/auth/login returns 400 with validation errors for invalid email'
     .send({ email: 'bad-email', password: '' });
 
   assert.equal(res.status, 400);
-  assert.ok(Array.isArray(res.body.errors));
+  assert.equal(res.body.error.code, 'VALIDATION_ERROR');
+  assert.ok(Array.isArray(res.body.error.fields));
 });
 
 test('POST /api/auth/forgot-password returns generic message for unknown email', async () => {

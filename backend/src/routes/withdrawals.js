@@ -147,6 +147,11 @@ router.post('/request', requireAuth, withdrawalValidation, validateRequest, asyn
       error: 'This campaign uses milestone releases. Funds are released through approved milestones instead of manual withdrawals.',
     });
   }
+  if (campaign.status === 'failed') {
+    return res.status(400).json({
+      error: 'This campaign has failed. Contributors are eligible for refunds — withdrawals are not permitted.',
+    });
+  }
   if (!ALLOWED_CAMPAIGN_STATUS_FOR_REQUEST.includes(campaign.status)) {
     return res.status(409).json({
       error: `Withdrawals cannot be requested while campaign status is "${campaign.status}".`,

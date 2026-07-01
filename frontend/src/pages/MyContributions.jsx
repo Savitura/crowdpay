@@ -6,7 +6,7 @@ import { stellarExpertTxUrl } from '../config/stellar';
 import ContributorDashboard from '../components/ContributorDashboard';
 
 export default function MyContributions() {
-  const { token, ready } = useAuth();
+  const { user, token, ready } = useAuth();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

@@ -14,13 +14,15 @@ export function retryQueuedRequests() {
   retryQueue.length = 0;
   for (const item of queue) {
     const { method, path, body, options, resolve, reject } = item;
-    request(method, path, body, options).then(resolve).catch((err) => {
-      if (isNetworkError(err)) {
-        retryQueue.push(item);
-      } else {
-        reject(err);
-      }
-    });
+    request(method, path, body, options)
+      .then(resolve)
+      .catch((err) => {
+        if (isNetworkError(err)) {
+          retryQueue.push(item);
+        } else {
+          reject(err);
+        }
+      });
   }
 }
 
@@ -209,6 +211,77 @@ async function refresh() {
   return refreshPromise;
 }
 
+function parseDownloadFilename(disposition, fallback) {
+  if (!disposition) return fallback;
+
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match) {
+    try {
+      return decodeURIComponent(utf8Match[1].replace(/^"|"$/g, ''));
+    } catch {
+      return utf8Match[1].replace(/^"|"$/g, '') || fallback;
+    }
+  }
+
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  return match?.[1] || fallback;
+}
+
+async function downloadFile(path, fallbackFilename, options = {}) {
+  const { _retry = false } = options || {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60_000);
+
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method: 'GET',
+      credentials: 'include',
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error('Download timed out. Check your connection and try again.');
+    }
+    if (isNetworkError(err)) {
+      throw new Error('You appear to be offline. Please check your connection and try again.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (res.status === 401 && !_retry) {
+    try {
+      await refresh();
+      return downloadFile(path, fallbackFilename, { _retry: true });
+    } catch {
+      throw new Error('Session expired. Please log in again.');
+    }
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    let message = `Download failed (${res.status})`;
+    try {
+      const data = JSON.parse(text);
+      const errorBody = data.error;
+      message = typeof errorBody === 'string' ? errorBody : errorBody?.message || message;
+    } catch {
+      if (text) message = text;
+    }
+
+    const err = new Error(message);
+    err.status = res.status;
+    throw err;
+  }
+
+  return {
+    blob: await res.blob(),
+    filename: parseDownloadFilename(res.headers.get('content-disposition'), fallbackFilename),
+  };
+}
+
 async function logout() {
   const res = await fetch(`${BASE}/auth/logout`, {
     method: 'POST',
@@ -250,7 +323,7 @@ export const api = {
   startKyc: () => request('POST', '/auth/kyc/start'),
   getKycStatus: () => request('GET', '/auth/kyc/status'),
 
-  getMyCampaigns: () => request('GET', '/campaigns/mine'),
+  getMyCampaigns: (options = {}) => request('GET', '/campaigns/mine', null, { query: options }),
   getFeaturedCampaigns: () => request('GET', '/campaigns/featured'),
   getCampaigns: (options = {}) => request('GET', '/campaigns', null, { query: options }),
   getCampaign: (id, options = {}) => request('GET', `/campaigns/${id}`, null, { query: options }),
@@ -258,11 +331,17 @@ export const api = {
   getCampaignAnalyticsContributors: (id) =>
     request('GET', `/campaigns/${id}/analytics/contributors`),
   getCampaignAnalyticsBackers: (id) => request('GET', `/campaigns/${id}/analytics/backers`),
+  exportCampaignContributions: (id) =>
+    downloadFile(
+      `/campaigns/${encodeURIComponent(id)}/contributions/export`,
+      `campaign-${id}-contributors.csv`
+    ),
   getUserDashboardAnalytics: () => request('GET', '/users/me/dashboard/analytics'),
   getCampaignEmbed: (id) => request('GET', `/campaigns/${id}/embed`),
   getCampaignBackers: (id) => request('GET', `/campaigns/${id}/backers`),
   getCampaignBalance: (id) => request('GET', `/campaigns/${id}/balance`),
   getCloneData: (id) => request('GET', `/campaigns/${id}/clone-data`),
+  checkDuplicateCampaign: (body) => request('POST', '/campaigns/check-duplicate', body),
   createCampaign: (body) => request('POST', '/campaigns', body),
   updateCampaign: (id, body) => request('PATCH', `/campaigns/${id}`, body),
   deleteCampaign: (id) => request('DELETE', `/campaigns/${id}`),
@@ -307,6 +386,9 @@ export const api = {
     request('GET', `/contributions/campaign/${campaignId}`, null, {
       query: options,
     }),
+  toggleCampaignVisibility: (id, is_hidden) =>
+    request('PATCH', `/campaigns/${id}/visibility`, { is_hidden }),
+
   getMilestones: (campaignId) => request('GET', `/campaigns/${campaignId}/milestones`),
   setCampaignMilestones: (campaignId, milestones) =>
     request('POST', `/campaigns/${campaignId}/milestones`, { milestones }),
@@ -357,7 +439,14 @@ export const api = {
 
   getAdminStats: () => request('GET', '/admin/stats'),
   getAdminHealth: () => request('GET', '/admin/health'),
-  getAdminCampaigns: () => request('GET', '/admin/campaigns'),
+  getAdminCampaigns: (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.include_deleted) qs.append('include_deleted', 'true');
+    if (params.flagged_only) qs.append('flagged_only', 'true');
+    if (params.status) qs.append('status', params.status);
+    const query = qs.toString();
+    return request('GET', `/admin/campaigns${query ? `?${query}` : ''}`);
+  },
   getAdminWithdrawals: (options = {}) =>
     request('GET', '/admin/withdrawals', null, { query: options }),
   getAdminDisputes: (options = {}) => request('GET', '/admin/disputes', null, { query: options }),
@@ -365,6 +454,8 @@ export const api = {
   getAdminKycCampaigns: () => request('GET', '/admin/kyc/campaigns'),
   getAdminCampaignContributions: (campaignId, options = {}) =>
     request('GET', `/admin/campaigns/${campaignId}/contributions`, null, { query: options }),
+  adminImpersonateUser: (id) => request('POST', `/admin/impersonate/${id}`, {}),
+  adminExitImpersonation: () => request('POST', '/admin/impersonate/exit', {}),
   getAdminWebhookDeliveries: (options = {}) =>
     request('GET', '/admin/webhook-deliveries', null, { query: options }),
   adminRetryWebhookDelivery: (id, body) =>
@@ -384,6 +475,7 @@ export const api = {
   adminRestoreCampaign: (id) => request('PATCH', `/admin/campaigns/${id}/restore`, {}),
   adminFeatureCampaign: (id, body) => request('PATCH', `/admin/campaigns/${id}/feature`, body),
   adminUnfeatureCampaign: (id) => request('PATCH', `/admin/campaigns/${id}/unfeature`, {}),
+  adminUnflagCampaign: (id) => request('PATCH', `/admin/campaigns/${id}/unflag`),
   adminDeleteCampaign: (id, body) => request('DELETE', `/admin/campaigns/${id}`, body),
   adminBanUser: (id, body) => request('PATCH', `/admin/users/${id}/ban`, body),
   adminUnbanUser: (id) => request('PATCH', `/admin/users/${id}/unban`, {}),
@@ -404,4 +496,9 @@ export const api = {
 
   getReferralCode: (campaignId) => request('GET', `/campaigns/${campaignId}/referral`),
   getReferralLeaderboard: (campaignId) => request('GET', `/campaigns/${campaignId}/referrals`),
+
+  sendBulkThankYou: (campaignId, message) =>
+    request('POST', `/campaigns/${campaignId}/thank-you`, { message }),
+  sendContributionThankYou: (contributionId, message) =>
+    request('POST', `/contributions/${contributionId}/thank-you`, { message }),
 };

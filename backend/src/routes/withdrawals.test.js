@@ -140,6 +140,27 @@ test('POST /api/withdrawals/request creates pending request and logs event', asy
   assert.ok(calls.some((c) => c.includes('INSERT INTO stellar_transactions')));
 });
 
+test('POST /api/withdrawals/request returns 400 for failed campaigns', async () => {
+  const { app, cleanup } = buildApp({
+    role: 'admin',
+    queryImpl: async (text) => {
+      if (text.includes('FROM campaigns WHERE id')) {
+        return { rows: [campaignRow({ status: 'failed' })] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .send({ campaign_id: '11111111-1111-1111-1111-111111111111', destination_key: VALID_DESTINATION, amount: '10.0000000' });
+
+  cleanup();
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /This campaign has failed/);
+});
+
 test('POST /api/withdrawals/request blocks when campaign not active or funded', async () => {
   const { app, cleanup } = buildApp({
     role: 'admin',

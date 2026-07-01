@@ -1,0 +1,3 @@
+ALTER TABLE users
+ADD COLUMN totp_failed_attempts INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN totp_locked_until TIMESTAMPTZ;
