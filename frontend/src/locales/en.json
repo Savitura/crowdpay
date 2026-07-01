@@ -403,6 +403,9 @@
     "perCampaignAnalytics": "Per-campaign analytics",
     "contributorStats": "Contributor stats",
     "contributionsOverTime": "Contributions over time",
+    "contributors": "Contributors",
+    "sendThankYou": "Send Thank You",
+    "sendBulkThankYou": "Thank all contributors",
     "tabs": {
       "campaigns": "My Campaigns",
       "contributions": "My Contributions",
@@ -419,5 +422,16 @@
     ,
   "offline": {
     "banner": "You're offline — changes may not be saved"
+  },
+  "thankYou": {
+    "bulkTitle": "Thank all contributors",
+    "bulkDescription": "Send a personal message to everyone who backed this campaign.",
+    "individualTitle": "Thank a contributor",
+    "individualDescription": "Send a personal thank-you to {{name}}.",
+    "placeholder": "Write your thank-you message...",
+    "send": "Send",
+    "sendError": "Could not send thank-you message. Please try again.",
+    "charactersLeft": "characters left",
+    "sent": "Thank-you message sent!"
   }
 }

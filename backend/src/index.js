@@ -247,6 +247,8 @@ app.use("/api/milestones", require("./routes/milestones"));
 app.use("/api", require("./routes/disputes"));
 app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/emails", require("./routes/emails"));
+app.use("/api/campaigns", require("./routes/thankYou"));
+app.use("/api/contributions", require("./routes/thankYou"));
 
 app.get("/health", async (_, res) => {
   try {

@@ -10,6 +10,7 @@ import ContributorDashboard from '../components/ContributorDashboard';
 import DepositModal from '../components/DepositModal';
 import ApiKeysPanel from '../components/ApiKeysPanel';
 import { stellarExpertAccountUrl } from '../config/stellar';
+import ThankYouModal from '../components/ThankYouModal';
 import {
   LineChart,
   Line,
@@ -163,6 +164,11 @@ export default function Dashboard() {
   const [referralData, setReferralData] = useState({});
   const [referralLoading, setReferralLoading] = useState(false);
   const [exportingCampaignId, setExportingCampaignId] = useState(null);
+  const [bulkThankYouCampaignId, setBulkThankYouCampaignId] = useState(null);
+  const [individualThankYouContribution, setIndividualThankYouContribution] = useState(null);
+  const [campaignContributions, setCampaignContributions] = useState([]);
+  const [contributionsLoading, setContributionsLoading] = useState(false);
+  const [thankYouSent, setThankYouSent] = useState('');
   const [togglingVisibility, setTogglingVisibility] = useState(null);
 
   const isCreator = user?.role === 'creator' || user?.role === 'admin';
@@ -231,14 +237,24 @@ export default function Dashboard() {
     setSelectedCampaignId(id);
     setCampaignAnalytics(null);
     setCampaignContributors(null);
+    setCampaignContributions([]);
     setAnalyticsLoading(true);
-    Promise.all([api.getCampaignAnalytics(id), api.getCampaignAnalyticsContributors(id)])
-      .then(([a, c]) => {
+    setContributionsLoading(true);
+    Promise.all([
+      api.getCampaignAnalytics(id),
+      api.getCampaignAnalyticsContributors(id),
+      api.getContributions(id, { limit: 100 }),
+    ])
+      .then(([a, c, ctr]) => {
         setCampaignAnalytics(a);
         setCampaignContributors(c);
+        setCampaignContributions(ctr.contributions || []);
       })
       .catch(() => {})
-      .finally(() => setAnalyticsLoading(false));
+      .finally(() => {
+        setAnalyticsLoading(false);
+        setContributionsLoading(false);
+      });
   }, []);
 
   const handleExportContributions = useCallback(async (campaign) => {
@@ -636,6 +652,10 @@ export default function Dashboard() {
                           <button
                             type="button"
                             className="btn-secondary"
+                            onClick={() => setBulkThankYouCampaignId(campaign.id)}
+                            style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                          >
+                            {t('dashboard.sendThankYou')}
                             disabled={togglingVisibility !== null}
                             aria-busy={togglingVisibility === campaign.id}
                             onClick={() => handleToggleVisibility(campaign)}
@@ -963,6 +983,49 @@ export default function Dashboard() {
                   >
                     {t('dashboard.exportCsv')}
                   </button>
+                {/* Contributions list with individual thank-you */}
+                {campaignContributions.length > 0 && !contributionsLoading && (
+                  <div className="campaign-card" style={{ minHeight: 'auto', marginTop: '0.75rem' }}>
+                    <strong style={{ display: 'block', marginBottom: '0.6rem', fontSize: '0.9rem' }}>
+                      {t('dashboard.contributors')}
+                    </strong>
+                    <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                      {campaignContributions.map((ct) => (
+                        <div
+                          key={ct.id}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '0.4rem 0',
+                            borderBottom: '1px solid var(--color-border-lighter)',
+                            fontSize: '0.85rem',
+                          }}
+                        >
+                          <span>
+                            {ct.display_name || ct.sender_public_key?.slice(0, 8) + '…'}{' '}
+                            <span style={{ color: 'var(--color-text-hint)' }}>
+                              · {Number(ct.amount).toLocaleString()} {ct.asset} ·{' '}
+                              {new Date(ct.created_at).toLocaleDateString()}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() =>
+                              setIndividualThankYouContribution({
+                                id: ct.id,
+                                display_name: ct.display_name || 'contributor',
+                              })
+                            }
+                            style={{ fontSize: '0.78rem', padding: '0.2rem 0.6rem' }}
+                          >
+                            {t('dashboard.sendThankYou')}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </>
             )}
@@ -1098,6 +1161,57 @@ export default function Dashboard() {
               .then((d) => setBalance(d.balance))
               .catch(() => {});
           }}
+        />
+      )}
+
+      {thankYouSent && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '1.5rem',
+            right: '1.5rem',
+            background: '#22c55e',
+            color: '#fff',
+            padding: '0.75rem 1.25rem',
+            borderRadius: '8px',
+            fontSize: '0.9rem',
+            fontWeight: 600,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            zIndex: 1001,
+          }}
+        >
+          {thankYouSent}
+          <button
+            onClick={() => setThankYouSent('')}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#fff',
+              marginLeft: '0.75rem',
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: '1rem',
+            }}
+          >
+            x
+          </button>
+        </div>
+      )}
+
+      {bulkThankYouCampaignId && (
+        <ThankYouModal
+          campaignId={bulkThankYouCampaignId}
+          onClose={() => setBulkThankYouCampaignId(null)}
+          onSent={() => setThankYouSent(t('thankYou.sent'))}
+        />
+      )}
+
+      {individualThankYouContribution && (
+        <ThankYouModal
+          campaignId={selectedCampaignId}
+          contribution={individualThankYouContribution}
+          onClose={() => setIndividualThankYouContribution(null)}
+          onSent={() => setThankYouSent(t('thankYou.sent'))}
         />
       )}
     </main>
