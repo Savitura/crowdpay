@@ -147,6 +147,10 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
   const [loadingCampaigns, setLoadingCampaigns] = useState(true);
+  const [campaignsPage, setCampaignsPage] = useState(1);
+  const [campaignsTotalPages, setCampaignsTotalPages] = useState(1);
+  const [campaignsTotal, setCampaignsTotal] = useState(0);
+  const [isCampaignsPageLoading, setIsCampaignsPageLoading] = useState(false);
   const [loadingContributions, setLoadingContributions] = useState(false);
   const [error, setError] = useState('');
   const [balance, setBalance] = useState(null);
@@ -165,6 +169,7 @@ export default function Dashboard() {
   const [campaignContributions, setCampaignContributions] = useState([]);
   const [contributionsLoading, setContributionsLoading] = useState(false);
   const [thankYouSent, setThankYouSent] = useState('');
+  const [togglingVisibility, setTogglingVisibility] = useState(null);
 
   const isCreator = user?.role === 'creator' || user?.role === 'admin';
 
@@ -188,26 +193,45 @@ export default function Dashboard() {
       .finally(() => setBalanceLoading(false));
 
     if (isCreator) {
-      Promise.all([api.getMe(), api.getMyStats(), api.getMyCampaigns()])
-        .then(([me, s, c]) => {
+      Promise.all([api.getMe(), api.getMyStats()])
+        .then(([me, s]) => {
           updateUser(me);
           setStats(s);
-          setCampaigns(c);
           // pre-fetch dashboard analytics for the analytics tab
           api
             .getUserDashboardAnalytics()
             .then(setDashAnalytics)
             .catch(() => {});
         })
-        .catch((err) => setError(err.message || 'Could not load dashboard'))
-        .finally(() => {
-          setLoadingCampaigns(false);
-        });
+        .catch((err) => setError(err.message || 'Could not load dashboard'));
     } else {
       setLoadingCampaigns(false);
       setLoadingContributions(false);
     }
   }, [isCreator, user, updateUser]);
+
+  useEffect(() => {
+    if (!user || !isCreator) return;
+    setIsCampaignsPageLoading(true);
+    api
+      .getMyCampaigns({ page: campaignsPage, limit: 20 })
+      .then((res) => {
+        if (res.data && res.pagination) {
+          setCampaigns(res.data);
+          setCampaignsTotalPages(res.pagination.totalPages);
+          setCampaignsTotal(res.pagination.total);
+        } else {
+          setCampaigns(res);
+          setCampaignsTotalPages(1);
+          setCampaignsTotal(res.length || 0);
+        }
+      })
+      .catch((err) => setError(err.message || 'Could not load campaigns'))
+      .finally(() => {
+        setLoadingCampaigns(false);
+        setIsCampaignsPageLoading(false);
+      });
+  }, [isCreator, user, campaignsPage]);
 
   const loadCampaignAnalytics = useCallback((id) => {
     setSelectedCampaignId(id);
@@ -250,6 +274,24 @@ export default function Dashboard() {
       setError(err.message || 'Could not export campaign contributors');
     } finally {
       setExportingCampaignId(null);
+    }
+  }, []);
+
+  const handleToggleVisibility = useCallback(async (campaign) => {
+    setError('');
+    setTogglingVisibility(campaign.id);
+    try {
+      const newHidden = !campaign.is_hidden;
+      await api.toggleCampaignVisibility(campaign.id, newHidden);
+      setCampaigns((prev) =>
+        prev.map((c) =>
+          c.id === campaign.id ? { ...c, is_hidden: newHidden } : c
+        )
+      );
+    } catch (err) {
+      setError(err.message || 'Could not change campaign visibility');
+    } finally {
+      setTogglingVisibility(null);
     }
   }, []);
 
@@ -508,11 +550,15 @@ export default function Dashboard() {
               {campaigns.length === 0 ? (
                 <p className="alert alert--info">{t('dashboard.noCampaigns')}</p>
               ) : (
-                <div style={{ display: 'grid', gap: '0.75rem' }}>
+                <div style={{ display: 'grid', gap: '0.75rem', opacity: isCampaignsPageLoading ? 0.5 : 1, transition: 'opacity 0.2s' }}>
                   {campaigns.map((campaign) => {
                     const pct = progressPct(campaign).toFixed(1);
                     return (
-                      <div key={campaign.id} className="campaign-card">
+                      <div
+                        key={campaign.id}
+                        className="campaign-card"
+                        style={campaign.is_hidden ? { opacity: 0.6 } : undefined}
+                      >
                         <div
                           style={{
                             display: 'flex',
@@ -523,7 +569,26 @@ export default function Dashboard() {
                           }}
                         >
                           <strong>{campaign.title}</strong>
-                          <CampaignStatusBadge status={campaign.status} />
+                          <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                            {campaign.is_hidden && (
+                              <span
+                                style={{
+                                  fontSize: '0.72rem',
+                                  fontWeight: 700,
+                                  textTransform: 'uppercase',
+                                  letterSpacing: '0.04em',
+                                  padding: '0.15rem 0.5rem',
+                                  borderRadius: '99px',
+                                  background: 'var(--color-surface)',
+                                  color: 'var(--color-text-hint)',
+                                  opacity: 0.6,
+                                }}
+                              >
+                                Hidden
+                              </span>
+                            )}
+                            <CampaignStatusBadge status={campaign.status} />
+                          </div>
                         </div>
                         <div style={{ marginTop: '0.35rem', fontSize: '0.9rem' }}>
                           {Number(campaign.raised_amount).toLocaleString()} /{' '}
@@ -591,6 +656,16 @@ export default function Dashboard() {
                             style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
                           >
                             {t('dashboard.sendThankYou')}
+                            disabled={togglingVisibility !== null}
+                            aria-busy={togglingVisibility === campaign.id}
+                            onClick={() => handleToggleVisibility(campaign)}
+                            style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                          >
+                            {togglingVisibility === campaign.id
+                              ? t('common.loading')
+                              : campaign.is_hidden
+                                ? t('dashboard.showCampaign')
+                                : t('dashboard.hideCampaign')}
                           </button>
                           {campaign.status === 'funded' && (
                             <Link
@@ -607,6 +682,36 @@ export default function Dashboard() {
                     );
                   })}
                 </div>
+                {campaignsTotalPages > 1 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+                    <span style={{ fontSize: '0.9rem', color: 'var(--color-text-hint)' }}>
+                      Showing {campaigns.length} of {campaignsTotal} campaigns
+                    </span>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <button 
+                        type="button"
+                        className="btn-secondary" 
+                        disabled={campaignsPage === 1 || isCampaignsPageLoading} 
+                        onClick={() => setCampaignsPage(p => Math.max(1, p - 1))}
+                        style={{ padding: '0.3rem 0.8rem', fontSize: '0.85rem' }}
+                      >
+                        Previous
+                      </button>
+                      <span style={{ fontSize: '0.9rem' }}>
+                        Page {campaignsPage} of {campaignsTotalPages}
+                      </span>
+                      <button 
+                        type="button"
+                        className="btn-secondary" 
+                        disabled={campaignsPage === campaignsTotalPages || isCampaignsPageLoading} 
+                        onClick={() => setCampaignsPage(p => Math.min(campaignsTotalPages, p + 1))}
+                        style={{ padding: '0.3rem 0.8rem', fontSize: '0.85rem' }}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               )}
             </>
           )}

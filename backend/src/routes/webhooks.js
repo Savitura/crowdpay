@@ -1,9 +1,11 @@
-const router = require('express').Router();
+const express = require('express');
+const router = express.Router();
 const crypto = require('crypto');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const { requireAuth } = require('../middleware/auth');
 const { ALL_WEBHOOK_EVENTS, processDelivery } = require('../services/webhookDispatcher');
+const { processIncomingWebhook } = require('../services/webhookService');
 
 function isValidWebhookUrl(urlString) {
   try {
@@ -28,6 +30,53 @@ function normalizeEvents(events) {
 }
 
 // KYC webhooks are handled at POST /api/webhooks/kyc (raw body + Persona signature verification).
+
+router.post('/incoming/:id', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT secret FROM webhooks WHERE id = $1 AND revoked_at IS NULL`,
+      [req.params.id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Webhook not found' });
+    }
+
+    const webhook = rows[0];
+    const rawBody = req.body;
+    
+    // Some services might use variations like X-Signature-256 or x-signature
+    const headerSig = req.headers['x-signature-256'] || req.headers['x-signature'];
+
+    if (!headerSig) {
+      return res.status(401).json({ error: 'Missing signature header' });
+    }
+
+    const expectedSig = crypto
+      .createHmac('sha256', webhook.secret)
+      .update(rawBody)
+      .digest('hex');
+
+    if (expectedSig !== headerSig) {
+      logger.warn('Failed webhook signature verification', { webhookId: req.params.id });
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(rawBody.toString('utf8'));
+    } catch (err) {
+      return res.status(400).json({ error: 'Invalid JSON payload' });
+    }
+
+    await processIncomingWebhook(req.params.id, payload);
+
+    res.status(200).json({ success: true });
+  } catch (err) {
+    logger.error('Error processing incoming webhook', { error: err.message, webhookId: req.params.id });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 router.get('/', requireAuth, async (req, res) => {
   const { rows } = await db.query(

@@ -29,7 +29,11 @@ const {
 const {
   refreshActiveCampaignStatuses,
 } = require("./services/campaignStatusService");
+const {
+  sendWeeklyContributorDigests,
+} = require("./services/weeklyDigestService");
 const { sendAlert } = require("./services/alerting");
+const ff = require("./services/featureFlags");
 const {
   assertNoLegacyPlaintextUserWalletSecrets,
 } = require("./services/walletSecrets");
@@ -212,6 +216,8 @@ const v1OpenApiSpec = swaggerJsdoc({
 const v1Router = require("./routes/v1");
 app.use("/api/v1", v1Router);
 app.use("/v1", v1Router);
+app.use("/api/v1/dev", require("./routes/dev"));
+app.use("/v1/dev", require("./routes/dev"));
 app.get("/api/v1/docs/openapi.json", (_req, res) => res.json(v1OpenApiSpec));
 app.get("/v1/docs/openapi.json", (_req, res) => res.json(v1OpenApiSpec));
 app.use("/api/v1/docs", swaggerUi.serve, swaggerUi.setup(v1OpenApiSpec));
@@ -220,6 +226,10 @@ app.use("/v1/docs", swaggerUi.serve, swaggerUi.setup(v1OpenApiSpec));
 app.use("/api/auth", require("./routes/auth"));
 // Backwards/alternate compatibility for docs + clients expecting /api/users/register|login.
 app.use("/api/users", require("./routes/auth"));
+// Session management routes
+app.use("/api/auth", require("./routes/sessions"));
+// Referral routes
+app.use("/api/referrals", require("./routes/referrals"));
 app.use("/api/users", require("./routes/users"));
 app.use("/api/invites", require("./routes/invites"));
 app.use("/api/campaigns", require("./routes/campaignUpdates"));
@@ -319,7 +329,7 @@ app.get("/health/ledger", async (_req, res) => {
   }
 });
 
-if (process.env.SERVE_FRONTEND === "true") {
+if (ff.isEnabled("serve-frontend")) {
   const dist = path.join(__dirname, "../../frontend/dist");
   app.use(express.static(dist));
   app.get("*", (req, res, next) => {
@@ -337,7 +347,7 @@ const { startWebhookRetryPoller } = require("./services/webhookDispatcher");
 const PORT = process.env.PORT || 3001;
 
 function startCampaignStatusCron() {
-  if (process.env.ENABLE_CAMPAIGN_STATUS_CRON === "false") return;
+  if (!ff.isEnabled("campaign-status-cron")) return;
   const cron = require("node-cron");
   cron.schedule("0 * * * *", () => {
     refreshActiveCampaignStatuses().catch((err) => {
@@ -348,7 +358,7 @@ function startCampaignStatusCron() {
 }
 
 function startReconciliationCron() {
-  if (process.env.ENABLE_RECONCILIATION_CRON === "false") return;
+  if (!ff.isEnabled("reconciliation-cron")) return;
   const cron = require("node-cron");
   const { reconcileCampaignBalances } = require("./services/reconciliation");
   cron.schedule("*/15 * * * *", () => {
@@ -357,6 +367,18 @@ function startReconciliationCron() {
     });
   });
   logger.info("Reconciliation cron scheduled (every 15 minutes)");
+}
+
+function startWeeklyDigestCron() {
+  if (!ff.isEnabled("weekly-digest-cron")) return;
+  const cron = require("node-cron");
+  const schedule = process.env.WEEKLY_DIGEST_CRON || "0 18 * * 0";
+  cron.schedule(schedule, () => {
+    sendWeeklyContributorDigests().catch((err) => {
+      logger.error("Weekly digest cron failed", { error: err.message });
+    });
+  });
+  logger.info("Weekly digest cron scheduled", { schedule });
 }
 
 async function bootstrap() {
@@ -373,6 +395,7 @@ async function bootstrap() {
     startWebhookRetryPoller();
     startCampaignStatusCron();
     startReconciliationCron();
+    startWeeklyDigestCron();
   });
 }
 

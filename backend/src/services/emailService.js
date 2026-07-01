@@ -17,6 +17,7 @@ const kycRejectedEmail = require("../emails/kycRejected");
 const disputeOpenedEmail = require("../emails/disputeOpened");
 const disputeResolvedEmail = require("../emails/disputeResolved");
 const campaignUpdatePostedEmail = require("../emails/campaignUpdatePosted");
+const weeklyDigestEmail = require("../emails/weeklyDigest");
 const teamMemberInvitedEmail = require("../emails/teamMemberInvited");
 const thankYouEmail = require("../emails/thankYou");
 
@@ -262,6 +263,21 @@ async function sendCampaignUpdatePostedEmail({ to, updateId, campaignId, ...para
   await sendIdempotent({ dedupeKey: `campaign_update_posted:${updateId}:${to}`, to, subject, text, html });
 }
 
+async function sendWeeklyDigestEmail({ to, userId, windowEnd, ...params }) {
+  if (!to) return;
+  if (await isUnsubscribed(to, "weekly_digest")) return;
+
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: "weekly_digest" });
+  const { subject, text, html } = weeklyDigestEmail.build({ ...params, unsubscribeUrl });
+  await sendIdempotent({
+    dedupeKey: `weekly_digest:${userId}:${windowEnd.toISOString()}`,
+    to,
+    subject,
+    text,
+    html,
+  });
+}
+
 async function sendTeamMemberInvitedEmail({ to, memberId, ...params }) {
   if (!to) return;
   const { subject, text, html } = teamMemberInvitedEmail.build(params);
@@ -311,6 +327,7 @@ module.exports = {
   sendDisputeResolvedCreatorEmail,
   sendDisputeResolvedContributorEmail,
   sendCampaignUpdatePostedEmail,
+  sendWeeklyDigestEmail,
   sendTeamMemberInvitedEmail,
   isThankYouUnsubscribed,
   sendThankYouEmail,
