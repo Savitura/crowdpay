@@ -1,7 +1,8 @@
 const crypto = require('crypto');
+const ff = require('./featureFlags');
 
 function isKycRequiredForCampaigns() {
-  return String(process.env.KYC_REQUIRED_FOR_CAMPAIGNS || 'true').toLowerCase() !== 'false';
+  return ff.isEnabled('kyc-required-for-campaigns');
 }
 
 function appBaseUrl() {
