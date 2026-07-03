@@ -352,7 +352,7 @@ router.post('/prepare', requireAuth, contributionValidation, validateRequest, as
       campaign_id,
       sender_public_key,
       unsigned_xdr: unsignedXdr,
-      flow_metadata: withReferralMetadata(intent.flowMetadata, campaign_id, req),
+      flow_metadata: { ...withReferralMetadata(intent.flowMetadata, campaign_id, req), ip_address: req.ip },
       conversion_quote: intent.conversionQuote,
     });
 
@@ -500,6 +500,7 @@ router.post('/', contributionPostLimiter, requireAuth, contributionValidation, v
       sendAsset: send_asset,
       displayName: display_name,
       referralCode: getReferralCodeFromRequest(campaign_id, req),
+      ipAddress: req.ip,
     });
     res.status(202).json({
       tx_hash: result.txHash,

@@ -5,6 +5,7 @@ const { getStellarExpertTxUrl } = require("../utils/stellarExplorer");
 const { buildUnsubscribeUrl } = require("../utils/unsubscribeToken");
 
 const welcomeEmail = require("../emails/welcome");
+const campaignFraudFlaggedEmail = require("../emails/campaignFraudFlagged");
 const contributionReceiptEmail = require("../emails/contributionReceipt");
 const campaignFundedEmail = require("../emails/campaignFunded");
 const campaignFailedEmail = require("../emails/campaignFailed");
@@ -303,6 +304,12 @@ async function sendThankYouEmail({ to, messageId, campaignId, ...params }) {
   await sendIdempotent({ dedupeKey: `thank_you:${messageId}:${to}`, to, subject, text, html });
 }
 
+async function sendCampaignFraudFlaggedEmail({ to, campaignId, ...params }) {
+  if (!to) return;
+  const { subject, text, html } = campaignFraudFlaggedEmail.build({ campaignId, ...params });
+  await sendIdempotent({ dedupeKey: `campaign_fraud_flagged:${campaignId}:${to}`, to, subject, text, html });
+}
+
 module.exports = {
   sendEmail,
   sendIdempotent,
@@ -331,4 +338,5 @@ module.exports = {
   sendTeamMemberInvitedEmail,
   isThankYouUnsubscribed,
   sendThankYouEmail,
+  sendCampaignFraudFlaggedEmail,
 };

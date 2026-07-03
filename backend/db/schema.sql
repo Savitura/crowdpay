@@ -39,7 +39,7 @@ CREATE TABLE campaigns (
   asset_type          TEXT NOT NULL CHECK (asset_type IN ('XLM', 'USDC')),
   wallet_public_key   TEXT UNIQUE NOT NULL,
   status              TEXT NOT NULL DEFAULT 'active'
-                        CHECK (status IN ('active', 'funded', 'in_progress', 'completed', 'closed', 'withdrawn', 'failed')),
+                        CHECK (status IN ('active', 'funded', 'in_progress', 'completed', 'closed', 'withdrawn', 'failed', 'suspended')),
   deadline            DATE,
   show_backer_amounts BOOLEAN DEFAULT TRUE,
   category            TEXT CHECK (category IN (
@@ -54,6 +54,9 @@ CREATE TABLE campaigns (
   featured_note       TEXT,
   content_fingerprint TEXT,
   is_flagged_duplicate BOOLEAN DEFAULT FALSE,
+  is_flagged_fraud    BOOLEAN DEFAULT FALSE,
+  fraud_score         INTEGER DEFAULT 0,
+  fraud_signals       JSONB DEFAULT '{}'::jsonb,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE TABLE IF NOT EXISTS campaign_updates (
@@ -88,6 +91,8 @@ CREATE TABLE contributions (
   tx_hash             TEXT UNIQUE NOT NULL,  -- deduplicate by Stellar transaction hash
   display_name        TEXT,
   refunded            BOOLEAN NOT NULL DEFAULT FALSE,
+  platform_fee_amount NUMERIC(20, 7),
+  ip_address          TEXT,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 

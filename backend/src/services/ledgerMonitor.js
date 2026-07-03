@@ -237,13 +237,14 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
     const anchorMetadata = submittedRows[0]?.metadata?.anchor || null;
     const displayName = submittedRows[0]?.metadata?.display_name || null;
     const referralCode = submittedRows[0]?.metadata?.referral_code || null;
+    const ipAddress = submittedRows[0]?.metadata?.ip_address || null;
 
     const { rows: inserted } = await client.query(
       `INSERT INTO contributions
          (campaign_id, sender_public_key, amount, asset, anchor_id, anchor_transaction_id,
           anchor_asset, anchor_amount, payment_type, source_amount, source_asset,
-          conversion_rate, path, tx_hash, display_name)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15)
+          conversion_rate, path, tx_hash, platform_fee_amount, display_name, ip_address)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17)
        RETURNING id`,
       [
         campaignId,
@@ -262,6 +263,7 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
         txHash,
         platformFeeAmount,
         displayName,
+        ipAddress,
       ],
     );
 
@@ -384,6 +386,15 @@ async function handlePayment(campaignId, walletPublicKey, payment) {
 
   if (postCommitHooks) {
     setImmediate(() => {
+      // Evaluate fraud signals on every new contribution
+      const { evaluateCampaign } = require('./fraudService');
+      evaluateCampaign(postCommitHooks.campaignId).catch((e) =>
+        logger.error("[fraud] Assessment failed", {
+          campaign_id: postCommitHooks.campaignId,
+          error: e.message,
+        }),
+      );
+
       // Bust public caches — contribution changes raised_amount and contributor_count
       cache.invalidate(`campaigns:id:${postCommitHooks.campaignId}`);
       cache.invalidatePrefix('campaigns:list:');

@@ -197,6 +197,97 @@ router.get('/campaigns', async (req, res) => {
 });
 
 /**
+ * GET /api/admin/fraud/flagged
+ * List fraud-flagged campaigns
+ */
+router.get('/fraud/flagged', async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT c.id, c.title, c.status, c.raised_amount, c.target_amount, c.asset_type,
+              c.is_flagged_fraud, c.fraud_score, c.fraud_signals, c.created_at,
+              u.name as creator_name, u.email as creator_email
+       FROM campaigns c
+       JOIN users u ON c.creator_id = u.id
+       WHERE c.is_flagged_fraud = TRUE AND c.deleted_at IS NULL
+       ORDER BY c.fraud_score DESC`
+    );
+    res.json(rows);
+  } catch (err) {
+    logger.error('Error fetching flagged campaigns', { error: err.message });
+    res.status(500).json({ error: 'Failed to fetch flagged campaigns' });
+  }
+});
+
+/**
+ * GET /api/admin/fraud/stats
+ * Get fraud metrics (e.g. false positive rate)
+ */
+router.get('/fraud/stats', async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT 
+         (SELECT COUNT(*)::int FROM admin_actions WHERE action_type = 'fraud_approve') AS false_positives,
+         (SELECT COUNT(*)::int FROM admin_actions WHERE action_type = 'suspend' AND (details->>'was_flagged_fraud')::boolean = TRUE) AS true_positives`
+    );
+    const fp = rows[0]?.false_positives || 0;
+    const tp = rows[0]?.true_positives || 0;
+    const total = fp + tp;
+    const fpr = total > 0 ? fp / total : 0;
+    
+    res.json({
+      false_positives: fp,
+      true_positives: tp,
+      false_positive_rate: fpr,
+    });
+  } catch (err) {
+    logger.error('Error fetching fraud stats', { error: err.message });
+    res.status(500).json({ error: 'Failed to fetch fraud statistics' });
+  }
+});
+
+/**
+ * PATCH /api/admin/campaigns/:id/fraud-approve
+ * Approve fraud flagged campaign (clears the flag, restores to active if suspended)
+ */
+router.patch('/campaigns/:id/fraud-approve', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { rows: campaignRows } = await db.query(
+      'SELECT id, status, is_flagged_fraud FROM campaigns WHERE id = $1 AND deleted_at IS NULL',
+      [id]
+    );
+
+    if (!campaignRows.length) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const campaign = campaignRows[0];
+
+    const { rows: updated } = await db.query(
+      `UPDATE campaigns 
+       SET is_flagged_fraud = FALSE, 
+           status = CASE WHEN status = 'suspended' THEN 'active' ELSE status END 
+       WHERE id = $1 
+       RETURNING id, title, status, is_flagged_fraud`,
+      [id]
+    );
+
+    await logAdminAction(req.user.userId, 'fraud_approve', 'campaign', id, {
+      previous_status: campaign.status,
+      was_flagged_fraud: campaign.is_flagged_fraud,
+    });
+
+    cache.invalidate(`campaigns:id:${id}`);
+    cache.invalidatePrefix('campaigns:list:');
+    res.json({ message: 'Campaign fraud flag cleared', campaign: updated[0] });
+  } catch (err) {
+    logger.error('Error approving fraud flagged campaign', { error: err.message, campaignId: req.params.id });
+    res.status(500).json({ error: 'Failed to approve campaign' });
+  }
+});
+
+/**
  * PATCH /api/admin/campaigns/:id/unflag
  * Remove duplicate flag from a campaign
  */
@@ -239,7 +330,7 @@ router.patch('/campaigns/:id/suspend', async (req, res) => {
     const { reason } = req.body;
 
     const { rows: campaignRows } = await db.query(
-      'SELECT id, status FROM campaigns WHERE id = $1 AND deleted_at IS NULL',
+      'SELECT id, status, is_flagged_fraud FROM campaigns WHERE id = $1 AND deleted_at IS NULL',
       [id]
     );
 
@@ -256,7 +347,8 @@ router.patch('/campaigns/:id/suspend', async (req, res) => {
 
     await logAdminAction(req.user.userId, 'suspend', 'campaign', id, { 
       reason: reason || null,
-      previous_status: campaign.status 
+      previous_status: campaign.status,
+      was_flagged_fraud: Boolean(campaign.is_flagged_fraud)
     });
 
     logger.info('Campaign suspended', { campaignId: id, adminId: req.user.userId, reason });

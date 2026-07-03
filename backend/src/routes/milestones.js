@@ -22,6 +22,7 @@ const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhook
 const { invokeContract, nativeToScVal, releaseMilestone } = require('../services/sorobanService');
 const { uploadMilestoneEvidence } = require('../services/storage');
 const { createNotification } = require('../services/notifications');
+const { evaluateCampaign } = require('../services/fraudService');
 const {
   sendMilestoneReleasedCreatorEmail,
   sendMilestoneReleasedContributorEmail,
@@ -376,6 +377,8 @@ router.post('/:id/submit', requireAuth, async (req, res) => {
       .catch((err) => logger.error('Milestone evidence admin notify failed', { error: err.message }));
   });
 
+  evaluateCampaign(milestone.campaign_id).catch(err => logger.error('Fraud evaluate failed in milestone submit', { error: err.message }));
+
   res.json(updatedMilestone);
 });
 
@@ -491,6 +494,8 @@ router.post('/:id/reject', requireAuth, async (req, res) => {
       logger.error('Soroban reject_milestone failed', { error: err.message, milestone_id: req.params.id });
     }
   }
+
+  evaluateCampaign(rows[0].campaign_id).catch(err => logger.error('Fraud evaluate failed in milestone reject', { error: err.message }));
 
   res.json(rows[0]);
 });
@@ -766,6 +771,8 @@ const approveMilestoneReleaseHandler = async (req, res) => {
         )
       ).catch((e) => logger.error('Milestone contributor email failed', { error: e.message }));
     });
+
+    evaluateCampaign(milestone.campaign_id).catch(err => logger.error('Fraud evaluate failed in milestone approve', { error: err.message }));
 
     res.json({
       milestone: updatedMilestones[0],
