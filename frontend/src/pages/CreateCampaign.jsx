@@ -1138,7 +1138,7 @@ export default function CreateCampaign() {
       </form>
 
       <p style={{ marginTop: '1.5rem', fontSize: '0.85rem', color: 'var(--color-text-hint)' }}>
-        <Link to="/" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
+        <Link to="/discover" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
           {t('createCampaign.backToCampaigns')}
         </Link>
       </p>

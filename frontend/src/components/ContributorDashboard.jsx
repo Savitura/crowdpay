@@ -265,7 +265,7 @@ export default function ContributorDashboard() {
     return (
       <p className="alert alert--info">
         You have not backed any campaigns yet.{' '}
-        <Link to="/" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
+        <Link to="/discover" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
           Browse campaigns
         </Link>
         .

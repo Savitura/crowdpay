@@ -5,6 +5,14 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import NotificationDropdown from './NotificationDropdown';
+import Logo from './Logo';
+
+const INFO_LINKS = [
+  { to: '/how-it-works', labelKey: 'nav.howItWorks', fallback: 'How it works' },
+  { to: '/pricing', labelKey: 'nav.pricing', fallback: 'Pricing' },
+  { to: '/about', labelKey: 'nav.about', fallback: 'About' },
+  { to: '/resources', labelKey: 'nav.resources', fallback: 'Resources' },
+];
 
 export default function Navbar() {
   const { user, logout } = useAuth();
@@ -15,6 +23,7 @@ export default function Navbar() {
 
   const [notifications, setNotifications] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const bellRef = useRef(null);
 
   const unread = notifications.filter((n) => !n.read_at).length;
@@ -66,26 +75,14 @@ export default function Navbar() {
     }
   }
 
-  async function handleMarkRead(id) {
-    try {
-      await api.markNotificationRead(id);
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n))
-      );
-    } catch (_err) {}
-  }
-
-  async function handleMarkAllRead() {
-    try {
-      await api.markAllNotificationsRead();
-      setNotifications((prev) => prev.map((n) => ({ ...n, read_at: new Date().toISOString() })));
-    } catch (_err) {}
-  }
-
   async function handleLogout() {
     await logout();
     navigate('/');
   }
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [pathname]);
 
   return (
     <nav style={styles.nav} data-no-print>
@@ -96,9 +93,35 @@ export default function Navbar() {
           aria-label={t('nav.homeAria')}
           aria-current={pathname === '/' ? 'page' : undefined}
         >
-          CrowdPay
+          <Logo size={26} />
         </Link>
-        <div className="nav-links">
+        <button
+          type="button"
+          className="nav-hamburger"
+          onClick={() => setMobileMenuOpen((v) => !v)}
+          aria-label={t('nav.toggleMenu', 'Toggle menu')}
+          aria-expanded={mobileMenuOpen}
+        >
+          ☰
+        </button>
+        <div className={`nav-links${mobileMenuOpen ? ' nav-links--open' : ''}`}>
+          <Link
+            to="/discover"
+            style={styles.link}
+            aria-current={pathname === '/discover' ? 'page' : undefined}
+          >
+            {t('nav.discover', 'Discover')}
+          </Link>
+          {INFO_LINKS.map((item) => (
+            <Link
+              key={item.to}
+              to={item.to}
+              style={styles.link}
+              aria-current={pathname === item.to ? 'page' : undefined}
+            >
+              {t(item.labelKey, item.fallback)}
+            </Link>
+          ))}
           <select
             value={language}
             onChange={(e) => i18n.changeLanguage(e.target.value)}
@@ -187,6 +210,7 @@ const styles = {
     whiteSpace: 'nowrap',
   },
   languageSelect: {
+    width: 'auto',
     background: 'transparent',
     border: '1px solid var(--color-border)',
     borderRadius: '8px',

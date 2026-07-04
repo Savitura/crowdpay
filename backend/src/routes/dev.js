@@ -91,18 +91,18 @@ router.get('/email-preview', (req, res) => {
 router.get('/email-preview/:templateName', (req, res) => {
   const { templateName } = req.params;
   const emailsDir = path.join(__dirname, '../emails');
-  const templatePath = path.join(emailsDir, \`\${templateName}.js\`);
+  const templatePath = path.join(emailsDir, `${templateName}.js`);
 
   if (!fs.existsSync(templatePath)) {
-    return res.status(404).send(\`Template "\${templateName}" not found.\`);
+    return res.status(404).send(`Template "${templateName}" not found.`);
   }
 
   try {
     const templateModule = require(templatePath);
     const method = req.query._method || 'build';
-    
+
     if (typeof templateModule[method] !== 'function') {
-      return res.status(400).send(\`Method "\${method}" not found on template "\${templateName}".\`);
+      return res.status(400).send(`Method "${method}" not found on template "${templateName}".`);
     }
 
     // Pass all query params (except _method and queryString) to the build method
@@ -138,7 +138,7 @@ router.get('/email-preview/:templateName', (req, res) => {
       res.status(500).send('Template did not return an html property.');
     }
   } catch (err) {
-    res.status(500).send(\`<pre>Error rendering template: \${err.stack}</pre>\`);
+    res.status(500).send(`<pre>Error rendering template: ${err.stack}</pre>`);
   }
 });
 

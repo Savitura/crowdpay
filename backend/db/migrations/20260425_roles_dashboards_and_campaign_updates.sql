@@ -2,9 +2,15 @@ ALTER TABLE users
   ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'contributor'
   CHECK (role IN ('contributor', 'creator', 'admin'));
 
-UPDATE users
-SET role = 'admin'
-WHERE is_admin = TRUE;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users' AND column_name = 'is_admin'
+  ) THEN
+    UPDATE users SET role = 'admin' WHERE is_admin = TRUE;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS campaign_updates (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

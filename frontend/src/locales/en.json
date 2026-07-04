@@ -24,6 +24,11 @@
     "yes": "Yes"
   },
   "nav": {
+    "discover": "Discover",
+    "howItWorks": "How it works",
+    "pricing": "Pricing",
+    "about": "About",
+    "resources": "Resources",
     "startCampaign": "Start Campaign",
     "login": "Log in",
     "signup": "Sign up",
@@ -31,9 +36,24 @@
     "selectLanguage": "Select language",
     "homeAria": "CrowdPay home"
   },
+  "landing": {
+    "hero_title": "Raise money from anyone, anywhere.",
+    "hero_subtitle": "Contributions arrive in seconds, from any country, with nothing lost to conversion or waiting on a bank.",
+    "campaigns_title": "Campaigns raising right now",
+    "trust_title": "Built on trust, not promises",
+    "trust_verified": "Verified creators",
+    "trust_verified_body": "Every campaign owner completes identity verification before they can withdraw funds.",
+    "trust_transparent": "Transparent progress",
+    "trust_transparent_body": "Funding totals, milestones, and updates are visible on every campaign.",
+    "trust_global": "Money that moves globally",
+    "trust_global_body": "Contributions reach creators in seconds, from anywhere in the world.",
+    "cta_title": "Ready to back something that matters?",
+    "cta_explore": "Explore campaigns",
+    "cta_start": "Start a campaign"
+  },
   "home": {
-    "hero_title": "Fund anything, from anywhere.",
-    "hero_subtitle": "CrowdPay runs on Stellar: fast settlement, optional cross-asset conversion, and a clear path from pledge to on-chain receipt.",
+    "hero_title": "Explore campaigns",
+    "hero_subtitle": "Find a cause to support, or check in on the ones you already back.",
     "startCampaign": "Start a campaign",
     "createAccount": "Create account",
     "browseHint": "or browse below and tap a card to contribute.",
@@ -105,7 +125,9 @@
     "noAccount": "No account?",
     "signUp": "Sign up",
     "required": "Email and password are required.",
-    "invalidEmail": "Enter a valid email address."
+    "invalidEmail": "Enter a valid email address.",
+    "twoFactorRequired": "2FA code is required",
+    "twoFactorPlaceholder": "6-digit 2FA code or backup code"
   },
   "register": {
     "title": "Create account",
@@ -360,6 +382,11 @@
     "totalRaised": "Total raised",
     "active": "Active",
     "funded": "Funded",
+    "hidden": "Hidden",
+    "showingCampaignsOf": "Showing {{count}} of {{total}} campaigns",
+    "previous": "Previous",
+    "next": "Next",
+    "pageOf": "Page {{page}} of {{totalPages}}",
     "createNewCampaign": "+ Create new campaign",
     "createCampaign": "Create a campaign",
     "noCampaigns": "No campaigns yet. Create your first campaign to get started.",

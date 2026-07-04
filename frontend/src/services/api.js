@@ -325,6 +325,7 @@ export const api = {
 
   getMyCampaigns: (options = {}) => request('GET', '/campaigns/mine', null, { query: options }),
   getFeaturedCampaigns: () => request('GET', '/campaigns/featured'),
+  getCampaignCategories: () => request('GET', '/campaigns/categories'),
   getCampaigns: (options = {}) => request('GET', '/campaigns', null, { query: options }),
   getCampaign: (id, options = {}) => request('GET', `/campaigns/${id}`, null, { query: options }),
   getCampaignAnalytics: (id) => request('GET', `/campaigns/${id}/analytics`),

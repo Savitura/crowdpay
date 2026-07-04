@@ -1551,8 +1551,6 @@ router.patch('/:id/visibility', requireAuth, asyncHandler(async (req, res) => {
   res.json({ is_hidden: updatedRows[0].is_hidden });
 }));
 
-const { getCampaignAnalytics, getCampaignContributors } = require('../services/analyticsService');
-
 // GET /campaigns/:id/analytics — full contribution analytics
 router.get('/:id/analytics', asyncHandler(async (req, res) => {
   const data = await getCampaignAnalytics(req.params.id);

@@ -11,6 +11,7 @@ import {
   dismissContributorOnboarding,
   consumeJustRegistered,
 } from '../lib/onboarding';
+import { getRecentlyViewedIds } from '../lib/recentlyViewed';
 
 const STATUS_OPTIONS = ['', 'active', 'funded', 'closed', 'failed'];
 const ASSET_OPTIONS = ['', 'USDC', 'XLM'];
@@ -45,6 +46,8 @@ export default function Home() {
   const [sort, setSort] = useState(() => searchParams.get('sort') || 'newest');
   const [categoryCounts, setCategoryCounts] = useState([]);
   const [featured, setFeatured] = useState([]);
+  const [recentlyViewed, setRecentlyViewed] = useState([]);
+  const [recommended, setRecommended] = useState([]);
 
   const search = searchParams.get('search') || '';
   const status = searchParams.get('status') || '';
@@ -87,6 +90,29 @@ export default function Home() {
       .getFeaturedCampaigns()
       .then(setFeatured)
       .catch(() => {});
+
+    const viewedIds = getRecentlyViewedIds(6);
+    if (viewedIds.length === 0) return;
+    Promise.all(viewedIds.map((id) => api.getCampaign(id).catch(() => null))).then((results) => {
+      const viewedCampaigns = results.filter(Boolean);
+      setRecentlyViewed(viewedCampaigns);
+
+      const categoryTally = {};
+      viewedCampaigns.forEach((c) => {
+        if (!c.category) return;
+        categoryTally[c.category] = (categoryTally[c.category] || 0) + 1;
+      });
+      const topCategory = Object.entries(categoryTally).sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (!topCategory) return;
+
+      api
+        .getCampaigns({ category: topCategory, sort: 'trending', limit: 8 })
+        .then((data) => {
+          const viewedIdSet = new Set(viewedIds);
+          setRecommended((data.campaigns || []).filter((c) => !viewedIdSet.has(c.id)).slice(0, 6));
+        })
+        .catch(() => {});
+    });
   }, []);
 
   useEffect(() => {
@@ -265,6 +291,38 @@ export default function Home() {
         </section>
       )}
 
+      {recommended.length > 0 && (
+        <section style={{ marginBottom: '2.5rem' }}>
+          <h2 style={styles.sectionTitle}>Recommended for you</h2>
+          <div
+            style={{
+              ...styles.grid,
+              gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))',
+            }}
+          >
+            {recommended.map((c) => (
+              <CampaignCard key={c.id} campaign={c} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {recentlyViewed.length > 0 && (
+        <section style={{ marginBottom: '2.5rem' }}>
+          <h2 style={styles.sectionTitle}>Recently viewed</h2>
+          <div
+            style={{
+              ...styles.grid,
+              gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))',
+            }}
+          >
+            {recentlyViewed.map((c) => (
+              <CampaignCard key={c.id} campaign={c} />
+            ))}
+          </div>
+        </section>
+      )}
+
       <div style={styles.filterBar}>
         <label style={styles.filterItem}>
           {t('home.searchLabel')}
@@ -374,7 +432,6 @@ export default function Home() {
         </div>
       )}
 
-      <h2 style={styles.sectionTitle}>Active campaigns</h2>
       <h2 style={styles.sectionTitle}>{t('home.activeCampaigns')}</h2>
       <div style={styles.sortBar}>
         <button

@@ -18,6 +18,7 @@ import CampaignQRCode from '../components/CampaignQRCode';
 import { getNetwork, signTransaction } from '@stellar/freighter-api';
 import { isConnected, getPublicKey } from '@stellar/freighter-api';
 import BackerInsightsCard from '../components/BackerInsightsCard';
+import { addRecentlyViewed } from '../lib/recentlyViewed';
 
 
 function escapeHtml(text) {
@@ -233,6 +234,7 @@ export default function Campaign() {
       .getCampaign(id, campaignOpts)
       .then((data) => {
         setCampaign(data);
+        addRecentlyViewed(data.id);
         const role = data.user_role;
         if (role === 'owner' || role === 'manager') {
           setActiveTab('team');
@@ -715,8 +717,8 @@ export default function Campaign() {
         <p className="alert alert--error" role="alert">
           {loadError}
         </p>
-        <Link to="/" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
-          ← Back home
+        <Link to="/discover" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
+          ← Back to campaigns
         </Link>
       </main>
     );
@@ -2111,6 +2113,12 @@ export default function Campaign() {
                 ))}
               </div>
             </div>
+          )}
+          </>
+          )}
+
+          {analyticsTab === 'backers' && (
+            <p style={{ color: 'var(--color-text-muted)' }}>Backer insights coming soon.</p>
           )}
         </div>
       )}
