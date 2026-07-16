@@ -86,6 +86,7 @@ async function submitCustodialContribution({
   anchorMetadata,
   displayName,
   referralCode,
+  client,
 }) {
   const intent =
     intentOverride ||
@@ -156,7 +157,7 @@ async function submitCustodialContribution({
       : {}),
   };
 
-  const stellarTransactionId = await insertContributionSubmitted(null, {
+  const stellarTransactionId = await insertContributionSubmitted(client, {
     txHash,
     campaignId,
     userId,
