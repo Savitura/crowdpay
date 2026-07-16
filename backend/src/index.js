@@ -32,6 +32,7 @@ const {
 const {
   sendWeeklyContributorDigests,
 } = require("./services/weeklyDigestService");
+const { flushQuietHours } = require("./services/notifications");
 const { sendAlert } = require("./services/alerting");
 const ff = require("./services/featureFlags");
 const {
@@ -381,6 +382,18 @@ function startWeeklyDigestCron() {
   logger.info("Weekly digest cron scheduled", { schedule });
 }
 
+function startNotificationDigestCron() {
+  if (!ff.isEnabled("notification-quiet-hours-cron")) return;
+  const cron = require("node-cron");
+  const schedule = process.env.NOTIFICATION_DIGEST_CRON || "0 * * * *";
+  cron.schedule(schedule, () => {
+    flushQuietHours().catch((err) => {
+      logger.error("Notification digest cron failed", { error: err.message });
+    });
+  });
+  logger.info("Notification digest cron scheduled", { schedule });
+}
+
 async function bootstrap() {
   if (process.env.NODE_ENV === "production") {
     await assertNoLegacyPlaintextUserWalletSecrets();
@@ -396,6 +409,7 @@ async function bootstrap() {
     startCampaignStatusCron();
     startReconciliationCron();
     startWeeklyDigestCron();
+    startNotificationDigestCron();
   });
 }
 

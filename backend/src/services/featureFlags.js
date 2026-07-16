@@ -95,6 +95,14 @@ const FLAGS = {
     allowedRoles: null,
     allowedUserIds: null,
   },
+  'notification-quiet-hours-cron': {
+    description: 'Enable the hourly cron that flushes quiet-hours notification digests',
+    envVar: 'ENABLE_NOTIFICATION_QUIET_HOURS_CRON',
+    defaultValue: true,
+    rolloutPct: null,
+    allowedRoles: null,
+    allowedUserIds: null,
+  },
 };
 
 // ─── Adapter Store ───────────────────────────────────────────────────
