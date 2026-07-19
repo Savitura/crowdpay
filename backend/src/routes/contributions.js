@@ -476,20 +476,31 @@ router.post('/', contributionPostLimiter, requireAuth, contributionValidation, v
     });
   }
 
-  if (campaign.max_per_user) {
-    const { rows: userCapRows } = await db.query(
-      'SELECT COALESCE(SUM(amount), 0) AS total FROM contributions WHERE campaign_id = $1 AND sender_public_key = $2',
-      [campaign_id, contributorPublicKey]
-    );
-    const alreadyContributed = parseFloat(userCapRows[0].total);
-    if (alreadyContributed + parseFloat(amount) > parseFloat(campaign.max_per_user)) {
-      return res.status(400).json({
-        error: `You have already contributed ${alreadyContributed} ${campaign.asset_type}. The per-contributor limit is ${campaign.max_per_user}.`,
-      });
-    }
-  }
-
+  const client = await db.connect();
+  let transactionStarted = false;
   try {
+    await client.query('BEGIN');
+    transactionStarted = true;
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+      [String(campaign_id), String(contributorPublicKey)]
+    );
+
+    if (campaign.max_per_user) {
+      const { rows: userCapRows } = await client.query(
+        'SELECT COALESCE(SUM(amount), 0) AS total FROM contributions WHERE campaign_id = $1 AND sender_public_key = $2 AND refunded = FALSE',
+        [campaign_id, contributorPublicKey]
+      );
+      const alreadyContributed = parseFloat(userCapRows[0].total);
+      if (alreadyContributed + parseFloat(amount) > parseFloat(campaign.max_per_user)) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        return res.status(400).json({
+          error: `You have already contributed ${alreadyContributed} ${campaign.asset_type}. The per-contributor limit is ${campaign.max_per_user}.`,
+        });
+      }
+    }
+
     const result = await submitCustodialContribution({
       campaign,
       campaignId: campaign_id,
@@ -500,7 +511,10 @@ router.post('/', contributionPostLimiter, requireAuth, contributionValidation, v
       sendAsset: send_asset,
       displayName: display_name,
       referralCode: getReferralCodeFromRequest(campaign_id, req),
+      client,
     });
+    await client.query('COMMIT');
+    transactionStarted = false;
     res.status(202).json({
       tx_hash: result.txHash,
       stellar_transaction_id: result.stellarTransactionId,
@@ -511,6 +525,14 @@ router.post('/', contributionPostLimiter, requireAuth, contributionValidation, v
         : {}),
     });
   } catch (err) {
+    if (transactionStarted) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackErr) {
+        logger.warn('Contribution transaction rollback failed', { error: rollbackErr.message });
+      }
+      transactionStarted = false;
+    }
     if (err.statusCode === 422) {
       return res.status(422).json({ error: err.message });
     }
@@ -536,6 +558,10 @@ router.post('/', contributionPostLimiter, requireAuth, contributionValidation, v
     return res.status(503).json({
       error: "Wallet setup is still completing; please retry in a few seconds.",
     });
+  } finally {
+    if (client?.release) {
+      await client.release();
+    }
   }
 
   if (Number(campaign.raised_amount) + Number(amount) >= Number(campaign.target_amount)) {

@@ -41,7 +41,7 @@ function buildUnsignedPaymentXdr({ senderPublicKey, destinationPublicKey, amount
     .toXDR();
 }
 
-function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
+function buildApp({ queryImpl, stellarImpl, stellarTxImpl, connectImpl }) {
   const stellarStub = {
     buildUnsignedContributionPayment: async () => 'unsigned-xdr',
     buildUnsignedContributionPathPayment: async () => 'unsigned-xdr',
@@ -191,12 +191,20 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl }) {
     },
   };
 
+  const databaseStub = {
+    query: queryImpl,
+    connect: connectImpl || (async () => ({
+      query: queryImpl,
+      release: async () => {},
+    })),
+  };
+
   const router = proxyquire('./contributions', {
     '../config/stellar': {
       networkPassphrase: TESTNET_PASSPHRASE,
       isTestnet: true,
     },
-    '../config/database': { query: queryImpl },
+    '../config/database': databaseStub,
     '../services/stellarService': stellarStub,
     '../services/stellarTransactionService': stellarTxStub,
     '../services/walletSecrets': {
@@ -888,6 +896,45 @@ test('POST /api/contributions validates cumulative max_per_user cap', async () =
 
   assert.equal(response.status, 400);
   assert.equal(response.body.error, 'You have already contributed 80 USDC. The per-contributor limit is 100.0000000.');
+});
+
+test('POST /api/contributions uses an advisory lock around the per-user cap check', async () => {
+  const lockQueries = [];
+  const app = buildApp({
+    queryImpl: async (text) => {
+      if (text.includes('FROM campaigns')) {
+        return {
+          rows: [{
+            id: '11111111-1111-1111-1111-111111111111',
+            status: 'active',
+            asset_type: 'USDC',
+            wallet_public_key: VALID_G,
+            max_per_user: '100.0000000',
+          }],
+        };
+      }
+      if (text.includes('FROM users')) {
+        return { rows: [{ wallet_secret_encrypted: 'SSECRET', wallet_public_key: 'GSENDER' }] };
+      }
+      if (text.includes('COALESCE(SUM(amount)')) {
+        return { rows: [{ total: '20.0000000' }] };
+      }
+      if (text.includes('pg_advisory_xact_lock')) {
+        lockQueries.push(text);
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/contributions')
+    .set('Authorization', 'Bearer token')
+    .send({ campaign_id: '11111111-1111-1111-1111-111111111111', amount: '10.0000000', send_asset: 'USDC' });
+
+  assert.equal(response.status, 202);
+  assert.equal(lockQueries.length, 1);
+  assert.ok(lockQueries[0].includes('pg_advisory_xact_lock'));
 });
 
 function buildRefundApp({ contributionRow, refundImpl }) {
