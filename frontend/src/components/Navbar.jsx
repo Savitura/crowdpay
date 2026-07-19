@@ -3,15 +3,17 @@ import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { api } from '../services/api';
 import NotificationDropdown from './NotificationDropdown';
 import Logo from './Logo';
 
-const INFO_LINKS = [
-  { to: '/how-it-works', labelKey: 'nav.howItWorks', fallback: 'How it works' },
+const NAV_LINKS = [
+  { to: '/discover', labelKey: 'nav.discover', fallback: 'Discover' },
+  { to: '/discover', labelKey: 'nav.supportSpaces', fallback: 'Support Spaces' },
+  { to: '/how-it-works', labelKey: 'nav.howItWorks', fallback: 'How It Works' },
   { to: '/pricing', labelKey: 'nav.pricing', fallback: 'Pricing' },
-  { to: '/about', labelKey: 'nav.about', fallback: 'About' },
-  { to: '/resources', labelKey: 'nav.resources', fallback: 'Resources' },
+  { to: '/about', labelKey: 'nav.about', fallback: 'About Us' },
 ];
 
 export default function Navbar() {
@@ -19,6 +21,7 @@ export default function Navbar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { t, i18n } = useTranslation();
+  const { dark, toggleTheme } = useTheme();
   const language = (i18n.resolvedLanguage || i18n.language || 'en').split('-')[0];
 
   const [notifications, setNotifications] = useState([]);
@@ -43,7 +46,6 @@ export default function Navbar() {
     return () => clearInterval(id);
   }, [user]);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     if (!showDropdown) return;
     function handleOutside(e) {
@@ -93,7 +95,7 @@ export default function Navbar() {
           aria-label={t('nav.homeAria')}
           aria-current={pathname === '/' ? 'page' : undefined}
         >
-          <Logo size={26} />
+          <Logo size={32} />
         </Link>
         <button
           type="button"
@@ -102,89 +104,119 @@ export default function Navbar() {
           aria-label={t('nav.toggleMenu', 'Toggle menu')}
           aria-expanded={mobileMenuOpen}
         >
-          ☰
+          {mobileMenuOpen ? '✕' : '☰'}
         </button>
         <div className={`nav-links${mobileMenuOpen ? ' nav-links--open' : ''}`}>
-          <Link
-            to="/discover"
-            style={styles.link}
-            aria-current={pathname === '/discover' ? 'page' : undefined}
-          >
-            {t('nav.discover', 'Discover')}
-          </Link>
-          {INFO_LINKS.map((item) => (
-            <Link
-              key={item.to}
-              to={item.to}
-              style={styles.link}
-              aria-current={pathname === item.to ? 'page' : undefined}
+          <div style={styles.centerLinks}>
+            {NAV_LINKS.map((item) => (
+              <Link
+                key={item.labelKey}
+                to={item.to}
+                style={styles.link}
+                aria-current={pathname === item.to ? 'page' : undefined}
+              >
+                {t(item.labelKey, item.fallback)}
+              </Link>
+            ))}
+          </div>
+
+          <div className="nav-search">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-hint)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input type="search" placeholder={t('nav.searchPlaceholder', 'Search projects, people, causes...')} aria-label={t('nav.searchPlaceholder')} />
+            <span className="nav-search__kbd" aria-hidden="true">⌘ K</span>
+          </div>
+
+          <div style={styles.navRight}>
+            <select
+              value={language}
+              onChange={(e) => i18n.changeLanguage(e.target.value)}
+              aria-label={t('nav.selectLanguage')}
+              style={styles.languageSelect}
             >
-              {t(item.labelKey, item.fallback)}
-            </Link>
-          ))}
-          <select
-            value={language}
-            onChange={(e) => i18n.changeLanguage(e.target.value)}
-            aria-label={t('nav.selectLanguage')}
-            style={styles.languageSelect}
-          >
-            <option value="en">EN</option>
-            <option value="fr">FR</option>
-          </select>
-          {user ? (
-            <>
-              <Link
-                to="/campaigns/new"
-                style={styles.link}
-                aria-current={pathname === '/campaigns/new' ? 'page' : undefined}
-              >
-                {t('nav.startCampaign')}
-              </Link>
-              <span style={styles.name} aria-hidden="true">
-                {user.name}
-              </span>
-              <div style={styles.bellWrap} ref={bellRef}>
-                <button
-                  onClick={() => setShowDropdown((v) => !v)}
-                  style={styles.bellBtn}
-                  aria-label={`${unread} unread notifications`}
+              <option value="en">EN</option>
+              <option value="fr">FR</option>
+            </select>
+
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={toggleTheme}
+              aria-label={t('nav.toggleTheme', 'Toggle theme')}
+            >
+              {dark ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="5" />
+                  <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
+                  <line x1="4.2" y1="4.2" x2="5.6" y2="5.6" /><line x1="18.4" y1="18.4" x2="19.8" y2="19.8" />
+                  <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
+                  <line x1="4.2" y1="19.8" x2="5.6" y2="18.4" /><line x1="18.4" y1="5.6" x2="19.8" y2="4.2" />
+                </svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" />
+                </svg>
+              )}
+            </button>
+
+            {user ? (
+              <>
+                <div style={styles.bellWrap} ref={bellRef}>
+                  <button
+                    onClick={() => setShowDropdown((v) => !v)}
+                    className="icon-btn"
+                    style={{ position: 'relative' }}
+                    aria-label={`${unread} unread notifications`}
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                      <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                    </svg>
+                    {unread > 0 && <span style={styles.badge}>{unread}</span>}
+                  </button>
+                  {showDropdown && (
+                    <NotificationDropdown
+                      notifications={notifications}
+                      onMarkRead={handleMarkRead}
+                      onMarkAllRead={handleMarkAllRead}
+                      onClose={() => setShowDropdown(false)}
+                    />
+                  )}
+                </div>
+                <Link to="/campaigns/new">
+                  <button className="btn-accent" style={styles.ctaBtn}>
+                    + {t('nav.createSupportSpace', 'Create Support Space')}
+                  </button>
+                </Link>
+                <div style={styles.avatarWrap}>
+                  <div style={styles.avatar} aria-hidden="true">
+                    {user.name ? user.name.charAt(0).toUpperCase() : '?'}
+                  </div>
+                  <span style={styles.name}>{user.name}</span>
+                </div>
+                <button onClick={handleLogout} className="btn-secondary" style={styles.logoutBtn}>
+                  {t('nav.logout')}
+                </button>
+              </>
+            ) : (
+              <>
+                <Link
+                  to="/login"
+                  style={styles.loginLink}
+                  aria-current={pathname === '/login' ? 'page' : undefined}
                 >
-                  🔔
-                  {unread > 0 && <span style={styles.badge}>{unread}</span>}
-                </button>
-                {showDropdown && (
-                  <NotificationDropdown
-                    notifications={notifications}
-                    onMarkRead={handleMarkRead}
-                    onMarkAllRead={handleMarkAllRead}
-                    onClose={() => setShowDropdown(false)}
-                  />
-                )}
-              </div>
-              <button
-                onClick={handleLogout}
-                className="btn-secondary"
-                style={{ padding: '0.4rem 0.9rem' }}
-              >
-                {t('nav.logout')}
-              </button>
-            </>
-          ) : (
-            <>
-              <Link
-                to="/login"
-                style={styles.link}
-                aria-current={pathname === '/login' ? 'page' : undefined}
-              >
-                {t('nav.login')}
-              </Link>
-              <Link to="/register" aria-current={pathname === '/register' ? 'page' : undefined}>
-                <button className="btn-primary" style={{ padding: '0.4rem 0.9rem' }}>
-                  {t('nav.signup')}
-                </button>
-              </Link>
-            </>
-          )}
+                  {t('nav.login')}
+                </Link>
+                <Link to="/register" aria-current={pathname === '/register' ? 'page' : undefined}>
+                  <button className="btn-accent" style={styles.ctaBtn}>
+                    {t('nav.signup', 'Sign up')}
+                  </button>
+                </Link>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </nav>
@@ -194,28 +226,99 @@ export default function Navbar() {
 const styles = {
   nav: {
     background: 'var(--color-bg)',
-    borderBottom: '1px solid var(--color-border)',
+    borderBottom: '1px solid var(--color-border-light)',
     position: 'sticky',
     top: 0,
     zIndex: 10,
   },
-  logo: { fontWeight: 800, fontSize: '1.15rem', color: 'var(--color-accent)' },
-  link: { color: 'var(--color-text-secondary)', fontWeight: 500, fontSize: '0.9rem' },
-  name: {
+  logo: {
+    display: 'flex',
+    alignItems: 'center',
+    flexShrink: 0,
+  },
+  centerLinks: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '1.5rem',
+    flexWrap: 'wrap',
+  },
+  link: {
     color: 'var(--color-text-secondary)',
+    fontWeight: 500,
+    fontSize: '0.9rem',
+    transition: 'color 0.15s',
+  },
+  name: {
+    color: 'var(--color-text-primary)',
     fontSize: '0.85rem',
-    maxWidth: '140px',
+    fontWeight: 600,
+    maxWidth: '120px',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
+  },
+  avatarWrap: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  avatar: {
+    width: '34px',
+    height: '34px',
+    borderRadius: '50%',
+    background: 'linear-gradient(135deg, #4f83f1 0%, #1d4ed8 100%)',
+    color: '#fff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '0.85rem',
+    fontWeight: 700,
+    flexShrink: 0,
   },
   languageSelect: {
     width: 'auto',
     background: 'transparent',
     border: '1px solid var(--color-border)',
-    borderRadius: '8px',
-    padding: '0.35rem 0.55rem',
+    borderRadius: '6px',
+    padding: '0.3rem 0.5rem',
     color: 'var(--color-text-secondary)',
+    fontSize: '0.8rem',
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+  navRight: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.75rem',
+  },
+  loginLink: {
+    color: 'var(--color-text-primary)',
+    fontWeight: 500,
+    fontSize: '0.9rem',
+  },
+  ctaBtn: {
+    padding: '0.5rem 1.1rem',
     fontSize: '0.85rem',
+    borderRadius: '8px',
+    whiteSpace: 'nowrap',
+  },
+  logoutBtn: {
+    padding: '0.4rem 0.9rem',
+    fontSize: '0.85rem',
+  },
+  bellWrap: {
+    position: 'relative',
+  },
+  badge: {
+    position: 'absolute',
+    top: '0',
+    right: '0',
+    background: '#ef4444',
+    color: '#fff',
+    fontSize: '0.65rem',
+    fontWeight: 700,
+    borderRadius: '99px',
+    padding: '1px 5px',
+    lineHeight: 1.3,
   },
 };
