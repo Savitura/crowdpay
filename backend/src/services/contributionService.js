@@ -86,6 +86,7 @@ async function submitCustodialContribution({
   anchorMetadata,
   displayName,
   referralCode,
+  ipAddress,
   client,
 }) {
   const intent =
@@ -143,6 +144,7 @@ async function submitCustodialContribution({
   }
   const metadata = {
     ...intent.flowMetadata,
+    ip_address: ipAddress || null,
     ...(referralCode ? { referral_code: referralCode } : {}),
     ...(anchorMetadata
       ? {
