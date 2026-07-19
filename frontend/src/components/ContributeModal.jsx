@@ -607,24 +607,24 @@ export default function ContributeModal({
                         checked={paymentMethod === 'custodial'}
                         onChange={() => setPaymentMethod('custodial')}
                       />
-                      <div className="asset-picker__code">CrowdPay wallet</div>
-                      <div className="asset-picker__hint">Uses your existing custodial balance</div>
+                      <div className="asset-picker__code">CrowdPay Balance</div>
+                      <div className="asset-picker__hint">Uses your existing CrowdPay balance</div>
                     </label>
                   )}
-                  {(freighterAvailable || guestFreighterMode) && (
+                  {anchorInfo.anchors.some((anchor) => anchor.available) && (
                     <label
-                      className={`asset-picker__option${paymentMethod === 'custodial' ? ' asset-picker__option--selected' : ''}`}
+                      className={`asset-picker__option${paymentMethod === 'anchor' ? ' asset-picker__option--selected' : ''}`}
                     >
                       <input
                         type="radio"
                         name="payment_method"
-                        value="custodial"
-                        checked={paymentMethod === 'custodial'}
-                        onChange={() => setPaymentMethod('custodial')}
+                        value="anchor"
+                        checked={paymentMethod === 'anchor'}
+                        onChange={() => setPaymentMethod('anchor')}
                       />
-                      <div className="asset-picker__code">Pay with Freighter</div>
+                      <div className="asset-picker__code">Bank or card</div>
                       <div className="asset-picker__hint">
-                        You sign in-browser; CrowdPay never sees your key
+                        Pay from your bank or card — we handle the rest automatically
                       </div>
                     </label>
                   )}
@@ -638,37 +638,19 @@ export default function ContributeModal({
                       checked={paymentMethod === 'freighter'}
                       onChange={() => setPaymentMethod('freighter')}
                     />
-                    <div className="asset-picker__code">Pay with Freighter</div>
+                    <div className="asset-picker__code">My own wallet (advanced)</div>
                     <div className="asset-picker__hint">
                       {freighterAvailable
-                        ? 'You sign in-browser; CrowdPay never sees your key'
-                        : 'Freighter not detected — see alternatives below'}
+                        ? 'Connect a wallet you already control; you approve the payment yourself'
+                        : 'Requires a browser wallet extension — see alternatives below'}
                     </div>
                   </label>
-                  {anchorInfo.anchors.some((anchor) => anchor.available) && (
-                    <label
-                      className={`asset-picker__option${paymentMethod === 'anchor' ? ' asset-picker__option--selected' : ''}`}
-                    >
-                      <input
-                        type="radio"
-                        name="payment_method"
-                        value="anchor"
-                        checked={paymentMethod === 'anchor'}
-                        onChange={() => setPaymentMethod('anchor')}
-                      />
-                      <div className="asset-picker__code">Deposit via anchor</div>
-                      <div className="asset-picker__hint">
-                        Open a bank or cash ramp, fund your Stellar wallet, then contribute
-                        automatically
-                      </div>
-                    </label>
-                  )}
                 </div>
                 {freighterChecked &&
                   !freighterAvailable &&
                   (paymentMethod === 'freighter' || guestFreighterMode) && (
                     <span id="contrib-wallet-help" style={styles.help}>
-                      Freighter extension not detected.{' '}
+                      No wallet extension detected.{' '}
                       <a
                         href="https://www.freighter.app/"
                         target="_blank"
@@ -676,7 +658,7 @@ export default function ContributeModal({
                       >
                         Install Freighter
                       </a>{' '}
-                      to contribute from your own Stellar wallet.
+                      to pay from a wallet you control.
                     </span>
                   )}
               </fieldset>
@@ -716,9 +698,9 @@ export default function ContributeModal({
                       style={{ marginBottom: '1rem' }}
                       role="status"
                     >
-                      <strong>{selectedAnchor.name}.</strong> CrowdPay will open the anchor’s hosted
-                      KYC and payment flow, wait for {selectedAnchor.asset.code} to arrive in your
-                      Stellar wallet, and then submit the campaign contribution for you.
+                      <strong>{selectedAnchor.name}.</strong> We'll open a secure identity and payment
+                      window. Once your payment clears, your contribution is submitted automatically —
+                      no further steps needed.
                     </div>
                   )}
                 </>
@@ -860,25 +842,22 @@ export default function ContributeModal({
 
               {isPathPayment && (
                 <div className="alert alert--info" style={{ marginTop: '0.85rem' }} role="status">
-                  <strong>Cross-asset payment.</strong> Stellar will convert from{' '}
-                  {effectiveSendAsset} to {campaign.asset_type} when you confirm. Estimated fees are
-                  tiny; conversion uses the network DEX.
+                  <strong>Automatic conversion.</strong> We'll convert your {effectiveSendAsset} to{' '}
+                  {campaign.asset_type} when you confirm. Fees are minimal.
                 </div>
               )}
 
               {paymentMethod === 'freighter' && (
                 <div className="alert alert--info" style={{ marginTop: '0.85rem' }} role="status">
-                  <strong>Non-custodial payment.</strong> CrowdPay will prepare the transaction,
-                  Freighter will ask you to sign it locally, and only the signed XDR comes back for
-                  submission.
+                  <strong>You stay in control.</strong> We'll prepare the payment, your wallet will ask
+                  you to approve it, and only your approval comes back to us — we never see your keys.
                 </div>
               )}
 
               {paymentMethod === 'anchor' && selectedAnchor && (
                 <div className="alert alert--info" style={{ marginTop: '0.85rem' }} role="status">
-                  <strong>Anchor deposit.</strong> This starts a SEP-24 flow with{' '}
-                  {selectedAnchor.name}. After the deposit confirms, CrowdPay submits the normal
-                  Stellar contribution from your custodial wallet.
+                  <strong>{selectedAnchor.name}.</strong> Your bank or card payment is verified, then
+                  your contribution is submitted for you automatically.
                 </div>
               )}
 
@@ -1039,7 +1018,7 @@ export default function ContributeModal({
         ) : phase === 'confirming' ? (
           <div>
             <h2 id="contribute-title" style={styles.title}>
-              Confirming on Stellar…
+              Confirming your payment…
             </h2>
             <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
               <div
@@ -1055,28 +1034,33 @@ export default function ContributeModal({
                 }}
               />
               <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.95rem' }}>
-                Your payment was submitted. We&apos;re waiting for it to be confirmed on the Stellar
-                ledger, which usually takes 3–5 seconds.
+                Your payment was submitted and is being confirmed, which usually takes just a few
+                seconds.
               </p>
             </div>
             {result?.tx_hash && (
-              <p
-                style={{
-                  fontSize: '0.875rem',
-                  marginBottom: '1rem',
-                  wordBreak: 'break-all',
-                  textAlign: 'center',
-                }}
-              >
-                <a
-                  href={stellarExpertTxUrl(result.tx_hash)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: 'var(--color-accent)', fontWeight: 600 }}
+              <details style={{ textAlign: 'center', marginBottom: '1rem' }}>
+                <summary
+                  style={{
+                    cursor: 'pointer',
+                    fontSize: '0.8rem',
+                    color: 'var(--color-text-hint)',
+                    display: 'inline-block',
+                  }}
                 >
-                  View transaction on Stellar Expert
-                </a>
-              </p>
+                  Technical details
+                </summary>
+                <p style={{ fontSize: '0.875rem', marginTop: '0.5rem', wordBreak: 'break-all' }}>
+                  <a
+                    href={stellarExpertTxUrl(result.tx_hash)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: 'var(--color-accent)', fontWeight: 600 }}
+                  >
+                    View transaction on Stellar Expert
+                  </a>
+                </p>
+              </details>
             )}
             <style>{`
               @keyframes spin {
@@ -1090,44 +1074,52 @@ export default function ContributeModal({
               Payment submitted
             </h2>
             <p className="alert alert--success" style={{ marginBottom: '1rem' }} role="status">
-              Your contribution is on its way. It usually confirms in a few seconds on Stellar.
+              Your contribution is on its way. It usually confirms in just a few seconds.
             </p>
             {unlockedTier && (
               <p className="alert alert--success" style={{ marginBottom: '1rem', fontSize: '0.9rem' }} role="status">
                 🎉 {"You've"} unlocked: <strong>{unlockedTier.title}</strong>
               </p>
             )}
-            {result?.tx_hash && (
-              <p style={{ fontSize: '0.875rem', marginBottom: '0.75rem', wordBreak: 'break-all' }}>
-                <strong>Transaction</strong>{' '}
-                <a
-                  href={stellarExpertTxUrl(result.tx_hash)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: 'var(--color-accent)', fontWeight: 600 }}
+            {(result?.tx_hash || result?.conversion_quote || result?.anchor_transaction_id) && (
+              <details style={{ marginBottom: '1rem' }}>
+                <summary
+                  style={{ cursor: 'pointer', fontSize: '0.8rem', color: 'var(--color-text-hint)' }}
                 >
-                  View on Stellar Expert
-                </a>
-              </p>
-            )}
-            {result?.conversion_quote && (
-              <div
-                className="alert alert--info"
-                style={{ marginBottom: '1rem', fontSize: '0.85rem' }}
-              >
-                <strong>Conversion summary:</strong> up to {result.conversion_quote.max_send_amount}{' '}
-                {result.conversion_quote.send_asset} authorized for{' '}
-                {result.conversion_quote.campaign_amount} {result.conversion_quote.campaign_asset}{' '}
-                received.
-              </div>
-            )}
-            {result?.anchor_transaction_id && (
-              <div
-                className="alert alert--info"
-                style={{ marginBottom: '1rem', fontSize: '0.85rem' }}
-              >
-                <strong>Anchor reference:</strong> {result.anchor_transaction_id}
-              </div>
+                  Technical details
+                </summary>
+                <div style={{ marginTop: '0.6rem' }}>
+                  {result?.tx_hash && (
+                    <p style={{ fontSize: '0.875rem', marginBottom: '0.5rem', wordBreak: 'break-all' }}>
+                      <strong>Transaction</strong>{' '}
+                      <a
+                        href={stellarExpertTxUrl(result.tx_hash)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: 'var(--color-accent)', fontWeight: 600 }}
+                      >
+                        View on Stellar Expert
+                      </a>
+                    </p>
+                  )}
+                  {result?.conversion_quote && (
+                    <div
+                      className="alert alert--info"
+                      style={{ marginBottom: '0.75rem', fontSize: '0.85rem' }}
+                    >
+                      <strong>Conversion summary:</strong> up to{' '}
+                      {result.conversion_quote.max_send_amount} {result.conversion_quote.send_asset}{' '}
+                      authorized for {result.conversion_quote.campaign_amount}{' '}
+                      {result.conversion_quote.campaign_asset} received.
+                    </div>
+                  )}
+                  {result?.anchor_transaction_id && (
+                    <div className="alert alert--info" style={{ fontSize: '0.85rem' }}>
+                      <strong>Anchor reference:</strong> {result.anchor_transaction_id}
+                    </div>
+                  )}
+                </div>
+              </details>
             )}
 
             {error && (
@@ -1156,7 +1148,7 @@ export default function ContributeModal({
     const shareUrl = window.location.href;
     const pct = Math.min(100, (campaign.raised_amount / campaign.target_amount) * 100).toFixed(1);
     const daysLeft = Math.max(0, Math.ceil((new Date(campaign.end_date) - new Date()) / (1000 * 60 * 60 * 24)));
-    const text = encodeURIComponent(`Back ${campaign.title} on CrowdPay — ${pct}% funded, ${daysLeft} days left. Built on Stellar. ${shareUrl} #Stellar #CrowdPay`);
+    const text = encodeURIComponent(`Back ${campaign.title} on CrowdPay — ${pct}% funded, ${daysLeft} days left. ${shareUrl} #CrowdPay`);
     window.open(`https://twitter.com/intent/tweet?text=${text}`, '_blank');
   }}
 >

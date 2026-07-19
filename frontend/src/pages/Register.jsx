@@ -75,7 +75,7 @@ export default function Register() {
       const { user } = await api.register(payload);
       login(user);
       markJustRegistered();
-      navigate(user.role === 'creator' ? '/dashboard' : '/');
+      navigate(user.role === 'creator' ? '/dashboard' : '/discover');
     } catch (err) {
       setError(err.message);
     } finally {

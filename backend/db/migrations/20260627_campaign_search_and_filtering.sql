@@ -1,7 +1,2 @@
--- Add category column to campaigns
-ALTER TABLE campaigns ADD COLUMN category TEXT;
-
--- Create GIN index for full-text search on title and description
-CREATE INDEX campaigns_search_idx ON campaigns USING GIN (
-  to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(description, ''))
-);
+-- category column already added by 20260602_campaign_categories.sql
+-- campaigns_search_idx (GIN on search_vector) already created by 20260602_campaign_search_vector.sql

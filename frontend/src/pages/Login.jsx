@@ -39,7 +39,7 @@ export default function Login() {
           setStep(2);
         } else {
           login(res.user);
-          navigate(location.state?.from || '/', { replace: true });
+          navigate(location.state?.from || '/discover', { replace: true });
         }
       } catch (err) {
         setError(err.message);
@@ -48,7 +48,7 @@ export default function Login() {
       }
     } else {
       if (!code.trim()) {
-        setError('2FA code is required');
+        setError(t('login.twoFactorRequired'));
         return;
       }
       setLoading(true);
@@ -56,7 +56,7 @@ export default function Login() {
       try {
         const { user } = await api.login2FA({ ...form, code });
         login(user);
-        navigate(location.state?.from || '/', { replace: true });
+        navigate(location.state?.from || '/discover', { replace: true });
       } catch (err) {
         setError(err.message);
       } finally {
@@ -120,7 +120,7 @@ export default function Login() {
         ) : (
           <input
             type="text"
-            placeholder="6-digit 2FA code or backup code"
+            placeholder={t('login.twoFactorPlaceholder')}
             value={code}
             onChange={(e) => setCode(e.target.value)}
             required

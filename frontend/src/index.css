@@ -33,6 +33,12 @@
   --color-status-error: #dc2626;
   --color-shadow: rgba(0, 0, 0, 0.25);
   --color-shadow-hover: rgba(15, 23, 42, 0.08);
+  --color-text: var(--color-text-primary);
+  --color-bg-secondary: var(--color-surface);
+  --color-accent-soft: var(--color-accent-lighter);
+  --color-danger: var(--color-error-text);
+  --color-danger-bg: var(--color-error-bg);
+  --color-danger-border: var(--color-error-border);
 }
 
 [data-theme="dark"] {
@@ -70,6 +76,12 @@
   --color-status-error: #f87171;
   --color-shadow: rgba(0, 0, 0, 0.5);
   --color-shadow-hover: rgba(0, 0, 0, 0.3);
+  --color-text: var(--color-text-primary);
+  --color-bg-secondary: var(--color-surface);
+  --color-accent-soft: var(--color-accent-lighter);
+  --color-danger: var(--color-error-text);
+  --color-danger-bg: var(--color-error-bg);
+  --color-danger-border: var(--color-error-border);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -286,6 +298,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   gap: 0.65rem;
   flex-wrap: wrap;
   justify-content: flex-end;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 @media (min-width: 480px) {
   .nav-links { gap: 1rem; }
@@ -383,7 +397,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 }
 
 .filter-chip {
-  background: var(--color-bg-elevated);
+  background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: 16px;
   padding: 0.25rem 0.75rem;
@@ -397,7 +411,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 }
 
 .filter-chip:hover {
-  background: var(--color-bg-hover);
+  background: var(--color-surface);
   border-color: var(--color-text-hint);
   color: var(--color-text-primary);
 }
@@ -445,6 +459,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
     border-top: 1px solid #ccc;
     padding-top: 0.5rem;
   }
+}
+
 /* Sort pills */
 .pill {
   background: var(--color-bg);

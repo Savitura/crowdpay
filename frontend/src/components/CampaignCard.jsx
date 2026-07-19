@@ -266,6 +266,23 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
   },
+  trending: {
+    background: 'var(--color-success-bg)',
+    color: 'var(--color-success-text)',
+    fontSize: '0.72rem',
+    fontWeight: 700,
+    padding: '2px 8px',
+    borderRadius: '99px',
+  },
+  categoryBadge: {
+    background: 'var(--color-surface)',
+    color: 'var(--color-text-secondary)',
+    border: '1px solid var(--color-border-light)',
+    fontSize: '0.72rem',
+    fontWeight: 600,
+    padding: '2px 8px',
+    borderRadius: '99px',
+  },
   updateBadge: {
     fontSize: '0.72rem',
     fontWeight: 800,

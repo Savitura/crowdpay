@@ -1,6 +1,7 @@
 import React from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
+import Landing from './pages/Landing';
 import Home from './pages/Home';
 import CreateCampaign from './pages/CreateCampaign';
 import Campaign from './pages/Campaign';
@@ -16,6 +17,10 @@ import Developer from './pages/Developer';
 import Dashboard from './pages/Dashboard';
 import MyContributions from './pages/MyContributions';
 import Profile from './pages/Profile';
+import HowItWorks from './pages/HowItWorks';
+import Pricing from './pages/Pricing';
+import About from './pages/About';
+import Resources from './pages/Resources';
 import NotFound from './pages/NotFound';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -44,7 +49,12 @@ export default function App() {
             {!hideNavbar && <ImpersonationBanner />}
             {!hideNavbar && <Navbar />}
             <Routes>
-              <Route path="/" element={<Home />} />
+              <Route path="/" element={<Landing />} />
+              <Route path="/discover" element={<Home />} />
+              <Route path="/how-it-works" element={<HowItWorks />} />
+              <Route path="/pricing" element={<Pricing />} />
+              <Route path="/about" element={<About />} />
+              <Route path="/resources" element={<Resources />} />
               <Route
                 path="/campaigns/new"
                 element={
