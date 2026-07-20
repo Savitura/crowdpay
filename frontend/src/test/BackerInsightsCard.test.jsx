@@ -1,7 +1,6 @@
 import { render, screen } from '@testing-library/react';
-import BackerInsightsCard from '../components/BackerInsightsCard';
-
-describe('BackerInsightsCard', () => {
+import { describe, it, expect } from 'vitest';
+import BackerInsightsCard from '../components/BackerInsightsCard';describe('BackerInsightsCard', () => {
   it('renders backer growth, repeat rate, and top backers', () => {
     render(
       <BackerInsightsCard

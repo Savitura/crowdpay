@@ -10,7 +10,7 @@ export default function About() {
       <p style={{ color: 'var(--color-text-secondary)', lineHeight: 1.65, marginBottom: '1.25rem' }}>
         Every campaign owner completes identity verification before they can withdraw funds. Funding
         totals, milestones, and creator updates are visible on every campaign page, so backers can see
-        exactly what their contribution is supporting and how it's progressing.
+        exactly what their contribution is supporting and how it&apos;s progressing.
       </p>
       <p style={{ color: 'var(--color-text-secondary)', lineHeight: 1.65 }}>
         Payments settle in seconds rather than days, and backers can pay with a bank, a card, or a

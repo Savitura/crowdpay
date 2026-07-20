@@ -198,7 +198,7 @@ function isEnabled(flagName, context = {}) {
   const baseEnabled = _resolveEnvVar(flag);
 
   // 6. Percentage rollout (only applies when base is enabled and rolloutPct is set)
-  if (baseEnabled && flag.rolloutPct != null && flag.rolloutPct > 0 && flag.rolloutPct < 100) {
+  if (baseEnabled && flag.rolloutPct !== null && flag.rolloutPct > 0 && flag.rolloutPct < 100) {
     if (!context.userId && !context.sessionId) {
       // No user context — only enable for 100% rollouts or specific users
       return flag.rolloutPct >= 100;
@@ -234,7 +234,7 @@ function getVariant(flagName, context = {}) {
   if (!flag) return null;
 
   // When no rollout is configured, treat as simple on/off
-  if (flag.rolloutPct == null || flag.rolloutPct >= 100) {
+  if (flag.rolloutPct === null || flag.rolloutPct >= 100) {
     return 'control';
   }
 
