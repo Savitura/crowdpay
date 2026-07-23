@@ -5,7 +5,11 @@ const db = require('../config/database');
 const logger = require('../config/logger');
 const { requireAuth } = require('../middleware/auth');
 const { ALL_WEBHOOK_EVENTS, processDelivery } = require('../services/webhookDispatcher');
-const { processIncomingWebhook } = require('../services/webhookService');
+const {
+  processIncomingWebhook,
+  verifyWebhookSignature,
+  WebhookError,
+} = require('../services/webhookService');
 
 function isValidWebhookUrl(urlString) {
   try {
@@ -34,7 +38,7 @@ function normalizeEvents(events) {
 router.post('/incoming/:id', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
     const { rows } = await db.query(
-      `SELECT secret FROM webhooks WHERE id = $1 AND revoked_at IS NULL`,
+      `SELECT id, user_id, secret FROM webhooks WHERE id = $1 AND revoked_at IS NULL`,
       [req.params.id]
     );
 
@@ -44,7 +48,7 @@ router.post('/incoming/:id', express.raw({ type: 'application/json' }), async (r
 
     const webhook = rows[0];
     const rawBody = req.body;
-    
+
     // Some services might use variations like X-Signature-256 or x-signature
     const headerSig = req.headers['x-signature-256'] || req.headers['x-signature'];
 
@@ -52,12 +56,8 @@ router.post('/incoming/:id', express.raw({ type: 'application/json' }), async (r
       return res.status(401).json({ error: 'Missing signature header' });
     }
 
-    const expectedSig = crypto
-      .createHmac('sha256', webhook.secret)
-      .update(rawBody)
-      .digest('hex');
-
-    if (expectedSig !== headerSig) {
+    // Constant-time HMAC-SHA256 comparison (tolerates a `sha256=` prefix).
+    if (!verifyWebhookSignature(webhook.secret, rawBody, headerSig)) {
       logger.warn('Failed webhook signature verification', { webhookId: req.params.id });
       return res.status(401).json({ error: 'Invalid signature' });
     }
@@ -69,10 +69,20 @@ router.post('/incoming/:id', express.raw({ type: 'application/json' }), async (r
       return res.status(400).json({ error: 'Invalid JSON payload' });
     }
 
-    await processIncomingWebhook(req.params.id, payload);
+    const result = await processIncomingWebhook(webhook.id, payload, {
+      ownerUserId: webhook.user_id,
+    });
 
-    res.status(200).json({ success: true });
+    res.status(200).json({ success: true, ...result });
   } catch (err) {
+    if (err instanceof WebhookError) {
+      logger.warn('Rejected incoming webhook', {
+        webhookId: req.params.id,
+        status: err.status,
+        error: err.message,
+      });
+      return res.status(err.status).json({ error: err.message });
+    }
     logger.error('Error processing incoming webhook', { error: err.message, webhookId: req.params.id });
     res.status(500).json({ error: 'Internal server error' });
   }
