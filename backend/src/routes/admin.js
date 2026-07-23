@@ -1126,3 +1126,4 @@ router.get('/campaigns/:id/contributions', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.logAdminAction = logAdminAction;
