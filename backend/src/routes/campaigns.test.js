@@ -463,3 +463,49 @@ test('GET /api/campaigns/mine parses page and limit parameters', async () => {
   assert.equal(response.body.pagination.page, 2);
   assert.equal(response.body.pagination.limit, 10);
 });
+
+function buildListingApp(queries) {
+  return buildApp({
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('COUNT(*)')) return { rows: [{ total: 1 }] };
+      return { rows: [{ id: 'camp-1', title: 'Solar panels', status: 'active' }] };
+    },
+  });
+}
+
+test('GET /api/campaigns search without sort ranks by relevance', async () => {
+  const queries = [];
+  const app = buildListingApp(queries);
+
+  const response = await request(app).get('/api/campaigns?search=solar');
+  assert.equal(response.status, 200);
+
+  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  assert.ok(listQuery);
+  assert.match(listQuery.text, /ORDER BY ts_rank\(c\.search_vector/);
+});
+
+test('GET /api/campaigns explicit sort wins over relevance when searching', async () => {
+  const queries = [];
+  const app = buildListingApp(queries);
+
+  const response = await request(app).get('/api/campaigns?search=solar&sort=newest');
+  assert.equal(response.status, 200);
+
+  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  assert.match(listQuery.text, /ORDER BY c\.created_at DESC/);
+  assert.doesNotMatch(listQuery.text, /ts_rank/);
+});
+
+test('GET /api/campaigns sort=relevance without search falls back to newest', async () => {
+  const queries = [];
+  const app = buildListingApp(queries);
+
+  const response = await request(app).get('/api/campaigns?sort=relevance');
+  assert.equal(response.status, 200);
+
+  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  assert.match(listQuery.text, /ORDER BY c\.created_at DESC/);
+  assert.doesNotMatch(listQuery.text, /ts_rank/);
+});
