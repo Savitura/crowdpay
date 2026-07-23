@@ -250,8 +250,10 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
     // Progress is (raised_amount / target_amount) * 100
     filters.push(`(c.raised_amount / c.target_amount) * 100 >= $${params.length}`);
   }
+  let searchParamIdx = null;
   if (search) {
     params.push(search);
+    searchParamIdx = params.length;
     filters.push(`c.search_vector @@ websearch_to_tsquery('english', $${params.length})`);
   }
 
@@ -268,7 +270,13 @@ router.get('/', getCampaignsValidation, validateRequest, asyncHandler(async (req
     most_backed: '(SELECT COUNT(*) FROM contributions ctr WHERE ctr.campaign_id = c.id) DESC',
     closest_to_goal: '(c.raised_amount / NULLIF(c.target_amount, 0)) DESC NULLS LAST, c.raised_amount DESC',
   };
-  const orderBy = sortExpressions[sort] || sortExpressions.newest;
+  if (searchParamIdx !== null) {
+    sortExpressions.relevance = `ts_rank(c.search_vector, websearch_to_tsquery('english', $${searchParamIdx})) DESC, c.created_at DESC`;
+  }
+  // A search without an explicit sort ranks by relevance; explicit sorts always win.
+  const effectiveSort =
+    searchParamIdx !== null && req.query.sort === undefined ? 'relevance' : sort;
+  const orderBy = sortExpressions[effectiveSort] || sortExpressions.newest;
 
   const query = `
     SELECT c.*,

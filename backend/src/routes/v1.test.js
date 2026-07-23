@@ -117,3 +117,67 @@ test('POST /api/v1/campaigns/:id/contributions records contribution from tx hash
   assert.equal(recorded.campaignId, 'camp-1');
   assert.equal(recorded.txHash, 'stellar-tx-hash');
 });
+
+function buildSearchApp(queries) {
+  return buildApp({
+    queryImpl: async (sql, params) => {
+      queries.push({ text: sql, params });
+      if (sql.includes('COUNT')) return { rows: [{ total: 1 }] };
+      return { rows: [{ id: 'camp-1', title: 'Solar panels', status: 'active' }] };
+    },
+    authError: 'Missing token',
+  });
+}
+
+test('GET /api/v1/campaigns search uses full-text search, not ILIKE', async () => {
+  const queries = [];
+  const app = buildSearchApp(queries);
+
+  const res = await request(app).get('/api/v1/campaigns?search=solar%20panels');
+  assert.equal(res.status, 200);
+
+  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  assert.ok(listQuery);
+  assert.match(listQuery.text, /websearch_to_tsquery/);
+  assert.doesNotMatch(listQuery.text, /ILIKE/);
+  // The raw search term is bound, not a %-wrapped pattern
+  assert.ok(listQuery.params.includes('solar panels'));
+  // Count query filters identically
+  const countQuery = queries.find((q) => q.text.includes('COUNT'));
+  assert.match(countQuery.text, /websearch_to_tsquery/);
+});
+
+test('GET /api/v1/campaigns search without sort ranks by relevance', async () => {
+  const queries = [];
+  const app = buildSearchApp(queries);
+
+  const res = await request(app).get('/api/v1/campaigns?search=solar');
+  assert.equal(res.status, 200);
+
+  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  assert.match(listQuery.text, /ORDER BY ts_rank\(c\.search_vector/);
+});
+
+test('GET /api/v1/campaigns explicit sort wins over relevance', async () => {
+  const queries = [];
+  const app = buildSearchApp(queries);
+
+  const res = await request(app).get('/api/v1/campaigns?search=solar&sort=newest');
+  assert.equal(res.status, 200);
+
+  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  assert.match(listQuery.text, /ORDER BY c\.created_at DESC/);
+  assert.doesNotMatch(listQuery.text, /ts_rank/);
+});
+
+test('GET /api/v1/campaigns sort=relevance without search falls back to newest', async () => {
+  const queries = [];
+  const app = buildSearchApp(queries);
+
+  const res = await request(app).get('/api/v1/campaigns?sort=relevance');
+  assert.equal(res.status, 200);
+
+  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  assert.match(listQuery.text, /ORDER BY c\.created_at DESC/);
+  assert.doesNotMatch(listQuery.text, /ts_rank/);
+});

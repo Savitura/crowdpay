@@ -5,7 +5,7 @@ const { stripHtml, sanitizeRichText } = require('../lib/sanitize');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const VALID_CAMPAIGN_STATUSES = ['active', 'funded', 'closed', 'failed'];
-const VALID_ORDER_BY = ['newest', 'ending_soon', 'most_funded', 'most_backed', 'closest_to_goal', 'trending'];
+const VALID_ORDER_BY = ['newest', 'ending_soon', 'most_funded', 'most_backed', 'closest_to_goal', 'trending', 'relevance'];
 const VALID_CATEGORIES = [
   'technology', 'community', 'arts', 'education',
   'environment', 'health', 'business', 'open_source', 'other',

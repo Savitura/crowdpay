@@ -81,12 +81,11 @@ router.get('/campaigns', getCampaignsValidation, validateRequest, asyncHandler(a
     params.push(asset);
     filters.push(`c.asset_type = $${params.length}`);
   }
+  let searchParamIdx = null;
   if (search) {
-    const escaped = String(search).replace(/[%_\\]/g, '\\$&');
-    params.push(`%${escaped}%`);
-    filters.push(
-      `(c.title ILIKE $${params.length} OR COALESCE(c.description, '') ILIKE $${params.length})`
-    );
+    params.push(search);
+    searchParamIdx = params.length;
+    filters.push(`c.search_vector @@ websearch_to_tsquery('english', $${params.length})`);
   }
 
   const whereClause = `WHERE ${filters.join(' AND ')}`;
@@ -103,7 +102,13 @@ router.get('/campaigns', getCampaignsValidation, validateRequest, asyncHandler(a
     most_backed:
       '(SELECT COUNT(*) FROM contributions ctr WHERE ctr.campaign_id = c.id) DESC',
   };
-  const orderBy = sortExpressions[sort] || sortExpressions.newest;
+  if (searchParamIdx !== null) {
+    sortExpressions.relevance = `ts_rank(c.search_vector, websearch_to_tsquery('english', $${searchParamIdx})) DESC, c.created_at DESC`;
+  }
+  // A search without an explicit sort ranks by relevance; explicit sorts always win.
+  const effectiveSort =
+    searchParamIdx !== null && req.query.sort === undefined ? 'relevance' : sort;
+  const orderBy = sortExpressions[effectiveSort] || sortExpressions.newest;
 
   const { rows } = await db.query(
     `SELECT c.id, c.title, c.description, c.target_amount, c.raised_amount,
