@@ -39,7 +39,7 @@ export default function Pricing() {
         <div>
           <strong style={{ fontSize: '0.95rem' }}>Payment processing is included</strong>
           <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.88rem', marginTop: '0.25rem' }}>
-            Bank, card, and wallet payment routing are covered by the platform fee — there's no separate
+            Bank, card, and wallet payment routing are covered by the platform fee — there&apos;s no separate
             processor charge.
           </p>
         </div>
