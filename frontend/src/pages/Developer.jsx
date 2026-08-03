@@ -60,6 +60,28 @@ export default function Developer() {
 
   async function loadOpenApi() {
     try {
+      // Cache hit: the spec is unlikely to change during a session (Issue #580).
+      const cacheKey = `cp_openapi_spec_${V1_API_BASE}`;
+      const cachedRaw = sessionStorage.getItem(cacheKey);
+      if (cachedRaw) {
+        try {
+          const cached = JSON.parse(cachedRaw);
+          if (Array.isArray(cached) && cached.length > 0) {
+            setV1Endpoints(cached);
+            const saved = localStorage.getItem('cp_explorer_endpoint');
+            if (saved && cached.find((e) => e.id === saved)) {
+              setExplorerEndpoint(saved);
+            } else if (cached.length > 0) {
+              setExplorerEndpoint(cached[0].id);
+            }
+            return;
+          }
+        } catch {
+          // Corrupted cache — silently re-fetch.
+          sessionStorage.removeItem(cacheKey);
+        }
+      }
+
       const res = await fetch(`${V1_API_BASE}/docs/openapi.json`);
       if (!res.ok) throw new Error('Failed to fetch OpenAPI spec');
       const spec = await res.json();
@@ -99,6 +121,15 @@ export default function Developer() {
         }
       }
       setV1Endpoints(endpoints);
+
+      // Cache the parsed endpoints in sessionStorage so subsequent mounts
+      // skip the network roundtrip (Issue #580).
+      try {
+        sessionStorage.setItem(cacheKey, JSON.stringify(endpoints));
+      } catch {
+        // Storage full or unavailable — non-critical, the endpoints are already
+        // in component state.
+      }
 
       const saved = localStorage.getItem('cp_explorer_endpoint');
       if (saved && endpoints.find((e) => e.id === saved)) {
