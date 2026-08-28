@@ -18,8 +18,9 @@ function buildReconciliation(overrides = {}) {
       if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') {
         return { rows: [] };
       }
-      if (text.includes('UPDATE campaigns SET raised_amount')) {
-        return { rows: [{ id: params[1] }] };
+      if (text.includes('UPDATE campaigns') && text.includes('raised_amount')) {
+        if (overrides.zeroRowCount) return { rowCount: 0 };
+        return { rows: [{ id: params[1] }], rowCount: 1 };
       }
       if (text.includes('INSERT INTO contributions')) {
         return { rows: [{ id: 'contribution-adj-1' }] };
@@ -271,4 +272,80 @@ test('no contribution adjustment is inserted when campaign has a pending withdra
     (q) => q.text === 'insertContributionAdjustment'
   );
   assert.strictEqual(contributionInsert, undefined, 'no adjustment should be inserted for skipped campaigns');
+});
+
+// ── concurrent reconciliation / zero-row update detection ──────────────────
+
+test('zero-row UPDATE (concurrent update) rolls back and returns conflict', async () => {
+  const reconciliation = buildReconciliation({ zeroRowCount: true });
+  const result = await reconciliation.reconcileSingleCampaign('camp-1');
+
+  // Should report conflict, not success
+  assert.strictEqual(result.updated, false);
+  assert.strictEqual(result.conflict, true);
+  assert.strictEqual(result.diff, 50);
+
+  // The transaction must have been rolled back
+  const txEvents = queryLog.filter((q) => q.via === 'client').map((q) => q.text);
+  assert.ok(txEvents.includes('BEGIN'), 'must start a transaction');
+  assert.ok(txEvents.includes('ROLLBACK'), 'must rollback on zero-row update');
+  assert.ok(!txEvents.includes('COMMIT'), 'must not commit when no rows were updated');
+
+  // Adjustment inserts must NOT have been attempted
+  assert.ok(!queryLog.some((q) => q.text === 'insertContributionAdjustment'));
+  assert.ok(!queryLog.some((q) => q.text === 'insertReconciliationAdjustment'));
+});
+
+test('concurrent reconciliations: only the first to commit succeeds', async () => {
+  let updateCount = 0;
+
+  // Build two reconciliation instances
+  const r1 = buildReconciliation();
+  const r2 = buildReconciliation();
+
+  // Override the shared connectClient AFTER both builds so both use the counter
+  connectClient = {
+    query: async (text, params) => {
+      queryLog.push({ text, params, via: 'client' });
+      if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') {
+        return { rows: [] };
+      }
+      if (text.includes('UPDATE campaigns') && text.includes('raised_amount')) {
+        updateCount += 1;
+        return { rowCount: updateCount === 1 ? 1 : 0 };
+      }
+      if (text.includes('INSERT INTO contributions')) {
+        return { rows: [{ id: 'contribution-adj-1' }] };
+      }
+      if (text.includes('INSERT INTO stellar_transactions')) {
+        return { rows: [{ id: 'stellar-tx-1' }] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+
+  // Run two concurrent reconciliations on the same campaign
+  const [result1, result2] = await Promise.all([
+    r1.reconcileSingleCampaign('camp-1'),
+    r2.reconcileSingleCampaign('camp-1'),
+  ]);
+
+  // Exactly one should succeed, the other should detect conflict
+  const results = [result1, result2];
+  const successes = results.filter((r) => r.updated === true);
+  const conflicts = results.filter((r) => r.conflict === true);
+
+  assert.strictEqual(successes.length, 1, 'exactly one reconciliation should succeed');
+  assert.strictEqual(conflicts.length, 1, 'exactly one reconciliation should detect a conflict');
+  assert.strictEqual(successes[0].stellar_transaction_id, 'stellar-tx-1');
+});
+
+test('batch reconciliation counts zero-row conflicts in the summary', async () => {
+  const reconciliation = buildReconciliation({ zeroRowCount: true });
+  const summary = await reconciliation.reconcileCampaignBalances();
+
+  assert.strictEqual(summary.campaigns_checked, 1);
+  assert.strictEqual(summary.updated, 0, 'zero-row conflicts must not count as updated');
+  assert.strictEqual(summary.results[0].conflict, true);
 });

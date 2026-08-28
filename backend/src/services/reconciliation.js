@@ -51,7 +51,7 @@ async function applyReconciliationCorrection(campaign, dbBalance, liveBalance) {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    await client.query(
+    const { rowCount } = await client.query(
       `UPDATE campaigns
        SET raised_amount = $1,
            status = CASE
@@ -61,6 +61,10 @@ async function applyReconciliationCorrection(campaign, dbBalance, liveBalance) {
        WHERE id = $2`,
       [liveBalance, campaign.id],
     );
+    if (rowCount === 0) {
+      await client.query("ROLLBACK");
+      return { updated: false, conflict: true, dbBalance, liveBalance, diff };
+    }
     const adjustedAt = new Date();
     await insertContributionAdjustment(client, {
       campaignId: campaign.id,
@@ -172,6 +176,14 @@ async function reconcileCampaignBalances() {
           campaign_id: campaign.id,
           skipped: true,
           reason: result.reason,
+        });
+      } else if (result.conflict) {
+        summary.results.push({
+          campaign_id: campaign.id,
+          conflict: true,
+          db_amount: result.dbBalance,
+          on_chain_amount: result.liveBalance,
+          diff: result.diff,
         });
       } else if (result.updated) {
         summary.updated += 1;

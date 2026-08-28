@@ -79,3 +79,85 @@ test('backoffMsForCampaign falls back to the fixed default schedule without a st
   assert.equal(backoffMsForCampaign(2), 30000);
   assert.equal(backoffMsForCampaign(3), 300000);
 });
+
+// ── duplicate dispatch prevention ───────────────────────────────────────────
+
+test('processDelivery returns early when a concurrent process already claimed the delivery', async () => {
+  const mockDb = {
+    query: async (text) => {
+      // First query: SELECT the delivery row (status = 'pending')
+      if (text.includes('SELECT') && text.includes('webhook_deliveries')) {
+        return {
+          rows: [{
+            id: 'del-1',
+            attempt_count: 0,
+            status: 'pending',
+            payload: { event: 'test' },
+            event_type: 'test.event',
+            url: 'https://example.com/hook',
+            secret: 'whsec_test',
+            revoked_at: null,
+            backoff_strategy: null,
+          }],
+        };
+      }
+      // Second query: UPDATE to 'delivering' — returns rowCount: 0 (concurrent claim)
+      if (text.includes('UPDATE webhook_deliveries') && text.includes('delivering')) {
+        return { rowCount: 0 };
+      }
+      return { rows: [] };
+    },
+  };
+
+  const { processDelivery } = proxyquire('./webhookDispatcher', {
+    '../config/database': mockDb,
+    '../config/logger': { error: () => {} },
+    './emailService': { sendEmail: async () => {} },
+  });
+
+  let fetchCalled = false;
+  global.fetch = async () => { fetchCalled = true; return { ok: true, status: 200, text: async () => '' }; };
+
+  await processDelivery('del-1');
+  assert.equal(fetchCalled, false, 'fetch must not be called when UPDATE returns zero rows');
+  delete global.fetch;
+});
+
+test('processCampaignWebhookDelivery returns early when a concurrent process already claimed the delivery', async () => {
+  const mockDb = {
+    query: async (text) => {
+      if (text.includes('SELECT') && text.includes('campaign_webhook_deliveries')) {
+        return {
+          rows: [{
+            id: 'cwd-1',
+            attempt_count: 0,
+            status: 'pending',
+            payload: { event: 'test' },
+            event: 'test.event',
+            url: 'https://example.com/hook',
+            secret: 'whsec_test',
+            active: true,
+            backoff_strategy: null,
+          }],
+        };
+      }
+      if (text.includes('UPDATE campaign_webhook_deliveries') && text.includes('delivering')) {
+        return { rowCount: 0 };
+      }
+      return { rows: [] };
+    },
+  };
+
+  const { processCampaignWebhookDelivery } = proxyquire('./webhookDispatcher', {
+    '../config/database': mockDb,
+    '../config/logger': { error: () => {} },
+    './emailService': { sendEmail: async () => {} },
+  });
+
+  let fetchCalled = false;
+  global.fetch = async () => { fetchCalled = true; return { ok: true, status: 200, text: async () => '' }; };
+
+  await processCampaignWebhookDelivery('cwd-1');
+  assert.equal(fetchCalled, false, 'fetch must not be called when UPDATE returns zero rows');
+  delete global.fetch;
+});

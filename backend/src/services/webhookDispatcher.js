@@ -105,20 +105,22 @@ async function processDelivery(deliveryId) {
 
   const nextAttempt = row.attempt_count + 1;
   if (nextAttempt > MAX_DELIVERY_ATTEMPTS) {
-    await db.query(
-      `UPDATE webhook_deliveries SET status = 'failed', last_error = $2, updated_at = NOW() WHERE id = $1`,
+    const { rowCount } = await db.query(
+      `UPDATE webhook_deliveries SET status = 'failed', last_error = $2, updated_at = NOW() WHERE id = $1 AND status != 'failed'`,
       [deliveryId, 'max delivery attempts exceeded']
     );
+    if (rowCount === 0) return; // another process already handled it
     return;
   }
 
   const bodyUtf8 = JSON.stringify(row.payload);
   const sig = hmacSignature(row.secret, bodyUtf8);
 
-  await db.query(
-    `UPDATE webhook_deliveries SET attempt_count = $2, status = 'delivering', updated_at = NOW() WHERE id = $1`,
-    [deliveryId, nextAttempt]
+  const { rowCount } = await db.query(
+    `UPDATE webhook_deliveries SET attempt_count = $2, status = 'delivering', updated_at = NOW() WHERE id = $1 AND status = $3`,
+    [deliveryId, nextAttempt, row.status]
   );
+  if (rowCount === 0) return; // another process is already handling this delivery
 
   let res;
   let responseText = '';
@@ -287,20 +289,22 @@ async function processCampaignWebhookDelivery(deliveryId) {
 
   const nextAttempt = row.attempt_count + 1;
   if (nextAttempt > MAX_CAMPAIGN_DELIVERY_ATTEMPTS) {
-    await db.query(
-      `UPDATE campaign_webhook_deliveries SET status = 'failed', last_error = $2, failed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+    const { rowCount } = await db.query(
+      `UPDATE campaign_webhook_deliveries SET status = 'failed', last_error = $2, failed_at = NOW(), updated_at = NOW() WHERE id = $1 AND status != 'failed'`,
       [deliveryId, 'max delivery attempts exceeded']
     );
+    if (rowCount === 0) return; // another process already handled it
     return;
   }
 
   const bodyUtf8 = JSON.stringify(row.payload);
   const sig = hmacSignature(row.secret, bodyUtf8);
 
-  await db.query(
-    `UPDATE campaign_webhook_deliveries SET attempt_count = $2, status = 'delivering', updated_at = NOW() WHERE id = $1`,
-    [deliveryId, nextAttempt]
+  const { rowCount } = await db.query(
+    `UPDATE campaign_webhook_deliveries SET attempt_count = $2, status = 'delivering', updated_at = NOW() WHERE id = $1 AND status = $3`,
+    [deliveryId, nextAttempt, row.status]
   );
+  if (rowCount === 0) return; // another process is already handling this delivery
 
   let res;
   try {
