@@ -6,9 +6,9 @@
  */
 
 module.exports = {
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
   // Stellar transaction timeouts (seconds)
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
 
   /** Timeout for contribution transactions (create-account, trustlines, payments). */
   TX_TIMEOUT_CONTRIBUTION_S: 30,
@@ -16,16 +16,16 @@ module.exports = {
   /** Timeout for withdrawal transactions — platform approver may not be available immediately (see issue #128). */
   TX_TIMEOUT_WITHDRAWAL_S: 60 * 60 * 24 * 7, // 7 days
 
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
   // Path payment slippage buffer
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
 
   /** Maximum slippage allowed on DEX path payments, in basis points (500 = 5.00%). */
   SLIPPAGE_BPS: 500,
 
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
   // Custodial account XLM reserves
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
 
   /** Base XLM reserve required for a new custodial account (covers account minimum + one entry). */
   CUSTODIAL_ACCOUNT_BASE_RESERVE_XLM: 2.5,
@@ -33,23 +33,23 @@ module.exports = {
   /** Additional XLM reserve required per trustline on a custodial account. */
   CUSTODIAL_ACCOUNT_PER_TRUSTLINE_XLM: 0.51,
 
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
   // Ledger monitor reconnect back-off
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
 
   /** Initial reconnect delay for the ledger payment stream, in milliseconds. */
   LEDGER_MONITOR_RECONNECT_DELAY_MS: 5_000,
 
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
   // Soroban contract amounts
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
 
   /** Scale factor between a decimal asset amount and the contract's i128 unit (7 decimal places, matching Stellar's native precision). */
   STELLAR_ASSET_DECIMALS_SCALE: 10_000_000,
 
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
   // Milestone limits
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
 
   /** Maximum number of milestones a campaign can define. */
   MILESTONE_LIMIT: 5,
@@ -57,13 +57,20 @@ module.exports = {
   /** Maximum file size (in bytes) for milestone evidence uploads (10 MB). */
   MILESTONE_EVIDENCE_MAX_FILE_SIZE: 10 * 1024 * 1024,
 
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
   // Admin
-  // ---------------------------------------------------------------------------
+  // --------------------------------------------------------------------------------------
 
-  /** Impersonation token TTL in seconds (15 minutes). */
+  /** Impersonation token TNL in seconds (15 minutes). */
   IMPERSONATION_TTL_SECONDS: 15 * 60,
 
   /** Maximum number of admin audit log entries that can be returned in a single query. */
   ADMIN_AUDIT_LOG_MAX_LIMIT: 1000,
+
+  // --------------------------------------------------------------------------------------
+  // Impact summary
+  // --------------------------------------------------------------------------------------
+
+  /** Cache TTL for public campaign impact stats (seconds). */
+  IMPACT_CACHE_TTL_SECONDS: 60,
 };
