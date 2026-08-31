@@ -79,6 +79,8 @@ const {
 const { stripHtml } = require('../lib/sanitize');
 const { getSimhash, simhashSimilarity } = require('../utils/simhash');
 const { parsePagination } = require('../utils/pagination');
+const { assembleReport, generateSignedUrl, verifySignedToken } = require('../services/campaignReportService');
+const { streamCampaignReportPdf, reportFilename } = require('../services/campaignReportPdf');
 
 const crypto = require('crypto');
 
@@ -2602,6 +2604,55 @@ router.delete('/:id/stretch-goals/:goalId', requireAuth, requireCampaignMember('
   );
   if (!rows.length) return res.status(404).json({ error: 'Stretch goal not found' });
   res.status(204).end();
+}));
+
+// ── Campaign Report Export (PDF) ──────────────────────────────────────────────
+
+// Download a PDF report for the campaign (owner or admin only)
+router.get('/:id/report/export', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const report = await assembleReport(req.params.id);
+  if (!report) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+
+  const filename = reportFilename(report.campaign.id, report.campaign.title);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'no-store');
+
+  streamCampaignReportPdf(report, res);
+}));
+
+// Generate a shareable signed URL for the report (owner or admin only)
+router.get('/:id/report/share', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const report = await assembleReport(req.params.id);
+  if (!report) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+
+  const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
+  const shareableUrl = generateSignedUrl(req.params.id, baseUrl);
+
+  res.json({ url: shareableUrl, expires_in_seconds: 24 * 60 * 60 });
+}));
+
+// Serve a PDF report via signed URL (no auth required — token-verified)
+router.get('/:id/report/share/:token', asyncHandler(async (req, res) => {
+  if (!verifySignedToken(req.params.token, req.params.id)) {
+    return res.status(403).json({ error: 'Invalid or expired share link' });
+  }
+
+  const report = await assembleReport(req.params.id);
+  if (!report) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+
+  const filename = reportFilename(report.campaign.id, report.campaign.title);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'no-store');
+
+  streamCampaignReportPdf(report, res);
 }));
 
 // Soroban treasury endpoints (#687) live in their own router to keep this file
