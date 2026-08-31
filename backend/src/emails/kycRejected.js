@@ -1,6 +1,6 @@
 const { renderLayout, heading, paragraph, buttonRow } = require("./layout");
 
-function build({ name, reason, retryUrl }) {
+function build({ name, reason, retryUrl, unsubscribeUrl }) {
   const recipientName = name || "there";
   const subject = "Action needed: KYC verification";
 
@@ -23,6 +23,7 @@ function build({ name, reason, retryUrl }) {
       reason ? paragraph(`Reason: ${reason}`) : "",
       buttonRow("Retry verification", retryUrl),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

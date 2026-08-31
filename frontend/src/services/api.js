@@ -38,4 +38,40 @@ export const api = {
     const res = await apiClient.patch(`/creator/campaigns/${campaignId}/velocity/threshold`, { threshold });
     return res.data;
   },
+  async getNotificationPreferences() {
+    const res = await apiClient.get('/users/me/notification-preferences');
+    return res.data;
+  },
+  async updateNotificationPreference(data) {
+    const res = await apiClient.patch('/users/me/notification-preferences', data);
+    return res.data;
+  },
+  async unsubscribeEmail(data) {
+    const res = await apiClient.get('/emails/unsubscribe', { params: data });
+    return res.data;
+  },
+  async getChannelSettings() {
+    const res = await apiClient.get('/users/me/channel-settings');
+    return res.data;
+  },
+  async updateChannelSettings(data) {
+    const res = await apiClient.patch('/users/me/channel-settings', data);
+    return res.data;
+  },
+  async getPushSubscriptionStatus() {
+    const res = await apiClient.get('/users/me/push-subscription');
+    return res.data;
+  },
+  async registerPushSubscription(token) {
+    const res = await apiClient.post('/users/me/push-subscription', { token });
+    return res.data;
+  },
+  async removePushSubscription(token) {
+    const res = await apiClient.delete('/users/me/push-subscription', { data: { token } });
+    return res.data;
+  },
+  async getMyCampaigns(params) {
+    const res = await apiClient.get('/users/me/campaigns', { params });
+    return res.data;
+  },
 };

@@ -51,7 +51,8 @@ function CampaignRequirementsNotice({ campaignId }) {
     </div>
   );
 }
- *
+
+/**
  * Shows a green "You're eligible" or red "Requirements not met" badge.
  * Fetches campaign requirements + contributor profile in parallel.
  */

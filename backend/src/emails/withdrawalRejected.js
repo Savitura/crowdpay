@@ -1,6 +1,6 @@
 const { renderLayout, heading, paragraph, table } = require("./layout");
 
-function build({ creatorName, amount, asset, campaignTitle, reason }) {
+function build({ creatorName, amount, asset, campaignTitle, reason, unsubscribeUrl }) {
   const name = creatorName || "there";
   const subject = "Your withdrawal request was rejected";
 
@@ -22,6 +22,7 @@ function build({ creatorName, amount, asset, campaignTitle, reason }) {
         ["Reason", reason],
       ]),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

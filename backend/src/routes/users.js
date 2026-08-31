@@ -203,75 +203,40 @@ router.get('/me/following', requireAuth, asyncHandler(async (req, res) => {
 }));
 
 router.get('/me/notification-preferences', requireAuth, asyncHandler(async (req, res) => {
-  const { rows: users } = await db.query(
-    'SELECT email FROM users WHERE id = $1',
+  const { rows } = await db.query(
+    'SELECT campaign_updates, refunds, disputes, milestones, marketing FROM notification_preferences WHERE user_id = $1',
     [req.user.userId]
   );
-  if (!users.length) return res.status(404).json({ error: 'User not found' });
-
-  const email = String(users[0].email).toLowerCase();
-  const { rows } = await db.query(
-    `SELECT category
-     FROM email_unsubscribes
-     WHERE email = $1
-       AND category IN ('campaign_update', 'weekly_digest')`,
-    [email]
-  );
-  const unsubscribed = new Set(rows.map((row) => row.category));
-
-  res.json({
-    campaign_update_emails: !unsubscribed.has('campaign_update'),
-    weekly_digest_emails: !unsubscribed.has('weekly_digest'),
-  });
+  if (rows.length > 0) {
+    res.json(rows[0]);
+  } else {
+    res.json({
+      campaign_updates: true,
+      refunds: true,
+      disputes: true,
+      milestones: true,
+      marketing: false,
+    });
+  }
 }));
 
 router.patch('/me/notification-preferences', requireAuth, asyncHandler(async (req, res) => {
-  const { rows: users } = await db.query(
-    'SELECT email FROM users WHERE id = $1',
-    [req.user.userId]
+  const { campaign_updates, refunds, disputes, milestones, marketing } = req.body;
+    const toNull = v => v === undefined ? null : v;
+  const { rows } = await db.query(
+    `INSERT INTO notification_preferences (user_id, campaign_updates, refunds, disputes, milestones, marketing)
+     VALUES ($1, COALESCE($2, TRUE), COALESCE($3, TRUE), COALESCE($4, TRUE), COALESCE($5, TRUE), COALESCE($6, FALSE))
+     ON CONFLICT (user_id) DO UPDATE SET
+       campaign_updates = COALESCE($2, notification_preferences.campaign_updates),
+       refunds = COALESCE($3, notification_preferences.refunds),
+       disputes = COALESCE($4, notification_preferences.disputes),
+       milestones = COALESCE($5, notification_preferences.milestones),
+       marketing = COALESCE($6, notification_preferences.marketing),
+       updated_at = NOW()
+     RETURNING campaign_updates, refunds, disputes, milestones, marketing`,
+    [req.user.userId, toNull(campaign_updates), toNull(refunds), toNull(disputes), toNull(milestones), toNull(marketing)]
   );
-  if (!users.length) return res.status(404).json({ error: 'User not found' });
-
-  const email = String(users[0].email).toLowerCase();
-  const updates = [];
-  if (typeof req.body?.campaign_update_emails === 'boolean') {
-    updates.push({ category: 'campaign_update', enabled: req.body.campaign_update_emails });
-  }
-  if (typeof req.body?.weekly_digest_emails === 'boolean') {
-    updates.push({ category: 'weekly_digest', enabled: req.body.weekly_digest_emails });
-  }
-  if (!updates.length) {
-    return res.status(400).json({ error: 'At least one notification preference must be provided' });
-  }
-
-  for (const update of updates) {
-    if (update.enabled) {
-      await db.query(
-        'DELETE FROM email_unsubscribes WHERE email = $1 AND category = $2',
-        [email, update.category]
-      );
-    } else {
-      await db.query(
-        `INSERT INTO email_unsubscribes (email, category)
-         VALUES ($1, $2)
-         ON CONFLICT (email, category) DO NOTHING`,
-        [email, update.category]
-      );
-    }
-  }
-
-  const { rows: currentRows } = await db.query(
-    `SELECT category
-     FROM email_unsubscribes
-     WHERE email = $1
-       AND category IN ('campaign_update', 'weekly_digest')`,
-    [email]
-  );
-  const unsubscribed = new Set(currentRows.map((row) => row.category));
-  res.json({
-    campaign_update_emails: !unsubscribed.has('campaign_update'),
-    weekly_digest_emails: !unsubscribed.has('weekly_digest'),
-  });
+  res.json(rows[0]);
 }));
 
 const { getUserDashboardAnalytics } = require('../services/analyticsService');

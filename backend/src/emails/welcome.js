@@ -1,6 +1,6 @@
 const { renderLayout, heading, paragraph, table } = require("./layout");
 
-function build({ name, walletPublicKey }) {
+function build({ name, walletPublicKey, unsubscribeUrl }) {
   const recipientName = name || "there";
   const subject = "Welcome to CrowdPay";
 
@@ -22,6 +22,7 @@ function build({ name, walletPublicKey }) {
       table([["Wallet public key", walletPublicKey]]),
       paragraph("Thanks for joining CrowdPay."),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

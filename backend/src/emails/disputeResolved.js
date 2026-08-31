@@ -1,6 +1,6 @@
 const { renderLayout, heading, paragraph, buttonRow } = require("./layout");
 
-function buildForCreator({ creatorName, campaignTitle, outcome, resolutionNote, campaignUrl }) {
+function buildForCreator({ creatorName, campaignTitle, outcome, resolutionNote, campaignUrl, unsubscribeUrl }) {
   const name = creatorName || "there";
   const subject = `Dispute resolved on "${campaignTitle}"`;
 
@@ -25,12 +25,13 @@ function buildForCreator({ creatorName, campaignTitle, outcome, resolutionNote, 
       resolutionNote ? paragraph(`Note: ${resolutionNote}`) : "",
       buttonRow("View campaign", campaignUrl),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };
 }
 
-function buildForContributor({ contributorName, campaignTitle, outcome, resolutionNote, campaignUrl }) {
+function buildForContributor({ contributorName, campaignTitle, outcome, resolutionNote, campaignUrl, unsubscribeUrl }) {
   const name = contributorName || "there";
   const subject = "Your dispute has been resolved";
 
@@ -55,6 +56,7 @@ function buildForContributor({ contributorName, campaignTitle, outcome, resoluti
       resolutionNote ? paragraph(`Note: ${resolutionNote}`) : "",
       buttonRow("View campaign", campaignUrl),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

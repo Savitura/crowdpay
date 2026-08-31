@@ -1,4 +1,4 @@
-'use strict;
+'use strict';
 
 // backend/src/middleware/embedAuth.js
 //
@@ -18,17 +18,17 @@ const requireEmbedToken = asyncHandler(async (req, res, next) => {
     return res.status(401).json({ error: 'embedToken is required' });
   }
 
-  const tokenRow = await validateEmbedToken rawToken);
-  if (!tokenRow) {
+  const activeToken = await validateEmbedToken(rawToken);
+  if (!activeToken) {
     return res.status(401).json({ error: 'Invalid or revoked embed token' });
   }
 
   const campaignId = req.params.campaignId || req.query.campaignId;
-  if (campaignId && String(tokenRow.campaignId) !== String(campaignId)) {
+  if (campaignId && String(activeToken.campaignId) !== String(campaignId)) {
     return res.status(403).json({ error: 'Embed token does not match campaign' });
   }
 
-  req.embedToken = tokenRow;
+  req.embedToken = activeToken;
   next();
 });
 

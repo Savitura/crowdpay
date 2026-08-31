@@ -99,11 +99,33 @@ async function sendIdempotent({ dedupeKey, to, subject, text, html }) {
 }
 
 async function isUnsubscribed(email, category) {
-  const { rows } = await db.query(
-    "SELECT 1 FROM email_unsubscribes WHERE email = $1 AND category = $2",
-    [email.toLowerCase(), category],
+  // Try to find the user
+  const { rows: users } = await db.query(
+    "SELECT id FROM users WHERE email = $1",
+    [email.toLowerCase()]
   );
-  return rows.length > 0;
+  if (!users.length) return false;
+
+  // Map old categories to the new ones
+  const map = {
+    marketing: 'marketing',
+    campaign_update: 'campaign_updates',
+    refund: 'refunds',
+    milestone: 'milestones',
+    dispute: 'disputes'
+  };
+  const mapped = map[category] || 'campaign_updates';
+
+  const { rows } = await db.query(
+    "SELECT * FROM notification_preferences WHERE user_id = $1",
+    [users[0].id]
+  );
+  if (!rows.length) {
+    // defaults: marketing off, others on
+    return mapped === 'marketing';
+  }
+  
+  return !rows[0][mapped];
 }
 
 async function isCampaignUpdateUnsubscribed(email, campaignId) {
@@ -116,7 +138,9 @@ async function isCampaignUpdateUnsubscribed(email, campaignId) {
 
 async function sendWelcomeEmail({ to, name, walletPublicKey }) {
   if (!to) return;
-  const { subject, text, html } = welcomeEmail.build({ name, walletPublicKey });
+    if (await isUnsubscribed(to, 'marketing')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'marketing' });
+const { subject, text, html } = welcomeEmail.build({ name, walletPublicKey, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `welcome:${to}`, to, subject, text, html });
 }
 
@@ -127,12 +151,14 @@ async function sendWelcomeEmail({ to, name, walletPublicKey }) {
  */
 async function sendRecurringContributionNoticeEmail({ to, kind, recurringRunKey, ...params }) {
   if (!to) return;
-  if (!['upcoming', 'charged', 'failed'].includes(kind)) return;
+    if (await isUnsubscribed(to, 'campaign_update')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'campaign_update' });
+if (!['upcoming', 'charged', 'failed'].includes(kind)) return;
 
   let built;
-  if (kind === 'upcoming') built = recurringContributionNoticeEmail.buildUpcoming(params);
-  else if (kind === 'charged') built = recurringContributionNoticeEmail.buildCharged(params);
-  else built = recurringContributionNoticeEmail.buildFailed(params);
+  if (kind === 'upcoming') built = recurringContributionNoticeEmail.buildUpcoming({ ...params, unsubscribeUrl });
+  else if (kind === 'charged') built = recurringContributionNoticeEmail.buildCharged({ ...params, unsubscribeUrl });
+  else built = recurringContributionNoticeEmail.buildFailed({ ...params, unsubscribeUrl });
 
   const { subject, text, html } = built;
   await sendIdempotent({
@@ -174,6 +200,8 @@ async function sendContributionReceipt({
     return;
   }
 
+  if (await isUnsubscribed(users[0].email, 'refund')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: users[0].email, category: 'refund' });
   const { subject, text, html } = contributionReceiptEmail.build({
     name: users[0].name,
     campaignTitle: campaigns[0].title,
@@ -181,6 +209,7 @@ async function sendContributionReceipt({
     asset,
     txHash,
     date: new Date().toISOString(),
+    unsubscribeUrl,
   });
 
   await sendIdempotent({
@@ -194,97 +223,129 @@ async function sendContributionReceipt({
 
 async function sendCampaignFundedCreatorEmail({ to, campaignId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = campaignFundedEmail.buildForCreator(params);
+    if (await isUnsubscribed(to, 'campaign_update')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'campaign_update' });
+const { subject, text, html } = campaignFundedEmail.buildForCreator({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `campaign_funded_creator:${campaignId}`, to, subject, text, html });
 }
 
 async function sendCampaignFundedContributorEmail({ to, campaignId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = campaignFundedEmail.buildForContributor(params);
+    if (await isUnsubscribed(to, 'campaign_update')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'campaign_update' });
+const { subject, text, html } = campaignFundedEmail.buildForContributor({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `campaign_funded_contributor:${campaignId}:${to}`, to, subject, text, html });
 }
 
 async function sendCampaignFailedCreatorEmail({ to, campaignId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = campaignFailedEmail.buildForCreator(params);
+    if (await isUnsubscribed(to, 'campaign_update')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'campaign_update' });
+const { subject, text, html } = campaignFailedEmail.buildForCreator({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `campaign_failed_creator:${campaignId}`, to, subject, text, html });
 }
 
 async function sendCampaignFailedContributorEmail({ to, campaignId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = campaignFailedEmail.buildForContributor(params);
+    if (await isUnsubscribed(to, 'campaign_update')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'campaign_update' });
+const { subject, text, html } = campaignFailedEmail.buildForContributor({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `campaign_failed_contributor:${campaignId}:${to}`, to, subject, text, html });
 }
 
 async function sendWithdrawalApprovedEmail({ to, withdrawalId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = withdrawalApprovedEmail.build(params);
+    if (await isUnsubscribed(to, 'milestone')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'milestone' });
+const { subject, text, html } = withdrawalApprovedEmail.build({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `withdrawal_approved:${withdrawalId}`, to, subject, text, html });
 }
 
 async function sendWithdrawalRejectedEmail({ to, withdrawalId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = withdrawalRejectedEmail.build(params);
+    if (await isUnsubscribed(to, 'milestone')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'milestone' });
+const { subject, text, html } = withdrawalRejectedEmail.build({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `withdrawal_rejected:${withdrawalId}`, to, subject, text, html });
 }
 
 async function sendMilestoneReleasedCreatorEmail({ to, milestoneId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = milestoneReleasedEmail.buildForCreator(params);
+    if (await isUnsubscribed(to, 'milestone')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'milestone' });
+const { subject, text, html } = milestoneReleasedEmail.buildForCreator({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `milestone_released_creator:${milestoneId}`, to, subject, text, html });
 }
 
 async function sendMilestoneReleasedContributorEmail({ to, milestoneId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = milestoneReleasedEmail.buildForContributor(params);
+    if (await isUnsubscribed(to, 'milestone')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'milestone' });
+const { subject, text, html } = milestoneReleasedEmail.buildForContributor({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `milestone_released_contributor:${milestoneId}:${to}`, to, subject, text, html });
 }
 
 async function sendContributorFundsReleasedEmail({ to, dedupeKey, ...params }) {
   if (!to) return;
-  const { subject, text, html } = fundsReleasedEmail.buildContributorRelease(params);
+    if (await isUnsubscribed(to, 'milestone')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'milestone' });
+const { subject, text, html } = fundsReleasedEmail.buildContributorRelease(params);
   await sendIdempotent({ dedupeKey, to, subject, text, html });
 }
 
 async function sendMilestoneEvidenceSubmittedAdminEmail({ to, milestoneId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = milestoneEvidenceSubmittedEmail.buildForAdmin(params);
+    if (await isUnsubscribed(to, 'milestone')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'milestone' });
+const { subject, text, html } = milestoneEvidenceSubmittedEmail.buildForAdmin({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `milestone_evidence_submitted:${milestoneId}:${to}`, to, subject, text, html });
 }
 
 async function sendKycApprovedEmail({ to, userId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = kycApprovedEmail.build(params);
+    if (await isUnsubscribed(to, 'campaign_update')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'campaign_update' });
+const { subject, text, html } = kycApprovedEmail.build({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `kyc_approved:${userId}:${Date.now()}`, to, subject, text, html });
 }
 
 async function sendKycRejectedEmail({ to, userId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = kycRejectedEmail.build(params);
+    if (await isUnsubscribed(to, 'campaign_update')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'campaign_update' });
+const { subject, text, html } = kycRejectedEmail.build({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `kyc_rejected:${userId}:${Date.now()}`, to, subject, text, html });
 }
 
 async function sendDisputeOpenedCreatorEmail({ to, disputeId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = disputeOpenedEmail.buildForCreator(params);
+    if (await isUnsubscribed(to, 'dispute')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'dispute' });
+const { subject, text, html } = disputeOpenedEmail.buildForCreator({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `dispute_opened_creator:${disputeId}`, to, subject, text, html });
 }
 
 async function sendDisputeOpenedAdminEmail({ to, disputeId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = disputeOpenedEmail.buildForAdmin(params);
+    if (await isUnsubscribed(to, 'dispute')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'dispute' });
+const { subject, text, html } = disputeOpenedEmail.buildForAdmin({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `dispute_opened_admin:${disputeId}:${to}`, to, subject, text, html });
 }
 
 async function sendDisputeResolvedCreatorEmail({ to, disputeId, outcome, ...params }) {
   if (!to) return;
-  const { subject, text, html } = disputeResolvedEmail.buildForCreator({ outcome, ...params });
+    if (await isUnsubscribed(to, 'dispute')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'dispute' });
+const { subject, text, html } = disputeResolvedEmail.buildForCreator({ outcome, ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `dispute_resolved_creator:${disputeId}:${outcome}`, to, subject, text, html });
 }
 
 async function sendDisputeResolvedContributorEmail({ to, disputeId, outcome, ...params }) {
   if (!to) return;
-  const { subject, text, html } = disputeResolvedEmail.buildForContributor({ outcome, ...params });
+    if (await isUnsubscribed(to, 'dispute')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'dispute' });
+const { subject, text, html } = disputeResolvedEmail.buildForContributor({ outcome, ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `dispute_resolved_contributor:${disputeId}:${outcome}`, to, subject, text, html });
 }
 
@@ -315,7 +376,9 @@ async function sendWeeklyDigestEmail({ to, userId, windowEnd, ...params }) {
 
 async function sendTeamMemberInvitedEmail({ to, memberId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = teamMemberInvitedEmail.build(params);
+    if (await isUnsubscribed(to, 'campaign_update')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'campaign_update' });
+const { subject, text, html } = teamMemberInvitedEmail.build({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `team_member_invited:${memberId}`, to, subject, text, html });
 }
 
@@ -340,29 +403,37 @@ async function sendThankYouEmail({ to, messageId, campaignId, ...params }) {
 
 async function sendCampaignFraudFlaggedEmail({ to, campaignId, ...params }) {
   if (!to) return;
-  const { subject, text, html } = campaignFraudFlaggedEmail.build({ campaignId, ...params });
+    if (await isUnsubscribed(to, 'dispute')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'dispute' });
+const { subject, text, html } = campaignFraudFlaggedEmail.build({ campaignId, ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `campaign_fraud_flagged:${campaignId}:${to}`, to, subject, text, html });
 }
 
 async function sendWalletFundingFailedEmail({ to, ...params }) {
   if (!to) return;
-  const { subject, text, html } = walletFundingFailedEmail.build(params);
+    if (await isUnsubscribed(to, 'campaign_update')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'campaign_update' });
+const { subject, text, html } = walletFundingFailedEmail.build({ ...params, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `wallet_funding_failed:${to}`, to, subject, text, html });
 }
 
 async function sendCampaignCommentEmail({ to, commentId, ...params }) {
   if (!to) return;
-  const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+    if (await isUnsubscribed(to, 'campaign_update')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'campaign_update' });
+const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
   const campaignUrl = `${frontendUrl}/campaigns/${params.campaignId}`;
-  const { subject, text, html } = campaignCommentEmail.buildForCreator({ ...params, campaignUrl });
+  const { subject, text, html } = campaignCommentEmail.buildForCreator({ ...params, campaignUrl, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `campaign_comment:${commentId}:${to}`, to, subject, text, html });
 }
 
 async function sendCommentReplyEmail({ to, commentId, ...params }) {
   if (!to) return;
-  const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+    if (await isUnsubscribed(to, 'campaign_update')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'campaign_update' });
+const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
   const campaignUrl = `${frontendUrl}/campaigns/${params.campaignId}`;
-  const { subject, text, html } = campaignCommentEmail.buildForCommenter({ ...params, campaignUrl });
+  const { subject, text, html } = campaignCommentEmail.buildForCommenter({ ...params, campaignUrl, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `comment_reply:${commentId}:${to}`, to, subject, text, html });
 }
 

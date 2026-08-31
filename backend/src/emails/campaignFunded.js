@@ -1,6 +1,6 @@
 const { renderLayout, heading, paragraph, table, buttonRow } = require("./layout");
 
-function buildForCreator({ creatorName, campaignTitle, campaignUrl, targetAmount, raisedAmount }) {
+function buildForCreator({ creatorName, campaignTitle, campaignUrl, targetAmount, raisedAmount, unsubscribeUrl }) {
   const name = creatorName || "there";
   const subject = `Your campaign "${campaignTitle}" has reached its goal`;
 
@@ -28,12 +28,13 @@ function buildForCreator({ creatorName, campaignTitle, campaignUrl, targetAmount
       buttonRow("View campaign", campaignUrl),
       paragraph("You can now request a withdrawal from your creator dashboard."),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };
 }
 
-function buildForContributor({ contributorName, campaignTitle, campaignUrl }) {
+function buildForContributor({ contributorName, campaignTitle, campaignUrl, unsubscribeUrl }) {
   const name = contributorName || "there";
   const subject = `Campaign you backed has been fully funded: "${campaignTitle}"`;
 
@@ -55,6 +56,7 @@ function buildForContributor({ contributorName, campaignTitle, campaignUrl }) {
       buttonRow("View campaign", campaignUrl),
       paragraph("Thank you for backing this campaign on CrowdPay."),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

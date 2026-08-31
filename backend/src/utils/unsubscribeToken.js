@@ -14,10 +14,10 @@ function sign(email, category, campaignId) {
 }
 
 function buildUnsubscribeUrl({ email, category, campaignId }) {
-  const base = (process.env.BACKEND_URL || process.env.APP_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+  const base = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
   const params = new URLSearchParams({ email, category, sig: sign(email, category, campaignId) });
   if (campaignId) params.set("campaign_id", String(campaignId));
-  return `${base}/api/emails/unsubscribe?${params.toString()}`;
+  return `${base}/settings/notifications?${params.toString()}`;
 }
 
 function verifyUnsubscribeToken({ email, category, sig, campaign_id: campaignId }) {

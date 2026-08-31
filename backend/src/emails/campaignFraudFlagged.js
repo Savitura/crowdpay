@@ -1,6 +1,6 @@
 const { renderLayout, heading, paragraph, table } = require("./layout");
 
-function build({ adminName, campaignTitle, campaignId, score, breakdown, autoSuspended }) {
+function build({ adminName, campaignTitle, campaignId, score, breakdown, autoSuspended, unsubscribeUrl }) {
   const recipientName = adminName || "Admin";
   const subject = `[Fraud Alert] Campaign Flagged: ${campaignTitle}`;
 
@@ -43,6 +43,7 @@ function build({ adminName, campaignTitle, campaignId, score, breakdown, autoSus
       table(breakdownRows),
       paragraph("Please review this campaign immediately from the Admin Dashboard."),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

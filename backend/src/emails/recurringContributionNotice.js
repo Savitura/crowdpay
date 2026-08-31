@@ -2,7 +2,7 @@
 // emailService.sendRecurringContributionNoticeEmail.
 const { renderLayout, heading, paragraph, table } = require("./layout");
 
-function buildUpcoming({ name, campaignTitle, amount, asset, scheduledAt, manageUrl }) {
+function buildUpcoming({ name, campaignTitle, amount, asset, scheduledAt, manageUrl, unsubscribeUrl }) {
   const recipientName = name || "there";
   const subject = `Your monthly contribution to "${campaignTitle}" is scheduled`;
   const text = [
@@ -28,12 +28,13 @@ function buildUpcoming({ name, campaignTitle, amount, asset, scheduledAt, manage
       ]),
       paragraph(`You can pause or cancel this recurring contribution any time: ${manageUrl}`),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };
 }
 
-function buildCharged({ name, campaignTitle, amount, asset, txHash, campaignUrl }) {
+function buildCharged({ name, campaignTitle, amount, asset, txHash, campaignUrl, unsubscribeUrl }) {
   const recipientName = name || "there";
   const subject = `Your monthly contribution to "${campaignTitle}" was processed`;
   const text = `Hi ${recipientName}, your recurring contribution of ${amount} ${asset} to "${campaignTitle}" was processed successfully on the Stellar network. Transaction: ${txHash} — ${campaignUrl}`;
@@ -50,12 +51,13 @@ function buildCharged({ name, campaignTitle, amount, asset, txHash, campaignUrl 
         ["Amount", `${amount} ${asset}`],
       ]),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };
 }
 
-function buildFailed({ name, campaignTitle, amount, asset, manageUrl }) {
+function buildFailed({ name, campaignTitle, amount, asset, manageUrl, unsubscribeUrl }) {
   const recipientName = name || "there";
   const subject = `Your monthly contribution to "${campaignTitle}" couldn't be processed`;
   const text = [
@@ -81,6 +83,7 @@ function buildFailed({ name, campaignTitle, amount, asset, manageUrl }) {
       ),
       paragraph(`Manage your recurring contribution: ${manageUrl}`),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

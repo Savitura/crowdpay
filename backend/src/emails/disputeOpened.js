@@ -1,6 +1,6 @@
 const { renderLayout, heading, paragraph, table, buttonRow } = require("./layout");
 
-function buildForCreator({ creatorName, campaignTitle, reason }) {
+function buildForCreator({ creatorName, campaignTitle, reason, unsubscribeUrl }) {
   const name = creatorName || "there";
   const subject = `A dispute has been raised on "${campaignTitle}"`;
 
@@ -21,12 +21,13 @@ function buildForCreator({ creatorName, campaignTitle, reason }) {
       table([["Reason", reason]]),
       paragraph("The platform team will review and contact you shortly."),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };
 }
 
-function buildForAdmin({ campaignTitle, campaignId, raisedByName, reason, description, adminUrl }) {
+function buildForAdmin({ campaignTitle, campaignId, raisedByName, reason, description, adminUrl, unsubscribeUrl }) {
   const subject = `A dispute has been raised on "${campaignTitle}"`;
 
   const text = [
@@ -50,6 +51,7 @@ function buildForAdmin({ campaignTitle, campaignId, raisedByName, reason, descri
       ]),
       buttonRow("Review dispute", adminUrl),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

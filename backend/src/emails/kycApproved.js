@@ -1,6 +1,6 @@
 const { renderLayout, heading, paragraph, buttonRow } = require("./layout");
 
-function build({ name, dashboardUrl }) {
+function build({ name, dashboardUrl, unsubscribeUrl }) {
   const recipientName = name || "there";
   const subject = "Your identity is verified";
 
@@ -19,6 +19,7 @@ function build({ name, dashboardUrl }) {
       paragraph(`Hi ${recipientName}, your identity verification is complete. You can now create campaigns and contribute without restriction.`),
       buttonRow("Go to dashboard", dashboardUrl),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

@@ -1,6 +1,6 @@
 const { renderLayout, heading, paragraph, buttonRow } = require("./layout");
 
-function buildForCreator({ creatorName, commenterName, campaignTitle, campaignUrl, commentBody }) {
+function buildForCreator({ creatorName, commenterName, campaignTitle, campaignUrl, commentBody, unsubscribeUrl }) {
   const name = creatorName || "Creator";
   const commenter = commenterName || "A backer";
   const subject = `New question on "${campaignTitle}"`;
@@ -24,12 +24,13 @@ function buildForCreator({ creatorName, commenterName, campaignTitle, campaignUr
       paragraph(`<em>"${commentBody}"</em>`),
       buttonRow("View & Reply", campaignUrl),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };
 }
 
-function buildForCommenter({ commenterName, replierName, campaignTitle, campaignUrl, replyBody, isCreatorReply }) {
+function buildForCommenter({ commenterName, replierName, campaignTitle, campaignUrl, replyBody, isCreatorReply, unsubscribeUrl }) {
   const name = commenterName || "there";
   const replier = replierName || (isCreatorReply ? "The creator" : "Someone");
   const subject = `New reply on "${campaignTitle}"`;
@@ -53,6 +54,7 @@ function buildForCommenter({ commenterName, replierName, campaignTitle, campaign
       paragraph(`<em>"${replyBody}"</em>`),
       buttonRow("View Conversation", campaignUrl),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };
