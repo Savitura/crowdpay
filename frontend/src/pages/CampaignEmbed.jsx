@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import MilestoneProgressBar, { normalizeWidgetSize } from '../components/MilestoneProgressBar';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
@@ -15,69 +15,37 @@ function getParentOrigin() {
 }
 
 export default function CampaignEmbed() {
-  const [campaign, setCampaign] = useState(null);
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [isLive, setIsLive] = useState(false);
 
   const pathParts = window.location.pathname.split('/');
   const campaignId = pathParts[pathParts.length - 1];
-  const size = normalizeWidgetSize(new URLSearchParams(window.location.search).get('size'));
+  const params = new URLSearchParams(window.location.search);
+  const size = normalizeWidgetSize(params.get('size'));
+  const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
   const parentOrigin = getParentOrigin();
 
-  useEffect(() => {
-    if (!campaignId) {
-      setError('Invalid campaign ID');
+  const fetchStats = useCallback(async () => {
+    if (!campaignId) return;
+    try {
+      const res = await fetch(`${BASE_URL}/embed/${campaignId}/stats`);
+      if (!res.ok) throw new Error('Campaign stats not found');
+      const data = await res.json();
+      setStats(data);
+      setError('');
+    } catch (err) {
+      setError(err.message || 'Failed to load campaign');
+    } finally {
       setLoading(false);
-      return;
     }
-
-    fetch(`${BASE_URL}/campaigns/${campaignId}/embed`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Campaign not found');
-        return res.json();
-      })
-      .then((data) => {
-        setCampaign(data);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message || 'Failed to load campaign');
-        setLoading(false);
-      });
   }, [campaignId]);
 
   useEffect(() => {
-    if (!campaignId || !campaign) return;
-    if (!window.EventSource) return;
-
-    const es = new EventSource(`${BASE_URL}/campaigns/${campaignId}/stream`);
-
-    es.onopen = () => setIsLive(true);
-
-    es.onmessage = (e) => {
-      let msg;
-      try {
-        msg = JSON.parse(e.data);
-      } catch {
-        return;
-      }
-
-      if (msg.type === 'contribution') {
-        setCampaign((prev) => (prev ? { ...prev, raised_amount: msg.raised_amount } : prev));
-      }
-    };
-
-    es.onerror = () => {
-      setIsLive(false);
-      es.close();
-    };
-
-    return () => {
-      es.close();
-      setIsLive(false);
-    };
-  }, [campaignId, campaign]);
+    fetchStats();
+    const interval = setInterval(fetchStats, 30000);
+    return () => clearInterval(interval);
+  }, [fetchStats]);
 
   useEffect(() => {
     const targetOrigin = parentOrigin || '*';
@@ -85,8 +53,6 @@ export default function CampaignEmbed() {
     let frame = 0;
 
     const measureHeight = () => {
-      // iOS Safari can under-report <html>.scrollHeight in an iframe, so take
-      // the largest of the documentElement / body heights and track images.
       const doc = document.documentElement;
       const body = document.body;
       const heights = [doc && doc.scrollHeight, doc && doc.offsetHeight, body && body.scrollHeight];
@@ -101,8 +67,6 @@ export default function CampaignEmbed() {
       }
     };
 
-    // Coalesce bursty layout changes (images, fonts) into a single frame so we
-    // only push one resize per paint rather than spamming the parent.
     const scheduleNotify = () => {
       if (frame) window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(notifyHeight);
@@ -112,21 +76,14 @@ export default function CampaignEmbed() {
 
     let observer;
     if (typeof ResizeObserver !== 'undefined') {
-      // Height is already deduped, so respond immediately to observed layout
-      // changes rather than deferring through a rAF tick.
       observer = new ResizeObserver(notifyHeight);
       observer.observe(document.documentElement);
       if (document.body) observer.observe(document.body);
     }
 
-    // Mobile Safari can skip ResizeObserver for late layout changes, so also
-    // react to window resizes, webfont loads, and image loads.
     window.addEventListener('resize', scheduleNotify);
     window.addEventListener('load', scheduleNotify);
 
-    document.fonts?.ready?.then(scheduleNotify).catch(() => {});
-
-    // Catch any remaining late-height drift (e.g. async content) after a tick.
     frame = window.requestAnimationFrame(() => {
       setTimeout(scheduleNotify, 50);
     });
@@ -137,244 +94,132 @@ export default function CampaignEmbed() {
       window.removeEventListener('load', scheduleNotify);
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [campaign, loading, error, parentOrigin]);
+  }, [stats, loading, error, parentOrigin]);
 
-  useEffect(() => {
-    const handler = (event) => {
-      if (event.data && event.data.type === 'open') {
-        // do nothing
-      }
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, []);
-
-  // Add pulse animation style
-  useEffect(() => {
-    const styleSheet = document.createElement('style');
-    styleSheet.textContent = `
-      @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
-      }
-    `;
-    document.head.appendChild(styleSheet);
-
-    return () => {
-      document.head.removeChild(styleSheet);
-    };
-  }, []);
+  const isDark = theme === 'dark';
+  const bg = isDark ? '#1a202c' : '#ffffff';
+  const textColor = isDark ? '#f7fafc' : '#1a202c';
+  const textMuted = isDark ? '#a0aec0' : '#718096';
+  const borderColor = isDark ? '#2d3748' : '#e2e8f0';
 
   if (loading) {
     return (
-      <div style={styles.container}>
-        <div style={styles.skeleton} />
-        <div style={styles.skeletonShort} />
-        <div style={styles.skeletonBar} />
+      <div style={{ background: bg, color: textColor, padding: '1rem', fontFamily: 'system-ui, sans-serif', fontSize: '0.85rem' }}>
+        Loading campaign progress...
       </div>
     );
   }
 
-  if (error || !campaign) {
+  if (error || !stats) {
     return (
-      <div style={styles.container}>
-        <p style={styles.error}>{error || 'Campaign not found'}</p>
+      <div style={{ background: bg, color: '#e53e3e', padding: '1rem', fontFamily: 'system-ui, sans-serif', fontSize: '0.85rem' }}>
+        {error || 'Campaign not available'}
       </div>
     );
   }
-
-  const progressPct = Math.min(100, campaign.progress_percentage);
 
   return (
-    <div style={styles.container}>
-      {isLive && <span style={styles.liveIndicator} title="Live updates active" />}
+    <div
+      style={{
+        background: bg,
+        color: textColor,
+        border: `1px solid ${borderColor}`,
+        borderRadius: '12px',
+        padding: size === 'small' ? '0.75rem' : '1rem',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        boxSizing: 'border-box',
+        width: '100%',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <h3 style={{ margin: 0, fontSize: size === 'small' ? '0.95rem' : '1.1rem', fontWeight: 700, lineHeight: 1.25 }}>
+          {stats.title}
+        </h3>
+        <span
+          style={{
+            fontSize: '0.7rem',
+            padding: '0.15rem 0.5rem',
+            borderRadius: '999px',
+            background: isDark ? '#2b6cb0' : '#ebf8ff',
+            color: isDark ? '#ebf8ff' : '#2b6cb0',
+            fontWeight: 600,
+            textTransform: 'uppercase',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {stats.status}
+        </span>
+      </div>
 
-      <h1 style={styles.title}>{campaign.title}</h1>
-
-      {size !== 'small' && campaign.description && (
-        <p style={styles.description}>{campaign.description}</p>
+      {size !== 'small' && stats.description && (
+        <p style={{ margin: '0 0 0.75rem', fontSize: '0.82rem', color: textMuted, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+          {stats.description}
+        </p>
       )}
 
-      <div style={styles.progressSection}>
-        <div style={styles.amounts}>
-          <div>
-            <span style={styles.raisedAmount}>
-              {Number(campaign.raised_amount).toLocaleString()}
-            </span>
-            <span style={styles.asset}>{campaign.asset_type}</span>
-            <span style={styles.label}> raised</span>
-          </div>
-          <div style={styles.target}>{progressPct.toFixed(1)}%</div>
+      <div style={{ marginBottom: '0.75rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.3rem', fontWeight: 600 }}>
+          <span>
+            {Number(stats.raised_amount).toLocaleString()} / {Number(stats.target_amount).toLocaleString()} {stats.asset_type}
+          </span>
+          <span style={{ color: textMuted }}>{stats.progress_percentage}%</span>
         </div>
-
-        <div style={styles.progressBar} role="progressbar" aria-valuenow={Math.round(progressPct)} aria-valuemin={0} aria-valuemax={100}>
+        <div style={{ height: '8px', background: borderColor, borderRadius: '99px', overflow: 'hidden' }}>
           <div
             style={{
-              ...styles.progressFill,
-              width: `${progressPct}%`,
+              height: '100%',
+              width: `${Math.min(100, stats.progress_percentage)}%`,
+              background: '#7c3aed',
+              borderRadius: '99px',
+              transition: 'width 0.3s ease',
             }}
           />
         </div>
-
-        <div style={styles.stats}>
-          <span>
-            <strong>{campaign.backer_count}</strong> backer{campaign.backer_count !== 1 ? 's' : ''}
-          </span>
-          <span>
-            Goal: <strong>{Number(campaign.target_amount).toLocaleString()}</strong>{' '}
-            {campaign.asset_type}
-          </span>
-          {campaign.days_remaining !== null && campaign.days_remaining !== undefined && (
-            <span>
-              <strong>{campaign.days_remaining}</strong> day{campaign.days_remaining !== 1 ? 's' : ''} left
-            </span>
-          )}
-        </div>
       </div>
 
-      <MilestoneProgressBar
-        milestones={campaign.milestones}
-        summary={campaign.milestone_summary}
-        size={size}
-      />
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: textMuted, marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <span>👥 {stats.backer_count} backers</span>
+        {stats.days_remaining !== null && (
+          <span>⏳ {stats.days_remaining} days left</span>
+        )}
+      </div>
+
+      {size === 'large' && stats.milestones?.length > 0 && (
+        <MilestoneProgressBar milestones={stats.milestones} size={size} />
+      )}
+
+      {size === 'large' && stats.recent_backers?.length > 0 && (
+        <div style={{ marginBottom: '0.75rem', borderTop: `1px solid ${borderColor}`, paddingTop: '0.5rem' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, marginBottom: '0.3rem', color: textMuted }}>Recent Backers</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+            {stats.recent_backers.slice(0, 3).map((b, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                <span>{b.name}</span>
+                <span style={{ fontWeight: 600 }}>{Number(b.amount).toLocaleString()} {stats.asset_type}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <a
-        href={campaign.contribution_url}
+        href={stats.contribution_url}
         target="_blank"
         rel="noopener noreferrer"
-        style={styles.ctaButton}
-        onClick={() => {
-          window.parent.postMessage({ type: 'cta_click', campaignId: campaign.id }, parentOrigin || '*');
+        style={{
+          display: 'block',
+          textAlign: 'center',
+          background: '#7c3aed',
+          color: '#ffffff',
+          padding: '0.6rem 1rem',
+          borderRadius: '8px',
+          textDecoration: 'none',
+          fontWeight: 700,
+          fontSize: '0.85rem',
         }}
       >
-        Back this campaign
+        Contribute Now
       </a>
     </div>
   );
 }
-
-const styles = {
-  container: {
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    padding: '1rem',
-    maxWidth: '600px',
-    margin: '0 auto',
-    background: 'var(--color-bg)',
-    borderRadius: '8px',
-    position: 'relative',
-  },
-  liveIndicator: {
-    position: 'absolute',
-    top: '12px',
-    right: '12px',
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-    background: 'var(--color-success-text)',
-    display: 'block',
-    animation: 'pulse 2s infinite',
-  },
-  title: {
-    fontSize: '1.1rem',
-    fontWeight: 700,
-    color: 'var(--color-text-primary)',
-    marginBottom: '0.5rem',
-    lineHeight: 1.3,
-  },
-  description: {
-    fontSize: '0.85rem',
-    color: 'var(--color-text-secondary)',
-    lineHeight: 1.5,
-    marginBottom: '1rem',
-  },
-  progressSection: {
-    marginBottom: '1rem',
-  },
-  amounts: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    marginBottom: '0.5rem',
-  },
-  raisedAmount: {
-    fontSize: '1.25rem',
-    fontWeight: 800,
-    color: 'var(--color-text-primary)',
-  },
-  asset: {
-    fontSize: '0.85rem',
-    fontWeight: 600,
-    color: 'var(--color-accent)',
-    marginLeft: '0.25rem',
-  },
-  label: {
-    fontSize: '0.85rem',
-    color: 'var(--color-text-hint)',
-  },
-  target: {
-    fontSize: '0.9rem',
-    fontWeight: 700,
-    color: 'var(--color-accent)',
-  },
-  progressBar: {
-    background: 'var(--color-surface)',
-    borderRadius: '99px',
-    height: '8px',
-    marginBottom: '0.75rem',
-    overflow: 'hidden',
-  },
-  progressFill: {
-    background: 'linear-gradient(90deg, var(--color-accent) 0%, var(--color-accent-light) 100%)',
-    height: '100%',
-    borderRadius: '99px',
-    transition: 'width 0.5s ease',
-  },
-  stats: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    fontSize: '0.8rem',
-    color: 'var(--color-text-hint)',
-  },
-  ctaButton: {
-    display: 'block',
-    width: '100%',
-    padding: '0.75rem',
-    background: 'var(--color-accent)',
-    color: '#fff',
-    textAlign: 'center',
-    borderRadius: '6px',
-    fontWeight: 600,
-    fontSize: '0.95rem',
-    textDecoration: 'none',
-    transition: 'opacity 0.15s',
-  },
-  skeleton: {
-    height: '20px',
-    width: '70%',
-    background: 'var(--color-border)',
-    borderRadius: '4px',
-    marginBottom: '0.5rem',
-    animation: 'pulse 1.5s infinite',
-  },
-  skeletonShort: {
-    height: '14px',
-    width: '90%',
-    background: 'var(--color-border)',
-    borderRadius: '4px',
-    marginBottom: '1rem',
-    animation: 'pulse 1.5s infinite',
-  },
-  skeletonBar: {
-    height: '8px',
-    width: '100%',
-    background: 'var(--color-border)',
-    borderRadius: '99px',
-    animation: 'pulse 1.5s infinite',
-  },
-  error: {
-    color: 'var(--color-status-error)',
-    fontSize: '0.85rem',
-    textAlign: 'center',
-    padding: '1rem',
-  },
-};
