@@ -59,6 +59,7 @@ function buildApp({ resolveReferralLink, onSubmit }) {
     '../services/rewardTierService': { reserveTierSlot: async () => null },
     '../services/sorobanService': { triggerRefund: async () => null },
     '../services/kycService': { assertUserKycVerified: async () => {} },
+    '../services/contributorIdentityService': { assertContributorMeetsRequirements: async () => {} },
     '../services/emailService': { sendEmail: async () => {} },
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
