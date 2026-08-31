@@ -51,6 +51,124 @@ function truncateDescription(description) {
     : description;
 }
 
+const IMPACT_CACHE_TTL_MS = 60 * 1000;
+const impactCache = new Map();
+
+function canonicalize(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalize).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function signImpactPayload(payload) {
+  const privateKeyPem =
+    process.env.CROWDPAY_PLATFORM_PRIVATE_KEY || process.env.PLATFORM_PRIVATE_KEY;
+  if (!privateKeyPem) return null;
+
+  const signer = crypto.createSign('RSA-SHA256');
+  signer.update(canonicalize(payload));
+  signer.end();
+  return signer.sign(privateKeyPem, 'base64');
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function buildImpactBadgeSvg(stats, title) {
+  const total = Number(stats.total_raised) || 0;
+  const average = Number(stats.average_contribution) || 0;
+  const largest = Number(stats.largest_contribution) || 0;
+  const formattedTotal = total.toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  });
+  const formattedAverage = average.toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  });
+  const formattedLargest = largest.toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  });
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="96" viewBox="0 0 320 96" role="img" aria-label="Campaign impact">
+  <rect width="320" height="96" rx="12" fill="#0f172a"/>
+  <text x="16" y="22" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#ffffff">${escapeXml(title)}</text>
+  <text x="16" y="46" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="#22c55e">${escapeXml(formattedTotal)} ${escapeXml(stats.currency)}</text>
+  <text x="16" y="66" font-family="Arial, sans-serif" font-size="12" fill="#cbd5e1">${escapeXml(stats.contribution_count)} contributions · avg ${escapeXml(formattedAverage)} · max ${escapeXml(formattedLargest)}</text>
+  <text x="16" y="84" font-family="Arial, sans-serif" font-size="11" fill="#64748b">${escapeXml(stats.unique_contributor_count)} unique contributors · CrowdPay Verified</text>
+</svg>`;
+}
+
+async function getCachedImpact(campaignId) {
+  const cached = impactCache.get(campaignId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.stats;
+  }
+
+  const { rows: campaignRows } = await db.query(
+    `SELECT asset_type
+       FROM campaigns
+      WHERE id = $1 AND deleted_at IS NULL`,
+    [campaignId]
+  );
+
+  if (campaignRows.length === 0) {
+    return null;
+  }
+
+  const currency = campaignRows[0].asset_type || 'USDC';
+
+  const { rows } = await db.query(
+    `WITH all_contribs AS (
+       SELECT amount, 'named' AS source,
+              COALESCE(NULLIF(contributor_name, ''), 'anonymous') AS contributor_key
+         FROM contributions
+        WHERE campaign_id = $1 AND status = 'completed'
+       UNION ALL
+       SELECT amount, 'embed' AS source, contributor_ip_hash AS contributor_key
+         FROM embed_contributions
+        WHERE campaign_id = $1
+     )
+     SELECT
+       COALESCE(SUM(amount), 0)::numeric AS total_raised,
+       COUNT(*)::int AS contribution_count,
+       COALESCE(AVG(amount), 0)::numeric AS average_contribution,
+       COALESCE(MAX(amount), 0)::numeric AS largest_contribution,
+       (COUNT(DISTINCT CASE WHEN source = 'named' THEN contributor_key END)::int +
+        COUNT(DISTINCT CASE WHEN source = 'embed' THEN contributor_key END)::int) AS unique_contributor_count
+       FROM all_contribs`,
+    [campaignId]
+  );
+
+  const row = rows[0];
+  const count = Number(row.contribution_count) || 0;
+  const totalRaised = Number(row.total_raised) || 0;
+  const stats = {
+    total_raised: totalRaised,
+    contribution_count: count,
+    average_contribution: count > 0 ? Number(row.average_contribution) || 0 : 0,
+    largest_contribution: count > 0 ? Number(row.largest_contribution) || 0 : 0,
+    unique_contributor_count: Number(row.unique_contributor_count) || 0,
+    currency,
+  };
+
+  impactCache.set(campaignId, {
+    stats,
+    expiresAt: Date.now() + IMPACT_CACHE_TTL_MS,
+  });
+
+  return stats;
+}
+
 function extractEmbedToken(req) {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -229,6 +347,70 @@ router.get(
 );
 
 /**
+ * GET /campaigns/:campaignId/impact
+ * Public aggregate-only impact summary with optional provenance signature.
+ */
+router.get(
+  '/campaigns/:campaignId/impact',
+  embedStatsLimiter,
+  asyncHandler(async (req, res) => {
+    const { campaignId } = req.params;
+    const stats = await getCachedImpact(campaignId);
+    if (!stats) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    res.set('Cache-Control', 'public, max-age=60');
+
+    if (req.query.sign === 'true' || req.query.signed === 'true') {
+      const signedPayload = canonicalize(stats);
+      const signature = signImpactPayload(stats);
+      if (!signature) {
+        return res.status(500).json({ error: 'Impact signing is not configured' });
+      }
+      return res.json({
+        ...stats,
+        signed_payload: signedPayload,
+        signature,
+        signature_algorithm: 'RSA-SHA256',
+      });
+    }
+
+    res.json(stats);
+  })
+);
+
+/**
+ * GET /campaigns/:campaignId/impact-badge.svg
+ * Renders a lightweight SVG impact badge for embeds and campaign pages.
+ */
+router.get(
+  '/campaigns/:campaignId/impact-badge.svg',
+  embedStatsLimiter,
+  asyncHandler(async (req, res) => {
+    const { campaignId } = req.params;
+    const stats = await getCachedImpact(campaignId);
+    if (!stats) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const { rows } = await db.query(
+      `SELECT title
+         FROM campaigns
+        WHERE id = $1 AND deleted_at IS NULL`,
+      [campaignId]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    res.set('Cache-Control', 'public, max-age=60');
+    res.type('image/svg+xml');
+    res.send(buildImpactBadgeSvg(stats, rows[0].title));
+  })
+);
+
+/**
  * POST /api/embed/campaigns/:campaignId/contribute
  * Public contribution endpoint gated by embed token with rate limiting.
  */
@@ -349,6 +531,8 @@ router.post(
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [campaignId, activeToken.id, contribAmount, asset, stellarTxHash, contributorIpHash]
     );
+
+    impactCache.delete(campaignId);
 
     const updated = campaignRows[0];
     const totalRaised = Number(updated.raised_amount);
