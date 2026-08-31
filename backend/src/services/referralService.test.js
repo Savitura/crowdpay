@@ -2,60 +2,45 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const proxyquire = require('proxyquire').noCallThru();
 
-function buildReferralService(queryImpl) {
-  return proxyquire('./referralService', {
-    '../config/database': { query: queryImpl },
-    '../config/logger': { warn: () => {} },
-  });
-}
-
-test('getReferralCodeFromRequest reads referral cookie', () => {
-  const { getReferralCodeFromRequest } = buildReferralService(async () => ({ rows: [] }));
-  const req = { cookies: { 'cp_ref_camp-1': 'abc12345' } };
-  assert.equal(getReferralCodeFromRequest('camp-1', req), 'abc12345');
-  assert.equal(getReferralCodeFromRequest('camp-1', { cookies: {} }), null);
-});
-
-test('attributeContributionToReferrer increments contribution_count', async () => {
-  const calls = [];
-  const queryImpl = async (text, params) => {
-    calls.push({ text, params });
-    if (text.includes('FROM campaign_referrals')) {
-      return { rows: [{ id: 'ref-1', referrer_user_id: 'user-2' }] };
-    }
-    return { rows: [] };
+test('adjustReferralCommissionOnRefund correctly adjusts commission on partial refund', async () => {
+  const queries = [];
+  const dbStub = {
+    connect: async () => ({
+      query: async (text, params) => {
+        queries.push({ text, params });
+        if (text.includes('FROM contributions')) {
+          return { rows: [{ id: 'c-1', campaign_id: 'camp-1', amount: '100.0000000', referral_link_id: 'link-1' }] };
+        }
+        if (text.includes('FROM referral_links')) {
+          return { rows: [{ id: 'link-1', user_id: 'user-ref', campaign_id: 'camp-1' }] };
+        }
+        if (text.includes('FROM referral_programs')) {
+          return { rows: [{ commission_percentage: '5.00' }] };
+        }
+        if (text.includes('FROM referral_commissions')) {
+          return { rows: [{ id: 'comm-1', commission_amount: '5.0000000', status: 'credited' }] };
+        }
+        return { rows: [] };
+      },
+      release: async () => {},
+    }),
   };
 
-  const { attributeContributionToReferrer } = buildReferralService(queryImpl);
-  await attributeContributionToReferrer('camp-1', 'abc12345');
-
-  assert.equal(calls.length, 2);
-  assert.match(calls[0].text, /FROM campaign_referrals/);
-  assert.deepEqual(calls[0].params, ['abc12345', 'camp-1']);
-  assert.match(calls[1].text, /contribution_count = contribution_count \+ 1/);
-  assert.deepEqual(calls[1].params, ['ref-1']);
-});
-
-test('attributeContributionToReferrer no-ops when referral code is missing', async () => {
-  const calls = [];
-  const { attributeContributionToReferrer } = buildReferralService(async (...args) => {
-    calls.push(args);
-    return { rows: [] };
+  const referralService = proxyquire('./referralService', {
+    '../config/database': dbStub,
+    '../config/logger': { info: () => {}, error: () => {} },
   });
 
-  await attributeContributionToReferrer('camp-1', null);
-  await attributeContributionToReferrer('camp-1', '');
-  assert.equal(calls.length, 0);
-});
-
-test('attributeContributionToReferrer no-ops when referral row is not found', async () => {
-  const calls = [];
-  const { attributeContributionToReferrer } = buildReferralService(async (text) => {
-    calls.push(text);
-    return { rows: [] };
+  await referralService.adjustReferralCommissionOnRefund({
+    contributionId: 'c-1',
+    refundAmount: '50.0000000',
   });
 
-  await attributeContributionToReferrer('camp-1', 'missing-code');
-  assert.equal(calls.length, 1);
-  assert.match(calls[0], /FROM campaign_referrals/);
+  const updateQuery = queries.find((q) => q.text.includes('UPDATE referral_commissions'));
+  assert.ok(updateQuery);
+  assert.equal(updateQuery.params[0], '2.5000000');
+
+  const adjQuery = queries.find((q) => q.text.includes('INSERT INTO referral_commission_adjustments'));
+  assert.ok(adjQuery);
+  assert.equal(adjQuery.params[2], '-2.5000000');
 });
