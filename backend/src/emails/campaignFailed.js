@@ -1,6 +1,6 @@
 const { renderLayout, heading, paragraph, table, buttonRow } = require("./layout");
 
-function buildForCreator({ creatorName, campaignTitle, campaignUrl, targetAmount, raisedAmount, deadlineText }) {
+function buildForCreator({ creatorName, campaignTitle, campaignUrl, targetAmount, raisedAmount, deadlineText, unsubscribeUrl }) {
   const name = creatorName || "there";
   const subject = `Your campaign "${campaignTitle}" ended below its goal`;
 
@@ -28,12 +28,13 @@ function buildForCreator({ creatorName, campaignTitle, campaignUrl, targetAmount
       paragraph("Contributors will receive refund instructions automatically."),
       buttonRow("View campaign", campaignUrl),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };
 }
 
-function buildForContributor({ contributorName, campaignTitle, campaignUrl, refundsUrl }) {
+function buildForContributor({ contributorName, campaignTitle, campaignUrl, refundsUrl, unsubscribeUrl }) {
   const name = contributorName || "there";
   const subject = `Campaign ended — your refund is available: "${campaignTitle}"`;
 
@@ -58,6 +59,7 @@ function buildForContributor({ contributorName, campaignTitle, campaignUrl, refu
       buttonRow("Claim your refund", refundsUrl),
       paragraph("Refunds are processed via the Stellar network back to the wallet you contributed from."),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

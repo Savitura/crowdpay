@@ -1,6 +1,6 @@
 const { renderLayout, heading, paragraph, table } = require("./layout");
 
-function build({ name, walletPublicKey }) {
+function build({ name, walletPublicKey, unsubscribeUrl }) {
   const recipientName = name || "there";
   const subject = "Wallet funding action required for your CrowdPay account";
 
@@ -29,6 +29,7 @@ function build({ name, walletPublicKey }) {
         "You can retry wallet funding directly from your CrowdPay dashboard or add funds manually before submitting contributions."
       ),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

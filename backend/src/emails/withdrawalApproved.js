@@ -1,7 +1,7 @@
 const { renderLayout, heading, paragraph, table, buttonRow } = require("./layout");
 const { getStellarExpertTxUrl } = require("../utils/stellarExplorer");
 
-function build({ creatorName, amount, asset, campaignTitle, campaignUrl, txHash }) {
+function build({ creatorName, amount, asset, campaignTitle, campaignUrl, txHash, unsubscribeUrl }) {
   const name = creatorName || "there";
   const explorerUrl = getStellarExpertTxUrl(txHash);
   const subject = `Your withdrawal of ${amount} ${asset} is on its way`;
@@ -24,6 +24,7 @@ function build({ creatorName, amount, asset, campaignTitle, campaignUrl, txHash 
       table([["Amount", `${amount} ${asset}`]]),
       buttonRow("View transaction", explorerUrl),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

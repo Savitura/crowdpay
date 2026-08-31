@@ -1,11 +1,15 @@
-const express = require('express');
-const router = express.Router();
+'use strict';
+
+// backend/src/routes/embed.js
+//
+// Issue #455 — Public Campaign Embed API, JWT-Scoped Embed Tokens, iframe Widget & Cross-Origin Contribution Flow
+
+const router = require('express').Router();
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const db = require('../config/database');
 const asyncHandler = require('../utils/asyncHandler');
-const { embedStatsLimiter } = require('../middleware/rateLimiter');
 const { requireAuth } = require('../middleware/auth');
 const { requireEmbedToken } = require('../middleware/embedAuth');
 const { getTrendingCampaigns } = require('../services/trendingService');
@@ -103,39 +107,62 @@ async function authenticateEmbedToken(req, res, next) {
 }
 
 /**
- * GET /api/embed/:campaignId/stats
- * Public endpoint gated by embed token. Returns ONLY public summary fields.
+ * POST /api/embed/tokens
+ * Authenticated endpoint for campaign creator to generate JWT embed token.
  */
-router.get(
-  '/:campaignId/stats',
-  embedStatsLimiter,
+router.post(
+  '/tokens',
+  requireAuth,
   asyncHandler(async (req, res) => {
-    const { campaignId } = req.params;
+    const { campaignId, allowedOrigins, expiresIn = 'never' } = req.body;
+    if (!campaignId) {
+      return res.status(400).json({ error: 'campaignId is required' });
+    }
 
-    const campaignQuery = await db.query(
-      `SELECT id, title, description, target_amount, raised_amount, asset_type,
-              status, deadline, backer_count, contribution_url
-       FROM campaigns WHERE id = $1`,
+    if (!['7d', '30d', 'never'].includes(expiresIn)) {
+      return res.status(400).json({ error: 'expiresIn must be 7d, 30d, or never' });
+    }
+
+    const userId = req.user.userId || req.user.id;
+    const { rows: campaignRows } = await db.query(
+      `SELECT * FROM campaigns WHERE id = $1 AND deleted_at IS NULL`,
       [campaignId]
     );
 
-    if (campaignQuery.rows.length === 0) {
+    if (campaignRows.length === 0) {
       return res.status(404).json({ error: 'Campaign not found' });
     }
 
-    const campaign = campaignQuery.rows[0];
+    const campaign = campaignRows[0];
+    if (campaign.creator_id !== userId && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only the campaign creator can generate embed tokens' });
+    }
 
-    const contributorsQuery = await db.query(
-      `SELECT id, amount, created_at, contributor_name
-       FROM contributions
-       WHERE campaign_id = $1 AND status = 'completed'
-       ORDER BY created_at DESC
-       LIMIT 5`
+    const originsList = Array.isArray(allowedOrigins) ? allowedOrigins : [];
+    let expiresAt = null;
+    if (expiresIn === '7d') {
+      expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    } else if (expiresIn === '30d') {
+      expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    }
+
+    const token = signEmbedToken({ campaignId, allowedOrigins: originsList, expiresIn });
+
+    const { rows: tokenRows } = await db.query(
+      `INSERT INTO embed_tokens (campaign_id, creator_id, allowed_origins, expires_at)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [campaignId, userId, JSON.stringify(originsList), expiresAt]
     );
 
-    res.json({
-      campaign,
-      recentContributors: contributorsQuery.rows,
+    const created = tokenRows[0];
+    res.status(201).json({
+      token,
+      id: created.id,
+      campaignId: created.campaign_id,
+      allowedOrigins: created.allowed_origins,
+      expiresAt: created.expires_at,
+      createdAt: created.created_at,
     });
   })
 );
@@ -151,34 +178,20 @@ router.get(
     const { campaignId } = req.params;
     res.header('Access-Control-Allow-Origin', '*');
     const { rows } = await db.query(
-      `SELECT id, title, description, target_amount, raised_amount, asset_type, status, deadline, backer_count, contribution_url
+      `SELECT title, description, target_amount, raised_amount, asset_type, status, deadline
        FROM campaigns WHERE id = $1 AND deleted_at IS NULL`,
       [campaignId]
     );
+
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Campaign not found' });
     }
-    const campaign = rows[0];
-    const countRows = [{ count: campaign.backer_count || 0 }];
-    const contributorsQuery = { rows: [] };
 
-    const milestonesQuery = await db.query(
-      `SELECT id, title, release_percentage, status, sort_order
-       FROM milestones
-       WHERE campaign_id = $1
-       ORDER BY sort_order ASC`,
+    const campaign = rows[0];
+    const { rows: countRows } = await db.query(
+      `SELECT COUNT(*)::int AS count FROM embed_contributions WHERE campaign_id = $1`,
       [campaignId]
     );
-
-    const target = Number(campaign.target_amount) || 0;
-    const raised = Number(campaign.raised_amount) || 0;
-    const progressPercentage = target > 0 ? Math.min(100, (raised / target) * 100) : 0;
-
-    let daysRemaining = null;
-    if (campaign.deadline) {
-      const diff = new Date(campaign.deadline) - new Date();
-      daysRemaining = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
-    }
 
     const goal = Number(campaign.target_amount) || 0;
     const totalRaised = Number(campaign.raised_amount) || 0;
@@ -367,9 +380,11 @@ router.post(
     }
 
     res.json({
-      id: campaign.id,
-      raised_amount: updated.raised_amount,
-      target_amount: updated.target_amount,
+      success: true,
+      amount: contribAmount,
+      asset,
+      txHash: stellarTxHash,
+      totalRaised,
     });
   })
 );

@@ -5,7 +5,7 @@ function buildForContributor({
   campaignTitle, 
   reportTitle, 
   reportSummary, 
-  campaignUrl 
+  campaignUrl, unsubscribeUrl 
 }) {
   const name = contributorName || "there";
   const subject = `${campaignTitle} published an impact report`;
@@ -33,6 +33,7 @@ function buildForContributor({
       buttonRow("View impact report", `${campaignUrl}#impact-report`),
       paragraph("See how your contribution made a difference and the impact created by this campaign."),
     ].filter(Boolean).join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

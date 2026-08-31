@@ -8,6 +8,7 @@ function buildForAdmin({
   evidenceDescription,
   creatorName,
   adminUrl,
+    unsubscribeUrl
 }) {
   const subject = `Milestone evidence submitted for "${campaignTitle}"`;
 
@@ -34,6 +35,7 @@ function buildForAdmin({
       ]),
       buttonRow('Review milestone', adminUrl),
     ].join(''),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

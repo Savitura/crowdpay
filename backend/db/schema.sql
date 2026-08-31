@@ -468,3 +468,14 @@ CREATE INDEX idx_embed_contributions_campaign_id ON embed_contributions(campaign
 CREATE INDEX idx_embed_contributions_token_id ON embed_contributions(embed_token_id);
 CREATE INDEX idx_embed_contributions_ip_hash_created ON embed_contributions(contributor_ip_hash, created_at);
 
+
+CREATE TABLE notification_preferences (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  campaign_updates BOOLEAN NOT NULL DEFAULT TRUE,
+  refunds BOOLEAN NOT NULL DEFAULT TRUE,
+  disputes BOOLEAN NOT NULL DEFAULT TRUE,
+  milestones BOOLEAN NOT NULL DEFAULT TRUE,
+  marketing BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

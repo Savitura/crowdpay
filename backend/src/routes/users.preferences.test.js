@@ -38,13 +38,10 @@ function buildApp(queryImpl) {
   return app;
 }
 
-test("GET /api/users/me/notification-preferences reflects weekly digest opt-out state", async () => {
+test("GET /api/users/me/notification-preferences reflects notification_preferences state", async () => {
   const app = buildApp(async (text) => {
-    if (text.includes("SELECT email FROM users")) {
-      return { rows: [{ email: "backer@example.com" }] };
-    }
-    if (text.includes("FROM email_unsubscribes")) {
-      return { rows: [{ category: "weekly_digest" }] };
+    if (text.includes("FROM notification_preferences")) {
+      return { rows: [{ campaign_updates: true, refunds: true, disputes: true, milestones: true, marketing: false }] };
     }
     return { rows: [] };
   });
@@ -53,34 +50,32 @@ test("GET /api/users/me/notification-preferences reflects weekly digest opt-out 
 
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, {
-    campaign_update_emails: true,
-    weekly_digest_emails: false,
+    campaign_updates: true,
+    refunds: true,
+    disputes: true,
+    milestones: true,
+    marketing: false,
   });
 });
 
-test("PATCH /api/users/me/notification-preferences stores weekly digest unsubscribe", async () => {
+test("PATCH /api/users/me/notification-preferences stores preferences", async () => {
   const calls = [];
   const app = buildApp(async (text, params) => {
     calls.push({ text, params });
-    if (text.includes("SELECT email FROM users")) {
-      return { rows: [{ email: "backer@example.com" }] };
-    }
-    if (text.includes("FROM email_unsubscribes")) {
-      return { rows: [{ category: "weekly_digest" }] };
+    if (text.includes("FROM notification_preferences")) {
+      return { rows: [{ campaign_updates: true, refunds: true, disputes: true, milestones: true, marketing: true }] };
     }
     return { rows: [] };
   });
 
   const res = await request(app)
     .patch("/api/users/me/notification-preferences")
-    .send({ weekly_digest_emails: false });
+    .send({ campaign_updates: false, marketing: false });
 
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body, {
-    campaign_update_emails: true,
-    weekly_digest_emails: false,
-  });
-  const insert = calls.find((call) => call.text.includes("INSERT INTO email_unsubscribes"));
+  
+  const insert = calls.find((call) => call.text.includes("INSERT INTO notification_preferences"));
   assert.ok(insert);
-  assert.deepEqual(insert.params, ["backer@example.com", "weekly_digest"]);
+  
+  assert.deepEqual(insert.params, ["user-1", false, null, null, null, false]);
 });

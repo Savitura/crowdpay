@@ -10,6 +10,7 @@ function buildContributorRelease({
   txHash,
   usage,
   recipient,
+    unsubscribeUrl
 }) {
   const name = contributorName || "there";
   const explorerUrl = getStellarExpertTxUrl(txHash);
@@ -42,6 +43,7 @@ function buildContributorRelease({
       txHash ? buttonRow("View transaction", explorerUrl) : "",
       buttonRow("View campaign", campaignUrl),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

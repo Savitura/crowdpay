@@ -34,10 +34,6 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 app.use(errorHandler);
 
-if (process.env.NODE_ENV !== 'test') {
-  const port = process.env.PORT || 3001;
-  app.listen(port, () => {
-    console.log(`CrowdPay server listening on port ${port}`);
 app.use('/api/v1', require('routes/v1'));
 app.use('/api', require('routes/admin'));
 app.use('/api/anchor', require('routes/anchor'));

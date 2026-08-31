@@ -1,7 +1,7 @@
 const { renderLayout, heading, paragraph, table, buttonRow } = require("./layout");
 const { getStellarExpertTxUrl } = require("../utils/stellarExplorer");
 
-function build({ name, campaignTitle, amount, asset, txHash, date }) {
+function build({ name, campaignTitle, amount, asset, txHash, date, unsubscribeUrl }) {
   const recipientName = name || "there";
   const explorerUrl = getStellarExpertTxUrl(txHash);
   const subject = `Your contribution to "${campaignTitle}" is confirmed`;
@@ -30,6 +30,7 @@ function build({ name, campaignTitle, amount, asset, txHash, date }) {
       buttonRow("View transaction", explorerUrl),
       paragraph("Thank you for contributing on CrowdPay."),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

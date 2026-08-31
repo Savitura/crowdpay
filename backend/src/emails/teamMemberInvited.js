@@ -1,6 +1,6 @@
 const { renderLayout, heading, paragraph, buttonRow } = require("./layout");
 
-function build({ campaignTitle, role, inviteUrl }) {
+function build({ campaignTitle, role, inviteUrl, unsubscribeUrl }) {
   const subject = `You've been invited to ${campaignTitle ? `"${campaignTitle}"` : "join a CrowdPay campaign"}`;
 
   const text = [
@@ -16,6 +16,7 @@ function build({ campaignTitle, role, inviteUrl }) {
       paragraph(`You have been invited to join ${campaignTitle ? `"${campaignTitle}"` : "a campaign"} as a ${role}.`),
       buttonRow("Accept invite", inviteUrl),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

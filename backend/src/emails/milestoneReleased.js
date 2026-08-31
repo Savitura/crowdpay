@@ -1,7 +1,7 @@
 const { renderLayout, heading, paragraph, table, buttonRow } = require("./layout");
 const { getStellarExpertTxUrl } = require("../utils/stellarExplorer");
 
-function buildForCreator({ creatorName, campaignTitle, campaignUrl, milestoneTitle, amount, asset, txHash }) {
+function buildForCreator({ creatorName, campaignTitle, campaignUrl, milestoneTitle, amount, asset, txHash, unsubscribeUrl }) {
   const name = creatorName || "there";
   const explorerUrl = getStellarExpertTxUrl(txHash);
   const subject = `Milestone reached on "${campaignTitle}"`;
@@ -24,12 +24,13 @@ function buildForCreator({ creatorName, campaignTitle, campaignUrl, milestoneTit
       table([["Released", `${amount} ${asset}`]]),
       buttonRow("View transaction", explorerUrl),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };
 }
 
-function buildForContributor({ contributorName, campaignTitle, campaignUrl, milestoneTitle }) {
+function buildForContributor({ contributorName, campaignTitle, campaignUrl, milestoneTitle, unsubscribeUrl }) {
   const name = contributorName || "there";
   const subject = `Milestone reached on "${campaignTitle}"`;
 
@@ -48,6 +49,7 @@ function buildForContributor({ contributorName, campaignTitle, campaignUrl, mile
       paragraph(`The milestone "${milestoneTitle}" on "${campaignTitle}" has been reached and funds have been released to the creator.`),
       buttonRow("View campaign", campaignUrl),
     ].join(""),
+    unsubscribeUrl
   });
 
   return { subject, text, html };

@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const jwt = require('jsonwebtoken');
+const CAMPAIGN_ID = 'c-1';
+const JWT_SECRET = 'test-secret';
+const TOKEN_ID = 't-1';
+const CREATOR_ID = 'u-1';
 const request = require('supertest');
 const proxyquire = require('proxyquire').noCallThru();
 
