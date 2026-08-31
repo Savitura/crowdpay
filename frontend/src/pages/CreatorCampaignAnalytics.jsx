@@ -29,6 +29,7 @@ export default function CreatorCampaignAnalytics() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   const isCreator = user?.role === 'creator' || user?.role === 'admin';
 
@@ -67,6 +68,27 @@ export default function CreatorCampaignAnalytics() {
     }
   }, [campaignId]);
 
+  const handleDownloadReport = useCallback(async () => {
+    if (!campaignId) return;
+    setDownloadingPdf(true);
+    setError('');
+    try {
+      const { blob, filename } = await api.exportCampaignReport(campaignId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || 'Report download failed');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  }, [campaignId]);
+
   if (!ready) return null;
   if (!user) return <Navigate to="/login" replace />;
   if (!isCreator) return <Navigate to="/dashboard" replace />;
@@ -101,6 +123,9 @@ export default function CreatorCampaignAnalytics() {
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <button type="button" className="btn-secondary" onClick={handleExport} disabled={exporting}>
             {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
+          <button type="button" className="btn-secondary" onClick={handleDownloadReport} disabled={downloadingPdf}>
+            {downloadingPdf ? 'Generating…' : 'Download Report'}
           </button>
           <Link to="/dashboard/analytics" style={{ color: 'var(--color-accent)', fontWeight: 600, fontSize: '0.9rem' }}>
             ← Back to Analytics

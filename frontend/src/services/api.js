@@ -30,6 +30,14 @@ export const api = {
     if (match && match[1]) filename = match[1];
     return { blob: res.data, filename };
   },
+  async exportCampaignReport(campaignId) {
+    const res = await apiClient.get(`/campaigns/${campaignId}/report/export`, { responseType: 'blob' });
+    const disposition = res.headers['content-disposition'] || '';
+    let filename = 'campaign-report.pdf';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    if (match && match[1]) filename = match[1];
+    return { blob: res.data, filename };
+  },
   async getCampaignVelocity(campaignId) {
     const res = await apiClient.get(`/creator/campaigns/${campaignId}/velocity`);
     return res.data;

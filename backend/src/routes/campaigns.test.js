@@ -26,6 +26,8 @@ function buildApp({
   sorobanInvokeImpl,
   listCreatorCampaignsImpl,
   getRecommendedCampaignsImpl,
+  reportImpl,
+  signedTokenValid,
 }) {
   const router = proxyquire('./campaigns', {
     '../services/campaignStatusService': campaignStatusImpl || {
@@ -122,6 +124,28 @@ function buildApp({
       getCampaignBackers: async () => ([]),
     },
     '../utils/asyncHandler': (fn) => (req, res, next) => fn(req, res, next).catch(next),
+    '../services/campaignReportService': {
+      assembleReport: async () => reportImpl || {
+        campaign: { id: 'campaign-1', title: 'Test', asset_type: 'USDC', status: 'active', created_at: new Date(), deadline: null, category: 'technology', description: null, target_amount: 100, raised_amount: 0, share_count: 0 },
+        financials: { goal_pct: 0, total_received: 0, target_amount: 100, total_platform_fees: 0, net_received: 0, average_contribution: 0, largest_contribution: 0 },
+        engagement: { total_contributions: 0, unique_contributors: 0, asset_breakdown: [] },
+        top_contributors: [],
+        milestones: [],
+        daily_series: [],
+        timeline: [],
+        generated_at: new Date().toISOString(),
+      },
+      generateSignedUrl: () => 'https://crowdpay.io/api/campaigns/campaign-1/report/share/tok',
+      verifySignedToken: (token) => signedTokenValid !== false,
+    },
+    '../services/campaignReportPdf': {
+      streamCampaignReportPdf: (report, res) => {
+        res.setHeader('Content-Type', 'application/pdf');
+        res.write('%PDF-1.4 test pdf');
+        res.end();
+      },
+      reportFilename: () => 'campaign-1-report.pdf',
+    },
     '../middleware/auth': {
       requireAuth: (req, res, next) => {
         if (authUser === null) {
@@ -905,4 +929,141 @@ test('GET /api/campaigns/:id denies hidden campaign to demoted admin with stale 
     .set('Authorization', `Bearer ${token}`);
 
   assert.equal(res.status, 404);
+});
+
+test('GET /api/campaigns/:id/report/export streams a PDF for the owner', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id = $1')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .get('/api/campaigns/campaign-1/report/export')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers['content-type'], /application\/pdf/);
+  assert.match(response.headers['content-disposition'], /campaign-1-report\.pdf/);
+  const bodyText = Buffer.isBuffer(response.body) ? response.body.toString('utf8') : response.text;
+  assert.ok(bodyText.includes('%PDF'));
+});
+
+test('GET /api/campaigns/:id/report/export rejects non-owners', async () => {
+  const app = buildApp({
+    authUser: { userId: 'user-2', role: 'creator' },
+    queryImpl: async (text) => {
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id = $1')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .get('/api/campaigns/campaign-1/report/export')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 403);
+});
+
+test('GET /api/campaigns/:id/report/export requires authentication', async () => {
+  const app = buildApp({
+    authUser: null,
+    queryImpl: async () => ({ rows: [] }),
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .get('/api/campaigns/campaign-1/report/export');
+
+  assert.equal(response.status, 401);
+});
+
+test('GET /api/campaigns/:id/report/share returns a signed URL for the owner', async () => {
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text) => {
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id = $1')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .get('/api/campaigns/campaign-1/report/share')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.match(response.body.url, /\/api\/campaigns\/campaign-1\/report\/share\//);
+  assert.equal(response.body.expires_in_seconds, 24 * 60 * 60);
+});
+
+test('GET /api/campaigns/:id/report/share/TOKEN serves the PDF for a valid signed token', async () => {
+  const app = buildApp({
+    authUser: null,
+    signedTokenValid: true,
+    queryImpl: async (text) => {
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id = $1')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app).get('/api/campaigns/campaign-1/report/share/sometoken');
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers['content-type'], /application\/pdf/);
+});
+
+test('GET /api/campaigns/:id/report/share/TOKEN rejects an invalid/expired signed token', async () => {
+  const app = buildApp({
+    authUser: null,
+    signedTokenValid: false,
+    queryImpl: async (text) => {
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id = $1')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app).get('/api/campaigns/campaign-1/report/share/invalidtoken');
+
+  assert.equal(response.status, 403);
+  assert.match(response.body.error, /Invalid or expired share link/);
 });
