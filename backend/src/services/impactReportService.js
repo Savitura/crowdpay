@@ -2,6 +2,14 @@ const db = require('../config/database');
 const logger = require('../config/logger');
 const { createNotification } = require('./notifications');
 
+const crypto = require('crypto');
+
+const IMPACT_CACHE_TTL_MS = 60 * 1000;
+const IMPACT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const IMPACT_RATE_LIMIT_MAX = 30;
+const impactCache = new Map();
+const impactRateLimits = new Map();
+
 /**
  * Creates a draft impact report for a completed campaign.
  * Only the campaign creator can create the report.
@@ -361,6 +369,112 @@ async function hasPublishedReport(campaignId) {
   return rows[0].count > 0;
 }
 
+function signImpactStats(stats, campaignId) {
+  const privateKey = process.env.CROWDPAY_IMPACT_SIGNING_PRIVATE_KEY ||
+    process.env.CROWDPAY_SIGNING_PRIVATE_KEY ||
+    process.env.PLATFORM_SIGNING_PRIVATE_KEY;
+  if (!privateKey) {
+    return null;
+  }
+
+  const payload = {
+    type: 'campaign_impact_summary',
+    campaignId: campaignId || null,
+    version: 1,
+    stats,
+    signedAt: new Date().toISOString(),
+  };
+  const payloadString = JSON.stringify(payload);
+  const signer = crypto.createSign('sha256');
+  signer.update(payloadString);
+  signer.end();
+
+  return {
+    payload: payloadString,
+    signature: signer.sign(privateKey, 'base64'),
+    algorithm: 'sha256',
+  };
+}
+
+function verifyImpactSignature(payload, signature, publicKey) {
+  if (!payload || !signature || !publicKey) {
+    return false;
+  }
+
+  const payloadString = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  const verifier = crypto.createVerify('sha256');
+  verifier.update(payloadString);
+  verifier.end();
+
+  return verifier.verify(publicKey, signature, 'base64');
+}
+
+async function getCampaignImpact(campaignId, options = {}) {
+  if (!campaignId) {
+    throw new Error('Missing campaignId');
+  }
+
+  const requesterIp = options.ip || options.requesterIp;
+  if (requesterIp) {
+    const now = Date.now();
+    const rateKey = `impact:${requesterIp}`;
+    const hits = (impactRateLimits.get(rateKey) || []).filter(
+      timestamp => now - timestamp < IMPACT_RATE_LIMIT_WINDOW_MS
+    );
+    if (hits.length >= IMPACT_RATE_LIMIT_MAX) {
+      const error = new Error('Rate limit exceeded');
+      error.status = 429;
+      throw error;
+    }
+    hits.push(now);
+    impactRateLimits.set(rateKey, hits);
+  }
+
+  const { rows: versionRows } = await db.query(
+    `SELECT COALESCE(MAX(updated_at), MAX(created_at)) AS version
+     FROM contributions
+     WHERE campaign_id = $1`,
+    [campaignId]
+  );
+  const version = versionRows[0]?.version ? new Date(versionRows[0].version).getTime() : 0;
+  const cached = impactCache.get(campaignId);
+
+  if (cached && cached.version === version && Date.now() - cached.fetchedAt < IMPACT_CACHE_TTL_MS) {
+    return cached.stats;
+  }
+
+  const { rows } = await db.query(
+    `SELECT
+       COALESCE(SUM(amount), 0) AS total_raised,
+       COUNT(*)::int AS contribution_count,
+       COALESCE(AVG(amount), 0) AS average_contribution,
+       COALESCE(MAX(amount), 0) AS largest_contribution,
+       COUNT(DISTINCT sender_public_key)::int AS unique_contributor_count,
+       COALESCE(MAX(currency), 'USD') AS currency
+     FROM contributions
+     WHERE campaign_id = $1 AND refunded = FALSE`,
+    [campaignId]
+  );
+
+  const row = rows[0];
+  const stats = {
+    total_raised: Number(row.total_raised),
+    contribution_count: row.contribution_count,
+    average_contribution: Number(row.average_contribution),
+    largest_contribution: Number(row.largest_contribution),
+    unique_contributor_count: row.unique_contributor_count,
+    currency: row.currency,
+  };
+
+  const signed = signImpactStats(stats, campaignId);
+  const response = signed
+    ? { ...stats, signature: signed }
+    : { ...stats, signature: null };
+
+  impactCache.set(campaignId, { stats: response, version, fetchedAt: Date.now() });
+  return response;
+}
+
 module.exports = {
   createImpactReport,
   publishImpactReport,
@@ -368,4 +482,7 @@ module.exports = {
   getDraftImpactReport,
   updateImpactReport,
   hasPublishedReport,
+  getCampaignImpact,
+  signImpactStats,
+  verifyImpactSignature,
 };
