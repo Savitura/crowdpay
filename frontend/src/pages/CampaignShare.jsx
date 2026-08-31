@@ -21,6 +21,8 @@ export default function CampaignShare() {
   const [error, setError] = useState('');
   const [claiming, setClaiming] = useState(false);
   const [copied, setCopied] = useState('');
+  const [embedTheme, setEmbedTheme] = useState('light');
+  const [embedSize, setEmbedSize] = useState('medium');
 
   useEffect(() => {
     if (!id) return;
@@ -59,6 +61,8 @@ export default function CampaignShare() {
   const campaignUrl = `${window.location.origin}/campaigns/${id}`;
   const shareUrl = link?.shareUrl || campaignUrl;
   const texts = shareTexts(campaign?.title || 'this campaign', shareUrl);
+
+  const embedScript = `<script src="${window.location.origin}/embed-widget.js" data-campaign="${id}" data-theme="${embedTheme}" data-size="${embedSize}"></script>`;
 
   return (
     <div style={{ maxWidth: '720px', margin: '0 auto', padding: '1.5rem 1rem' }}>
@@ -103,56 +107,77 @@ export default function CampaignShare() {
             {copied === 'url' ? 'Copied!' : 'Copy link'}
           </button>
         </div>
-        {link && (
-          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>
-            Referral code <code>{link.code}</code> — recorded in the Stellar memo of every contribution
-            made through this link.
-          </span>
-        )}
+      </div>
+
+      <div className="campaign-card" style={{ display: 'grid', gap: '0.75rem', marginBottom: '1.25rem' }}>
+        <strong>Get Embed Code</strong>
+        <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+          Embed a real-time contribution progress widget on your website or blog.
+        </p>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <label style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+            Theme:
+            <select value={embedTheme} onChange={(e) => setEmbedTheme(e.target.value)} style={{ padding: '0.2rem' }}>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+          <label style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+            Size:
+            <select value={embedSize} onChange={(e) => setEmbedSize(e.target.value)} style={{ padding: '0.2rem' }}>
+              <option value="small">Small</option>
+              <option value="medium">Medium</option>
+              <option value="large">Large</option>
+            </select>
+          </label>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <textarea
+            readOnly
+            rows={3}
+            value={embedScript}
+            aria-label="Embed Code"
+            style={{ flex: '1 1 20rem', padding: '0.45rem 0.6rem', fontFamily: 'monospace', fontSize: '0.78rem' }}
+          />
+          <button type="button" className="btn-secondary" onClick={() => copy(embedScript, 'embed')}>
+            {copied === 'embed' ? 'Copied!' : 'Copy embed code'}
+          </button>
+        </div>
       </div>
 
       <div className="campaign-card" style={{ marginBottom: '1.25rem' }}>
-        <strong style={{ display: 'block', marginBottom: '0.75rem' }}>QR code</strong>
-        <CampaignQRCode url={shareUrl} />
+        <strong style={{ display: 'block', marginBottom: '0.5rem' }}>QR Code</strong>
+        <CampaignQRCode url={shareUrl} size={160} />
       </div>
 
-      <div className="campaign-card" style={{ display: 'grid', gap: '1rem' }}>
-        <strong>Ready-to-post messages</strong>
-
-        {[
-          { key: 'twitter', label: 'X / Twitter', href: `https://twitter.com/intent/tweet?text=${encodeURIComponent(texts.twitter)}` },
-          { key: 'whatsapp', label: 'WhatsApp', href: `https://wa.me/?text=${encodeURIComponent(texts.whatsapp)}` },
-          { key: 'telegram', label: 'Telegram', href: `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(texts.telegram)}` },
-        ].map((channel) => (
-          <div key={channel.key} style={{ display: 'grid', gap: '0.4rem' }}>
-            <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{channel.label}</span>
-            <textarea
-              readOnly
-              rows={3}
-              value={texts[channel.key]}
-              aria-label={`${channel.label} share text`}
-              style={{ width: '100%', padding: '0.5rem', fontSize: '0.82rem' }}
-            />
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => copy(texts[channel.key], channel.key)}
-              >
-                {copied === channel.key ? 'Copied!' : 'Copy text'}
-              </button>
-              <a
-                className="btn-secondary"
-                href={channel.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => api.trackShare(id, channel.key).catch(() => {})}
-              >
-                Share on {channel.label}
-              </a>
-            </div>
-          </div>
-        ))}
+      <div className="campaign-card" style={{ display: 'grid', gap: '0.75rem' }}>
+        <strong>Share on social media</strong>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <a
+            href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(texts.twitter)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-secondary"
+          >
+            Twitter / X
+          </a>
+          <a
+            href={`https://api.whatsapp.com/send?text=${encodeURIComponent(texts.whatsapp)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-secondary"
+          >
+            WhatsApp
+          </a>
+          <a
+            href={`https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(texts.telegram)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-secondary"
+          >
+            Telegram
+          </a>
+        </div>
       </div>
     </div>
   );
