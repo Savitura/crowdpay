@@ -84,6 +84,56 @@ const { streamCampaignReportPdf, reportFilename } = require('../services/campaig
 
 const crypto = require('crypto');
 
+const IMPACT_CACHE_TTL_MS = 60_000;
+const impactLimiter = rateLimit({
+  windowMs: IMPACT_CACHE_TTL_MS,
+  max: process.env.NODE_ENV === 'test' ? 100000 : 60,
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
+  skip: () => process.env.NODE_ENV === 'test',
+});
+
+async function computeCampaignImpact(campaignId) {
+  const { rows } = await db.query(
+    `SELECT
+       camp.asset_type AS currency,
+       COALESCE(SUM(c.amount), 0)::numeric AS total_raised,
+       COUNT(c.id)::int AS contribution_count,
+       COALESCE(AVG(c.amount), 0)::numeric AS average_contribution,
+       COALESCE(MAX(c.amount), 0)::numeric AS largest_contribution,
+       COUNT(DISTINCT c.sender_public_key)::int AS unique_contributor_count
+     FROM campaigns camp
+     LEFT JOIN contributions c ON c.campaign_id = camp.id
+     WHERE camp.id = $1 AND camp.deleted_at IS NULL AND camp.is_hidden = FALSE
+     GROUP BY camp.asset_type`,
+    [campaignId]
+  );
+
+  if (!rows.length) return null;
+
+  const row = rows[0];
+  return {
+    total_raised: Number(row.total_raised),
+    contribution_count: row.contribution_count,
+    average_contribution: Number(row.average_contribution),
+    largest_contribution: Number(row.largest_contribution),
+    unique_contributor_count: row.unique_contributor_count,
+    currency: row.currency,
+  };
+}
+
+function signImpactStats(stats) {
+  const signedPayload = JSON.stringify(stats);
+  const keypair = Keypair.fromSecret(process.env.PLATFORM_SECRET_KEY);
+  return {
+    signed_payload: signedPayload,
+    signature: keypair.sign(Buffer.from(signedPayload)).toString('base64'),
+    public_key: keypair.publicKey(),
+  };
+}
+
 async function generateUniqueReferralCode(runner = db) {
   for (let i = 0; i < 10; i++) {
     const code = crypto.randomBytes(6).toString('base64url').slice(0, 8);
@@ -1013,6 +1063,31 @@ router.get('/:id/contract-status', asyncHandler(async (req, res) => {
   }
 }));
 
+router.get('/:id/impact', impactLimiter, asyncHandler(async (req, res) => {
+  const campaignId = req.params.id;
+  const impact = await campaignsCache.wrap(
+    `impact:${campaignId}`,
+    () => computeCampaignImpact(campaignId),
+    IMPACT_CACHE_TTL_MS
+  );
+
+  if (!impact) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+
+  res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=30');
+
+  if (req.query.sign === '1' || req.query.signed === 'true') {
+    if (!process.env.PLATFORM_SECRET_KEY) {
+      return res.status(503).json({ error: 'Impact signing is not configured' });
+    }
+    const { signed_payload, signature, public_key } = signImpactStats(impact);
+    return res.json({ ...impact, signed_payload, signature, public_key });
+  }
+
+  res.json(impact);
+}));
+
 router.get('/:id', asyncHandler(async (req, res) => {
   /**
    * @openapi
@@ -1247,6 +1322,7 @@ router.get('/:id/embed', asyncHandler(async (req, res) => {
   if (!summary) return res.status(404).json({ error: 'Campaign not found' });
 
   const milestones = await loadPublicCampaignMilestones(campaignId);
+  const impact = await computeCampaignImpact(campaignId);
 
   res.json({
     ...summary,
@@ -1254,6 +1330,7 @@ router.get('/:id/embed', asyncHandler(async (req, res) => {
       summary.description?.slice(0, 200) + (summary.description?.length > 200 ? '...' : ''),
     milestones,
     milestone_summary: summariseMilestones(milestones),
+    impact,
   });
 }));
 
@@ -1268,6 +1345,7 @@ router.get('/:id/widget', asyncHandler(async (req, res) => {
   if (!summary) return res.status(404).json({ error: 'Campaign not found' });
 
   const milestones = await loadPublicCampaignMilestones(campaignId);
+  const impact = await computeCampaignImpact(campaignId);
 
   res.json({
     id: summary.id,
@@ -1282,6 +1360,7 @@ router.get('/:id/widget', asyncHandler(async (req, res) => {
     contribution_url: summary.contribution_url,
     milestones,
     milestone_summary: summariseMilestones(milestones),
+    impact,
   });
 }));
 
