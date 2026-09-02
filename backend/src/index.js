@@ -12,6 +12,7 @@ const campaignRoutes = require('./routes/campaigns');
 const contributionRoutes = require('./routes/contributions');
 const embedRoutes = require('./routes/embed');
 const adminRoutes = require('./routes/admin');
+const adminAuditLogRoutes = require('./routes/adminAuditLogs');
 const healthRoutes = require('./routes/health.test') || express.Router();
 
 const app = express();
@@ -29,6 +30,7 @@ app.use('/api/campaigns', campaignRoutes);
 app.use('/api/contributions', contributionRoutes);
 app.use('/api/embed', embedRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin', adminAuditLogRoutes);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
@@ -36,6 +38,7 @@ app.use(errorHandler);
 
 app.use('/api/v1', require('routes/v1'));
 app.use('/api', require('routes/admin'));
+app.use('/api/admin', require('routes/adminAuditLogs'));
 app.use('/api/anchor', require('routes/anchor'));
 app.use('/api/announcements', require('routes/announcement'));
 app.use('/api/auth', require('routes/auth'));

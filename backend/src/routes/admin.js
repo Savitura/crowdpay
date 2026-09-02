@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const db = require('../config/database');
 const { requireAuth } = require('../middleware/auth');
-const { requireAdmin } = require('../middleware/authScopes');
+const { requireAdmin } = require('../middleware/auth');
 const asyncHandler = require('../utils/asyncHandler');
 const { getFraudDashboard, resolveFlaggedContribution, retrainModel } = require('../services/fraudService');
 
