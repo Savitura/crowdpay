@@ -36,6 +36,7 @@ test('GET /health returns pool stats and ok status when database is reachable', 
 
   const app = proxyquire('../index', {
     './config/database': mockDb,
+    '../config/database': mockDb,
     './config/env': { validateEnv: () => {} },
     '@sentry/node': mockSentry,
     // Stub background services to prevent them from executing or failing
@@ -83,6 +84,7 @@ test('GET /health returns 503 and error message when database query fails', asyn
 
   const app = proxyquire('../index', {
     './config/database': mockDb,
+    '../config/database': mockDb,
     './config/env': { validateEnv: () => {} },
     '@sentry/node': mockSentry,
     './services/ledgerMonitor': {
@@ -150,6 +152,7 @@ test('GET /health sends Sentry alert when pool utilisation exceeds 90%', async (
 
   const app = proxyquire('../index', {
     './config/database': mockDb,
+    '../config/database': mockDb,
     './config/env': { validateEnv: () => {} },
     '@sentry/node': mockSentryCapture,
     './services/ledgerMonitor': {
