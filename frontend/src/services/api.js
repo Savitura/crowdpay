@@ -5,6 +5,32 @@ const apiClient = axios.create({
   withCredentials: true,
 });
 
+// --- Offline retry queue ---
+// Idempotent GET requests that fail with a network error while the app is
+// offline are queued here and replayed when connectivity returns
+// (NetworkStatusContext calls retryQueuedRequests on reconnect).
+const retryQueue = [];
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const config = error.config;
+    if (!error.response && config && config.method === 'get' && !config._retried) {
+      config._retried = true;
+      retryQueue.push(() => apiClient.request(config));
+    }
+    return Promise.reject(error);
+  }
+);
+
+export function retryQueuedRequests() {
+  const queue = [...retryQueue];
+  retryQueue.length = 0;
+  for (const replay of queue) {
+    replay().catch(() => { /* replayed request failed again — drop it */ });
+  }
+}
+
 export const api = {
   async getCampaign(id) {
     const res = await apiClient.get(`/campaigns/${id}`);

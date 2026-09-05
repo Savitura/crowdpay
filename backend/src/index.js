@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const requestContext = require('./config/requestContext');
 const requestLogger = require('./middleware/requestLogger');
+const logger = require('./config/logger');
 const errorHandler = require('./middleware/errorHandler');
 const compression = require('./middleware/compression');
 
