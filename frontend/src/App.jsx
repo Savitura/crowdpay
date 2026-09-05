@@ -5,6 +5,7 @@ import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { ToastProvider } from './context/ToastContext';
 import { NetworkStatusProvider } from './context/NetworkStatusContext';
+import { FeatureFlagsProvider } from './context/FeatureFlagsContext';
 import { OfflineBanner } from './components/OfflineBanner';
 import ImpersonationBanner from './components/ImpersonationBanner';
 import AnnouncementBanner from './components/AnnouncementBanner';
@@ -55,7 +56,8 @@ export default function App() {
     location.pathname.startsWith('/widget/') || location.pathname.startsWith('/embed/');
 
   return (
-    <ThemeProvider>
+    <FeatureFlagsProvider>
+      <ThemeProvider>
       <AuthProvider>
         <ToastProvider>
           <NetworkStatusProvider>
@@ -192,5 +194,6 @@ export default function App() {
         </ToastProvider>
       </AuthProvider>
     </ThemeProvider>
+      </FeatureFlagsProvider>
   );
 }

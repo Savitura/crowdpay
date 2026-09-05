@@ -217,3 +217,47 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 MIT
  
+## Feature Flags
+
+CrowdPay supports runtime feature flags stored in PostgreSQL. This lets the team ship behind flags, gather feedback, and kill a bad feature instantly without a deploy.
+
+### Database schema
+
+Migration: `backend/db/migrations/20260906_feature_flags.sql`
+
+| Column            | Type        | Description                          |
+|-------------------|-------------|--------------------------------------|
+| `key`             | TEXT (PK)   | Flag identifier (kebab-case)         |
+| `enabled`         | BOOLEAN     | Current runtime state                |
+| `default_enabled` | BOOLEAN     | Fallback when row is absent          |
+| `description`     | TEXT        | Human-readable purpose               |
+| `updated_at`      | TIMESTAMPTZ | Last modification time               |
+
+### API
+
+- `GET /api/feature-flags` — list all flags (public, no admin required)
+- `GET /api/feature-flags/enabled` — list only enabled flag keys (public)
+- `GET /api/admin/feature-flags` — list all flags with details (admin only)
+- `PUT /api/admin/feature-flags/:key` — toggle a flag (admin only)
+
+### Frontend usage
+
+Wrap your app with `FeatureFlagsProvider` (already added in `App.jsx`).
+
+```jsx
+import { useFeatureFlags } from './context/FeatureFlagsContext';
+
+function MyComponent() {
+  const { isEnabled } = useFeatureFlags();
+  if (isEnabled('new-dashboard')) {
+    return <NewDashboard />;
+  }
+  return <OldDashboard />;
+}
+```
+
+Flags are fetched once on app load and cached. Call `refreshFlags()` to force a refresh.
+
+### Defaults
+
+Unknown flags resolve to `false` unless `default_enabled` is explicitly `true`.
