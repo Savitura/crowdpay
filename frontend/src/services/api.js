@@ -108,4 +108,32 @@ export const api = {
     const res = await apiClient.get('/users/me/campaigns', { params });
     return res.data;
   },
+  async getNotifications() {
+    const res = await apiClient.get('/users/me/notifications');
+    return res.data;
+  },
+  async markNotificationRead(id) {
+    const res = await apiClient.patch(`/users/me/notifications/${id}/read`);
+    return res.data;
+  },
+  async markAllNotificationsRead() {
+    const res = await apiClient.patch('/users/me/notifications/read-all');
+    return res.data;
+  },
+  async getMyBadges() {
+    const res = await apiClient.get('/users/me/badges');
+    return res.data;
+  },
+  async getMyNftRewards() {
+    const res = await apiClient.get('/users/me/nft-rewards');
+    return res.data;
+  },
+  async setup2FA() {
+    const res = await apiClient.post('/users/me/2fa/setup');
+    return res.data;
+  },
+  async verify2FA({ code }) {
+    const res = await apiClient.post('/users/me/2fa/verify', { code });
+    return res.data;
+  },
 };

@@ -21,6 +21,15 @@ vi.mock('../../context/AuthContext', () => ({
   }),
 }));
 
+vi.mock('../../services/api', () => ({
+  api: {
+    getMyBadges: vi.fn().mockResolvedValue([]),
+    getMyNftRewards: vi.fn().mockResolvedValue({ rewards: [] }),
+    setup2FA: vi.fn(),
+    verify2FA: vi.fn(),
+  },
+}));
+
 describe('Profile page', () => {
   afterEach(() => {
     vi.restoreAllMocks();

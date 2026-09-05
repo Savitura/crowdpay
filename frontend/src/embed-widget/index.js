@@ -6,7 +6,8 @@ export function initCrowdPayEmbed(scriptTag) {
   if (!campaignId) return;
 
   const theme = script.getAttribute('data-theme') || 'light';
-  const size = script.getAttribute('data-size') || 'medium';
+  const rawSize = script.getAttribute('data-size') || 'medium';
+  const size = ['large', 'small', 'medium'].includes(rawSize) ? rawSize : 'medium';
 
   const origin = window.location.origin;
   const iframe = document.createElement('iframe');
