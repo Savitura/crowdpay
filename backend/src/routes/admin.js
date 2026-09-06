@@ -4,6 +4,7 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
 const asyncHandler = require('../utils/asyncHandler');
 const { getFraudDashboard, resolveFlaggedContribution, retrainModel } = require('../services/fraudService');
 const auditLogsRouter = require('./auditLogs');
+const creatorRefundsRouter = require('./creatorRefunds');
 
 router.use(requireAuth, requireAdmin);
 
@@ -54,5 +55,6 @@ router.post('/fraud/retrain', asyncHandler(async (req, res) => {
 }));
 
 router.use('/audit-logs', auditLogsRouter);
+router.use('/refunds', creatorRefundsRouter);
 
 module.exports = router;
