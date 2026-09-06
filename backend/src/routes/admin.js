@@ -3,6 +3,7 @@ const db = require('../config/database');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const asyncHandler = require('../utils/asyncHandler');
 const { getFraudDashboard, resolveFlaggedContribution, retrainModel } = require('../services/fraudService');
+const auditLogsRouter = require('./auditLogs');
 
 router.use(requireAuth, requireAdmin);
 
@@ -51,5 +52,7 @@ router.post('/fraud/retrain', asyncHandler(async (req, res) => {
   const result = await retrainModel();
   res.json(result);
 }));
+
+router.use('/audit-logs', auditLogsRouter);
 
 module.exports = router;
