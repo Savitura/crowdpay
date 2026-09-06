@@ -3,6 +3,7 @@ const db = require("../config/database");
 const { requireAuth, authenticate } = require("../middleware/auth");
 const asyncHandler = require("../utils/asyncHandler");
 const logger = require("../config/logger");
+const rateLimit = require("express-rate-limit");
 const { createNotification } = require("../services/notifications");
 const { sendCampaignCommentEmail, sendCommentReplyEmail } = require("../services/emailService");
 
@@ -33,9 +34,19 @@ async function requireCampaignCreator(req, res, next) {
   req.campaign = rows[0];
   next();
 }
+const commentRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.userId || req.ip,
+  message: { error: "Rate limit exceeded. You can post up to 5 comments per minute." },
+});
+
 
 const COMMENT_COLUMNS = `cc.id, cc.campaign_id, cc.author_id, cc.author_id AS user_id, cc.parent_id, cc.body,
        cc.hidden, cc.hidden_reason, cc.created_at, cc.updated_at,
+       cc.pinned,
        u.name AS author_name, (cc.author_id = c.creator_id) AS is_creator_reply`;
 
 // Public (optionally authenticated): list comments newest first, flat with parent_id.
@@ -80,7 +91,7 @@ router.get(
          WHERE user_id = $2
        ) u_user ON u_user.comment_id = cc.id
        WHERE cc.campaign_id = $1 ${canSeeHidden ? "" : "AND cc.hidden = FALSE"}
-       ORDER BY cc.created_at DESC`;
+       ORDER BY cc.pinned DESC, cc.created_at DESC`;
 
     const params = [req.params.id, userId];
 
@@ -99,6 +110,7 @@ router.get(
 router.post(
   "/:id/comments",
   requireAuth,
+  commentRateLimiter,
   asyncHandler(async (req, res) => {
     const body = cleanText(req.body.body);
     if (!body) return res.status(422).json({ error: "Body is required" });
@@ -396,6 +408,47 @@ router.post(
       [req.params.commentId, req.params.id],
     );
 
+    if (!rows.length) return res.status(404).json({ error: "Comment not found" });
+    res.json(rows[0]);
+  }),
+);
+
+
+// Creator/admin only: pin a comment to the top (max one per campaign)
+router.post(
+  "/:id/comments/:commentId/pin",
+  requireAuth,
+  requireCampaignCreator,
+  asyncHandler(async (req, res) => {
+    await db.query(
+      `UPDATE campaign_comments SET pinned = FALSE WHERE campaign_id = $1`,
+      [req.params.id],
+    );
+    const { rows } = await db.query(
+      `UPDATE campaign_comments
+       SET pinned = TRUE
+       WHERE id = $1 AND campaign_id = $2
+       RETURNING id, campaign_id, author_id, parent_id, body, hidden, hidden_reason, created_at, updated_at, pinned`,
+      [req.params.commentId, req.params.id],
+    );
+    if (!rows.length) return res.status(404).json({ error: "Comment not found" });
+    res.json(rows[0]);
+  }),
+);
+
+// Creator/admin only: unpin a comment
+router.post(
+  "/:id/comments/:commentId/unpin",
+  requireAuth,
+  requireCampaignCreator,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `UPDATE campaign_comments
+       SET pinned = FALSE
+       WHERE id = $1 AND campaign_id = $2
+       RETURNING id, campaign_id, author_id, parent_id, body, hidden, hidden_reason, created_at, updated_at, pinned`,
+      [req.params.commentId, req.params.id],
+    );
     if (!rows.length) return res.status(404).json({ error: "Comment not found" });
     res.json(rows[0]);
   }),
