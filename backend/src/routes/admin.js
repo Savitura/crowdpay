@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const db = require('../config/database');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
+const { requireAdmin } = require('../middleware/auth');
 const asyncHandler = require('../utils/asyncHandler');
 const { getFraudDashboard, resolveFlaggedContribution, retrainModel } = require('../services/fraudService');
 const auditLogsRouter = require('./auditLogs');

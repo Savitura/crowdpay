@@ -34,6 +34,15 @@ async function handleKycWebhook(req, res) {
       return res.status(400).json({ error: 'Unsupported KYC status' });
     }
 
+    const eventType = result.kycStatus === 'verified' ? 'inquiry.approved' : result.kycStatus === 'rejected' ? 'inquiry.declined' : 'inquiry.pending';
+    const prior = await db.query(
+      'SELECT 1 FROM kyc_events WHERE persona_inquiry_id = $1 AND event_type = $2 LIMIT 1',
+      [result.providerReference, eventType]
+    );
+    if (prior.rows.length) {
+      return res.json({ received: true, duplicate: true });
+    }
+
     const params = [result.kycStatus, result.providerReference || null];
     let lookup = 'kyc_provider_reference = $2';
     if (result.userId) {
@@ -74,7 +83,7 @@ async function handleKycWebhook(req, res) {
         [
           rows[0].id,
           result.providerReference,
-          result.kycStatus === 'verified' ? 'inquiry.approved' : result.kycStatus === 'rejected' ? 'inquiry.declined' : 'inquiry.pending',
+          eventType,
           result.tier || null,
           result.reason || null,
         ]
