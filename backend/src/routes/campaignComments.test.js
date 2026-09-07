@@ -210,3 +210,45 @@ test('POST /api/campaigns/:id/comments/:commentId/flag flags a comment for revie
   assert.equal(calls.length, 2);
   assert.match(calls[1].text, /INSERT INTO campaign_comment_flags/);
 });
+
+test('POST /api/campaigns/:id/comments/:commentId/pin pins a comment to the top', async () => {
+  const { app, calls } = buildApp({
+    user: { userId: CREATOR_ID, role: 'creator' },
+    queryImpl: async (text) => {
+      if (text.includes('SELECT id, creator_id FROM campaigns')) {
+        return { rows: [{ id: CAMPAIGN_ID, creator_id: CREATOR_ID }] };
+      }
+      if (text.includes('UPDATE campaign_comments SET pinned = FALSE')) {
+        return { rows: [] };
+      }
+      if (text.includes('UPDATE campaign_comments') && text.includes('pinned = TRUE')) {
+        return { rows: [{ id: COMMENT_ID, campaign_id: CAMPAIGN_ID, pinned: true }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const res = await request(app).post(`/api/campaigns/${CAMPAIGN_ID}/comments/${COMMENT_ID}/pin`);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.pinned, true);
+});
+
+test('POST /api/campaigns/:id/comments/:commentId/unpin unpins a comment', async () => {
+  const { app, calls } = buildApp({
+    user: { userId: CREATOR_ID, role: 'creator' },
+    queryImpl: async (text) => {
+      if (text.includes('SELECT id, creator_id FROM campaigns')) {
+        return { rows: [{ id: CAMPAIGN_ID, creator_id: CREATOR_ID }] };
+      }
+      if (text.includes('UPDATE campaign_comments') && text.includes('pinned = FALSE')) {
+        return { rows: [{ id: COMMENT_ID, campaign_id: CAMPAIGN_ID, pinned: false }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const res = await request(app).post(`/api/campaigns/${CAMPAIGN_ID}/comments/${COMMENT_ID}/unpin`);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.pinned, false);
+});
+
