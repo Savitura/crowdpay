@@ -20,7 +20,7 @@ const CAMPAIGN = {
 
 function buildApp({ resolveReferralLink, onSubmit }) {
   const queryImpl = async (text) => {
-    if (text.includes('FROM campaigns c')) return { rows: [CAMPAIGN] };
+    if (text.includes('FROM campaigns') && text.includes('WHERE id = $1')) return { rows: [CAMPAIGN] };
     if (text.includes('wallet_secret_encrypted')) {
       return { rows: [{ wallet_secret_encrypted: 'enc', wallet_public_key: 'GCONTRIB' }] };
     }

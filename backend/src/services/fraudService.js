@@ -151,10 +151,39 @@ async function retrainModel() {
   return { success: true, falsePositiveRate: '1.2%', validationSamples: 12500 };
 }
 
+/**
+ * Evaluate fraud risk for all contributions on a campaign.
+ * Convenience wrapper around per-contribution scoring used by the ledger
+ * monitor after a contribution is indexed.
+ * @param {string} campaignId
+ */
+async function evaluateCampaign(campaignId) {
+  const { rows } = await db.query(
+    `SELECT id, user_id, amount, ip_address, device_fingerprint
+     FROM contributions WHERE campaign_id = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
+    [campaignId]
+  );
+  const results = await Promise.all(
+    rows.map((row) =>
+      scoreContribution({
+        contributionId: row.id,
+        campaignId,
+        userId: row.user_id,
+        amount: row.amount,
+        ipAddress: row.ip_address,
+        deviceFingerprint: row.device_fingerprint,
+      }).catch((err) => ({ contributionId: row.id, error: err.message }))
+    )
+  );
+  const highRisk = results.filter((r) => r.isHighRisk);
+  return { campaignId, assessed: results.length, highRisk: highRisk.length };
+}
+
 module.exports = {
   extractFeatures,
   scoreContribution,
   resolveFlaggedContribution,
   getFraudDashboard,
   retrainModel,
+  evaluateCampaign,
 };

@@ -42,6 +42,7 @@ function buildApp({ queryImpl, stellarImpl, walletServiceImpl, userId = 'creator
         next();
       },
     },
+    './admin': { logAdminAction: async () => {} },
   });
 
   const app = express();

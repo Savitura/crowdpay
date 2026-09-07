@@ -1,20 +1,23 @@
-const { describe, it, expect, vi, beforeEach } = require('vitest');
-const contributionReceiptService = require('../services/contributionReceiptService');
+const test = require('node:test');
+const assert = require('node:assert/strict');
 
-vi.mock('../services/contributionReceiptService', () => ({
-  getOrCreateReceiptPdf: vi.fn(),
-  getReceiptData: vi.fn(),
-}));
+test('assembly and pdf generation mock verification', async () => {
+  let getOrCreateReceiptPdfCalled = false;
+  let getReceiptDataCalled = false;
 
-describe('Contribution Receipt Service Tests', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+  const contributionReceiptService = {
+    getOrCreateReceiptPdf: async (id) => {
+      getOrCreateReceiptPdfCalled = true;
+      return 'https://storage.test/signed-receipt.pdf';
+    },
+    getReceiptData: async () => {
+      getReceiptDataCalled = true;
+      return {};
+    },
+  };
 
-  it('assembly and pdf generation mock verification', async () => {
-    contributionReceiptService.getOrCreateReceiptPdf.mockResolvedValue('https://storage.test/signed-receipt.pdf');
-    const url = await contributionReceiptService.getOrCreateReceiptPdf('test-contrib-id');
-    expect(url).toContain('signed-receipt.pdf');
-    expect(contributionReceiptService.getOrCreateReceiptPdf).toHaveBeenCalledWith('test-contrib-id');
-  });
+  const url = await contributionReceiptService.getOrCreateReceiptPdf('test-contrib-id');
+  assert.ok(url.includes('signed-receipt.pdf'));
+  assert.ok(getOrCreateReceiptPdfCalled);
+  assert.ok(!getReceiptDataCalled);
 });

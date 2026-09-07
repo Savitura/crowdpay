@@ -139,6 +139,46 @@ const createCampaignValidation = [
     .optional({ nullable: true, checkFalsy: true })
     .isFloat({ gt: 0 })
     .withMessage('Minimum contribution must be greater than zero'),
+  body('max_contribution')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ gt: 0 })
+    .withMessage('Maximum contribution must be greater than zero'),
+  body('max_per_user')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ gt: 0 })
+    .withMessage('Maximum per user must be greater than zero'),
+  body('milestones')
+    .optional({ nullable: true })
+    .isArray({ max: 20 })
+    .withMessage('Milestones must be an array of at most 20 items'),
+  body('milestones.*.release_percentage')
+    .optional({ nullable: true })
+    .isFloat({ min: 0, max: 100 })
+    .withMessage('Milestone release_percentage must be between 0 and 100'),
+  body('max_per_user')
+    .custom((value, { req }) => {
+      if (value === undefined || value === null || value === '') return true;
+      const maxPerUser = parseFloat(value);
+      if (isNaN(maxPerUser) || maxPerUser <= 0) return true; // handled by isFloat above
+      const minContribution = parseFloat(req.body.min_contribution);
+      if (!isNaN(minContribution) && maxPerUser <= minContribution) {
+        throw new Error('Per-contributor cap must be greater than minimum contribution');
+      }
+      return true;
+    }),
+  body('milestones')
+    .custom((milestones) => {
+      if (!milestones || !Array.isArray(milestones)) return true;
+      if (milestones.length === 0) return true;
+      const total = milestones.reduce((sum, m) => {
+        const pct = parseFloat(m?.release_percentage);
+        return sum + (isNaN(pct) ? 0 : pct);
+      }, 0);
+      if (total > 100) {
+        throw new Error('Milestone percentages must not exceed 100%');
+      }
+      return true;
+    }),
 ];
 
 const updateCampaignValidation = [

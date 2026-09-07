@@ -25,6 +25,7 @@ test('feature flag effective value: default_enabled used when enabled is null', 
 });
 
 test('feature flag effective value: both null resolves to false', () => {
+  // eslint-disable-next-line no-constant-binary-expression
   const effective = null ?? null ?? false;
   assert.strictEqual(effective, false);
 });

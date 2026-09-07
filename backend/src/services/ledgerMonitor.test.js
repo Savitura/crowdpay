@@ -74,6 +74,9 @@ function buildLedgerMonitor(mockQuery, treasuryStub) {
     './contractTreasury': {
       indexContribution: treasuryStub || (async () => ({ indexed: true })),
     },
+    './fraudService': { evaluateCampaign: async () => ({}) },
+    './badgeService': { syncBadgesForWallet: async () => {} },
+    './campaignFollowService': { announceFundingProgress: async () => {} },
     '../utils/cache': {
       invalidate: () => {},
       invalidatePrefix: () => {},

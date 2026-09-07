@@ -6,8 +6,9 @@ const requestContext = require('./config/requestContext');
 const { requestLogger } = require('./middleware/requestLogger');
 const logger = require('./config/logger');
 const { normalizeErrorResponse, errorHandler } = require('./middleware/errorHandler');
-const healthRoutes = require('./routes/health');
 const compression = require('./middleware/compression');
+const Sentry = require('@sentry/node');
+const db = require('./config/database');
 
 const authRoutes = require('./routes/auth');
 const campaignRoutes = require('./routes/campaigns');
@@ -15,7 +16,6 @@ const contributionRoutes = require('./routes/contributions');
 const embedRoutes = require('./routes/embed');
 const adminRoutes = require('./routes/admin');
 const adminAuditLogRoutes = require('./routes/adminAuditLogs');
-const healthRoutes = require('./routes/health.test') || express.Router();
 
 const app = express();
 
@@ -72,48 +72,41 @@ app.use('/api/wallets', require('./routes/wallets'));
 app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/withdrawals', require('./routes/withdrawals'));
 
-app.use(errorHandler);
+function getPoolMetrics() {
+  if (typeof db.getPoolMetrics === 'function') return db.getPoolMetrics();
+  return {
+    total: db.totalCount || 0,
+    idle: db.idleCount || 0,
+    waiting: db.waitingCount || 0,
+    max: db.poolMax || 0,
+    utilisation: 0,
+  };
+}
 
-app.use('/api/v1', require('routes/v1'));
-app.use('/api', require('routes/admin'));
-app.use('/api/admin', require('routes/adminAuditLogs'));
-app.use('/api/anchor', require('routes/anchor'));
-app.use('/api/announcements', require('routes/announcement'));
-app.use('/api/auth', require('routes/auth'));
-app.use('/api/campaigns', require('routes/campaignComments'));
-app.use('/api/campaigns', require('routes/campaignFollowers'));
-app.use('/api/campaigns', require('routes/campaignUpdates'));
-app.use('/api/campaigns', require('routes/campaigns'));
-app.use('/api/campaign-pools', require('routes/contributionPools'));
-app.use('/api/contributions', require('routes/contributions'));
-app.use('/api/contributor-identity', require('routes/contributorIdentity'));
-app.use('/api/creator', require('routes/creatorAnalytics'));
-app.use('/api/disputes', require('routes/disputes'));
-app.use('/api/emails', require('routes/emails'));
-app.use('/api/embed', require('routes/embed'));
-app.use('/api/governance', require('routes/governance'));
-app.use('/api/impact-reports', require('routes/impactReports'));
-app.use('/api/invites', require('routes/invites'));
-app.use('/api/kyc-webhook', require('routes/kycWebhook'));
-app.use('/api/milestones', require('routes/milestones'));
-app.use('/api/nft-rewards', require('routes/nftRewards'));
-app.use('/api/notifications', require('routes/notifications'));
-app.use('/api/ops', require('routes/ops'));
-app.use('/api/referrals', require('routes/referrals'));
-app.use('/api/sessions', require('routes/sessions'));
-app.use('/api/sponsor-matching', require('routes/sponsorMatching'));
-app.use('/api/stellar-transactions', require('routes/stellarTransactions'));
-app.use('/api/subscriptions', require('routes/subscriptions'));
-app.use('/api/thank-you', require('routes/thankYou'));
-app.use('/api/translations', require('routes/translations'));
-app.use('/api/treasury', require('routes/treasury'));
-app.use('/api/users', require('routes/users'));
-app.use('/api/wallets', require('routes/wallets'));
-app.use('/api/webhooks', require('routes/webhooks'));
-app.use('/api/withdrawals', require('routes/withdrawals'));
-
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+app.get('/health', async (_req, res) => {
+  try {
+    await db.query('SELECT 1');
+    const metrics = getPoolMetrics();
+    const { utilisation, ...pool } = metrics;
+    res.json({
+      status: 'ok',
+      db: { pool, utilisation },
+    });
+    if (utilisation > 90) {
+      Sentry.captureMessage(
+        `Database pool utilisation exceeds 90% (current: ${utilisation}%)`,
+        'warning'
+      );
+    }
+  } catch (err) {
+    logger.error('Health check database query failed', { error: err.message });
+    res.status(503).json({
+      error: {
+        code: 'ERROR',
+        message: err.message,
+      },
+    });
+  }
 });
 
 app.use(normalizeErrorResponse);

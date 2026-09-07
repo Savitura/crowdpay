@@ -145,7 +145,8 @@ async function createNotificationsBulk(userIds, message, options = {}) {
   await Promise.all(userIds.map((userId) => createNotification(userId, message, options)));
 }
 
-async function flushQuietHours(nowHour = new Date().getHours()) {
+async function flushQuietHours(options = {}) {
+  const nowHour = options.nowHour !== undefined ? options.nowHour : new Date().getHours();
   const { rows } = await db.query(
     `SELECT q.id, q.user_id, q.channel, q.type, q.title, q.body, q.link,
             s.push_token, s.slack_webhook_url, s.discord_webhook_url, s.sms_phone_number,
@@ -158,32 +159,72 @@ async function flushQuietHours(nowHour = new Date().getHours()) {
      LIMIT 200`
   );
 
+  // Group deliverable rows by (user_id, channel) so we can batch them into a
+  // single digest message per user/channel pair.
+  const groups = new Map();
+  const allFlushedIds = [];
+
   for (const row of rows) {
     if (inQuietHours(row, nowHour)) continue;
 
-    const settings = {
-      push_token: row.push_token,
-      push_enabled: row.push_enabled,
-      slack_webhook_url: row.slack_webhook_url,
-      discord_webhook_url: row.discord_webhook_url,
-      sms_phone_number: row.sms_phone_number,
-    };
-
-    const message = {
+    const key = `${row.user_id}:${row.channel}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        userId: row.user_id,
+        channel: row.channel,
+        settings: {
+          push_token: row.push_token,
+          push_enabled: row.push_enabled,
+          slack_webhook_url: row.slack_webhook_url,
+          discord_webhook_url: row.discord_webhook_url,
+          sms_phone_number: row.sms_phone_number,
+        },
+        items: [],
+      });
+    }
+    groups.get(key).items.push({
+      id: row.id,
       type: row.type,
       title: row.title,
       body: row.body,
       link: row.link,
+    });
+  }
+
+  let deliveredCount = 0;
+
+  for (const group of groups.values()) {
+    // Build a digest message combining all queued items for this user/channel.
+    const lastItem = group.items[group.items.length - 1];
+    const digestMessage = {
+      type: lastItem.type,
+      title: `${group.items.length} notifications: ${group.items.map((i) => i.title).join('; ')}`,
+      body: group.items.map((i) => i.body).filter(Boolean).join('\\n'),
+      link: lastItem.link,
+      items: group.items,
     };
 
     try {
-      await deliverChannel(row.user_id, row.channel, settings, message);
+      await deliverChannel(group.userId, group.channel, group.settings, digestMessage);
+      deliveredCount++;
     } catch (err) {
-      logger.error('Failed to flush queued notification', { queue_id: row.id, error: err.message });
+      logger.error('Failed to flush digest notification', {
+        user_id: group.userId,
+        channel: group.channel,
+        error: err.message,
+      });
     }
 
-    await db.query('UPDATE notification_queue SET flushed_at = NOW() WHERE id = $1', [row.id]);
+    for (const item of group.items) {
+      allFlushedIds.push(item.id);
+    }
   }
+
+  if (allFlushedIds.length > 0) {
+    await db.query('UPDATE notification_queue SET flushed_at = NOW() WHERE id = ANY($1)', [allFlushedIds]);
+  }
+
+  return deliveredCount;
 }
 
 module.exports = {
