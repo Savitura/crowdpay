@@ -39,6 +39,7 @@ app.use('/api', require('./routes/admin'));
 app.use('/api/anchor', require('./routes/anchor'));
 app.use('/api/announcements', require('./routes/announcement'));
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api', require('./routes/featureFlags'));
 app.use('/api/campaigns', require('./routes/campaignComments'));
 app.use('/api/campaigns', require('./routes/campaignFollowers'));
 app.use('/api/campaigns', require('./routes/campaignUpdates'));
