@@ -108,6 +108,28 @@ export const api = {
     const res = await apiClient.get('/users/me/campaigns', { params });
     return res.data;
   },
+
+  async getAdminAuditLogs(params) {
+    const res = await apiClient.get('/admin/audit-logs', { params });
+    return res.data;
+  },
+
+  async exportAdminAuditLogsCsv(params) {
+    const res = await apiClient.get('/admin/audit-logs/export.csv', { params, responseType: 'blob' });
+    const disposition = res.headers['content-disposition'] || '';
+    let filename = 'audit-logs.csv';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    if (match && match[1]) filename = match[1];
+    return { blob: res.data, filename };
+  },
+
+  async exportAdminAuditLogsJson(params) {
+    const res = await apiClient.get('/admin/audit-logs/export.json', { params, responseType: 'blob' });
+    const disposition = res.headers['content-disposition'] || '';
+    let filename = 'audit-logs.json';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    if (match && match[1]) filename = match[1];
+    return { blob: res.data, filename };
   async getNotifications() {
     const res = await apiClient.get('/users/me/notifications');
     return res.data;
