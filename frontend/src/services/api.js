@@ -130,6 +130,7 @@ export const api = {
     const match = disposition.match(/filename="?([^"]+)"?/);
     if (match && match[1]) filename = match[1];
     return { blob: res.data, filename };
+  },
   async getNotifications() {
     const res = await apiClient.get('/users/me/notifications');
     return res.data;

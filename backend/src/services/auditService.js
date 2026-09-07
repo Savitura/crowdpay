@@ -150,6 +150,8 @@ async function exportAuditLogs(filters, format = 'json') {
     return { contentType: 'text/csv', body: rowsToCsv(rows) };
   }
   return { contentType: 'application/json', body: JSON.stringify(rows, null, 2) };
+}
+
 const { parsePagination } = require('../utils/pagination');
 
 const MAX_AUDIT_LIMIT = 200;
