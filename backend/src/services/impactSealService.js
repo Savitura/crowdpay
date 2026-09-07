@@ -41,7 +41,7 @@ function computeStats(contributions, currency) {
 function signStats(stats, campaignId) {
   const payload = JSON.stringify({ campaign_id: campaignId, ...stats });
   const signature = crypto.createHmac('sha256', process.env.IMPACT_SIGNING_SECRET || 'crowdpay-impact-secret')
-    .context(data)
+    .update(payload)
     .digest('hex');
   return {
     ...stats,

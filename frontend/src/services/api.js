@@ -5,6 +5,32 @@ const apiClient = axios.create({
   withCredentials: true,
 });
 
+// --- Offline retry queue ---
+// Idempotent GET requests that fail with a network error while the app is
+// offline are queued here and replayed when connectivity returns
+// (NetworkStatusContext calls retryQueuedRequests on reconnect).
+const retryQueue = [];
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const config = error.config;
+    if (!error.response && config && config.method === 'get' && !config._retried) {
+      config._retried = true;
+      retryQueue.push(() => apiClient.request(config));
+    }
+    return Promise.reject(error);
+  }
+);
+
+export function retryQueuedRequests() {
+  const queue = [...retryQueue];
+  retryQueue.length = 0;
+  for (const replay of queue) {
+    replay().catch(() => { /* replayed request failed again — drop it */ });
+  }
+}
+
 export const api = {
   async getCampaign(id) {
     const res = await apiClient.get(`/campaigns/${id}`);
@@ -104,5 +130,32 @@ export const api = {
     const match = disposition.match(/filename="?([^"]+)"?/);
     if (match && match[1]) filename = match[1];
     return { blob: res.data, filename };
+  async getNotifications() {
+    const res = await apiClient.get('/users/me/notifications');
+    return res.data;
+  },
+  async markNotificationRead(id) {
+    const res = await apiClient.patch(`/users/me/notifications/${id}/read`);
+    return res.data;
+  },
+  async markAllNotificationsRead() {
+    const res = await apiClient.patch('/users/me/notifications/read-all');
+    return res.data;
+  },
+  async getMyBadges() {
+    const res = await apiClient.get('/users/me/badges');
+    return res.data;
+  },
+  async getMyNftRewards() {
+    const res = await apiClient.get('/users/me/nft-rewards');
+    return res.data;
+  },
+  async setup2FA() {
+    const res = await apiClient.post('/users/me/2fa/setup');
+    return res.data;
+  },
+  async verify2FA({ code }) {
+    const res = await apiClient.post('/users/me/2fa/verify', { code });
+    return res.data;
   },
 };

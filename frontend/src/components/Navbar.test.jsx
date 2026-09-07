@@ -23,6 +23,14 @@ vi.mock('../context/ThemeContext', () => ({
   useTheme: () => ({ dark: false, toggleTheme: vi.fn() }),
 }));
 
+vi.mock('../services/api', () => ({
+  api: {
+    getNotifications: vi.fn().mockResolvedValue([]),
+    markNotificationRead: vi.fn().mockResolvedValue({}),
+    markAllNotificationsRead: vi.fn().mockResolvedValue({}),
+  },
+}));
+
 import { useAuth } from '../context/AuthContext';
 
 function renderNavbar() {
