@@ -107,7 +107,7 @@ impl FeeRegistry {
         }
 
         // Check if there's already an active proposal
-        if let Some(existing_proposal) = env.storage().instance().get(&DataKey::PendingProposal) {
+        if let Some(existing_proposal) = env.storage().instance().get::<_, FeeProposal>(&DataKey::PendingProposal) {
             if existing_proposal.status == ProposalStatus::Active {
                 panic!("There is already an active proposal");
             }
@@ -139,7 +139,7 @@ impl FeeRegistry {
         voter.require_auth();
 
         let mut proposal: FeeProposal = env.storage().instance()
-            .get(&DataKey::PendingProposal)
+            .get::<_, FeeProposal>(&DataKey::PendingProposal)
             .expect("No active proposal");
 
         if proposal.id != proposal_id {
@@ -184,7 +184,7 @@ impl FeeRegistry {
 
     pub fn execute_proposal(env: Env, proposal_id: u32) {
         let mut proposal: FeeProposal = env.storage().instance()
-            .get(&DataKey::PendingProposal)
+            .get::<_, FeeProposal>(&DataKey::PendingProposal)
             .expect("No active proposal");
 
         if proposal.id != proposal_id {

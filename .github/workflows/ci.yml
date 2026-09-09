@@ -130,9 +130,6 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Install Soroban CLI
-        run: cargo install --locked soroban-cli || true
-
       - name: Run cargo test
         working-directory: ./contracts/soroban
         run: cargo test --workspace
