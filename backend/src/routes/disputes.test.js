@@ -401,3 +401,241 @@ test('POST /admin/disputes/:id/decide refund_contributors allocates proportional
   const total = res.body.refunds.reduce((sum, r) => sum + Number(r.amount), 0);
   assert.equal(total.toFixed(7), '100.0000000');
 });
+
+// --- PATCH /disputes/:id resolution tests (#751) ----------------------------
+
+const DISPUTE_ID = 'dispute-1';
+const ADMIN_ID = 'admin-1';
+
+function buildAppForPatch({
+  escrowContractId = null,
+  campaignStatus = 'funded',
+  raisedAmount = '1000.00',
+  releaseEscrowMock = async () => 'tx-hash-123',
+  releaseEscrowShouldFail = false,
+  releaseCalled = { count: 0 },
+} = {}) {
+  const queries = [];
+  const rollbackCalled = { value: false };
+
+  const queryImpl = async (sql, params) => {
+    queries.push({ sql, params });
+
+    if (sql.includes('SELECT * FROM disputes WHERE id')) {
+      return {
+        rows: [{
+          id: DISPUTE_ID,
+          campaign_id: CAMPAIGN_ID,
+          raised_by: CONTRIBUTOR_ID,
+          status: 'under_review',
+          reason: 'non_delivery',
+          description: 'Test dispute',
+        }],
+      };
+    }
+
+    if (sql.includes('SELECT c.id, c.creator_id, c.wallet_public_key, c.escrow_contract_id')) {
+      return {
+        rows: [{
+          id: CAMPAIGN_ID,
+          creator_id: 'creator-1',
+          wallet_public_key: 'GCREATOR...',
+          escrow_contract_id: escrowContractId,
+          raised_amount: raisedAmount,
+          title: 'Test Campaign',
+          campaign_status: campaignStatus,
+          creator_wallet_public_key: 'GCREATORWALLET...',
+        }],
+      };
+    }
+
+    if (sql.includes('UPDATE disputes')) {
+      return {
+        rows: [{
+          id: DISPUTE_ID,
+          campaign_id: CAMPAIGN_ID,
+          raised_by: CONTRIBUTOR_ID,
+          status: params[0],
+          resolution_note: params[1],
+        }],
+      };
+    }
+
+    if (sql.includes('INSERT INTO dispute_events')) {
+      return { rows: [] };
+    }
+
+    if (sql.includes('UPDATE withdrawal_requests')) {
+      return { rows: [] };
+    }
+
+    if (sql.includes('UPDATE campaigns SET status')) {
+      return { rows: [] };
+    }
+
+    if (sql.includes('SELECT u.email, u.name, c.title')) {
+      return {
+        rows: [{
+          email: 'creator@example.com',
+          name: 'Creator',
+          title: 'Test Campaign',
+        }],
+      };
+    }
+
+    if (sql.includes('SELECT wallet_public_key FROM campaigns')) {
+      return { rows: [{ wallet_public_key: 'GCAMPAIGNWALLET...' }] };
+    }
+
+    if (sql.includes('SELECT wallet_public_key FROM users')) {
+      return { rows: [{ wallet_public_key: 'GCONTRIBUTORWALLET...' }] };
+    }
+
+    if (sql.includes('SELECT id, amount, asset FROM contributions')) {
+      return { rows: [] };
+    }
+
+    if (sql.includes('SELECT email, name FROM users WHERE id')) {
+      return { rows: [{ email: 'user@example.com', name: 'User' }] };
+    }
+
+    if (sql.includes('SELECT title FROM campaigns')) {
+      return { rows: [{ title: 'Test Campaign' }] };
+    }
+
+    return { rows: [] };
+  };
+
+  const releaseEscrowToCreatorMock = async (opts) => {
+    releaseCalled.count++;
+    if (releaseEscrowShouldFail) {
+      throw new Error('Simulated escrow release failure');
+    }
+    return releaseEscrowMock(opts);
+  };
+
+  const router = proxyquire('./disputes', {
+    '../config/database': {
+      query: queryImpl,
+      connect: async () => ({
+        query: async (sql, params) => {
+          if (sql === 'BEGIN') return { rows: [] };
+          if (sql === 'COMMIT') return { rows: [] };
+          if (sql === 'ROLLBACK') {
+            rollbackCalled.value = true;
+            return { rows: [] };
+          }
+          return queryImpl(sql, params);
+        },
+        release: () => {},
+      }),
+    },
+    '../middleware/auth': {
+      requireAuth: (req, _res, next) => {
+        req.user = { userId: ADMIN_ID };
+        next();
+      },
+      requireRole: () => (_req, _res, next) => next(),
+    },
+    '../services/emailService': {
+      sendDisputeOpenedCreatorEmail: async () => {},
+      sendDisputeOpenedAdminEmail: async () => {},
+      sendDisputeResolvedCreatorEmail: async () => {},
+      sendDisputeResolvedContributorEmail: async () => {},
+    },
+    '../services/webhookDispatcher': {
+      emitWebhookEventForUser: async () => {},
+      emitWebhookEventForCampaign: async () => {},
+      WEBHOOK_EVENTS: {
+        DISPUTE_OPENED: 'dispute.opened',
+        DISPUTE_RESOLVED: 'dispute.resolved',
+        WITHDRAWAL_UPDATED: 'withdrawal.updated',
+      },
+    },
+    '../services/sorobanService': {
+      releaseEscrowToCreator: releaseEscrowToCreatorMock,
+    },
+    '../services/stellarService': {
+      buildWithdrawalTransaction: async () => 'mock-unsigned-xdr',
+    },
+    '../services/stellarTransactionService': {
+      insertWithdrawalPendingSignatures: async () => {},
+    },
+    '../config/logger': { info: () => {}, warn: () => {}, error: () => {} },
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api', router);
+  return { app, queries, releaseCalled, rollbackCalled };
+}
+
+test('PATCH /disputes/:id with resolved_creator calls releaseEscrowToCreator when escrow contract exists', async () => {
+  const releaseCalled = { count: 0 };
+  const { app } = buildAppForPatch({
+    escrowContractId: 'CESCROW123',
+    raisedAmount: '500.00',
+    releaseCalled,
+  });
+
+  const res = await request(app)
+    .patch(`/api/disputes/${DISPUTE_ID}`)
+    .send({ status: 'resolved_creator', resolution_note: 'Creator wins' });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.status, 'resolved_creator');
+  assert.equal(releaseCalled.count, 1, 'releaseEscrowToCreator should be called once');
+});
+
+test('PATCH /disputes/:id with resolved_creator does NOT call escrow release when no contract', async () => {
+  const releaseCalled = { count: 0 };
+  const { app } = buildAppForPatch({
+    escrowContractId: null,
+    raisedAmount: '500.00',
+    releaseCalled,
+  });
+
+  const res = await request(app)
+    .patch(`/api/disputes/${DISPUTE_ID}`)
+    .send({ status: 'resolved_creator', resolution_note: 'Creator wins' });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.status, 'resolved_creator');
+  assert.equal(releaseCalled.count, 0, 'releaseEscrowToCreator should NOT be called without contract');
+});
+
+test('PATCH /disputes/:id with resolved_contributor does NOT call escrow release', async () => {
+  const releaseCalled = { count: 0 };
+  const { app } = buildAppForPatch({
+    escrowContractId: 'CESCROW123',
+    raisedAmount: '500.00',
+    releaseCalled,
+  });
+
+  const res = await request(app)
+    .patch(`/api/disputes/${DISPUTE_ID}`)
+    .send({ status: 'resolved_contributor', resolution_note: 'Contributor wins' });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.status, 'resolved_contributor');
+  assert.equal(releaseCalled.count, 0, 'releaseEscrowToCreator should NOT be called for contributor resolution');
+});
+
+test('PATCH /disputes/:id rolls back transaction on escrow release failure', async () => {
+  const releaseCalled = { count: 0 };
+  const { app, rollbackCalled } = buildAppForPatch({
+    escrowContractId: 'CESCROW123',
+    raisedAmount: '500.00',
+    releaseCalled,
+    releaseEscrowShouldFail: true,
+  });
+
+  const res = await request(app)
+    .patch(`/api/disputes/${DISPUTE_ID}`)
+    .send({ status: 'resolved_creator', resolution_note: 'Creator wins' });
+
+  assert.equal(res.status, 500);
+  assert.match(res.body.error, /Failed to release on-chain escrow funds/);
+  assert.equal(releaseCalled.count, 1, 'releaseEscrowToCreator should be called');
+  assert.equal(rollbackCalled.value, true, 'Transaction should be rolled back on failure');
+});
