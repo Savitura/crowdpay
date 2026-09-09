@@ -575,6 +575,7 @@ fn uninitialized_calls_are_refused() {
 }
 
 #[test]
+#[should_panic]
 fn test_initialize_requires_platform_auth() {
     let env = Env::default();
     let contract_id = env.register_contract(None, CampaignTreasury);
@@ -585,17 +586,14 @@ fn test_initialize_requires_platform_auth() {
     let token_admin = Address::generate(&env);
     let token_id = env.register_stellar_asset_contract(token_admin);
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.initialize(
-            &symbol_short!("cp687"),
-            &creator,
-            &platform,
-            &None,
-            &policy(),
-            &DEADLINE,
-            &10_000,
-            &token_id,
-        );
-    }));
-    assert!(result.is_err());
+    client.initialize(
+        &symbol_short!("cp687"),
+        &creator,
+        &platform,
+        &None,
+        &policy(),
+        &DEADLINE,
+        &10_000,
+        &token_id,
+    );
 }

@@ -84,7 +84,7 @@ fn setup_v2_contract(
     let platform = Address::generate(&env);
     let (token_addr, _) = install_token(&env);
 
-    let escrow_id = env.register(MockEscrow, ());
+    let escrow_id = env.register_contract(None, MockEscrow);
     let escrow_client = MockEscrowClient::new(&env, &escrow_id);
 
     escrow_client.initialize(
@@ -102,7 +102,7 @@ fn setup_v2_contract(
         env.storage().instance().set(&MockDataKey::MockAsset, &token_addr);
     });
 
-    let contract_id = env.register(MilestonesV2Contract, ());
+    let contract_id = env.register_contract(None, MilestonesV2Contract);
     let client = MilestonesV2ContractClient::new(&env, &contract_id);
 
     client.initialize(&creator, &platform, &escrow_id, &milestones);
@@ -120,7 +120,7 @@ fn test_initialize_requires_platform_auth() {
     let creator = Address::generate(&env);
     let platform = Address::generate(&env);
     let escrow_id = Address::generate(&env);
-    let contract_id = env.register(MilestonesV2Contract, ());
+    let contract_id = env.register_contract(None, MilestonesV2Contract);
     let client = MilestonesV2ContractClient::new(&env, &contract_id);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -215,12 +215,12 @@ fn test_migrate_from_v1_copies_all_milestones() {
     // Fresh v2 contract, initialized independently, sharing the same platform
     // address as v1 so a single platform key drives the migration.
     let creator = Address::generate(&env);
-    let escrow_id = env.register(MockEscrow, ());
+    let escrow_id = env.register_contract(None, MockEscrow);
     let seed_milestones = Vec::from_array(
         &env,
         [make_milestone(&env, b"ZZZZ0000000000000000000000000000", 10000u32)],
     );
-    let v2_id = env.register(MilestonesV2Contract, ());
+    let v2_id = env.register_contract(None, MilestonesV2Contract);
     let v2_client = MilestonesV2ContractClient::new(&env, &v2_id);
     v2_client.initialize(&creator, &v1_platform, &escrow_id, &seed_milestones);
 
@@ -250,16 +250,16 @@ fn test_migrate_from_v1_rejects_non_platform() {
 
     let v1_creator = Address::generate(&env);
     let v1_platform = Address::generate(&env);
-    let v1_escrow = env.register(MockEscrow, ());
-    let v1_id = env.register(MilestonesV2Contract, ());
+    let v1_escrow = env.register_contract(None, MockEscrow);
+    let v1_id = env.register_contract(None, MilestonesV2Contract);
     MilestonesV2ContractClient::new(&env, &v1_id).mock_all_auths().initialize(
         &v1_creator, &v1_platform, &v1_escrow, &milestones,
     );
 
     let creator = Address::generate(&env);
     let platform = Address::generate(&env);
-    let escrow_id = env.register(MockEscrow, ());
-    let v2_id = env.register(MilestonesV2Contract, ());
+    let escrow_id = env.register_contract(None, MockEscrow);
+    let v2_id = env.register_contract(None, MilestonesV2Contract);
     let v2_client = MilestonesV2ContractClient::new(&env, &v2_id);
     v2_client.mock_all_auths().initialize(&creator, &platform, &escrow_id, &milestones);
 
