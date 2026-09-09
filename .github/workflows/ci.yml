@@ -117,3 +117,26 @@ jobs:
           SENTRY_RELEASE: ${{ github.sha }}
           VITE_SENTRY_RELEASE: ${{ github.sha }}
         run: npm run build
+
+  soroban-contracts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install Soroban CLI
+        run: cargo install --locked soroban-cli || true
+
+      - name: Run cargo test
+        working-directory: ./contracts/soroban
+        run: cargo test --workspace
+
+      - name: Build contracts
+        working-directory: ./contracts/soroban
+        run: cargo build --release --target wasm32-unknown-unknown
