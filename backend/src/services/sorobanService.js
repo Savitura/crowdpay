@@ -656,7 +656,6 @@ async function triggerRefund({ escrowContractId, contributorAddress, signerSecre
 }
 
 /**
-<<<<<<< HEAD
  * Deploy a milestones V2 contract instance from MILESTONES_V2_WASM_HASH.
  * Its `initialize` ABI is identical to V1's, so initializeMilestones() above
  * is reused to initialize it once deployed.
