@@ -7,6 +7,7 @@ const REQUIRED = [
   'JWT_SECRET',
   'API_KEY_PEPPER',
   'PLATFORM_SECRET_KEY',
+  'ARBITRATOR_SECRET_KEY',
   'STELLAR_NETWORK',
   'STELLAR_HORIZON_URL',
   'WALLET_ENCRYPTION_KEY',
@@ -48,6 +49,13 @@ function validateEnv() {
   if (!/^S[A-Z2-7]{55}$/.test(platformKey)) {
     errors.push(
       'PLATFORM_SECRET_KEY must be a valid Stellar secret seed (56 characters, starting with S)'
+    );
+  }
+
+  const arbitratorKey = process.env.ARBITRATOR_SECRET_KEY;
+  if (!/^S[A-Z2-7]{55}$/.test(arbitratorKey)) {
+    errors.push(
+      'ARBITRATOR_SECRET_KEY must be a valid Stellar secret seed (56 characters, starting with S)'
     );
   }
 
