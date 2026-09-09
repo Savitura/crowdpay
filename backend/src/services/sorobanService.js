@@ -220,12 +220,48 @@ function isContractDepositEligible(campaign) {
   return process.env.SOROBAN_ENABLED === 'true' && !!campaign?.escrow_contract_id;
 }
 
+/**
+ * Returns true if the given escrow contract ID is a real deployed Soroban
+ * contract (not a mock ID generated when SOROBAN_ENABLED=false).
+ * 
+ * Mock IDs are random hex strings starting with 'C', but they're only stamped
+ * when SOROBAN_ENABLED is not 'true'. Real contract IDs are also 'C...' but
+ * they're deployed on-chain.
+ */
+function isRealSorobanContract(escrowContractId) {
+  if (!escrowContractId) return false;
+  return process.env.SOROBAN_ENABLED === 'true';
+}
+
 async function requestRefund({ contractId, contributorAddress, signerSecret }) {
   return invokeContract({
     contractId,
     method: 'refund',
     args: [
       nativeToScVal(Address.fromString(contributorAddress), { type: 'address' }),
+    ],
+    signerSecret,
+  });
+}
+
+async function approveEscrowWithdrawal({ contractId, releaseAmount, signerSecret }) {
+  return invokeContract({
+    contractId,
+    method: 'approve_withdrawal',
+    args: [
+      nativeToScVal(releaseAmount, { type: 'i128' }),
+    ],
+    signerSecret,
+  });
+}
+
+async function executeEscrowWithdrawal({ contractId, toAddress, releaseAmount, signerSecret }) {
+  return invokeContract({
+    contractId,
+    method: 'execute_withdrawal',
+    args: [
+      nativeToScVal(Address.fromString(toAddress), { type: 'address' }),
+      nativeToScVal(releaseAmount, { type: 'i128' }),
     ],
     signerSecret,
   });
@@ -406,22 +442,23 @@ async function deployCampaignContracts({
   }
 
   const sorobanEnabled = process.env.SOROBAN_ENABLED === 'true';
-  const escrowWasmHash = process.env.ESCOW_WASM_HASH;
+  const escrowWasmHash = process.env.ESCROW_WASM_HASH;
   const milestonesWasmHash = process.env.MILESTONES_WASM_HASH;
 
   if (!sorobanEnabled) {
     const mockEscrowId = 'C' + crypto.randomBytes(24).toString('hex').toUpperCase();
     const mockMilestonesId = 'C' + crypto.randomBytes(24).toString('hex').toUpperCase();
-    logger.info('Soroban disabled, using mock contract IDs', {
+    logger.info('Soroban disabled (SOROBAN_ENABLED != true), using mock contract IDs for development', {
       mockEscrowId,
       mockMilestonesId,
+      hint: 'Set SOROBAN_ENABLED=true and configure ESCROW_CONTRACT_ID/MILESTONES_CONTRACT_ID or ESCROW_WASM_HASH/MILESTONES_WASM_HASH for real contracts',
     });
     return { escrowContractId: mockEscrowId, milestonesContractId: mockMilestonesId };
   }
 
   if (!escrowWasmHash || !milestonesWasmHash) {
     throw new Error(
-      'SOROBAN_ENABLED is true but ESCROW_WASM_HASH or MILESTONES_WASM_HASH is not configured'
+      'SOROBAN_ENABLED is true but no contracts configured. Either set ESCROW_CONTRACT_ID and MILESTONES_CONTRACT_ID (demo mode) or ESCROW_WASM_HASH and MILESTONES_WASM_HASH (deploy mode).'
     );
   }
 
@@ -705,6 +742,41 @@ async function runMigration({ migrationContractId, v1ContractId, v2ContractId, s
 }
 
 /**
+ * Release escrow funds to the creator (dispute resolved in creator's favor).
+ * Approves and executes the withdrawal in a single call.
+ * Returns the transaction hash on success.
+ * 
+ * NOTE: This is for REAL Soroban escrow contracts only. It is NOT a substitute
+ * for stellarService.releaseEscrowFreeze which handles the multisig freeze.
+ */
+async function releaseEscrowToCreator({ escrowContractId, creatorAddress, releaseAmount, signerSecret }) {
+  if (!escrowContractId) {
+    throw new Error('Campaign does not have an escrow contract deployed');
+  }
+
+  const signer = signerSecret || process.env.PLATFORM_SECRET_KEY;
+
+  try {
+    await approveEscrowWithdrawal({
+      contractId: escrowContractId,
+      releaseAmount,
+      signerSecret: signer,
+    });
+
+    const result = await executeEscrowWithdrawal({
+      contractId: escrowContractId,
+      toAddress: creatorAddress,
+      releaseAmount,
+      signerSecret: signer,
+    });
+
+    return result;
+  } catch (err) {
+    throw new Error(`On-chain escrow release failed: ${err.message}`);
+  }
+}
+
+/**
  * Read on-chain campaign status from deployed Soroban contracts.
  */
 async function getContractStatus({
@@ -759,7 +831,11 @@ module.exports = {
   depositToEscrow,
   buildUnsignedEscrowDeposit,
   isContractDepositEligible,
+  isRealSorobanContract,
   requestRefund,
+  approveEscrowWithdrawal,
+  executeEscrowWithdrawal,
+  releaseEscrowToCreator,
   getEscrowTotalRaised,
   getEscrowAsset,
   getEscrowPlatformFeeConfig,
