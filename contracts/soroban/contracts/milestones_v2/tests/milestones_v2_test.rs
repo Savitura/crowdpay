@@ -10,7 +10,7 @@ fn make_milestone(env: &Env, title: &[u8; 32], bps: u32) -> Milestone {
         title_hash: BytesN::from_array(env, title),
         release_bps: bps,
         status: MilestoneStatus::Pending,
-        evidence_hash: None,
+        evidence_hash: BytesN::from_array(env, &[0u8; 32]),
     }
 }
 

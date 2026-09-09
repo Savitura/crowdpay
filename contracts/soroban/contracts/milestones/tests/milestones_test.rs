@@ -10,7 +10,7 @@ fn make_milestone(env: &Env, title: &[u8; 32], bps: u32) -> Milestone {
         title_hash: BytesN::from_array(env, title),
         release_bps: bps,
         status: MilestoneStatus::Pending,
-        evidence_hash: None,
+        evidence_hash: BytesN::from_array(env, &[0u8; 32]),
     }
 }
 
@@ -233,7 +233,7 @@ fn test_submit_milestone() {
 
     let milestone = client.get_milestone(&0u32);
     assert_eq!(milestone.status, MilestoneStatus::Submitted);
-    assert_eq!(milestone.evidence_hash, Some(evidence));
+    assert_eq!(milestone.evidence_hash, evidence);
 }
 
 #[test]
@@ -429,5 +429,5 @@ fn test_resubmit_after_rejection() {
 
     let milestone = client.get_milestone(&0u32);
     assert_eq!(milestone.status, MilestoneStatus::Submitted);
-    assert_eq!(milestone.evidence_hash, Some(new_evidence));
+    assert_eq!(milestone.evidence_hash, new_evidence);
 }
