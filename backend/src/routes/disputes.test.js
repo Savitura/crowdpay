@@ -7,7 +7,7 @@ const proxyquire = require('proxyquire').noCallThru();
 const CAMPAIGN_ID = 'cam-1';
 const CONTRIBUTOR_ID = 'user-1';
 
-function buildApp({ queryImpl, hasContributed = true, userId = CONTRIBUTOR_ID, stellarImpl = {} } = {}) {
+function buildApp({ queryImpl, hasContributed = true, userId = CONTRIBUTOR_ID, stellarImpl = {}, sorobanImpl = {} } = {}) {
   const defaultQuery = async (sql, params) => {
     if (sql.includes('SELECT id, creator_id, title, wallet_public_key FROM campaigns')) {
       return {
@@ -43,6 +43,9 @@ function buildApp({ queryImpl, hasContributed = true, userId = CONTRIBUTOR_ID, s
     }
     if (sql.includes("SELECT email, name FROM users WHERE role = 'admin'")) {
       return { rows: [] };
+    }
+    if (sql.includes('SELECT previous_status FROM campaign_status_events')) {
+      return { rows: [{ previous_status: 'active' }] };
     }
     return { rows: [] };
   };
@@ -81,6 +84,11 @@ function buildApp({ queryImpl, hasContributed = true, userId = CONTRIBUTOR_ID, s
       submitDisputeRefund: async () => ({ hash: 'refund-hash', xdr: 'refund-xdr' }),
       getCampaignBalance: async () => ({ XLM: '0' }),
       ...stellarImpl,
+    },
+    '../services/sorobanService': {
+      isRealSorobanContract: () => false,
+      releaseEscrowToCreator: async () => 'soroban-tx-hash',
+      ...sorobanImpl,
     },
     '../config/logger': { info: () => {}, warn: () => {}, error: () => {} },
   });
@@ -312,9 +320,9 @@ test('POST /disputes/:id/evidence accepts submission from the campaign creator',
 
 // --- admin decision (#674) ---------------------------------------------------
 
-function buildDecideQuery({ contributorRows = [] } = {}) {
+function buildDecideQuery({ contributorRows = [], escrowContractId = null } = {}) {
   return async (sql, params) => {
-    if (sql.includes('FROM disputes d JOIN campaigns c') && sql.includes('creator_id, c.wallet_public_key')) {
+    if (sql.includes('FROM disputes d') && sql.includes('JOIN campaigns c') && sql.includes('creator_id')) {
       return {
         rows: [
           {
@@ -322,7 +330,10 @@ function buildDecideQuery({ contributorRows = [] } = {}) {
             campaign_id: CAMPAIGN_ID,
             creator_id: 'creator-1',
             wallet_public_key: 'GCAMPAIGN',
+            escrow_contract_id: escrowContractId,
+            raised_amount: '100.00',
             campaign_title: 'Test Campaign',
+            creator_wallet_public_key: 'GCREATORWALLET',
             status: 'open',
           },
         ],
@@ -336,8 +347,10 @@ function buildDecideQuery({ contributorRows = [] } = {}) {
       return { rows: [{ id: 'dispute-1', status: 'resolved', decision, resolution_note: reason }] };
     }
     if (sql.includes('INSERT INTO dispute_events')) return { rows: [] };
-    if (sql.includes("UPDATE campaigns SET status = 'active'")) return { rows: [] };
-    if (sql.includes("UPDATE campaigns SET status = 'refunded'")) return { rows: [] };
+    if (sql.includes('SELECT previous_status FROM campaign_status_events')) {
+      return { rows: [{ previous_status: 'active' }] };
+    }
+    if (sql.includes("UPDATE campaigns SET status")) return { rows: [] };
     if (sql.includes('UPDATE withdrawal_requests')) return { rows: [] };
     if (sql.includes('INSERT INTO withdrawal_requests')) return { rows: [] };
     if (sql.includes('SELECT id, email, name FROM users WHERE id = $1')) {
@@ -403,20 +416,30 @@ test('POST /admin/disputes/:id/decide refund_contributors allocates proportional
 });
 
 // --- PATCH /disputes/:id resolution tests (#751) ----------------------------
+// Tests for the dual-path release: multisig freeze release via stellarService
+// + Soroban contract release via sorobanService (only when real contract + SOROBAN_ENABLED=true)
 
 const DISPUTE_ID = 'dispute-1';
 const ADMIN_ID = 'admin-1';
 
 function buildAppForPatch({
   escrowContractId = null,
-  campaignStatus = 'funded',
+  campaignStatus = 'disputed',
   raisedAmount = '1000.00',
-  releaseEscrowMock = async () => 'tx-hash-123',
-  releaseEscrowShouldFail = false,
-  releaseCalled = { count: 0 },
+  arbitratorSignerAdded = true,
+  sorobanEnabled = 'true',
+  releaseFreezeMock = async () => ({ hash: 'freeze-release-hash' }),
+  releaseFreezeShouldFail = false,
+  sorobanReleaseMock = async () => 'soroban-tx-hash',
+  sorobanReleaseShouldFail = false,
+  freezeReleaseCalled = { count: 0 },
+  sorobanReleaseCalled = { count: 0 },
 } = {}) {
   const queries = [];
   const rollbackCalled = { value: false };
+  const originalSorobanEnabled = process.env.SOROBAN_ENABLED;
+
+  process.env.SOROBAN_ENABLED = sorobanEnabled;
 
   const queryImpl = async (sql, params) => {
     queries.push({ sql, params });
@@ -430,6 +453,7 @@ function buildAppForPatch({
           status: 'under_review',
           reason: 'non_delivery',
           description: 'Test dispute',
+          arbitrator_signer_added: arbitratorSignerAdded,
         }],
       };
     }
@@ -473,6 +497,10 @@ function buildAppForPatch({
       return { rows: [] };
     }
 
+    if (sql.includes('SELECT previous_status FROM campaign_status_events')) {
+      return { rows: [{ previous_status: 'active' }] };
+    }
+
     if (sql.includes('SELECT u.email, u.name, c.title')) {
       return {
         rows: [{
@@ -507,11 +535,24 @@ function buildAppForPatch({
   };
 
   const releaseEscrowToCreatorMock = async (opts) => {
-    releaseCalled.count++;
-    if (releaseEscrowShouldFail) {
-      throw new Error('Simulated escrow release failure');
+    sorobanReleaseCalled.count++;
+    if (sorobanReleaseShouldFail) {
+      throw new Error('Simulated Soroban escrow release failure');
     }
-    return releaseEscrowMock(opts);
+    return sorobanReleaseMock(opts);
+  };
+
+  const isRealSorobanContractMock = (contractId) => {
+    if (!contractId) return false;
+    return process.env.SOROBAN_ENABLED === 'true';
+  };
+
+  const releaseEscrowFreezeMock = async (opts) => {
+    freezeReleaseCalled.count++;
+    if (releaseFreezeShouldFail) {
+      throw new Error('Simulated freeze release failure');
+    }
+    return releaseFreezeMock(opts);
   };
 
   const router = proxyquire('./disputes', {
@@ -554,9 +595,12 @@ function buildAppForPatch({
     },
     '../services/sorobanService': {
       releaseEscrowToCreator: releaseEscrowToCreatorMock,
+      isRealSorobanContract: isRealSorobanContractMock,
     },
     '../services/stellarService': {
       buildWithdrawalTransaction: async () => 'mock-unsigned-xdr',
+      releaseEscrowFreeze: releaseEscrowFreezeMock,
+      freezeCampaignEscrow: async () => ({ hash: 'freeze-hash' }),
     },
     '../services/stellarTransactionService': {
       insertWithdrawalPendingSignatures: async () => {},
@@ -567,75 +611,167 @@ function buildAppForPatch({
   const app = express();
   app.use(express.json());
   app.use('/api', router);
-  return { app, queries, releaseCalled, rollbackCalled };
+
+  const cleanup = () => {
+    process.env.SOROBAN_ENABLED = originalSorobanEnabled;
+  };
+
+  return { app, queries, freezeReleaseCalled, sorobanReleaseCalled, rollbackCalled, cleanup };
 }
 
-test('PATCH /disputes/:id with resolved_creator calls releaseEscrowToCreator when escrow contract exists', async () => {
-  const releaseCalled = { count: 0 };
-  const { app } = buildAppForPatch({
-    escrowContractId: 'CESCROW123',
-    raisedAmount: '500.00',
-    releaseCalled,
-  });
-
-  const res = await request(app)
-    .patch(`/api/disputes/${DISPUTE_ID}`)
-    .send({ status: 'resolved_creator', resolution_note: 'Creator wins' });
-
-  assert.equal(res.status, 200);
-  assert.equal(res.body.status, 'resolved_creator');
-  assert.equal(releaseCalled.count, 1, 'releaseEscrowToCreator should be called once');
-});
-
-test('PATCH /disputes/:id with resolved_creator does NOT call escrow release when no contract', async () => {
-  const releaseCalled = { count: 0 };
-  const { app } = buildAppForPatch({
+test('PATCH /disputes/:id with resolved_creator calls freeze release when arbitrator_signer_added', async () => {
+  const freezeReleaseCalled = { count: 0 };
+  const sorobanReleaseCalled = { count: 0 };
+  const { app, cleanup } = buildAppForPatch({
     escrowContractId: null,
-    raisedAmount: '500.00',
-    releaseCalled,
+    arbitratorSignerAdded: true,
+    sorobanEnabled: 'false',
+    freezeReleaseCalled,
+    sorobanReleaseCalled,
   });
 
-  const res = await request(app)
-    .patch(`/api/disputes/${DISPUTE_ID}`)
-    .send({ status: 'resolved_creator', resolution_note: 'Creator wins' });
+  try {
+    const res = await request(app)
+      .patch(`/api/disputes/${DISPUTE_ID}`)
+      .send({ status: 'resolved_creator', resolution_note: 'Creator wins' });
 
-  assert.equal(res.status, 200);
-  assert.equal(res.body.status, 'resolved_creator');
-  assert.equal(releaseCalled.count, 0, 'releaseEscrowToCreator should NOT be called without contract');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.status, 'resolved_creator');
+    assert.equal(freezeReleaseCalled.count, 1, 'releaseEscrowFreeze should be called for multisig freeze');
+    assert.equal(sorobanReleaseCalled.count, 0, 'Soroban release should NOT be called without real contract');
+  } finally {
+    cleanup();
+  }
 });
 
-test('PATCH /disputes/:id with resolved_contributor does NOT call escrow release', async () => {
-  const releaseCalled = { count: 0 };
-  const { app } = buildAppForPatch({
+test('PATCH /disputes/:id with resolved_creator calls BOTH freeze release AND Soroban release when real contract', async () => {
+  const freezeReleaseCalled = { count: 0 };
+  const sorobanReleaseCalled = { count: 0 };
+  const { app, cleanup } = buildAppForPatch({
     escrowContractId: 'CESCROW123',
+    arbitratorSignerAdded: true,
+    sorobanEnabled: 'true',
     raisedAmount: '500.00',
-    releaseCalled,
+    freezeReleaseCalled,
+    sorobanReleaseCalled,
   });
 
-  const res = await request(app)
-    .patch(`/api/disputes/${DISPUTE_ID}`)
-    .send({ status: 'resolved_contributor', resolution_note: 'Contributor wins' });
+  try {
+    const res = await request(app)
+      .patch(`/api/disputes/${DISPUTE_ID}`)
+      .send({ status: 'resolved_creator', resolution_note: 'Creator wins' });
 
-  assert.equal(res.status, 200);
-  assert.equal(res.body.status, 'resolved_contributor');
-  assert.equal(releaseCalled.count, 0, 'releaseEscrowToCreator should NOT be called for contributor resolution');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.status, 'resolved_creator');
+    assert.equal(freezeReleaseCalled.count, 1, 'releaseEscrowFreeze should be called');
+    assert.equal(sorobanReleaseCalled.count, 1, 'releaseEscrowToCreator should be called for real Soroban contract');
+  } finally {
+    cleanup();
+  }
 });
 
-test('PATCH /disputes/:id rolls back transaction on escrow release failure', async () => {
-  const releaseCalled = { count: 0 };
-  const { app, rollbackCalled } = buildAppForPatch({
-    escrowContractId: 'CESCROW123',
+test('PATCH /disputes/:id with resolved_creator skips Soroban release when SOROBAN_ENABLED=false (mock ID)', async () => {
+  const freezeReleaseCalled = { count: 0 };
+  const sorobanReleaseCalled = { count: 0 };
+  const { app, cleanup } = buildAppForPatch({
+    escrowContractId: 'CMOCKCONTRACT123',
+    arbitratorSignerAdded: true,
+    sorobanEnabled: 'false',
     raisedAmount: '500.00',
-    releaseCalled,
-    releaseEscrowShouldFail: true,
+    freezeReleaseCalled,
+    sorobanReleaseCalled,
   });
 
-  const res = await request(app)
-    .patch(`/api/disputes/${DISPUTE_ID}`)
-    .send({ status: 'resolved_creator', resolution_note: 'Creator wins' });
+  try {
+    const res = await request(app)
+      .patch(`/api/disputes/${DISPUTE_ID}`)
+      .send({ status: 'resolved_creator', resolution_note: 'Creator wins' });
 
-  assert.equal(res.status, 500);
-  assert.match(res.body.error, /Failed to release on-chain escrow funds/);
-  assert.equal(releaseCalled.count, 1, 'releaseEscrowToCreator should be called');
-  assert.equal(rollbackCalled.value, true, 'Transaction should be rolled back on failure');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.status, 'resolved_creator');
+    assert.equal(freezeReleaseCalled.count, 1, 'Freeze release should still be called');
+    assert.equal(sorobanReleaseCalled.count, 0, 'Soroban release should be SKIPPED for mock contract ID');
+  } finally {
+    cleanup();
+  }
+});
+
+test('PATCH /disputes/:id with resolved_contributor does NOT call any release', async () => {
+  const freezeReleaseCalled = { count: 0 };
+  const sorobanReleaseCalled = { count: 0 };
+  const { app, cleanup } = buildAppForPatch({
+    escrowContractId: 'CESCROW123',
+    arbitratorSignerAdded: true,
+    sorobanEnabled: 'true',
+    raisedAmount: '500.00',
+    freezeReleaseCalled,
+    sorobanReleaseCalled,
+  });
+
+  try {
+    const res = await request(app)
+      .patch(`/api/disputes/${DISPUTE_ID}`)
+      .send({ status: 'resolved_contributor', resolution_note: 'Contributor wins' });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.status, 'resolved_contributor');
+    assert.equal(freezeReleaseCalled.count, 0, 'Freeze release should NOT be called for contributor resolution');
+    assert.equal(sorobanReleaseCalled.count, 0, 'Soroban release should NOT be called for contributor resolution');
+  } finally {
+    cleanup();
+  }
+});
+
+test('PATCH /disputes/:id rolls back transaction on freeze release failure', async () => {
+  const freezeReleaseCalled = { count: 0 };
+  const sorobanReleaseCalled = { count: 0 };
+  const { app, rollbackCalled, cleanup } = buildAppForPatch({
+    escrowContractId: null,
+    arbitratorSignerAdded: true,
+    sorobanEnabled: 'false',
+    freezeReleaseCalled,
+    sorobanReleaseCalled,
+    releaseFreezeShouldFail: true,
+  });
+
+  try {
+    const res = await request(app)
+      .patch(`/api/disputes/${DISPUTE_ID}`)
+      .send({ status: 'resolved_creator', resolution_note: 'Creator wins' });
+
+    assert.equal(res.status, 500);
+    assert.match(res.body.error, /Failed to release multisig escrow freeze/);
+    assert.equal(freezeReleaseCalled.count, 1, 'releaseEscrowFreeze should be called');
+    assert.equal(rollbackCalled.value, true, 'Transaction should be rolled back on failure');
+  } finally {
+    cleanup();
+  }
+});
+
+test('PATCH /disputes/:id rolls back transaction on Soroban release failure', async () => {
+  const freezeReleaseCalled = { count: 0 };
+  const sorobanReleaseCalled = { count: 0 };
+  const { app, rollbackCalled, cleanup } = buildAppForPatch({
+    escrowContractId: 'CESCROW123',
+    arbitratorSignerAdded: true,
+    sorobanEnabled: 'true',
+    raisedAmount: '500.00',
+    freezeReleaseCalled,
+    sorobanReleaseCalled,
+    sorobanReleaseShouldFail: true,
+  });
+
+  try {
+    const res = await request(app)
+      .patch(`/api/disputes/${DISPUTE_ID}`)
+      .send({ status: 'resolved_creator', resolution_note: 'Creator wins' });
+
+    assert.equal(res.status, 500);
+    assert.match(res.body.error, /Failed to release Soroban escrow funds/);
+    assert.equal(freezeReleaseCalled.count, 1, 'Freeze release should be called first');
+    assert.equal(sorobanReleaseCalled.count, 1, 'Soroban release should be attempted');
+    assert.equal(rollbackCalled.value, true, 'Transaction should be rolled back on failure');
+  } finally {
+    cleanup();
+  }
 });

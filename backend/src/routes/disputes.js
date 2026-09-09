@@ -422,55 +422,100 @@ router.patch('/disputes/:id', requireAuth, requireRole('admin'), async (req, res
         );
       }
 
-      // Release on-chain escrow funds to creator if contract is deployed
-      let escrowReleaseTxHash = null;
-      if (campaign.escrow_contract_id && campaign.creator_wallet_public_key) {
+      // Release the multisig freeze (remove arbitrator signer, lower thresholds back to 2)
+      // This is required when arbitrator_signer_added is true from the dispute raise
+      let freezeReleaseTxHash = null;
+      if (dispute.arbitrator_signer_added && campaign.wallet_public_key) {
         try {
-          const { releaseEscrowToCreator } = require('../services/sorobanService');
+          const result = await stellarService.releaseEscrowFreeze({
+            campaignWalletPublicKey: campaign.wallet_public_key,
+            creatorId: campaign.creator_id,
+          });
+          freezeReleaseTxHash = result?.hash || null;
+          logger.info('Multisig escrow freeze released', {
+            dispute_id: dispute.id,
+            campaign_id: dispute.campaign_id,
+            tx_hash: freezeReleaseTxHash,
+          });
+
+          await logDisputeEvent(client, {
+            disputeId: dispute.id,
+            actorId: req.user.userId,
+            action: 'freeze_released',
+            note: `Multisig freeze released. TX: ${freezeReleaseTxHash || 'N/A'}`,
+          });
+        } catch (freezeErr) {
+          logger.error('Failed to release multisig freeze', {
+            dispute_id: dispute.id,
+            campaign_id: dispute.campaign_id,
+            error: freezeErr.message,
+          });
+          await client.query('ROLLBACK');
+          return res.status(500).json({
+            error: 'Failed to release multisig escrow freeze',
+            detail: freezeErr.message,
+          });
+        }
+      }
+
+      // ALSO release Soroban escrow funds if a REAL contract is deployed
+      // (not a mock ID generated when SOROBAN_ENABLED=false)
+      let sorobanReleaseTxHash = null;
+      const { isRealSorobanContract, releaseEscrowToCreator } = require('../services/sorobanService');
+      if (isRealSorobanContract(campaign.escrow_contract_id) && campaign.creator_wallet_public_key) {
+        try {
           const releaseAmount = Math.floor(parseFloat(campaign.raised_amount || 0) * 10000000);
           if (releaseAmount > 0) {
-            escrowReleaseTxHash = await releaseEscrowToCreator({
+            sorobanReleaseTxHash = await releaseEscrowToCreator({
               escrowContractId: campaign.escrow_contract_id,
               creatorAddress: campaign.creator_wallet_public_key,
               releaseAmount,
             });
-            logger.info('Escrow released to creator', {
+            logger.info('Soroban escrow released to creator', {
               dispute_id: dispute.id,
               campaign_id: dispute.campaign_id,
               release_amount: releaseAmount,
-              tx_hash: escrowReleaseTxHash,
+              tx_hash: sorobanReleaseTxHash,
             });
 
             await logDisputeEvent(client, {
               disputeId: dispute.id,
               actorId: req.user.userId,
-              action: 'escrow_released',
-              note: `On-chain escrow released to creator. TX: ${escrowReleaseTxHash || 'N/A'}`,
+              action: 'soroban_escrow_released',
+              note: `Soroban escrow released to creator. TX: ${sorobanReleaseTxHash || 'N/A'}`,
             });
           }
         } catch (escrowErr) {
-          logger.error('Failed to release escrow to creator', {
+          logger.error('Failed to release Soroban escrow to creator', {
             dispute_id: dispute.id,
             campaign_id: dispute.campaign_id,
             error: escrowErr.message,
           });
           await client.query('ROLLBACK');
           return res.status(500).json({
-            error: 'Failed to release on-chain escrow funds',
+            error: 'Failed to release Soroban escrow funds',
             detail: escrowErr.message,
           });
         }
       }
 
-      // Restore campaign status if it was changed due to dispute
+      // Restore campaign status to pre-dispute state
+      // Look up the previous status from campaign_status_events, default to 'active'
       if (campaign.campaign_status === 'disputed') {
-        await client.query(
-          `UPDATE campaigns SET status = 'funded' WHERE id = $1`,
+        const { rows: statusEvents } = await client.query(
+          `SELECT previous_status FROM campaign_status_events
+           WHERE campaign_id = $1 AND new_status = 'disputed'
+           ORDER BY created_at DESC LIMIT 1`,
           [dispute.campaign_id]
+        );
+        const restoredStatus = statusEvents[0]?.previous_status || 'active';
+        await client.query(
+          `UPDATE campaigns SET status = $1 WHERE id = $2`,
+          [restoredStatus, dispute.campaign_id]
         );
         logger.info('Campaign status restored from disputed', {
           campaign_id: dispute.campaign_id,
-          new_status: 'funded',
+          restored_status: restoredStatus,
         });
       }
 
@@ -480,12 +525,13 @@ router.patch('/disputes/:id', requireAuth, requireRole('admin'), async (req, res
          WHERE c.id = $1`,
         [dispute.campaign_id]
       );
+      const txInfo = [freezeReleaseTxHash, sorobanReleaseTxHash].filter(Boolean).join(', ');
       if (creatorRows.length) {
         sendDisputeResolvedCreatorEmail({
           to: creatorRows[0].email,
           disputeId: dispute.id,
           outcome: 'resolved in your favor — the dispute is closed' +
-            (escrowReleaseTxHash ? ` (TX: ${escrowReleaseTxHash})` : ''),
+            (txInfo ? ` (TX: ${txInfo})` : ''),
           creatorName: creatorRows[0].name,
           campaignTitle: creatorRows[0].title,
           resolutionNote: resolution_note,
@@ -528,8 +574,11 @@ router.post('/admin/disputes/:id/decide', requireAuth, requireRole('admin'), asy
   }
 
   const { rows: disputes } = await db.query(
-    `SELECT d.*, c.creator_id, c.wallet_public_key, c.title AS campaign_title
-     FROM disputes d JOIN campaigns c ON c.id = d.campaign_id
+    `SELECT d.*, c.creator_id, c.wallet_public_key, c.escrow_contract_id, c.raised_amount, c.title AS campaign_title,
+            u.wallet_public_key AS creator_wallet_public_key
+     FROM disputes d
+     JOIN campaigns c ON c.id = d.campaign_id
+     JOIN users u ON u.id = c.creator_id
      WHERE d.id = $1`,
     [req.params.id]
   );
@@ -541,12 +590,33 @@ router.post('/admin/disputes/:id/decide', requireAuth, requireRole('admin'), asy
 
   let refunds = [];
   let assetCode = null;
+  let freezeReleaseTxHash = null;
+  let sorobanReleaseTxHash = null;
   try {
     if (decision === 'release_to_creator') {
-      await stellarService.releaseEscrowFreeze({
+      // Release the multisig freeze
+      const result = await stellarService.releaseEscrowFreeze({
         campaignWalletPublicKey: dispute.wallet_public_key,
         creatorId: dispute.creator_id,
       });
+      freezeReleaseTxHash = result?.hash || null;
+
+      // ALSO release Soroban escrow if a REAL contract is deployed
+      const { isRealSorobanContract, releaseEscrowToCreator } = require('../services/sorobanService');
+      if (isRealSorobanContract(dispute.escrow_contract_id) && dispute.creator_wallet_public_key) {
+        const releaseAmount = Math.floor(parseFloat(dispute.raised_amount || 0) * 10000000);
+        if (releaseAmount > 0) {
+          sorobanReleaseTxHash = await releaseEscrowToCreator({
+            escrowContractId: dispute.escrow_contract_id,
+            creatorAddress: dispute.creator_wallet_public_key,
+            releaseAmount,
+          });
+          logger.info('Soroban escrow released via /decide', {
+            dispute_id: dispute.id,
+            tx_hash: sorobanReleaseTxHash,
+          });
+        }
+      }
     } else {
       const { rows: contributorRows } = await db.query(
         `SELECT u.id AS contributor_id, u.wallet_public_key, SUM(c.amount) AS contributed
@@ -609,9 +679,17 @@ router.post('/admin/disputes/:id/decide', requireAuth, requireRole('admin'), asy
 
     let unfrozenWithdrawals = [];
     if (decision === 'release_to_creator') {
-      await client.query(
-        `UPDATE campaigns SET status = 'active' WHERE id = $1 AND status = 'disputed'`,
+      // Restore campaign to pre-dispute status (lookup from campaign_status_events)
+      const { rows: statusEvents } = await client.query(
+        `SELECT previous_status FROM campaign_status_events
+         WHERE campaign_id = $1 AND new_status = 'disputed'
+         ORDER BY created_at DESC LIMIT 1`,
         [dispute.campaign_id]
+      );
+      const restoredStatus = statusEvents[0]?.previous_status || 'active';
+      await client.query(
+        `UPDATE campaigns SET status = $1 WHERE id = $2 AND status = 'disputed'`,
+        [restoredStatus, dispute.campaign_id]
       );
       const { rows } = await client.query(
         `UPDATE withdrawal_requests
