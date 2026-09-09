@@ -296,10 +296,19 @@ router.patch('/disputes/:id', requireAuth, requireRole('admin'), async (req, res
   if (!disputes.length) return res.status(404).json({ error: 'Dispute not found' });
   const dispute = disputes[0];
 
-  const { rows: disputeCampaigns } = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [
-    dispute.campaign_id,
-  ]);
-  const campaignCreatorId = disputeCampaigns[0]?.creator_id;
+  const { rows: disputeCampaigns } = await db.query(
+    `SELECT c.id, c.creator_id, c.wallet_public_key, c.escrow_contract_id, c.raised_amount, c.title, c.status AS campaign_status,
+            u.wallet_public_key AS creator_wallet_public_key
+     FROM campaigns c
+     JOIN users u ON u.id = c.creator_id
+     WHERE c.id = $1`,
+    [dispute.campaign_id]
+  );
+  if (!disputeCampaigns.length) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+  const campaign = disputeCampaigns[0];
+  const campaignCreatorId = campaign.creator_id;
 
   const client = await db.connect();
   try {
@@ -413,6 +422,58 @@ router.patch('/disputes/:id', requireAuth, requireRole('admin'), async (req, res
         );
       }
 
+      // Release on-chain escrow funds to creator if contract is deployed
+      let escrowReleaseTxHash = null;
+      if (campaign.escrow_contract_id && campaign.creator_wallet_public_key) {
+        try {
+          const { releaseEscrowToCreator } = require('../services/sorobanService');
+          const releaseAmount = Math.floor(parseFloat(campaign.raised_amount || 0) * 10000000);
+          if (releaseAmount > 0) {
+            escrowReleaseTxHash = await releaseEscrowToCreator({
+              escrowContractId: campaign.escrow_contract_id,
+              creatorAddress: campaign.creator_wallet_public_key,
+              releaseAmount,
+            });
+            logger.info('Escrow released to creator', {
+              dispute_id: dispute.id,
+              campaign_id: dispute.campaign_id,
+              release_amount: releaseAmount,
+              tx_hash: escrowReleaseTxHash,
+            });
+
+            await logDisputeEvent(client, {
+              disputeId: dispute.id,
+              actorId: req.user.userId,
+              action: 'escrow_released',
+              note: `On-chain escrow released to creator. TX: ${escrowReleaseTxHash || 'N/A'}`,
+            });
+          }
+        } catch (escrowErr) {
+          logger.error('Failed to release escrow to creator', {
+            dispute_id: dispute.id,
+            campaign_id: dispute.campaign_id,
+            error: escrowErr.message,
+          });
+          await client.query('ROLLBACK');
+          return res.status(500).json({
+            error: 'Failed to release on-chain escrow funds',
+            detail: escrowErr.message,
+          });
+        }
+      }
+
+      // Restore campaign status if it was changed due to dispute
+      if (campaign.campaign_status === 'disputed') {
+        await client.query(
+          `UPDATE campaigns SET status = 'funded' WHERE id = $1`,
+          [dispute.campaign_id]
+        );
+        logger.info('Campaign status restored from disputed', {
+          campaign_id: dispute.campaign_id,
+          new_status: 'funded',
+        });
+      }
+
       const { rows: creatorRows } = await db.query(
         `SELECT u.email, u.name, c.title
          FROM campaigns c JOIN users u ON u.id = c.creator_id
@@ -423,7 +484,8 @@ router.patch('/disputes/:id', requireAuth, requireRole('admin'), async (req, res
         sendDisputeResolvedCreatorEmail({
           to: creatorRows[0].email,
           disputeId: dispute.id,
-          outcome: 'resolved in your favor — the dispute is closed',
+          outcome: 'resolved in your favor — the dispute is closed' +
+            (escrowReleaseTxHash ? ` (TX: ${escrowReleaseTxHash})` : ''),
           creatorName: creatorRows[0].name,
           campaignTitle: creatorRows[0].title,
           resolutionNote: resolution_note,
