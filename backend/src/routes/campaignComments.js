@@ -4,6 +4,7 @@ const { requireAuth, authenticate } = require("../middleware/auth");
 const asyncHandler = require("../utils/asyncHandler");
 const logger = require("../config/logger");
 const rateLimit = require("express-rate-limit");
+const { ipKeyGenerator } = rateLimit;
 const { createNotification } = require("../services/notifications");
 const { sendCampaignCommentEmail, sendCommentReplyEmail } = require("../services/emailService");
 
@@ -39,7 +40,7 @@ const commentRateLimiter = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.user?.userId || req.ip,
+  keyGenerator: (req) => req.user?.userId || ipKeyGenerator(req.ip),
   message: { error: "Rate limit exceeded. You can post up to 5 comments per minute." },
 });
 
