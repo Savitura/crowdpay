@@ -215,8 +215,8 @@ test('POST /api/campaigns/:id/comments/:commentId/pin pins a comment to the top'
   const { app, calls } = buildApp({
     user: { userId: CREATOR_ID, role: 'creator' },
     queryImpl: async (text) => {
-      if (text.includes('SELECT id, creator_id FROM campaigns')) {
-        return { rows: [{ id: CAMPAIGN_ID, creator_id: CREATOR_ID }] };
+      if (text.includes('SELECT id, creator_id') && text.includes('FROM campaigns')) {
+        return { rows: [{ id: CAMPAIGN_ID, creator_id: CREATOR_ID, title: 'Test Campaign' }] };
       }
       if (text.includes('UPDATE campaign_comments SET pinned = FALSE')) {
         return { rows: [] };
@@ -237,8 +237,8 @@ test('POST /api/campaigns/:id/comments/:commentId/unpin unpins a comment', async
   const { app, calls } = buildApp({
     user: { userId: CREATOR_ID, role: 'creator' },
     queryImpl: async (text) => {
-      if (text.includes('SELECT id, creator_id FROM campaigns')) {
-        return { rows: [{ id: CAMPAIGN_ID, creator_id: CREATOR_ID }] };
+      if (text.includes('SELECT id, creator_id') && text.includes('FROM campaigns')) {
+        return { rows: [{ id: CAMPAIGN_ID, creator_id: CREATOR_ID, title: 'Test Campaign' }] };
       }
       if (text.includes('UPDATE campaign_comments') && text.includes('pinned = FALSE')) {
         return { rows: [{ id: COMMENT_ID, campaign_id: CAMPAIGN_ID, pinned: false }] };

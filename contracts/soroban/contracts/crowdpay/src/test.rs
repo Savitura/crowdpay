@@ -40,6 +40,7 @@ fn test_initialize() {
 }
 
 #[test]
+#[should_panic]
 fn test_initialize_requires_creator_auth() {
     let env = Env::default();
     let (creator, token_id, _token, _token_admin, client) = setup_test(&env);
@@ -48,17 +49,14 @@ fn test_initialize_requires_creator_auth() {
         Milestone { target: 1000, amount: 1000, released: false },
     ]);
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.initialize(
-            &symbol_short!("cp1"),
-            &creator,
-            &token_id,
-            &1000,
-            &10000,
-            &milestones,
-        );
-    }));
-    assert!(result.is_err());
+    client.initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &token_id,
+        &1000,
+        &10000,
+        &milestones,
+    );
 }
 
 #[test]

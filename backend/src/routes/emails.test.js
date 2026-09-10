@@ -23,10 +23,11 @@ function buildApp({ queryImpl } = {}) {
 
 test('GET /api/emails/unsubscribe records unsubscribe for a valid signed link', async () => {
   const { app, calls } = buildApp();
-  const url = buildUnsubscribeUrl({ email: 'a@test.com', category: 'campaign_update' });
-  const path = url.split('/api/emails')[1];
+  const frontendUrl = buildUnsubscribeUrl({ email: 'a@test.com', category: 'campaign_update' });
+  const parsed = new URL(frontendUrl);
+  const queryString = parsed.search;
 
-  const res = await request(app).get(`/api/emails${path}`);
+  const res = await request(app).get(`/api/emails/unsubscribe${queryString}`);
 
   assert.equal(res.status, 200);
   const insertCall = calls.find((c) => c.text.includes('INSERT INTO email_unsubscribes'));
@@ -56,10 +57,11 @@ test('GET /api/emails/unsubscribe rejects a tampered signature', async () => {
 test('GET /api/emails/unsubscribe records a campaign-scoped unsubscribe for a valid UUID campaign_id', async () => {
   const campaignId = '11111111-1111-1111-1111-111111111111';
   const { app, calls } = buildApp();
-  const url = buildUnsubscribeUrl({ email: 'a@test.com', category: 'campaign_update', campaignId });
-  const path = url.split('/api/emails')[1];
+  const frontendUrl = buildUnsubscribeUrl({ email: 'a@test.com', category: 'campaign_update', campaignId });
+  const parsed = new URL(frontendUrl);
+  const queryString = parsed.search;
 
-  const res = await request(app).get(`/api/emails${path}`);
+  const res = await request(app).get(`/api/emails/unsubscribe${queryString}`);
 
   assert.equal(res.status, 200);
   const insertCall = calls.find((c) => c.text.includes('INSERT INTO campaign_update_unsubscribes'));

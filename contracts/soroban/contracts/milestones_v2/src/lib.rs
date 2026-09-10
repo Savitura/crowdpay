@@ -28,7 +28,8 @@ pub struct Milestone {
     pub title_hash: BytesN<32>,
     pub release_bps: u32,
     pub status: MilestoneStatus,
-    pub evidence_hash: Option<BytesN<32>>,
+    /// Evidence hash when submitted. All zeros means no evidence submitted yet.
+    pub evidence_hash: BytesN<32>,
 }
 
 #[derive(Clone)]
@@ -144,7 +145,7 @@ impl MilestonesV2Contract {
         }
 
         milestone.status = MilestoneStatus::Submitted;
-        milestone.evidence_hash = Some(evidence_hash.clone());
+        milestone.evidence_hash = evidence_hash.clone();
         milestones.set(index, milestone);
         env.storage().instance().set(&DataKey::Milestones, &milestones);
 

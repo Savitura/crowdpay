@@ -26,7 +26,7 @@ fn setup_contract(
 
     let (token_addr, _token_admin) = install_token(&env);
 
-    let contract_id = env.register(EscrowContract, ());
+    let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     client.initialize(
@@ -61,7 +61,7 @@ fn test_initialize_sets_state() {
 fn test_initialize_requires_fee_recipient_auth() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let env = Env::default();
-        let contract_id = env.register(EscrowContract, ());
+        let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
@@ -97,7 +97,7 @@ fn test_initialize_rejects_invalid_fee() {
     let fee_recipient = Address::generate(&env);
     let (token_addr, _) = install_token(&env);
 
-    let contract_id = env.register(EscrowContract, ());
+    let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -116,7 +116,7 @@ fn test_initialize_rejects_fee_above_cap() {
     let fee_recipient = Address::generate(&env);
     let (token_addr, _) = install_token(&env);
 
-    let contract_id = env.register(EscrowContract, ());
+    let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     // 1001 BPS is one basis point above the 10% cap and must be rejected.
@@ -202,7 +202,7 @@ fn test_cancel_fee_change() {
 fn test_fee_change_requires_admin_auth() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let env = Env::default();
-        let contract_id = env.register(EscrowContract, ());
+        let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(&env, &contract_id);
 
         // Without auth mocking, propose_fee_change fails without admin auth
@@ -337,7 +337,7 @@ fn test_execute_withdrawal_rejects_insufficient_approval() {
 fn test_approve_withdrawal_requires_admin_auth() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let env = Env::default();
-        let contract_id = env.register(EscrowContract, ());
+        let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
@@ -351,7 +351,7 @@ fn test_approve_withdrawal_requires_admin_auth() {
 fn test_execute_withdrawal_requires_admin_auth() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let env = Env::default();
-        let contract_id = env.register(EscrowContract, ());
+        let contract_id = env.register_contract(None, EscrowContract);
         let client = EscrowContractClient::new(&env, &contract_id);
         let dest = Address::generate(&env);
         client.execute_withdrawal(&dest, &100);
