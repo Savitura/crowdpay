@@ -2,7 +2,7 @@ const assert = require('node:assert');
 const test = require('node:test');
 const request = require('supertest');
 const express = require('express');
-const proxyquire = require('proxyquire');
+const proxyquire = require('proxyquire').noCallThru();
 
 const mockDb = {
   query: async (sql, params) => {
@@ -40,17 +40,20 @@ const mockDb = {
   },
 };
 
-const router = proxyquire('./creatorRefunds', {
-  '../config/database': mockDb,
-});
-
 function createApp(user) {
+  const router = proxyquire('./creatorRefunds', {
+    '../config/database': mockDb,
+    '../middleware/auth': {
+      requireAuth: (req, _res, next) => {
+        req.user = user;
+        next();
+      },
+      requireRole: () => (_req, _res, next) => next(),
+    },
+  });
+
   const app = express();
   app.use(express.json());
-  app.use((req, res, next) => {
-    req.user = user;
-    next();
-  });
   app.use('/api/admin/refunds', router);
   return app;
 }
