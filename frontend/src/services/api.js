@@ -1,7 +1,17 @@
 import axios from 'axios';
 
+function resolveApiBaseUrl() {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return `${import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '')}/api`;
+  }
+  return '/api';
+}
+
 export const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api',
+  baseURL: resolveApiBaseUrl(),
   withCredentials: true,
 });
 
@@ -32,6 +42,26 @@ export function retryQueuedRequests() {
 }
 
 export const api = {
+  async getFeaturedCampaigns() {
+    const res = await apiClient.get('/campaigns/featured');
+    return res.data;
+  },
+  async getCampaigns(params) {
+    const res = await apiClient.get('/campaigns', { params });
+    return res.data;
+  },
+  async getCampaignCategories() {
+    const res = await apiClient.get('/campaigns/categories');
+    return res.data;
+  },
+  async getCampaignFacets() {
+    const res = await apiClient.get('/campaigns/facets');
+    return res.data;
+  },
+  async getRecommendedCampaigns(params) {
+    const res = await apiClient.get('/campaigns/recommended', { params });
+    return res.data;
+  },
   async getCampaign(id) {
     const res = await apiClient.get(`/campaigns/${id}`);
     return res.data;

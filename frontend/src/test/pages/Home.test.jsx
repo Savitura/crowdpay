@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import Home from '../../pages/Home';
 import { renderWithProviders } from '../renderWithProviders';
+import { api } from '../../services/api';
 
 const apiMocks = vi.hoisted(() => ({
   getCampaignCategories: vi.fn().mockResolvedValue([]),
@@ -9,6 +10,7 @@ const apiMocks = vi.hoisted(() => ({
   getCampaignFacets: vi.fn().mockResolvedValue({ categories: [], assets: [], countries: [], funding: { min: 0, max: 0 }, verified_creators: 0 }),
   getCampaigns: vi.fn().mockResolvedValue({ campaigns: [{ id: '1', title: 'Test campaign', status: 'active', target_amount: '100', asset_type: 'USDC' }], total: 1 }),
   getCampaign: vi.fn().mockResolvedValue({}),
+  getRecommendedCampaigns: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('../../context/AuthContext', () => ({
@@ -45,5 +47,15 @@ describe('Home page', () => {
     renderWithProviders(<Home />);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load campaigns');
+  });
+});
+
+describe('api exports for Home page', () => {
+  it('exports all required campaign methods', () => {
+    expect(typeof api.getFeaturedCampaigns).toBe('function');
+    expect(typeof api.getCampaigns).toBe('function');
+    expect(typeof api.getCampaignCategories).toBe('function');
+    expect(typeof api.getCampaignFacets).toBe('function');
+    expect(typeof api.getRecommendedCampaigns).toBe('function');
   });
 });
