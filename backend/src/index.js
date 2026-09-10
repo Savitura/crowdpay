@@ -35,7 +35,6 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/admin', adminAuditLogRoutes);
 
 app.use('/api/v1', require('./routes/v1'));
-app.use('/api', require('./routes/admin'));
 app.use('/api/anchor', require('./routes/anchor'));
 app.use('/api/announcements', require('./routes/announcement'));
 app.use('/api/auth', require('./routes/auth'));

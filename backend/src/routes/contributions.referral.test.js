@@ -55,7 +55,7 @@ function buildApp({ resolveReferralLink, onSubmit }) {
       },
     },
     '../services/referral': { resolveReferralLink },
-    '../services/referralService': { getReferralCodeFromRequest: () => null },
+    '../services/referralService': { getReferralCodeFromRequest: (req) => req.query?.ref || req.body?.ref || null },
     '../services/rewardTierService': { reserveTierSlot: async () => null },
     '../services/sorobanService': { triggerRefund: async () => null },
     '../services/kycService': { assertUserKycVerified: async () => {} },
