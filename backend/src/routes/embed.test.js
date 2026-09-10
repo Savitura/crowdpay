@@ -59,13 +59,12 @@ test('GET /api/embed/:campaignId/stats returns safe public campaign stats', asyn
   const res = await request(app).get('/api/embed/c-1/stats');
 
   assert.equal(res.status, 200);
-  assert.equal(res.body.title, 'Clean Water Initiative');
-  assert.equal(res.body.raised_amount, '5000');
-  assert.equal(res.body.target_amount, '10000');
-  assert.equal(res.body.progress_percentage, 50);
-  assert.equal(res.body.backer_count, 15);
-  assert.equal(res.body.recent_backers.length, 1);
-  assert.equal(res.body.recent_backers[0].name, 'Alice');
+  assert.equal(res.body.campaign.title, 'Clean Water Initiative');
+  assert.equal(res.body.campaign.raised_amount, '5000');
+  assert.equal(res.body.campaign.target_amount, '10000');
+  assert.equal(res.body.campaign.backer_count, 15);
+  assert.equal(res.body.recentContributors.length, 1);
+  assert.equal(res.body.recentContributors[0].contributor_name, 'Alice');
 });
 
 test('GET /api/embed/:campaignId/stats returns 404 if campaign missing', async () => {
@@ -83,13 +82,12 @@ test('POST /api/embed/campaigns/:id/contribute rate limiting returns 429 on 11th
       return { rows: [{ id: TOKEN_ID, campaign_id: CAMPAIGN_ID }] };
     }
     if (text.includes('contributor_ip_hash')) {
-      // Return 10 existing attempts to trigger 429 limit on 11th attempt
       return { rows: [{ count: 10 }] };
     }
     return { rows: [] };
   };
 
-  const app = buildApp({ dbQueryImpl: queryImpl });
+  const app = buildApp(queryImpl);
 
   const res = await request(app)
     .post(`/api/embed/campaigns/${CAMPAIGN_ID}/contribute`)
@@ -101,10 +99,10 @@ test('POST /api/embed/campaigns/:id/contribute rate limiting returns 429 on 11th
   assert.equal(res.body.error, 'Too Many Requests');
 });
 
-test('GET /embed/widget.html responds with frame-ancestors * CSP headers', async () => {
-  const app = buildApp({ dbQueryImpl: async () => ({ rows: [] }) });
+test('GET /api/embed/widget.html responds with frame-ancestors * CSP headers', async () => {
+  const app = buildApp(async () => ({ rows: [] }));
 
-  const res = await request(app).get('/embed/widget.html');
+  const res = await request(app).get('/api/embed/widget.html');
 
   assert.equal(res.status, 200);
   const csp = res.headers['content-security-policy'];

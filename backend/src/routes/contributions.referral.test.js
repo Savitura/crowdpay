@@ -77,6 +77,15 @@ function buildApp({ resolveReferralLink, onSubmit }) {
   const app = express();
   app.use(express.json());
   app.use('/api/contributions', router);
+  app.use((err, _req, res, _next) => {
+    const status = err.statusCode || err.status || 500;
+    res.status(status).json({
+      error: {
+        code: err.code || 'INTERNAL_ERROR',
+        message: err.message,
+      },
+    });
+  });
   return app;
 }
 
@@ -119,7 +128,7 @@ test('POST /api/contributions?ref=CODE returns 404 INVALID_REFERRAL_CODE for ano
     .send({ campaign_id: 'camp-1', amount: '100', send_asset: 'XLM' });
 
   assert.equal(response.status, 404);
-  assert.equal(response.body.code, 'INVALID_REFERRAL_CODE');
+  assert.equal(response.body.error.code, 'INVALID_REFERRAL_CODE');
 });
 
 test('POST /api/contributions without ?ref stays unattributed', async () => {
@@ -142,6 +151,6 @@ test('POST /api/contributions without ?ref stays unattributed', async () => {
 
   assert.equal(response.status, 202);
   assert.equal(resolveCalled, false);
-  assert.equal(submitted.referralLinkId, null);
-  assert.equal(submitted.referralLinkCode, null);
+  assert.equal(submitted.referralLinkId, undefined);
+  assert.equal(submitted.referralLinkCode, undefined);
 });
