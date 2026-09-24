@@ -172,8 +172,37 @@ export const api = {
     const res = await apiClient.get('/campaigns/recommended', { params });
     return res.data;
   },
-  async getCampaign(id) {
-    const res = await apiClient.get(`/campaigns/${id}`);
+  async getCampaign(id, params) {
+    const res = await apiClient.get(`/campaigns/${id}`, { params });
+    return res.data;
+  },
+  async getMilestones(id, params) {
+    const res = await apiClient.get(`/campaigns/${id}/milestones`, { params });
+    return res.data;
+  },
+  async getCampaignTranslations(campaignId) {
+    const res = await apiClient.get(`/campaigns/${campaignId}/translations`);
+    return res.data?.data || res.data || [];
+  },
+  async getCampaignTranslation(campaignId, locale) {
+    const res = await apiClient.get(`/campaigns/${campaignId}/translations/${locale}`);
+    return res.data?.data || res.data;
+  },
+  async saveCampaignTranslation(campaignId, data) {
+    const res = await apiClient.post(`/campaigns/${campaignId}/translations`, data);
+    return res.data?.data || res.data;
+  },
+  async deleteCampaignTranslation(campaignId, locale) {
+    const res = await apiClient.delete(`/campaigns/${campaignId}/translations/${locale}`);
+    return res.data;
+  },
+  async updateCampaign(campaignId, updates, token) {
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const res = await apiClient.patch(`/campaigns/${campaignId}`, updates, { headers });
+    return res.data;
+  },
+  async createCampaign(data) {
+    const res = await apiClient.post('/campaigns', data);
     return res.data;
   },
   async getReferralProgram(id) {

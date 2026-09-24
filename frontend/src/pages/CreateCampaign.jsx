@@ -52,12 +52,20 @@ function milestonePercentTotal(milestones) {
   );
 }
 
+const SUPPORTED_LOCALES = [
+  { code: 'fr', label: 'French (Français)' },
+  { code: 'es', label: 'Spanish (Español)' },
+  { code: 'de', label: 'German (Deutsch)' },
+];
+
 export default function CreateCampaign() {
   const { t } = useTranslation();
   const { user, ready, updateUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [step, setStep] = useState(1);
+  const [translations, setTranslations] = useState({});
+  const [activeTranslationLocale, setActiveTranslationLocale] = useState(null);
   const [form, setForm] = useState({
     title: location.state?.prefill?.title || '',
     description: location.state?.prefill?.description || '',
@@ -510,7 +518,7 @@ export default function CreateCampaign() {
           setLoading(false);
           return;
         }
-      } catch (err) {
+      } catch {
         // ignore error and proceed
       }
     }
@@ -558,6 +566,22 @@ export default function CreateCampaign() {
             }))
           : undefined,
       });
+
+      // Save any translations added during creation
+      for (const [locale, trans] of Object.entries(translations)) {
+        if (trans && trans.title && trans.title.trim()) {
+          try {
+            await api.saveCampaignTranslation(campaign.id, {
+              locale,
+              title: trans.title.trim(),
+              description: trans.description?.trim() || null,
+              milestone_titles: trans.milestone_titles || [],
+            });
+          } catch {
+            // Non-fatal: translation can be added/edited in campaign settings
+          }
+        }
+      }
 
       // The policy needs a campaign to attach to, so it is saved once the campaign
       // exists. A failure here leaves the campaign on the standard wallet rather
@@ -1311,6 +1335,122 @@ export default function CreateCampaign() {
                 </div>
               </div>
             </details>
+
+            <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--color-border-lightest)', paddingTop: '1.25rem' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.35rem' }}>
+                Translations (Optional)
+              </h3>
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
+                Provide translated versions of your campaign for international contributors.
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                {SUPPORTED_LOCALES.map((loc) => {
+                  const hasTranslation = Boolean(translations[loc.code]?.title);
+                  const isActive = activeTranslationLocale === loc.code;
+                  return (
+                    <button
+                      key={loc.code}
+                      type="button"
+                      className={isActive ? 'btn-primary' : 'btn-secondary'}
+                      style={{ fontSize: '0.85rem', padding: '0.35rem 0.65rem' }}
+                      onClick={() => setActiveTranslationLocale(isActive ? null : loc.code)}
+                    >
+                      {hasTranslation ? `✓ Edit ${loc.label}` : `+ Add Translation (${loc.label})`}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {activeTranslationLocale && (
+                <div
+                  style={{
+                    background: 'var(--color-surface, #f9fafb)',
+                    border: '1px solid var(--color-border-lightest, #e5e7eb)',
+                    borderRadius: '8px',
+                    padding: '1rem',
+                    marginBottom: '1rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>
+                      {SUPPORTED_LOCALES.find((l) => l.code === activeTranslationLocale)?.label} Translation
+                    </span>
+                    {translations[activeTranslationLocale]?.title && (
+                      <button
+                        type="button"
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--color-error, #ef4444)',
+                          fontSize: '0.8rem',
+                          cursor: 'pointer',
+                          padding: 0,
+                        }}
+                        onClick={() => {
+                          const next = { ...translations };
+                          delete next[activeTranslationLocale];
+                          setTranslations(next);
+                          setActiveTranslationLocale(null);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <div className="form-stack" style={{ marginBottom: '0.5rem' }}>
+                    <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Translated Title *</label>
+                    <input
+                      type="text"
+                      value={translations[activeTranslationLocale]?.title || ''}
+                      onChange={(e) =>
+                        setTranslations((prev) => ({
+                          ...prev,
+                          [activeTranslationLocale]: {
+                            ...prev[activeTranslationLocale],
+                            title: e.target.value,
+                          },
+                        }))
+                      }
+                      placeholder={`Title in ${SUPPORTED_LOCALES.find((l) => l.code === activeTranslationLocale)?.label}`}
+                    />
+                  </div>
+                  <div className="form-stack" style={{ marginBottom: '0.5rem' }}>
+                    <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Translated Description (optional)</label>
+                    <textarea
+                      value={translations[activeTranslationLocale]?.description || ''}
+                      onChange={(e) =>
+                        setTranslations((prev) => ({
+                          ...prev,
+                          [activeTranslationLocale]: {
+                            ...prev[activeTranslationLocale],
+                            description: e.target.value,
+                          },
+                        }))
+                      }
+                      rows={3}
+                      placeholder={`Description in ${SUPPORTED_LOCALES.find((l) => l.code === activeTranslationLocale)?.label}`}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid var(--color-border-lightest)',
+                        borderRadius: '6px',
+                        fontSize: '0.85rem',
+                        boxSizing: 'border-box',
+                        resize: 'vertical',
+                      }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{ fontSize: '0.8rem', padding: '0.35rem 0.65rem' }}
+                    onClick={() => setActiveTranslationLocale(null)}
+                  >
+                    Done
+                  </button>
+                </div>
+              )}
+            </div>
 
             {error && (
               <p className="alert alert--error" style={{ marginTop: '1rem' }} role="alert">
