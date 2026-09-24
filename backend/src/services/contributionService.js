@@ -32,6 +32,7 @@ async function buildContributionIntent({
   sendAsset,
   contributorPublicKey,
   displayName,
+  previewPath,
 }) {
   if (sendAsset === campaign.asset_type) {
     return {
@@ -47,22 +48,35 @@ async function buildContributionIntent({
     };
   }
 
-  const paths = await getPathPaymentQuote({
-    sendAsset,
-    destAsset: campaign.asset_type,
-    destAmount: amount,
-  });
-  if (!paths.length) {
-    const error = new Error(`No conversion path found for ${sendAsset} -> ${campaign.asset_type}`);
-    error.statusCode = 422;
-    throw error;
+  // A validated preview path carries its own max_send_amount computed from the
+  // quote the contributor approved (#688). Without one we fall back to quoting
+  // the best route inline (embeds and legacy callers).
+  let bestPath;
+  let sendMax;
+  if (previewPath) {
+    bestPath = previewPath;
+    sendMax = previewPath.max_send_amount;
+  } else {
+    const paths = await getPathPaymentQuote({
+      sendAsset,
+      destAsset: campaign.asset_type,
+      destAmount: amount,
+    });
+    if (!paths.length) {
+      const error = new Error(`No conversion path found for ${sendAsset} -> ${campaign.asset_type}`);
+      error.statusCode = 422;
+      throw error;
+    }
+    bestPath = paths[0];
+    sendMax = (
+      parseFloat(bestPath.source_amount) *
+      (1 + SLIPPAGE_BPS / 10000)
+    ).toFixed(7);
   }
 
-  const bestPath = paths[0];
-  const sendMax = (
-    parseFloat(bestPath.source_amount) *
-    (1 + SLIPPAGE_BPS / 10000)
-  ).toFixed(7);
+  const effectiveRate = String(
+    parseFloat(bestPath.source_amount) / parseFloat(bestPath.destination_amount || amount)
+  );
 
   return {
     kind: 'path_payment_strict_receive',
@@ -81,10 +95,26 @@ async function buildContributionIntent({
       dest_asset: campaign.asset_type,
       dest_amount: String(amount),
       max_send_amount: sendMax,
+      quoted_source_amount: bestPath.source_amount,
+      path_hops: bestPath.path,
+      effective_rate: effectiveRate,
+      slippage_bps: SLIPPAGE_BPS,
+      send_max: sendMax,
+      retry_count: 0,
       contributor_public_key: contributorPublicKey,
       display_name: displayName || null,
     },
   };
+}
+
+/** Horizon throws PATH_PAYMENT_OVER_SENDMAX when a strict-receive path payment's sendMax is too tight. */
+function isPathPaymentOverSendMax(err) {
+  const extras = err?.response?.data?.extras;
+  const resultCodes = extras?.result_codes?.operations || extras?.result_codes || [];
+  if (Array.isArray(resultCodes) && resultCodes.includes('PATH_PAYMENT_OVER_SENDMAX')) {
+    return true;
+  }
+  return String(err?.message || '').includes('PATH_PAYMENT_OVER_SENDMAX');
 }
 
 async function submitCustodialContribution({
@@ -105,6 +135,7 @@ async function submitCustodialContribution({
   deviceFingerprint,
   client,
   tierId,
+  previewPath,
 }) {
   const contractMode = isContractDepositEligible(campaign);
   if (contractMode && sendAsset !== campaign.asset_type) {
@@ -121,11 +152,13 @@ async function submitCustodialContribution({
       sendAsset,
       contributorPublicKey: walletPublicKey,
       displayName,
+      previewPath,
     }));
 
   let unsignedXdr = null;
   let signedXdr = null;
   let txHash;
+  let retryCount = 0;
 
   if (contractMode) {
     // Same-asset only (see issue #710) — deposit directly into the escrow
@@ -188,8 +221,68 @@ async function submitCustodialContribution({
     try {
       txHash = await submitPreparedTransaction(signedXdr);
     } catch (err) {
-      err.statusCode = err.statusCode || 502;
-      throw err;
+      // Slippage safety net (#688): if the strict-receive sendMax was too tight
+      // (DEX rate moved since the quote), re-quote once and retry before
+      // surfacing the failure to the contributor.
+      if (
+        intent.kind === 'path_payment_strict_receive' &&
+        retryCount === 0 &&
+        isPathPaymentOverSendMax(err)
+      ) {
+        const freshPaths = await getPathPaymentQuote({
+          sendAsset,
+          destAsset: campaign.asset_type,
+          destAmount: amount,
+        });
+        if (!freshPaths.length) {
+          err.statusCode = err.statusCode || 502;
+          throw err;
+        }
+        const freshBest = freshPaths[0];
+        const freshSendMax = (
+          parseFloat(freshBest.source_amount) *
+          (1 + SLIPPAGE_BPS / 10000)
+        ).toFixed(7);
+
+        const retried = await withDecryptedWalletSecret(
+          walletSecretEncrypted,
+          { userId, walletPublicKey },
+          async (senderSecret) =>
+            prepareSignedContributionPathPayment({
+              senderSecret,
+              destinationPublicKey: campaign.wallet_public_key,
+              sendAsset,
+              sendMax: freshSendMax,
+              destAmount: amount,
+              destAssetCode: campaign.asset_type,
+              memo: buildAttributionMemo(campaignId, referralLinkCode),
+            })
+        );
+
+        retryCount = 1;
+        unsignedXdr = retried.unsignedXdr;
+        signedXdr = retried.signedXdr;
+        // Reflect the re-quote in the stored metadata so diagnostics show the
+        // final route that actually moved funds.
+        intent.flowMetadata.send_max = freshSendMax;
+        intent.flowMetadata.max_send_amount = freshSendMax;
+        intent.flowMetadata.quoted_source_amount = freshBest.source_amount;
+        intent.flowMetadata.path_hops = freshBest.path;
+        intent.flowMetadata.effective_rate = String(
+          parseFloat(freshBest.source_amount) / parseFloat(amount)
+        );
+        intent.flowMetadata.retry_count = retryCount;
+
+        try {
+          txHash = await submitPreparedTransaction(signedXdr);
+        } catch (retryErr) {
+          retryErr.statusCode = retryErr.statusCode || 502;
+          throw retryErr;
+        }
+      } else {
+        err.statusCode = err.statusCode || 502;
+        throw err;
+      }
     }
   }
 
