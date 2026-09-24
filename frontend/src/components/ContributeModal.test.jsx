@@ -96,6 +96,18 @@ describe('ContributeModal', () => {
     expect(screen.getByText(/payment method/i)).toBeInTheDocument();
   });
 
+  it('pre-populates amount when initialAmount is provided', () => {
+    render(
+      <ContributeModal
+        campaign={campaign}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+        initialAmount="50"
+      />
+    );
+    expect(screen.getByLabelText(/amount campaign receives/i)).toHaveValue(50);
+  });
+
   it('validates that amount must be a positive number', async () => {
     const user = userEvent.setup();
     renderModal();

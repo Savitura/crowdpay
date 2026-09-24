@@ -533,6 +533,7 @@ export default function Campaign() {
   const deleteModalRef = useRef(null);
 
   const refParam = new URLSearchParams(location.search).get('ref');
+  const presetAmount = new URLSearchParams(location.search).get('amount') || '';
 
   const currentUserId = user?.id || user?.userId;
   const userRole =
@@ -623,6 +624,31 @@ export default function Campaign() {
       delete document.body.dataset.printDate;
     };
   }, []);
+
+  useEffect(() => {
+    if (!campaign) return;
+    const baseUrl = import.meta.env.VITE_API_URL || window.location.origin;
+    const ogImageUrl = campaign.og_image_url || `${baseUrl}/api/campaigns/${campaign.id}/og-image.png`;
+    const setMeta = (property, content) => {
+      let el = document.querySelector(`meta[property="${property}"]`);
+      if (!el) {
+        el = document.createElement('meta');
+        el.setAttribute('property', property);
+        document.head.appendChild(el);
+      }
+      el.setAttribute('content', content);
+    };
+    setMeta('og:title', campaign.title);
+    setMeta('og:description', (campaign.description || '').slice(0, 160));
+    setMeta('og:image', ogImageUrl);
+    setMeta('og:url', campaign.share_url || window.location.href);
+    setMeta('og:type', 'website');
+    return () => {
+      ['og:title', 'og:description', 'og:image', 'og:url', 'og:type'].forEach((p) => {
+        document.querySelector(`meta[property="${p}"]`)?.remove();
+      });
+    };
+  }, [campaign]);
 
   useEffect(() => {
     setLoadError('');
@@ -2990,6 +3016,7 @@ export default function Campaign() {
           campaign={campaign}
           tiers={tiers}
           referralCode={refParam}
+          initialAmount={presetAmount}
           guestFreighterMode={freighterGuestMode}
           onClose={() => {
             setShowModal(false);

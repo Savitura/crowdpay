@@ -177,6 +177,14 @@ export default function CampaignShare() {
           >
             Telegram
           </a>
+          <a
+            href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-secondary"
+          >
+            LinkedIn
+          </a>
         </div>
       </div>
     </div>

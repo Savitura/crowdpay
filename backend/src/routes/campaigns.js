@@ -81,6 +81,7 @@ const { getSimhash, simhashSimilarity } = require('../utils/simhash');
 const { parsePagination } = require('../utils/pagination');
 const { assembleReport, generateSignedUrl, verifySignedToken } = require('../services/campaignReportService');
 const { streamCampaignReportPdf, reportFilename } = require('../services/campaignReportPdf');
+const { generateCampaignOgImage } = require('../services/ogImageService');
 
 const crypto = require('crypto');
 
@@ -1078,6 +1079,40 @@ router.get('/:id/impact', impactLimiter, asyncHandler(async (req, res) => {
   res.json(impact);
 }));
 
+const serveOgImage = asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT c.id, c.title, c.target_amount, c.raised_amount, c.asset_type, c.status, c.deleted_at,
+            u.full_name AS creator_name, u.email AS creator_email
+     FROM campaigns c
+     LEFT JOIN users u ON u.id = c.creator_id
+     WHERE c.id = $1`,
+    [req.params.id]
+  );
+  if (!rows.length || rows[0].deleted_at) {
+    return res.status(404).json({ error: 'Campaign not found' });
+  }
+  const campaign = rows[0];
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const campaignUrl = `${frontendUrl}/campaigns/${campaign.id}`;
+  const creatorName = campaign.creator_name || (campaign.creator_email ? campaign.creator_email.split('@')[0] : 'Creator');
+
+  const pngBuffer = await generateCampaignOgImage({
+    title: campaign.title,
+    creatorName,
+    raisedAmount: campaign.raised_amount,
+    targetAmount: campaign.target_amount,
+    assetType: campaign.asset_type,
+    campaignUrl,
+  });
+
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  return res.send(pngBuffer);
+});
+
+router.get('/:id/og-image.png', serveOgImage);
+router.get('/:id/og-image', serveOgImage);
+
 router.get('/:id', asyncHandler(async (req, res) => {
   /**
    * @openapi
@@ -1119,6 +1154,17 @@ router.get('/:id', asyncHandler(async (req, res) => {
     } catch (err) {
       logger.warn('Referral click tracking failed', { campaign_id: req.params.id, ref: refCode, error: err.message });
     }
+  }
+
+  const shareSource = req.query.source || req.query.utm_source;
+  if (shareSource && typeof shareSource === 'string') {
+    res.cookie(`cp_share_source_${req.params.id}`, shareSource.slice(0, 64), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+      path: '/',
+    });
   }
 
   const query = `
@@ -1186,6 +1232,11 @@ router.get('/:id', asyncHandler(async (req, res) => {
   if (campaign.status === 'suspended') {
     response.suspended_notice = 'This campaign has been suspended and cannot receive new contributions';
   }
+
+  const baseUrl = process.env.BACKEND_URL || (req.get('host') ? `${req.protocol}://${req.get('host')}` : 'http://localhost:3000');
+  const frontendBase = process.env.FRONTEND_URL || 'http://localhost:5173';
+  response.og_image_url = `${baseUrl}/api/campaigns/${campaign.id}/og-image.png`;
+  response.share_url = `${frontendBase}/campaigns/${campaign.id}`;
 
   res.json(response);
 }));
@@ -2734,5 +2785,55 @@ router.get('/:id/report/share/:token', asyncHandler(async (req, res) => {
 // Soroban treasury endpoints (#687) live in their own router to keep this file
 // from growing further; they are mounted under /api/campaigns/:id/treasury.
 router.use('/:id/treasury', require('./treasury'));
+
+let _refundService;
+function getRefundService() {
+  if (!_refundService) _refundService = require('../services/refundService');
+  return _refundService;
+}
+
+router.get('/:id/refunds/eligible', requireAuth, asyncHandler(async (req, res) => {
+  const campaign = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [req.params.id]);
+  if (campaign.rows.length === 0) return res.status(404).json({ error: 'Campaign not found' });
+  const isOwner = campaign.rows[0].creator_id === req.user.userId;
+  const isAdmin = req.user.role === 'admin';
+  if (!isOwner && !isAdmin) return res.status(403).json({ error: 'Forbidden' });
+  const items = await getRefundService().getEligibleContributions(req.params.id);
+  res.json({ items });
+}));
+
+router.get('/:id/refunds', requireAuth, asyncHandler(async (req, res) => {
+  const campaign = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [req.params.id]);
+  if (campaign.rows.length === 0) return res.status(404).json({ error: 'Campaign not found' });
+  const isOwner = campaign.rows[0].creator_id === req.user.userId;
+  const isAdmin = req.user.role === 'admin';
+  if (!isOwner && !isAdmin) return res.status(403).json({ error: 'Forbidden' });
+  const result = await getRefundService().getCampaignRefunds(req.params.id, req.query);
+  res.json(result);
+}));
+
+router.post('/:id/refunds', requireAuth, asyncHandler(async (req, res) => {
+  const campaign = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [req.params.id]);
+  if (campaign.rows.length === 0) return res.status(404).json({ error: 'Campaign not found' });
+  const isOwner = campaign.rows[0].creator_id === req.user.userId;
+  const isAdmin = req.user.role === 'admin';
+  if (!isOwner && !isAdmin) return res.status(403).json({ error: 'Forbidden' });
+
+  const { contributionId, amount, reason, isForceRefund, adminNote } = req.body;
+  if (!contributionId || !amount || amount <= 0) {
+    return res.status(400).json({ error: 'contributionId and positive amount are required' });
+  }
+
+  const refund = await getRefundService().processRefund({
+    campaignId: req.params.id,
+    contributionId,
+    amount: parseFloat(amount),
+    reason,
+    initiatorId: req.user.userId,
+    isForceRefund: isAdmin && !!isForceRefund,
+    adminNote: isAdmin ? adminNote : null,
+  });
+  res.status(201).json(refund);
+}));
 
 module.exports = router;
