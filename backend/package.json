@@ -1,11 +1,11 @@
 {
   "name": "crowdpay-backend",
   "version": "1.0.0",
-  "description": "CrowdPay backend — campaign logic, Stellar wallet management, Horizon listener",
+  "description": "CrowdPay backend \u2014 campaign logic, Stellar wallet management, Horizon listener",
   "main": "src/index.js",
   "scripts": {
-    "dev": "nodemon src/index.js",
-    "start": "node src/index.js",
+    "dev": "node api.js && nodemon src/index.js",
+    "start": "node api.js && node src/index.js",
     "lint": "eslint src/ db/ scripts/ src/scripts/",
     "lint:fix": "eslint src/ db/ scripts/ src/scripts/ --fix",
     "test": "NODE_ENV=test JWT_SECRET=testsecret API_KEY_PEPPER=testpeppersecret USDC_ISSUER=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 STELLAR_NETWORK=testnet PLATFORM_SECRET_KEY=SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR ARBITRATOR_SECRET_KEY=SD5R3ADP7AC37OAYWYG73266DR2MBR6IJGXBLLAGCOWMTHLMPFAJMWPM STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org WALLET_SECRET_LOCAL_KEK=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= WALLET_ENCRYPTION_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa OPS_API_KEY=test-ops-key UNSUBSCRIBE_SECRET=test-unsubscribe-secret IMPACT_SIGNING_SECRET=test-impact-secret node --test --test-force-exit --test-timeout=30000 src/**/*.test.js src/*.test.js",
