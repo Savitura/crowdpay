@@ -5,8 +5,15 @@ const request = require('supertest');
 const proxyquire = require('proxyquire').noCallThru();
 
 function buildApp({ queryImpl }) {
+  const database = { query: queryImpl };
+  // Load the real service against the same stubbed database so the route's
+  // record/mint/fail writes flow through queryImpl.
+  const nftRewardService = proxyquire('../services/nftRewardService', {
+    '../config/database': database,
+  });
   const router = proxyquire('./nftRewards', {
-    '../config/database': { query: queryImpl },
+    '../config/database': database,
+    '../services/nftRewardService': nftRewardService,
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
         req.user = { userId: 'user-1' };
@@ -21,8 +28,7 @@ function buildApp({ queryImpl }) {
   return app;
 }
 
-// TODO(#786): Test uses proxyquire stub that doesn't match the actual route's database interactions
-test('POST /api/nft-rewards/claim prevents duplicates and retries failed mints', { skip: 'Test stub mismatch with real route - see #786' }, async () => {
+test('POST /api/nft-rewards/claim prevents duplicates and retries failed mints', async () => {
   let nftRows = [];
 
   const app = buildApp({

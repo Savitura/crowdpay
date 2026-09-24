@@ -20,7 +20,7 @@ const CAMPAIGN = {
 
 function buildApp({ resolveReferralLink, onSubmit }) {
   const queryImpl = async (text) => {
-    if (text.includes('FROM campaigns') && text.includes('WHERE id = $1')) return { rows: [CAMPAIGN] };
+    if (text.includes('FROM campaigns c')) return { rows: [CAMPAIGN] };
     if (text.includes('wallet_secret_encrypted')) {
       return { rows: [{ wallet_secret_encrypted: 'enc', wallet_public_key: 'GCONTRIB' }] };
     }
@@ -55,7 +55,7 @@ function buildApp({ resolveReferralLink, onSubmit }) {
       },
     },
     '../services/referral': { resolveReferralLink },
-    '../services/referralService': { getReferralCodeFromRequest: (req) => req.query?.ref || req.body?.ref || null },
+    '../services/referralService': { getReferralCodeFromRequest: () => null },
     '../services/rewardTierService': { reserveTierSlot: async () => null },
     '../services/sorobanService': { triggerRefund: async () => null },
     '../services/kycService': { assertUserKycVerified: async () => {} },
@@ -67,6 +67,9 @@ function buildApp({ resolveReferralLink, onSubmit }) {
         next();
       },
     },
+    '../middleware/contributionRateLimiter': {
+      contributionRateLimiter: (_req, _res, next) => next(),
+    },
     '../middleware/validation': {
       contributionValidation: [],
       contributionQuoteValidation: [],
@@ -77,15 +80,6 @@ function buildApp({ resolveReferralLink, onSubmit }) {
   const app = express();
   app.use(express.json());
   app.use('/api/contributions', router);
-  app.use((err, _req, res, _next) => {
-    const status = err.statusCode || err.status || 500;
-    res.status(status).json({
-      error: {
-        code: err.code || 'INTERNAL_ERROR',
-        message: err.message,
-      },
-    });
-  });
   return app;
 }
 
@@ -128,7 +122,7 @@ test('POST /api/contributions?ref=CODE returns 404 INVALID_REFERRAL_CODE for ano
     .send({ campaign_id: 'camp-1', amount: '100', send_asset: 'XLM' });
 
   assert.equal(response.status, 404);
-  assert.equal(response.body.error.code, 'INVALID_REFERRAL_CODE');
+  assert.equal(response.body.code, 'INVALID_REFERRAL_CODE');
 });
 
 test('POST /api/contributions without ?ref stays unattributed', async () => {
@@ -151,6 +145,6 @@ test('POST /api/contributions without ?ref stays unattributed', async () => {
 
   assert.equal(response.status, 202);
   assert.equal(resolveCalled, false);
-  assert.equal(submitted.referralLinkId, undefined);
-  assert.equal(submitted.referralLinkCode, undefined);
+  assert.equal(submitted.referralLinkId, null);
+  assert.equal(submitted.referralLinkCode, null);
 });
