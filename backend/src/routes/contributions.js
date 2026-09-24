@@ -13,9 +13,24 @@ const { getReferralCodeFromRequest } = require('../services/referralService');
 const { reserveTierSlot } = require('../services/rewardTierService');
 const { assertUserKycVerified } = require('../services/kycService');
 const { parsePagination, paginatedResponse } = require('../utils/pagination');
+const { assertContributorMeetsRequirements } = require('../services/contributorIdentityService');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const asyncHandler = require('../utils/asyncHandler');
+
+function mapContributionGateError(err, res) {
+  if (err.statusCode === 403 && err.code === 'CONTRIBUTOR_REQUIREMENTS_NOT_MET') {
+    return res.status(403).json({
+      error: err.message,
+      code: err.code,
+      missing: err.missing || [],
+    });
+  }
+  if (err.statusCode === 503 && (err.code === 'IDENTITY_UNAVAILABLE' || err.code === 'ATTESTATION_UNAVAILABLE')) {
+    return res.status(503).json({ error: err.message, code: err.code });
+  }
+  throw err;
+}
 
 async function resolveContributorWallet(req) {
   if (req.user?.walletPublicKey && req.user?.walletSecretEncrypted) {
@@ -67,14 +82,54 @@ router.post(
 
     const { walletPublicKey, walletSecretEncrypted } = await resolveContributorWallet(req);
 
+    try {
+      await assertContributorMeetsRequirements(walletPublicKey, campaign_id);
+    } catch (err) {
+      return mapContributionGateError(err, res);
+    }
+
     const referralCode = getReferralCodeFromRequest(req);
     let referralLink = null;
     if (referralCode) {
       referralLink = await resolveReferralLink({ campaignId: campaign_id, code: referralCode });
     }
 
-    if (tier_id) {
-      await reserveTierSlot({ tierId: tier_id, userId });
+    const client = await db.connect();
+    let result;
+    try {
+      await client.query('BEGIN');
+
+      if (tier_id) {
+        const reserved = await reserveTierSlot(client, { tierId: tier_id, campaignId: campaign_id });
+        if (!reserved) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'Reward tier is no longer available' });
+        }
+      }
+
+      result = await contributionService.submitCustodialContribution({
+        campaign,
+        campaignId: campaign_id,
+        userId,
+        walletPublicKey,
+        walletSecretEncrypted,
+        amount,
+        sendAsset: send_asset || campaign.asset_type,
+        displayName: display_name,
+        referralCode,
+        referralLinkCode: referralLink?.code,
+        referralLinkId: referralLink?.id,
+        tierId: tier_id,
+        idempotencyKey: idempotency_key,
+        client,
+      });
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
     }
 
     // Cross-asset contributions may arrive with a single-use preview token from
@@ -154,6 +209,20 @@ router.post(
     const user = userRows[0];
     if (!user || !user.wallet_public_key) {
       return res.status(400).json({ error: 'Contributor wallet not found' });
+    }
+
+    try {
+      await assertUserKycVerified(userId);
+      await assertContributorMeetsRequirements(user.wallet_public_key, campaign_id);
+    } catch (err) {
+      if (err.code === 'KYC_REQUIRED' || err.statusCode === 403) {
+        return res.status(err.statusCode || 403).json({
+          error: err.message,
+          code: err.code,
+          missing: err.missing || undefined,
+        });
+      }
+      return mapContributionGateError(err, res);
     }
 
     const result = await contributionService.submitCustodialContribution({

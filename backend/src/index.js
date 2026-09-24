@@ -61,6 +61,7 @@ app.use('/api/campaigns', require('./routes/campaignFollowers'));
 app.use('/api/campaigns/:campaignId/contribution/preview', require('./routes/pathPaymentPreview'));
 app.use('/api/campaigns', require('./routes/campaignUpdates'));
 app.use('/api/campaigns', require('./routes/campaigns'));
+app.use('/api/campaigns', require('./routes/campaignRequirements'));
 app.use('/api/campaign-pools', require('./routes/contributionPools'));
 app.use('/api/contributions', require('./routes/contributions'));
 app.use('/api/contributor-identity', require('./routes/contributorIdentity'));
