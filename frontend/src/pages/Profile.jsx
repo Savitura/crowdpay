@@ -6,6 +6,11 @@ import VerificationBadge from '../components/VerificationBadge';
 import KycPrompt from '../components/KycPrompt';
 import ContributorBadges from '../components/ContributorBadges';
 import { api } from '../services/api';
+import {
+  isCreatorChecklistDismissed,
+  restoreCreatorChecklist,
+  dismissCreatorChecklist,
+} from '../lib/onboarding';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 const BASE_URL = import.meta.env.VITE_API_URL || `${API_BASE_URL}/api`;
@@ -26,6 +31,9 @@ export default function Profile() {
   const [twoFaError, setTwoFaError] = useState('');
   const [twoFaLoading, setTwoFaLoading] = useState(false);
   const [nftRewards, setNftRewards] = useState([]);
+  const [checklistDismissed, setChecklistDismissed] = useState(() =>
+    isCreatorChecklistDismissed()
+  );
 
   useEffect(() => {
     if (user) {
@@ -389,7 +397,42 @@ export default function Profile() {
         </div>
       )}
 
-      <div className="campaign-card" style={{ marginTop: '2rem' }}>
+      
+      {(user?.role === 'creator' || user?.role === 'admin') && (
+        <div className="campaign-card" style={{ marginTop: '1.25rem' }}>
+          <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.5rem' }}>
+            Creator onboarding checklist
+          </h2>
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: '1rem' }}>
+            Show the setup checklist on your dashboard until you publish your first campaign.
+          </p>
+          {checklistDismissed ? (
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => {
+                restoreCreatorChecklist();
+                setChecklistDismissed(false);
+              }}
+            >
+              Re-open checklist on dashboard
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                dismissCreatorChecklist();
+                setChecklistDismissed(true);
+              }}
+            >
+              Dismiss checklist
+            </button>
+          )}
+        </div>
+      )}
+
+<div className="campaign-card" style={{ marginTop: '2rem' }}>
         <div
           style={{
             display: 'flex',

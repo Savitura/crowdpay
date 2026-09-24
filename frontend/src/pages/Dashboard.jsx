@@ -13,6 +13,7 @@ import DepositModal from '../components/DepositModal';
 import ApiKeysPanel from '../components/ApiKeysPanel';
 import { stellarExpertTxUrl, stellarExpertAccountUrl } from '../config/stellar';
 import ThankYouModal from '../components/ThankYouModal';
+import CreatorOnboardingChecklist from '../components/CreatorOnboardingChecklist';
 
 const BackerInsightsCard = React.lazy(() => import('../components/BackerInsightsCard'));
 const MiniLineChart = React.lazy(() => import('../components/MiniLineChart'));
@@ -525,6 +526,10 @@ export default function Dashboard() {
       <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>
         {t('dashboard.title')}
       </h1>
+
+      {isCreator && (
+        <CreatorOnboardingChecklist user={user} campaigns={campaigns} stats={stats} />
+      )}
 
       <div className="campaign-card" style={{ marginBottom: '1rem', minHeight: 'auto' }}>
         <div
