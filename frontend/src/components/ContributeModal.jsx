@@ -119,9 +119,10 @@ export default function ContributeModal({
   guestFreighterMode = false,
   tiers = [],
   referralCode = null,
+  initialAmount = '',
 }) {
   const { user, token, updateUser } = useAuth();
-  const [amount, setAmount] = useState('');
+  const [amount, setAmount] = useState(initialAmount);
   const [sendAsset, setSendAsset] = useState(campaign.asset_type);
   const [paymentMethod, setPaymentMethod] = useState(
     guestFreighterMode ? 'freighter' : 'custodial'

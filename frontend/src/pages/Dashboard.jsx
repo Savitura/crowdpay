@@ -784,6 +784,12 @@ export default function Dashboard() {
                           >
                             {t('dashboard.viewCampaign')}
                           </Link>
+                          <Link
+                            to={`/campaigns/${campaign.id}/share`}
+                            style={{ color: 'var(--color-accent)', fontWeight: 600 }}
+                          >
+                            Share
+                          </Link>
                           <button
                             type="button"
                             className="btn-secondary"
