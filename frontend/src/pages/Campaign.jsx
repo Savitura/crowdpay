@@ -7,6 +7,7 @@ import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import ContributeModal from '../components/ContributeModal';
+import RefundsSection from '../components/RefundsSection';
 
 const SUPPORTED_LOCALES = [
   { code: 'fr', label: 'French (Français)' },
@@ -3654,6 +3655,16 @@ export default function Campaign() {
             </div>
           </div>
         </div>
+      )}
+
+      {(isOwner || user?.role === 'admin') && campaign && (
+        <RefundsSection
+          campaign={campaign}
+          user={user}
+          onRefundSuccess={() => {
+            api.getCampaign(id).then(setCampaign).catch(() => {});
+          }}
+        />
       )}
     </main>
   );

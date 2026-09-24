@@ -79,6 +79,7 @@ app.use('/api/nft-rewards', require('./routes/nftRewards'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/ops', require('./routes/ops'));
 app.use('/api/referrals', require('./routes/referrals'));
+app.use('/api/refunds', require('./routes/creatorRefunds'));
 app.use('/api/sessions', require('./routes/sessions'));
 app.use('/api/sponsor-matching', require('./routes/sponsorMatching'));
 app.use('/api/stellar-transactions', require('./routes/stellarTransactions'));

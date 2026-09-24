@@ -332,6 +332,7 @@ export const api = {
     const res = await apiClient.post('/users/me/2fa/verify', { code });
     return res.data;
   },
+<<<<<<< HEAD
   async listCampaignPools(campaignId) {
     const res = await apiClient.get(`/campaign-pools/campaign/${campaignId}`);
     return res.data;
@@ -451,4 +452,14 @@ export const api = {
     const res = await apiClient.post(url, { prepare_token: prepareToken, signed_xdr: signedXdr });
     return res.data;
   },
+
+  getEligibleRefunds: (campaignId) =>
+    apiClient.get(`/campaigns/${campaignId}/refunds/eligible`).then((r) => r.data),
+
+  getCampaignRefunds: (campaignId, params = {}) =>
+    apiClient.get(`/campaigns/${campaignId}/refunds`, { params }).then((r) => r.data),
+
+  processRefund: (campaignId, payload) =>
+    apiClient.post(`/campaigns/${campaignId}/refunds`, payload).then((r) => r.data),
 };
+
