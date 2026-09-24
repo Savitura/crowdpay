@@ -1,11 +1,18 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Link, useParams, useLocation, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import DOMPurify from 'dompurify';
 import * as Sentry from '@sentry/react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import ContributeModal from '../components/ContributeModal';
+
+const SUPPORTED_LOCALES = [
+  { code: 'fr', label: 'French (Français)' },
+  { code: 'es', label: 'Spanish (Español)' },
+  { code: 'de', label: 'German (Deutsch)' },
+];
 
 /**
  * CampaignRequirementsNotice — shown to non-logged-in visitors when the
@@ -455,9 +462,17 @@ export default function Campaign() {
   const navigate = useNavigate();
   const { user, token } = useAuth();
   const toast = useToast();
+  const { i18n } = useTranslation();
+  const currentLocale = (i18n.resolvedLanguage || i18n.language || 'en').split('-')[0];
 
   const [campaign, setCampaign] = useState(null);
   const [translation, setTranslation] = useState(null);
+  const [translations, setTranslations] = useState([]);
+  const [translationsLoading, setTranslationsLoading] = useState(false);
+  const [translationForm, setTranslationForm] = useState(null);
+  const [translationError, setTranslationError] = useState('');
+  const [translationSuccess, setTranslationSuccess] = useState('');
+  const [translationSaving, setTranslationSaving] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [contributions, setContributions] = useState(null);
   const [totalContributions, setTotalContributions] = useState(0);
@@ -652,7 +667,10 @@ export default function Campaign() {
 
   useEffect(() => {
     setLoadError('');
-    const campaignOpts = refParam ? { ref: refParam } : {};
+    const campaignOpts = {
+      locale: currentLocale,
+      ...(refParam ? { ref: refParam } : {}),
+    };
     api
       .getCampaign(id, campaignOpts)
       .then((data) => {
@@ -698,7 +716,7 @@ export default function Campaign() {
       });
     setMilestonesLoading(true);
     api
-      .getMilestones(id)
+      .getMilestones(id, { locale: currentLocale })
       .then(setMilestones)
       .catch(() => setMilestones([]))
       .finally(() => setMilestonesLoading(false));
@@ -736,7 +754,7 @@ export default function Campaign() {
         })
         .catch(() => setHasPendingWithdrawal(false));
     }
-  }, [id, token, contributed, showAll]);
+  }, [id, token, contributed, showAll, currentLocale]);
 
   useEffect(() => {
     if (!id || !user || campaign?.status !== 'disputed') {
@@ -976,7 +994,16 @@ export default function Campaign() {
     });
     setEditError('');
     setEditSuccess('');
+    setTranslationForm(null);
+    setTranslationError('');
+    setTranslationSuccess('');
     setIsEditingCampaign(true);
+    setTranslationsLoading(true);
+    api
+      .getCampaignTranslations(campaign.id)
+      .then((data) => setTranslations(Array.isArray(data) ? data : []))
+      .catch(() => setTranslations([]))
+      .finally(() => setTranslationsLoading(false));
   }
 
   function handleCloseEditModal() {
@@ -984,6 +1011,81 @@ export default function Campaign() {
     setEditFormData({ title: '', description: '', deadline: '' });
     setEditError('');
     setEditSuccess('');
+    setTranslationForm(null);
+    setTranslationError('');
+    setTranslationSuccess('');
+  }
+
+  function handleStartAddTranslation(locale) {
+    const existing = translations.find((t) => t.locale === locale || t.language === locale);
+    setTranslationError('');
+    setTranslationSuccess('');
+    if (existing) {
+      let mt = existing.milestone_titles || [];
+      if (typeof mt === 'string') {
+        try { mt = JSON.parse(mt); } catch { mt = []; }
+      }
+      setTranslationForm({
+        locale,
+        title: existing.title || '',
+        description: existing.description || '',
+        milestone_titles: Array.isArray(mt) ? [...mt] : [],
+      });
+    } else {
+      setTranslationForm({
+        locale,
+        title: '',
+        description: '',
+        milestone_titles: (milestones || []).map(() => ''),
+      });
+    }
+  }
+
+  async function handleSaveTranslation() {
+    if (!translationForm) return;
+    if (!translationForm.title.trim()) {
+      setTranslationError('Title is required for translation');
+      return;
+    }
+    setTranslationSaving(true);
+    setTranslationError('');
+    try {
+      const saved = await api.saveCampaignTranslation(campaign.id, {
+        locale: translationForm.locale,
+        title: translationForm.title.trim(),
+        description: translationForm.description.trim() || null,
+        milestone_titles: translationForm.milestone_titles || [],
+      });
+      setTranslations((prev) => {
+        const filtered = prev.filter((t) => t.locale !== translationForm.locale && t.language !== translationForm.locale);
+        return [...filtered, saved];
+      });
+      setTranslationSuccess(`Translation for ${translationForm.locale.toUpperCase()} saved!`);
+      setTranslationForm(null);
+      if (currentLocale === translationForm.locale) {
+        api.getCampaign(id, { locale: currentLocale }).then(setCampaign).catch(() => {});
+        api.getMilestones(id, { locale: currentLocale }).then(setMilestones).catch(() => {});
+      }
+      setTimeout(() => setTranslationSuccess(''), 3000);
+    } catch (err) {
+      setTranslationError(err.message || 'Failed to save translation');
+    } finally {
+      setTranslationSaving(false);
+    }
+  }
+
+  async function handleDeleteTranslation(locale) {
+    if (!window.confirm(`Are you sure you want to delete the ${locale.toUpperCase()} translation?`)) return;
+    try {
+      await api.deleteCampaignTranslation(campaign.id, locale);
+      setTranslations((prev) => prev.filter((t) => t.locale !== locale && t.language !== locale));
+      if (currentLocale === locale) {
+        api.getCampaign(id, { locale: currentLocale }).then(setCampaign).catch(() => {});
+        api.getMilestones(id, { locale: currentLocale }).then(setMilestones).catch(() => {});
+      }
+    } catch (err) {
+      setTranslationError(err.message || 'Failed to delete translation');
+    }
   }
 
   async function handleSaveEdit() {
@@ -3230,6 +3332,175 @@ export default function Campaign() {
                   boxSizing: 'border-box',
                 }}
               />
+            </div>
+
+            <div style={{ marginTop: '1.5rem', marginBottom: '1.5rem', borderTop: '1px solid var(--color-border-lightest)', paddingTop: '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Translations</h3>
+                {translationsLoading && <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Loading...</span>}
+              </div>
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+                Add translated versions of your campaign content for international contributors. If a translation is not provided, the original content will be displayed.
+              </p>
+
+              {translationSuccess && (
+                <div className="alert alert--success" style={{ marginBottom: '1rem', fontSize: '0.85rem' }}>
+                  {translationSuccess}
+                </div>
+              )}
+              {translationError && (
+                <div className="alert alert--error" style={{ marginBottom: '1rem', fontSize: '0.85rem' }}>
+                  {translationError}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
+                {SUPPORTED_LOCALES.map((loc) => {
+                  const hasTranslation = translations.some((t) => (t.locale || t.language) === loc.code);
+                  const isCurrentForm = translationForm?.locale === loc.code;
+                  return (
+                    <button
+                      key={loc.code}
+                      type="button"
+                      className={isCurrentForm ? 'btn-primary' : 'btn-secondary'}
+                      style={{ fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
+                      onClick={() => handleStartAddTranslation(loc.code)}
+                    >
+                      {hasTranslation ? `✓ Edit ${loc.label}` : `+ Add Translation (${loc.label})`}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {translationForm && (
+                <div
+                  style={{
+                    background: 'var(--color-surface, #f9fafb)',
+                    border: '1px solid var(--color-border-lightest, #e5e7eb)',
+                    borderRadius: '8px',
+                    padding: '1rem',
+                    marginBottom: '1rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                    <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>
+                      Editing {SUPPORTED_LOCALES.find((l) => l.code === translationForm.locale)?.label || translationForm.locale.toUpperCase()} Translation
+                    </h4>
+                    {translations.some((t) => (t.locale || t.language) === translationForm.locale) && (
+                      <button
+                        type="button"
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--color-error, #ef4444)',
+                          fontSize: '0.8rem',
+                          cursor: 'pointer',
+                          padding: 0,
+                        }}
+                        onClick={() => handleDeleteTranslation(translationForm.locale)}
+                      >
+                        Delete translation
+                      </button>
+                    )}
+                  </div>
+
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                      Translated Title *
+                    </label>
+                    <input
+                      type="text"
+                      value={translationForm.title}
+                      onChange={(e) => setTranslationForm({ ...translationForm, title: e.target.value })}
+                      placeholder="Title in selected language"
+                      style={{
+                        width: '100%',
+                        padding: '0.6rem',
+                        border: '1px solid var(--color-border-lightest)',
+                        borderRadius: '6px',
+                        fontSize: '0.9rem',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                      Translated Description (optional)
+                    </label>
+                    <textarea
+                      value={translationForm.description}
+                      onChange={(e) => setTranslationForm({ ...translationForm, description: e.target.value })}
+                      placeholder="Description in selected language"
+                      rows={3}
+                      style={{
+                        width: '100%',
+                        padding: '0.6rem',
+                        border: '1px solid var(--color-border-lightest)',
+                        borderRadius: '6px',
+                        fontSize: '0.9rem',
+                        boxSizing: 'border-box',
+                        resize: 'vertical',
+                      }}
+                    />
+                  </div>
+
+                  {milestones && milestones.length > 0 && (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem' }}>
+                        Translated Milestone Titles (optional)
+                      </label>
+                      {milestones.map((m, idx) => (
+                        <div key={m.id || idx} style={{ marginBottom: '0.5rem' }}>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                            Milestone {idx + 1}: {m.title}
+                          </span>
+                          <input
+                            type="text"
+                            value={translationForm.milestone_titles[idx] || ''}
+                            onChange={(e) => {
+                              const newTitles = [...(translationForm.milestone_titles || [])];
+                              newTitles[idx] = e.target.value;
+                              setTranslationForm({ ...translationForm, milestone_titles: newTitles });
+                            }}
+                            placeholder={`Translated title for "${m.title}"`}
+                            style={{
+                              width: '100%',
+                              padding: '0.5rem',
+                              border: '1px solid var(--color-border-lightest)',
+                              borderRadius: '6px',
+                              fontSize: '0.85rem',
+                              boxSizing: 'border-box',
+                              marginTop: '0.2rem',
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.75rem' }}>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}
+                      onClick={() => setTranslationForm(null)}
+                      disabled={translationSaving}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}
+                      onClick={handleSaveTranslation}
+                      disabled={translationSaving}
+                    >
+                      {translationSaving ? 'Saving...' : 'Save Translation'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div

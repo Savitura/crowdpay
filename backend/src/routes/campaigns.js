@@ -624,6 +624,44 @@ router.get('/:id/milestones', asyncHandler(async (req, res) => {
      ORDER BY m.sort_order ASC, m.created_at ASC`,
     [req.params.id]
   );
+
+  const requestedLocale = (req.query.locale || req.query.lang || '').trim().toLowerCase();
+  if (requestedLocale && rows.length > 0) {
+    try {
+      const { rows: transRows } = await db.query(
+        `SELECT milestone_titles
+         FROM campaign_translations
+         WHERE campaign_id = $1 AND (locale = $2 OR language = $2)
+         LIMIT 1`,
+        [req.params.id, requestedLocale]
+      );
+      if (transRows.length > 0 && transRows[0].milestone_titles) {
+        let mt = transRows[0].milestone_titles;
+        if (typeof mt === 'string') {
+          try {
+            mt = JSON.parse(mt);
+          } catch {
+            mt = [];
+          }
+        }
+        rows.forEach((milestone, idx) => {
+          if (Array.isArray(mt)) {
+            if (mt[idx]) milestone.title = mt[idx];
+          } else if (typeof mt === 'object' && mt !== null) {
+            if (mt[milestone.id]) milestone.title = mt[milestone.id];
+            else if (mt[idx]) milestone.title = mt[idx];
+          }
+        });
+      }
+    } catch (err) {
+      logger.warn('Failed to load milestone translations', {
+        campaign_id: req.params.id,
+        locale: requestedLocale,
+        error: err.message,
+      });
+    }
+  }
+
   res.json(rows);
 }));
 
@@ -1182,6 +1220,38 @@ router.get('/:id', asyncHandler(async (req, res) => {
   if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
   
   const campaign = rows[0];
+  
+  // Handle locale translation if requested (#753)
+  const requestedLocale = (req.query.locale || req.query.lang || '').trim().toLowerCase();
+  if (requestedLocale) {
+    try {
+      const { rows: translationRows } = await db.query(
+        `SELECT title, description, milestone_titles, COALESCE(locale, language) AS locale
+         FROM campaign_translations
+         WHERE campaign_id = $1 AND (locale = $2 OR language = $2)
+         LIMIT 1`,
+        [req.params.id, requestedLocale]
+      );
+      if (translationRows.length > 0) {
+        const translation = translationRows[0];
+        campaign.title = translation.title || campaign.title;
+        if (translation.description !== null && translation.description !== undefined) {
+          campaign.description = translation.description;
+        }
+        if (translation.milestone_titles) {
+          campaign.milestone_titles = translation.milestone_titles;
+        }
+        campaign.locale = translation.locale;
+        campaign.is_translated = true;
+      }
+    } catch (err) {
+      logger.warn('Failed to load campaign translation', {
+        campaign_id: req.params.id,
+        locale: requestedLocale,
+        error: err.message,
+      });
+    }
+  }
   
   // Allow viewing suspended campaigns with a notice, but deleted campaigns are not accessible
   if (campaign.deleted_at) {
