@@ -3,7 +3,21 @@ const db = require('../config/database');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const asyncHandler = require('../utils/asyncHandler');
 
+let _refundService;
+function getRefundService() {
+  if (!_refundService) _refundService = require('../services/refundService');
+  return _refundService;
+}
+
 router.use(requireAuth, requireRole('admin'));
+
+router.get('/eligible', asyncHandler(async (req, res) => {
+  const { campaignId } = req.query;
+  if (!campaignId) return res.status(400).json({ error: 'campaignId is required' });
+  const items = await getRefundService().getEligibleContributions(campaignId);
+  res.json({ items });
+}));
+
 
 router.get('/', asyncHandler(async (req, res) => {
   const campaignId = req.query.campaignId || null;

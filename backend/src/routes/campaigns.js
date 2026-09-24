@@ -2735,4 +2735,54 @@ router.get('/:id/report/share/:token', asyncHandler(async (req, res) => {
 // from growing further; they are mounted under /api/campaigns/:id/treasury.
 router.use('/:id/treasury', require('./treasury'));
 
+let _refundService;
+function getRefundService() {
+  if (!_refundService) _refundService = require('../services/refundService');
+  return _refundService;
+}
+
+router.get('/:id/refunds/eligible', requireAuth, asyncHandler(async (req, res) => {
+  const campaign = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [req.params.id]);
+  if (campaign.rows.length === 0) return res.status(404).json({ error: 'Campaign not found' });
+  const isOwner = campaign.rows[0].creator_id === req.user.userId;
+  const isAdmin = req.user.role === 'admin';
+  if (!isOwner && !isAdmin) return res.status(403).json({ error: 'Forbidden' });
+  const items = await getRefundService().getEligibleContributions(req.params.id);
+  res.json({ items });
+}));
+
+router.get('/:id/refunds', requireAuth, asyncHandler(async (req, res) => {
+  const campaign = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [req.params.id]);
+  if (campaign.rows.length === 0) return res.status(404).json({ error: 'Campaign not found' });
+  const isOwner = campaign.rows[0].creator_id === req.user.userId;
+  const isAdmin = req.user.role === 'admin';
+  if (!isOwner && !isAdmin) return res.status(403).json({ error: 'Forbidden' });
+  const result = await getRefundService().getCampaignRefunds(req.params.id, req.query);
+  res.json(result);
+}));
+
+router.post('/:id/refunds', requireAuth, asyncHandler(async (req, res) => {
+  const campaign = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [req.params.id]);
+  if (campaign.rows.length === 0) return res.status(404).json({ error: 'Campaign not found' });
+  const isOwner = campaign.rows[0].creator_id === req.user.userId;
+  const isAdmin = req.user.role === 'admin';
+  if (!isOwner && !isAdmin) return res.status(403).json({ error: 'Forbidden' });
+
+  const { contributionId, amount, reason, isForceRefund, adminNote } = req.body;
+  if (!contributionId || !amount || amount <= 0) {
+    return res.status(400).json({ error: 'contributionId and positive amount are required' });
+  }
+
+  const refund = await getRefundService().processRefund({
+    campaignId: req.params.id,
+    contributionId,
+    amount: parseFloat(amount),
+    reason,
+    initiatorId: req.user.userId,
+    isForceRefund: isAdmin && !!isForceRefund,
+    adminNote: isAdmin ? adminNote : null,
+  });
+  res.status(201).json(refund);
+}));
+
 module.exports = router;
