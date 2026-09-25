@@ -230,6 +230,9 @@ function buildApp({ queryImpl, stellarImpl, stellarTxImpl, connectImpl, sorobanI
     '../services/kycService': {
       assertUserKycVerified: async () => {},
     },
+    '../services/contributorIdentityService': {
+      assertContributorMeetsRequirements: async () => {},
+    },
     '../services/emailService': {
       sendEmail: async () => {},
     },

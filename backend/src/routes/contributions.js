@@ -62,7 +62,16 @@ router.post(
   contributionValidation,
   validateRequest,
   asyncHandler(async (req, res) => {
-    const { campaign_id, amount, send_asset, tier_id, display_name, preview_token, selected_path_index } = req.body;
+    const {
+      campaign_id,
+      amount,
+      send_asset,
+      tier_id,
+      display_name,
+      preview_token,
+      selected_path_index,
+      idempotency_key,
+    } = req.body;
     const userId = req.user.userId;
 
     await assertUserKycVerified(userId);
@@ -96,6 +105,7 @@ router.post(
 
     const client = await db.connect();
     let result;
+    let previewPath = null;
     try {
       await client.query('BEGIN');
 
@@ -107,6 +117,20 @@ router.post(
         }
       }
 
+      // Cross-asset contributions may arrive with a single-use preview token from
+      // POST /api/campaigns/:id/contribution/preview. When present it is
+      // validated + redeemed and the exact approved route is used; callers
+      // without one fall back to quoting the best route inline (#688).
+      if (sendAsset !== campaign.asset_type && preview_token) {
+        previewPath = await pathPaymentPreviewService.consumeContributionPreview({
+          previewToken: preview_token,
+          campaignId: campaign_id,
+          sendAsset,
+          amount,
+          selectedPathIndex: typeof selected_path_index === 'number' ? selected_path_index : Number(selected_path_index),
+        });
+      }
+
       result = await contributionService.submitCustodialContribution({
         campaign,
         campaignId: campaign_id,
@@ -114,13 +138,14 @@ router.post(
         walletPublicKey,
         walletSecretEncrypted,
         amount,
-        sendAsset: send_asset || campaign.asset_type,
+        sendAsset,
         displayName: display_name,
         referralCode,
         referralLinkCode: referralLink?.code,
         referralLinkId: referralLink?.id,
         tierId: tier_id,
         idempotencyKey: idempotency_key,
+        previewPath,
         client,
       });
 
@@ -131,37 +156,6 @@ router.post(
     } finally {
       client.release();
     }
-
-    // Cross-asset contributions may arrive with a single-use preview token from
-    // POST /api/campaigns/:id/contribution/preview. When present it is
-    // validated + redeemed and the exact approved route is used; callers
-    // without one fall back to quoting the best route inline (#688).
-    let previewPath = null;
-    if (sendAsset !== campaign.asset_type && preview_token) {
-      previewPath = await pathPaymentPreviewService.consumeContributionPreview({
-        previewToken: preview_token,
-        campaignId: campaign_id,
-        sendAsset,
-        amount,
-        selectedPathIndex: typeof selected_path_index === 'number' ? selected_path_index : Number(selected_path_index),
-      });
-    }
-
-    const result = await contributionService.submitCustodialContribution({
-      campaign,
-      campaignId: campaign_id,
-      userId,
-      walletPublicKey,
-      walletSecretEncrypted,
-      amount,
-      sendAsset,
-      displayName: display_name,
-      referralCode,
-      referralLinkCode: referralLink?.code,
-      referralLinkId: referralLink?.id,
-      tierId: tier_id,
-      previewPath,
-    });
 
     return res.status(202).json({
       success: true,
