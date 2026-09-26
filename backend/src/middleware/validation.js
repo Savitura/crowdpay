@@ -2,6 +2,7 @@ const { body, param, query, validationResult } = require('express-validator');
 const { Keypair } = require('@stellar/stellar-sdk');
 const { getSupportedAssetCodes } = require('../services/stellarService');
 const { stripHtml, sanitizeRichText } = require('../lib/sanitize');
+const { isValidAmount, STROOP_DECIMALS } = require('../utils/stroops');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
 const VALID_CAMPAIGN_STATUSES = ['active', 'funded', 'closed', 'failed'];
@@ -120,7 +121,10 @@ const createCampaignValidation = [
     .exists()
     .withMessage('Target amount is required')
     .isFloat({ gt: 0 })
-    .withMessage('Target amount must be greater than zero'),
+    .withMessage('Target amount must be greater than zero')
+    .bail()
+    .custom((value) => isValidAmount(value))
+    .withMessage(`Target amount must have at most ${STROOP_DECIMALS} decimal places and fit a Stellar amount`),
   body('asset_type')
     .notEmpty()
     .withMessage('Asset type is required')
@@ -253,7 +257,10 @@ const contributionValidation = [
     .exists()
     .withMessage('amount is required')
     .isFloat({ gt: 0 })
-    .withMessage('amount must be greater than zero'),
+    .withMessage('amount must be greater than zero')
+    .bail()
+    .custom((value) => isValidAmount(value))
+    .withMessage(`amount must have at most ${STROOP_DECIMALS} decimal places and fit a Stellar amount`),
   body('send_asset')
     .notEmpty()
     .withMessage('send_asset is required')

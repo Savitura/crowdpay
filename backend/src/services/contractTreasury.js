@@ -5,6 +5,7 @@ const db = require('../config/database');
 const logger = require('../config/logger');
 const soroban = require('./sorobanService');
 const { withDecryptedWalletSecret } = require('./walletSecrets');
+const { toStroops: exactToStroops, fromStroops } = require('../utils/stroops');
 
 /**
  * Compiled campaign_treasury WASM. Built from contracts/soroban with
@@ -92,17 +93,9 @@ function validatePolicy(policy) {
   return normalized;
 }
 
-/** Stellar amounts carry 7 decimals; the contract works in stroops. */
+/** Stellar amounts carry 7 decimals; the contract works in stroops (#840: shared exact helper). */
 function toStroops(amount) {
-  const [whole, fraction = ''] = String(amount).split('.');
-  return BigInt(whole) * 10000000n + BigInt(fraction.padEnd(7, '0').slice(0, 7));
-}
-
-function fromStroops(stroops) {
-  const value = BigInt(stroops);
-  const whole = value / 10000000n;
-  const fraction = (value % 10000000n).toString().padStart(7, '0');
-  return `${whole}.${fraction}`;
+  return exactToStroops(amount, { allowZero: true, allowNegative: true });
 }
 
 function i128(amount) {

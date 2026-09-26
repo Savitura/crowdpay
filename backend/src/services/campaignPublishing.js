@@ -4,7 +4,7 @@ const { Keypair } = require('@stellar/stellar-sdk');
 const { createCampaignWallet } = require('./stellarService');
 const { deployCampaignContracts } = require('./sorobanService');
 const { watchCampaignWallet } = require('./ledgerMonitor');
-const { STELLAR_ASSET_DECIMALS_SCALE } = require('../config/constants');
+const { toStroops } = require('../utils/stroops');
 
 const MILESTONE_PERCENT_SCALE = 10000;
 
@@ -56,7 +56,7 @@ async function publishDraftCampaign(campaignId) {
     creatorPublicKey,
     platformPublicKey,
     campaignId: campaign.title + Date.now(),
-    targetAmount: Math.floor(parseFloat(campaign.target_amount) * STELLAR_ASSET_DECIMALS_SCALE),
+    targetAmount: toStroops(campaign.target_amount),
     deadlineUnix,
     assetContractAddress,
     platformFeeBps,

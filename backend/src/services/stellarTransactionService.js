@@ -36,11 +36,28 @@ async function insertContributionPending(client, row) {
   return { id: rows[0].id, reused: false };
 }
 
-async function markContributionSubmitted(client, id, txHash) {
+/**
+ * Mark a pending contribution submitted. `extra` optionally records the XDR
+ * that was actually submitted and merges metadata that only became known at
+ * submission time (e.g. a slippage re-quote).
+ */
+async function markContributionSubmitted(client, id, txHash, extra = {}) {
   const runner = client || db;
   await runner.query(
-    `UPDATE stellar_transactions SET status = 'submitted', tx_hash = $1, updated_at = NOW() WHERE id = $2`,
-    [txHash, id]
+    `UPDATE stellar_transactions
+     SET status = 'submitted', tx_hash = $1,
+         unsigned_xdr = COALESCE($3, unsigned_xdr),
+         signed_xdr = COALESCE($4, signed_xdr),
+         metadata = COALESCE(metadata, '{}'::jsonb) || COALESCE($5::jsonb, '{}'::jsonb),
+         updated_at = NOW()
+     WHERE id = $2`,
+    [
+      txHash,
+      id,
+      extra.unsignedXdr || null,
+      extra.signedXdr || null,
+      extra.metadata ? JSON.stringify(extra.metadata) : null,
+    ]
   );
 }
 
