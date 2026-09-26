@@ -19,7 +19,7 @@ router.post(
   validateRequest,
   asyncHandler(async (req, res) => {
       const contributionId = req.params.id;
-    const { message } = req.body;
+    const message = req.body.message;
 
       const { rows: contribRows } = await db.query(
         `SELECT ct.id, ct.campaign_id, ct.sender_public_key,
