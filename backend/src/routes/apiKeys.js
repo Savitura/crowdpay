@@ -74,6 +74,20 @@ router.delete('/:id', requireAuth, asyncHandler(async (req, res) => {
 router.post('/:id/rotate', requireAuth, asyncHandler(async (req, res) => {
   const rotated = await rotateApiKey(req.user.userId, req.params.id, req.body || {});
   if (!rotated) return res.status(404).json({ error: 'Key not found or cannot be rotated' });
+  
+  await logCredentialEvent({
+    actorId: req.user.userId,
+    action: 'api_key_rotate',
+    resourceType: 'api_key',
+    resourceId: req.params.id,
+    req,
+    metadata: { 
+      successor_id: rotated.id,
+      scopes: rotated.scopes,
+      expires_at: rotated.expires_at 
+    },
+  });
+
   res.status(201).json(rotated);
 }));
 

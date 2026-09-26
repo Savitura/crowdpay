@@ -751,18 +751,26 @@ export default function Developer() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead>
                 <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border-light)' }}>
-                  <th style={{ padding: '0.35rem' }}>Action</th>
+                  <th style={{ padding: '0.35rem' }}>Time</th>
+                  <th>Action</th>
                   <th>Resource</th>
-                  <th>Time</th>
+                  <th>Resource ID</th>
+                  <th>Metadata</th>
                 </tr>
               </thead>
               <tbody>
                 {credentialsActivity.map((event) => (
                   <tr key={event.id} style={{ borderBottom: '1px solid var(--color-border-lightest)' }}>
+                    <td style={{ padding: '0.35rem', whiteSpace: 'nowrap' }}>
+                      {new Date(event.createdAt).toLocaleString()}
+                    </td>
                     <td style={{ padding: '0.35rem' }}>{event.action}</td>
                     <td style={{ padding: '0.35rem' }}>{event.resourceType}</td>
-                    <td style={{ padding: '0.35rem' }}>
-                      {new Date(event.createdAt).toLocaleString()}
+                    <td style={{ padding: '0.35rem', fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                      {event.resourceId || '—'}
+                    </td>
+                    <td style={{ padding: '0.35rem', fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>
+                      {event.metadata ? JSON.stringify(event.metadata) : '—'}
                     </td>
                   </tr>
                 ))}
