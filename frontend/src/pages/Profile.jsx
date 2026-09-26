@@ -31,6 +31,9 @@ export default function Profile() {
   const [checklistDismissed, setChecklistDismissed] = useState(() =>
     isCreatorChecklistDismissed()
   );
+  const [dataExports, setDataExports] = useState([]);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportError, setExportError] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -43,6 +46,10 @@ export default function Profile() {
     api.getMyNftRewards()
       .then((data) => setNftRewards(Array.isArray(data?.rewards) ? data.rewards : []))
       .catch(() => setNftRewards([]));
+
+    api.getDataExports()
+      .then(setDataExports)
+      .catch(console.error);
   }, [user]);
 
   if (!ready) {
@@ -113,6 +120,28 @@ export default function Profile() {
       setTwoFaError(err.message);
     } finally {
       setTwoFaLoading(false);
+    }
+  };
+
+  const handleRequestExport = async () => {
+    setExportLoading(true);
+    setExportError('');
+    try {
+      const res = await api.requestDataExport();
+      setDataExports([res, ...dataExports]);
+    } catch (err) {
+      setExportError(err.message);
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const handleDownloadExport = async (exportId) => {
+    try {
+      const res = await api.getExportDownloadUrl(exportId);
+      window.location.href = res.downloadUrl;
+    } catch (err) {
+      setExportError(err.message);
     }
   };
 
@@ -416,6 +445,47 @@ export default function Profile() {
           )}
         </div>
       )}
+
+      <div className="campaign-card" style={{ marginTop: '1.25rem' }}>
+        <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.5rem' }}>
+          Account Data Export
+        </h2>
+        <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: '1rem' }}>
+          Request a copy of your personal data and account activity. This may take a few minutes for large accounts.
+        </p>
+
+        {exportError && <p className="alert alert--error" style={{ marginBottom: '1rem' }}>{exportError}</p>}
+
+        <button 
+          className="btn-primary" 
+          onClick={handleRequestExport} 
+          disabled={exportLoading || dataExports.some(e => e.status === 'pending')}
+          style={{ marginBottom: '1rem' }}
+        >
+          {exportLoading ? 'Requesting...' : 'Request Data Export'}
+        </button>
+
+        {dataExports.length > 0 && (
+          <div style={{ display: 'grid', gap: '0.75rem' }}>
+            {dataExports.map(exp => (
+              <div key={exp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--color-surface)', padding: '0.75rem', borderRadius: '8px' }}>
+                <div>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 600 }}>Exported {new Date(exp.created_at).toLocaleDateString()}</div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>Status: {exp.status}</div>
+                </div>
+                {exp.status === 'completed' && new Date(exp.expires_at) > new Date() && (
+                  <button className="btn-secondary" onClick={() => handleDownloadExport(exp.id)}>
+                    Download
+                  </button>
+                )}
+                {exp.status === 'completed' && new Date(exp.expires_at) <= new Date() && (
+                  <span style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>Expired</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
 <div className="campaign-card" style={{ marginTop: '2rem' }}>
         <div

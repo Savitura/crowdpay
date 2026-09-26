@@ -270,6 +270,51 @@ router.patch('/me', requireAuth, async (req, res) => {
   res.json(rows[0]);
 });
 
+const { generateUserExport, getExportDownloadUrl } = require('../services/exportService');
+
+router.post('/me/exports', requireAuth, asyncHandler(async (req, res) => {
+  const { rows: existing } = await db.query(
+    `SELECT id, status, created_at FROM user_data_exports WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [req.user.userId]
+  );
+
+  if (existing.length && existing[0].status === 'pending') {
+    return res.status(409).json({ error: 'An export is already pending' });
+  }
+
+  const { rows } = await db.query(
+    `INSERT INTO user_data_exports (user_id) VALUES ($1) RETURNING id, status, created_at`,
+    [req.user.userId]
+  );
+  const exportId = rows[0].id;
+
+  generateUserExport(req.user.userId, exportId);
+
+  res.status(202).json(rows[0]);
+}));
+
+router.get('/me/exports', requireAuth, asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT id, status, expires_at, created_at, updated_at FROM user_data_exports WHERE user_id = $1 ORDER BY created_at DESC`,
+    [req.user.userId]
+  );
+  res.json(rows);
+}));
+
+router.get('/me/exports/:id/download', requireAuth, asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT id, status, file_url, expires_at FROM user_data_exports WHERE id = $1 AND user_id = $2`,
+    [req.params.id, req.user.userId]
+  );
+
+  if (!rows.length) return res.status(404).json({ error: 'Export not found' });
+  if (rows[0].status !== 'completed') return res.status(400).json({ error: 'Export is not ready' });
+  if (new Date(rows[0].expires_at) < new Date()) return res.status(410).json({ error: 'Export has expired' });
+
+  const url = await getExportDownloadUrl(rows[0].file_url);
+  res.json({ downloadUrl: url });
+}));
+
 router.use('/api-keys', require('./apiKeys'));
 
 // ── Creator Public Profile (#588) ──────────────────────────────────────────────

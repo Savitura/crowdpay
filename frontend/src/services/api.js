@@ -324,6 +324,18 @@ export const api = {
     const res = await apiClient.post('/users/me/2fa/verify', { code });
     return res.data;
   },
+  async requestDataExport() {
+    const res = await apiClient.post('/users/me/exports');
+    return res.data;
+  },
+  async getDataExports() {
+    const res = await apiClient.get('/users/me/exports');
+    return res.data;
+  },
+  async getExportDownloadUrl(exportId) {
+    const res = await apiClient.get(`/users/me/exports/${exportId}/download`);
+    return res.data;
+  },
   async listCampaignPools(campaignId) {
     const res = await apiClient.get(`/campaign-pools/campaign/${campaignId}`);
     return res.data;
