@@ -47,19 +47,29 @@ module.exports = {
   /** Scale factor between a decimal asset amount and the contract's i128 unit (7 decimal places, matching Stellar's native precision). */
   STELLAR_ASSET_DECIMALS_SCALE: 10_000_000,
 
-  // --------------------------------------------------------------------------------------
-  // Milestone limits
-  // --------------------------------------------------------------------------------------
+// --------------------------------------------------------------------------------------
+// Milestone limits
+// --------------------------------------------------------------------------------------
 
-  /** Maximum number of milestones a campaign can define. */
-  MILESTONE_LIMIT: 5,
+/** Maximum number of milestones a campaign can define. */
+MILESTONE_LIMIT: 5,
 
-  /** Maximum file size (in bytes) for milestone evidence uploads (10 MB). */
-  MILESTONE_EVIDENCE_MAX_FILE_SIZE: 10 * 1024 * 1024,
+/** Maximum file size (in bytes) for milestone evidence uploads (10 MB). */
+MILESTONE_EVIDENCE_MAX_FILE_SIZE: 10 * 1024 * 1024,
 
-  // --------------------------------------------------------------------------------------
-  // Admin
-  // --------------------------------------------------------------------------------------
+// --------------------------------------------------------------------------------------
+// Upload limits
+// --------------------------------------------------------------------------------------
+
+/** Maximum file size (in bytes) for campaign cover image uploads (5 MB). */
+MAX_UPLOAD_SIZE: 5 * 1024 * 1024,
+
+/** Allowed MIME types for campaign cover image uploads. */
+ALLOWED_UPLOAD_MIME_TYPES: ['image/jpeg', 'image/png', 'image/webp'],
+
+// --------------------------------------------------------------------------------------
+// Admin
+// --------------------------------------------------------------------------------------
 
   /** Impersonation token TNL in seconds (15 minutes). */
   IMPERSONATION_TTL_SECONDS: 15 * 60,

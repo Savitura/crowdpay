@@ -19,158 +19,23 @@ const { TtlCache } = require('../utils/TtlCache');
 const analyticsCache = new TtlCache(5 * 60_000);
 
 /**
+ * Maximum number of daily buckets returned by getCampaignAnalytics.
+ * A campaign running longer than 365 days will have its time range clamped
+ * to the most recent 365 days. The response includes the effective range used.
+ */
+const MAX_DAILY_BUCKETS = 365;
+
+/**
  * Get analytics for a single campaign.
  *
  * Runs 4 parallel queries:
  *   1. Contribution totals and unique backer count
- *   2. Daily contribution time series (last 30 days)
+ *   2. Daily contribution time series (bounded by MAX_DAILY_BUCKETS days)
  *   3. Milestone release summary
  *   4. Asset / payment-type breakdown
  *
  * @param {string} campaignId
  * @returns {Promise<object>}
- */
-async function getCachedCampaignAnalytics(campaignId) {
-  const key = `analytics:${campaignId}`;
-  return analyticsCache.wrap(key, async () => {
-    const [totals, timeSeries, milestones, breakdown] = await Promise.all([
-      // 1. Totals + unique backers
-      db.query(
-        `SELECT
-           COUNT(*)::int                        AS total_contributions,
-           COUNT(DISTINCT sender_public_key)::int AS unique_backers,
-           COALESCE(SUM(amount), 0)             AS total_received,
-           COALESCE(AVG(amount), 0)             AS average_contribution,
-           COALESCE(MAX(amount), 0)             AS largest_contribution
-         FROM contributions
-         WHERE campaign_id = $1`,
-        [campaignId]
-      ),
-
-      // 2. Daily time series — last 30 days
-      db.query(
-        `SELECT
-           date_trunc('day', created_at)::date AS day,
-           COUNT(*)::int                        AS count,
-           COALESCE(SUM(amount), 0)             AS amount
-         FROM contributions
-         WHERE campaign_id = $1
-           AND created_at >= NOW() - INTERVAL '30 days'
-         GROUP BY 1
-         ORDER BY 1`,
-        [campaignId]
-      ),
-
-      // 3. Milestone release progress
-      db.query(
-        `SELECT
-           status,
-           COUNT(*)::int            AS count,
-           SUM(release_percentage)  AS total_release_pct
-         FROM milestones
-         WHERE campaign_id = $1
-         GROUP BY status`,
-        [campaignId]
-      ),
-
-      // 4. Payment type and asset breakdown
-      db.query(
-        `SELECT
-           asset,
-           payment_type,
-           COUNT(*)::int       AS count,
-           SUM(amount)         AS total
-         FROM contributions
-         WHERE campaign_id = $1
-         GROUP BY asset, payment_type
-         ORDER BY total DESC`,
-        [campaignId]
-      ),
-    ]);
-
-    return {
-      campaign_id: campaignId,
-      totals: totals.rows[0],
-      daily_series: timeSeries.rows,
-      milestones: milestones.rows,
-      payment_breakdown: breakdown.rows,
-      generated_at: new Date().toISOString(),
-    };
-  });
-}
-
-/**
- * Get platform-wide analytics summary.
- * Cached for 5 minutes — this is a heavy aggregation across all campaigns.
- *
- * @returns {Promise<object>}
- */
-async function getPlatformAnalytics() {
-  return analyticsCache.wrap('analytics:platform', async () => {
-    const [summary, topCampaigns, recentActivity, assetBreakdown] = await Promise.all([
-      // 1. Platform-wide totals
-      db.query(
-        `SELECT
-           COUNT(DISTINCT c.id)::int            AS total_campaigns,
-           COUNT(DISTINCT ctr.id)::int          AS total_contributions,
-           COUNT(DISTINCT ctr.sender_public_key)::int AS unique_backers,
-           COALESCE(SUM(ctr.amount), 0)         AS total_raised
-         FROM campaigns c
-         LEFT JOIN contributions ctr ON ctr.campaign_id = c.id
-         WHERE c.deleted_at IS NULL`
-      ),
-
-      // 2. Top 5 campaigns by raised_amount
-      db.query(
-        `SELECT id, title, raised_amount, target_amount, asset_type, status
-         FROM campaigns
-         WHERE deleted_at IS NULL
-         ORDER BY raised_amount DESC
-         LIMIT 5`
-      ),
-
-      // 3. Contributions in last 24h
-      db.query(
-        `SELECT
-           COUNT(*)::int        AS contributions_24h,
-           COALESCE(SUM(amount), 0) AS raised_24h
-         FROM contributions
-         WHERE created_at >= NOW() - INTERVAL '24 hours'`
-      ),
-
-      // 4. Asset breakdown across all campaigns
-      db.query(
-        `SELECT asset, COUNT(*)::int AS count, SUM(amount) AS total
-         FROM contributions
-         GROUP BY asset
-         ORDER BY total DESC`
-      ),
-    ]);
-
-    return {
-      summary: summary.rows[0],
-      top_campaigns: topCampaigns.rows,
-      recent_activity: recentActivity.rows[0],
-      asset_breakdown: assetBreakdown.rows,
-      generated_at: new Date().toISOString(),
-    };
-  });
-}
-
-/**
- * Invalidate cached analytics for a specific campaign.
- * Call after a contribution is recorded for that campaign.
- * @param {string} campaignId
- */
-function invalidateCampaignAnalytics(campaignId) {
-  analyticsCache.invalidate(`analytics:${campaignId}`);
-  analyticsCache.invalidate('analytics:platform');
-}
-
-
-/**
- * Daily contribution buckets for the full campaign duration.
- * Fills in zero-contribution days so charts render continuous lines.
  */
 async function getCampaignAnalytics(campaignId) {
   const { rows: [campaign] } = await db.query(
@@ -212,12 +77,19 @@ async function getCampaignAnalytics(campaignId) {
     ),
   ]);
 
-  // Fill zero-contribution days across the full campaign duration
+  // Fill zero-contribution days across the campaign duration, bounded by MAX_DAILY_BUCKETS
   const start = new Date(campaign.created_at);
   const end = campaign.deadline ? new Date(campaign.deadline) : new Date();
+  const totalDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+
+  // If the campaign spans more than MAX_DAILY_BUCKETS days, clamp to the most recent window
+  const effectiveStart = totalDays > MAX_DAILY_BUCKETS
+    ? new Date(end.getTime() - (MAX_DAILY_BUCKETS - 1) * 24 * 60 * 60 * 1000)
+    : start;
+
   const byDay = Object.fromEntries(dailyRows.rows.map(r => [r.day.toISOString().slice(0, 10), r]));
   const buckets = [];
-  for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+  for (let d = new Date(effectiveStart); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
     const key = d.toISOString().slice(0, 10);
     buckets.push(byDay[key] ?? { day: key, contribution_count: 0, total_amount: '0' });
   }
@@ -230,6 +102,12 @@ async function getCampaignAnalytics(campaignId) {
     },
     summary: summaryRows.rows[0],
     daily_buckets: buckets,
+    daily_buckets_meta: {
+      max_buckets: MAX_DAILY_BUCKETS,
+      range_clamped: totalDays > MAX_DAILY_BUCKETS,
+      effective_start: effectiveStart.toISOString().slice(0, 10),
+      effective_end: end.toISOString().slice(0, 10),
+    },
     top_currencies: assetRows.rows,
   };
 }
@@ -271,7 +149,7 @@ async function getCampaignContributors(campaignId) {
 }
 
 async function getCampaignBackers(campaignId) {
-  const [backerRows, topBackerRows] = await Promise.all([
+  const [backerRows, topBackerRows, senderStats] = await Promise.all([
     db.query(
       `SELECT DATE(created_at) AS day,
               COUNT(DISTINCT sender_public_key)::int AS new_backers
@@ -292,42 +170,36 @@ async function getCampaignBackers(campaignId) {
        LIMIT 10`,
       [campaignId]
     ),
+    // Compute sender stats once (total backers + repeat rate) to avoid duplicate subqueries
+    db.query(
+      `SELECT
+         COUNT(DISTINCT sender_public_key)::int AS total_backers,
+         CASE
+           WHEN COUNT(*) = 0 THEN 0
+           ELSE ROUND(
+             SUM(CASE WHEN times > 1 THEN 1 ELSE 0 END)::numeric / COUNT(*) * 100,
+             2
+           )
+         END AS repeat_rate
+       FROM (
+         SELECT sender_public_key, COUNT(*) AS times
+         FROM contributions
+         WHERE campaign_id = $1
+         GROUP BY sender_public_key
+       ) sub`,
+      [campaignId]
+    ),
   ]);
 
-  const totalBackers = await db.query(
-    `SELECT COUNT(DISTINCT sender_public_key)::int AS total_backers
-     FROM contributions
-     WHERE campaign_id = $1`,
-    [campaignId]
-  );
-
-  const repeatRate = await db.query(
-    `SELECT
-       CASE
-         WHEN COUNT(*) = 0 THEN 0
-         ELSE ROUND(
-           SUM(CASE WHEN times > 1 THEN 1 ELSE 0 END)::numeric / COUNT(*) * 100,
-           2
-         )
-       END AS repeat_rate
-     FROM (
-       SELECT sender_public_key, COUNT(*) AS times
-       FROM contributions
-       WHERE campaign_id = $1
-       GROUP BY sender_public_key
-     ) sub`,
-    [campaignId]
-  );
-
   return {
-    total_backers: totalBackers.rows[0]?.total_backers ?? 0,
+    total_backers: senderStats.rows[0]?.total_backers ?? 0,
     new_backers_by_day: backerRows.rows,
     top_backers: topBackerRows.rows.map((row) => ({
       sender_public_key: row.sender_public_key,
       contribution_count: row.contribution_count,
       total_amount: row.total_amount,
     })),
-    repeat_rate: Number(repeatRate.rows[0]?.repeat_rate ?? 0),
+    repeat_rate: Number(senderStats.rows[0]?.repeat_rate ?? 0),
   };
 }
 
@@ -439,11 +311,8 @@ async function getUserDashboardAnalytics(userId) {
 
 module.exports = {
   getCampaignAnalytics,
-  getPlatformAnalytics,
-  invalidateCampaignAnalytics,
-  // Exported for testing
-  _analyticsCache: analyticsCache,
   getCampaignContributors,
   getCampaignBackers,
   getUserDashboardAnalytics,
+  _analyticsCache: analyticsCache,
 };

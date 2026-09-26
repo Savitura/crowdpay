@@ -7,12 +7,34 @@ const CSRF_TOKEN_LENGTH = 32;
 const CSRF_COOKIE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
 
 // Paths that receive external callbacks and should be exempt from CSRF validation
-const CSRF_EXEMPT_PATHS = [
+// Using exact path matching (not prefixes) to prevent silent exemption of new sub-paths
+const CSRF_EXEMPT_PATHS = new Set([
   '/api/webhooks/kyc',
-  '/api/webhooks/incoming/',
-  '/api/anchor/callbacks/',
-  '/api/anchor/sep24/',
-];
+  '/api/webhooks/incoming',
+  '/api/anchor/callbacks',
+  '/api/anchor/sep24',
+]);
+
+/**
+ * Check if the request is authenticated via API key (not cookie-based session).
+ * API key requests don't use CSRF cookies, so CSRF validation doesn't apply.
+ * @param {object} req - Express request object
+ * @returns {boolean}
+ */
+function isApiKeyRequest(req) {
+  const authHeader = req.headers.authorization;
+  return Boolean(authHeader && authHeader.startsWith('Bearer cpk_'));
+}
+
+/**
+ * Check if the request path is explicitly exempt from CSRF validation.
+ * Uses exact matching to prevent silent exemption of new sub-paths.
+ * @param {string} requestPath - The request path
+ * @returns {boolean}
+ */
+function isExemptPath(requestPath) {
+  return CSRF_EXEMPT_PATHS.has(requestPath);
+}
 
 /**
  * Generate a new CSRF token.
@@ -50,10 +72,11 @@ function setCsrfCookie(res, token) {
  *    preflight checks.
  *
  * Exemptions:
- * - Webhook endpoints (authenticated by signature, not cookies)
+ * - Webhook endpoints (authenticated by signature, not cookies) - exact paths only
  * - Public auth endpoints (login, register) don't need CSRF since they don't
  *   rely on existing sessions
  * - GET/HEAD/OPTIONS are safe (idempotent)
+ * - API key requests (Bearer cpk_*) don't use cookies, so CSRF doesn't apply
  */
 function csrfProtection(req, res, next) {
   const method = req.method.toUpperCase();
@@ -71,8 +94,13 @@ function csrfProtection(req, res, next) {
     return next();
   }
 
-  // Exempt external webhook/callback endpoints from CSRF validation
-  if (CSRF_EXEMPT_PATHS.some((prefix) => requestPath.startsWith(prefix))) {
+  // Exempt exact paths from CSRF validation (external webhooks/callbacks)
+  if (isExemptPath(requestPath)) {
+    return next();
+  }
+
+  // API key requests don't use cookies, so CSRF validation doesn't apply
+  if (isApiKeyRequest(req)) {
     return next();
   }
 
@@ -80,13 +108,16 @@ function csrfProtection(req, res, next) {
   const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
   const headerToken = req.headers[CSRF_HEADER_NAME];
 
-  // If there's no cookie token, this is likely a fresh session or API key request.
-  // API key requests don't use cookies, so CSRF validation doesn't apply.
+  // If there's no cookie token, reject the request (unless it's an API key request, handled above)
   if (!cookieToken) {
-    const newToken = generateCsrfToken();
-    setCsrfCookie(res, newToken);
-    req.csrfToken = newToken;
-    return next();
+    logger.warn('CSRF validation failed: missing cookie token', {
+      method,
+      path: requestPath,
+      hasHeader: Boolean(headerToken),
+    });
+    return res.status(403).json({
+      error: 'CSRF validation failed. Please refresh the page and try again.',
+    });
   }
 
   // Validate: header token must match cookie token
@@ -127,4 +158,7 @@ module.exports = {
   setCsrfCookie,
   CSRF_COOKIE_NAME,
   CSRF_HEADER_NAME,
+  CSRF_EXEMPT_PATHS,
+  isExemptPath,
+  isApiKeyRequest,
 };
