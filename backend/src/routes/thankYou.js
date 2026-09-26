@@ -11,21 +11,15 @@ function frontendBaseUrl() {
   return (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
 }
 
-// POST /api/campaigns/:id/thank-you — bulk thank-you to all contributors (rate-limited: 1/24h)
 // POST /api/contributions/:id/thank-you — individual thank-you to a specific contributor
-// The handler checks req.baseUrl to determine which mount point was hit.
 router.post(
-  "/:id/thank-you",
+  "/contributions/:id/thank-you",
   requireAuth,
   thankYouValidation,
   validateRequest,
   asyncHandler(async (req, res) => {
-    const isContribution = req.baseUrl.includes("/contributions");
-    const { message } = req.body;
-
-    if (isContribution) {
-      // --- Individual thank-you by contribution ID ---
       const contributionId = req.params.id;
+    const { message } = req.body;
 
       const { rows: contribRows } = await db.query(
         `SELECT ct.id, ct.campaign_id, ct.sender_public_key,
@@ -93,7 +87,16 @@ router.post(
       });
 
       return res.status(201).json(thankYou);
-    }
+  }),
+);
+
+// POST /api/campaigns/:id/thank-you — bulk thank-you to all contributors (rate-limited: 1/24h)
+router.post(
+  "/campaigns/:id/thank-you",
+  requireAuth,
+  thankYouValidation,
+  validateRequest,
+  asyncHandler(async (req, res) => {
 
     // --- Bulk thank-you to all contributors by campaign ID (rate-limited) ---
     const campaignId = req.params.id;

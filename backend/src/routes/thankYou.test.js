@@ -58,16 +58,16 @@ function buildApp({ queryImpl, role = 'user', authed = true } = {}) {
 
   const app = express();
   app.use(express.json());
-  app.use('/api', router);
+  app.use('/api/thank-you', router);
 
   return { app, calls };
 }
 
-test('POST /api/campaigns/:id/thank-you returns 401 without auth', async () => {
+test('POST /api/thank-you/:id/thank-you returns 401 without auth', async () => {
   const { app } = buildApp({ authed: false });
 
   const res = await request(app)
-    .post(`/api/campaigns/${CAMPAIGN_ID}/thank-you`)
+    .post(`/api/thank-you/${CAMPAIGN_ID}/thank-you`)
     .send({ message: 'Thanks!' });
 
   assert.equal(res.status, 401);
@@ -77,10 +77,140 @@ test('POST /api/contributions/:id/thank-you returns 401 without auth', async () 
   const { app } = buildApp({ authed: false });
 
   const res = await request(app)
-    .post(`/api/contributions/contrib-1/thank-you`)
+    .post('/api/contributions/contrib-1/thank-you')
     .send({ message: 'Thanks!' });
 
   assert.equal(res.status, 401);
+});
+
+test('POST /api/contributions/:id/thank-you sends an individual thank-you to a contributor', async () => {
+  const calls = {};
+  const contributionRow = {
+    id: 'contrib-1',
+    campaign_id: CAMPAIGN_ID,
+    sender_public_key: 'GBPUBKEY',
+    creator_id: USER_ID,
+    campaign_title: 'Test Campaign',
+  };
+
+  const queryImpl = async (sql, params) => {
+    calls.lastQuery = { sql, params };
+    if (sql.includes('SELECT ct.id, ct.campaign_id')) {
+      return { rows: [contributionRow] };
+    }
+    if (sql.includes('INSERT INTO thank_you_messages')) {
+      calls.insertParams = params;
+      return {
+        rows: [
+          {
+            id: 'ty-ind-1',
+            campaign_id: CAMPAIGN_ID,
+            creator_id: USER_ID,
+            contribution_id: 'contrib-1',
+            message: params[3],
+            type: 'individual',
+            sent_at: '2024-01-01T00:00:00Z',
+          },
+        ],
+      };
+    }
+    return { rows: [] };
+  };
+
+  const { app } = buildApp({ queryImpl });
+
+  const res = await request(app)
+    .post('/api/contributions/contrib-1/thank-you')
+    .send({ message: 'Great job!' });
+
+  assert.equal(res.status, 201);
+  assert.equal(res.body.type, 'individual');
+  assert.equal(res.body.contribution_id, 'contrib-1');
+  assert.deepEqual(calls.insertParams, [CAMPAIGN_ID, USER_ID, 'contrib-1', 'Great job!']);
+});
+
+test('POST /api/contributions/:id/thank-you returns 404 for unknown contribution', async () => {
+  const queryImpl = async (sql) => {
+    if (sql.includes('SELECT ct.id, ct.campaign_id')) {
+      return { rows: [] };
+    }
+    return { rows: [] };
+  };
+
+  const { app } = buildApp({ queryImpl });
+
+  const res = await request(app)
+    .post('/api/contributions/contrib-999/thank-you')
+    .send({ message: 'Thanks!' });
+
+  assert.equal(res.status, 404);
+  assert.deepEqual(res.body, { error: 'Contribution not found' });
+});
+
+test('POST /api/contributions/:id/thank-you returns 403 for non-creator', async () => {
+  const contributionRow = {
+    id: 'contrib-1',
+    campaign_id: CAMPAIGN_ID,
+    sender_public_key: 'GBPUBKEY',
+    creator_id: 'other-creator',
+    campaign_title: 'Test Campaign',
+  };
+
+  const queryImpl = async (sql) => {
+    if (sql.includes('SELECT ct.id, ct.campaign_id')) {
+      return { rows: [contributionRow] };
+    }
+    return { rows: [] };
+  };
+
+  const { app } = buildApp({ queryImpl, role: 'user' });
+
+  const res = await request(app)
+    .post('/api/contributions/contrib-1/thank-you')
+    .send({ message: 'Thanks!' });
+
+  assert.equal(res.status, 403);
+  assert.deepEqual(res.body, { error: 'Only the campaign creator can send thank-you messages' });
+});
+
+test('POST /api/contributions/:id/thank-you allows admins for any contribution', async () => {
+  const contributionRow = {
+    id: 'contrib-1',
+    campaign_id: CAMPAIGN_ID,
+    sender_public_key: 'GBPUBKEY',
+    creator_id: 'other-creator',
+    campaign_title: 'Test Campaign',
+  };
+
+  const queryImpl = async (sql, params) => {
+    if (sql.includes('SELECT ct.id, ct.campaign_id')) {
+      return { rows: [contributionRow] };
+    }
+    if (sql.includes('INSERT INTO thank_you_messages')) {
+      return {
+        rows: [
+          {
+            id: 'ty-ind-1',
+            campaign_id: CAMPAIGN_ID,
+            creator_id: USER_ID,
+            contribution_id: 'contrib-1',
+            message: params[3],
+            type: 'individual',
+            sent_at: '2024-01-01T00:00:00Z',
+          },
+        ],
+      };
+    }
+    return { rows: [] };
+  };
+
+  const { app } = buildApp({ queryImpl, role: 'admin' });
+
+  const res = await request(app)
+    .post('/api/contributions/contrib-1/thank-you')
+    .send({ message: 'Admin thanks!' });
+
+  assert.equal(res.status, 201);
 });
 
 test('POST /api/thank-you/:id/thank-you sends a bulk thank-you to the campaign', async () => {
