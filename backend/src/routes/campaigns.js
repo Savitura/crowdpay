@@ -5,7 +5,7 @@ const { ipKeyGenerator } = rateLimit;
 const Sentry = require('@sentry/node');
 const db = require('../config/database');
 const logger = require('../config/logger');
-const { MILESTONE_LIMIT } = require('../config/constants');
+const { MILESTONE_LIMIT, MAX_UPLOAD_SIZE, ALLOWED_UPLOAD_MIME_TYPES } = require('../config/constants');
 const { requireAuth, requireRole, optionalAuth } = require('../middleware/auth');
 const {
   createCampaignWallet,
@@ -201,10 +201,9 @@ const requireCampaignMember = (...allowedRoles) => {
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_SIZE },
   fileFilter: (_req, file, cb) => {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!allowed.includes(file.mimetype)) {
+    if (!ALLOWED_UPLOAD_MIME_TYPES.includes(file.mimetype)) {
       return cb(new Error('Invalid image type. Only JPG, PNG and WEBP are allowed.'));
     }
     cb(null, true);

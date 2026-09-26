@@ -124,6 +124,20 @@
     "testnet_title": "Aperçu testnet",
     "testnet_body": "CrowdPay est en développement actif. Les transactions utilisent actuellement des actifs du testnet Stellar sans valeur réelle."
   },
+  "offline": {
+    "banner": "Vous êtes actuellement hors ligne. Certaines fonctionnalités peuvent être limitées."
+  },
+  "thankYou": {
+    "bulkTitle": "Envoyer un message groupé de remerciement",
+    "bulkDescription": "Envoyez un message à tous les contributeurs de cette campagne.",
+    "individualTitle": "Remercier le contributeur",
+    "individualDescription": "Envoyez un message de remerciement personnel à {{name}}.",
+    "placeholder": "Écrivez votre message de remerciement...",
+    "send": "Envoyer le remerciement",
+    "sendError": "Impossible d'envoyer le message de remerciement",
+    "charactersLeft": "Caractères restants : {{count}}",
+    "sent": "Remerciement envoyé avec succès !"
+  },
   "home": {
     "hero_title": "Explorer les campagnes",
     "hero_subtitle": "Trouvez une cause à soutenir, ou suivez celles que vous soutenez déjà.",
@@ -173,7 +187,10 @@
     },
     "sortNewest": "Plus récent",
     "sortTrending": "🔥 Tendance",
-    "sortMostFunded": "Le plus financé"
+    "sortMostFunded": "Le plus financé",
+    "loadError": "Impossible de charger les campagnes pour le moment. Veuillez vérifier votre connexion.",
+    "loadErrorTitle": "Erreur de chargement",
+    "tryAgain": "Réessayer"
   },
   "campaignCard": {
     "noImage": "Aucune image de campagne",
@@ -449,6 +466,8 @@
     "disputed": "Litige en cours"
   },
   "dashboard": {
+    "contributors": "Contributeurs",
+    "sendBulkThankYou": "Envoyer un message groupé de remerciement",
     "title": "Tableau de bord",
     "restoringSession": "Restauration de votre session...",
     "walletBalance": "Solde du portefeuille",
@@ -520,6 +539,7 @@
       "contributions": "Contributions",
       "uniqueContributors": "Contributeurs uniques",
       "avgContribution": "Contribution moyenne"
-    }
+    },
+    "sendThankYou": "Envoyer un remerciement"
   }
 }

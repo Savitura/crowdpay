@@ -9,6 +9,8 @@ function safeExportName(ext) {
   return `audit-logs-${now}.${ext}`;
 }
 
+const { queryAllForExport } = require('../services/exportService');
+
 function buildFilteredExport(builder) {
   return asyncHandler(async (req, res) => {
     const filters = {
