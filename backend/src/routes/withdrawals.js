@@ -151,7 +151,11 @@ router.post('/request', requireAuth, withdrawalValidation, validateRequest, asyn
    *       404:
    *         description: Campaign not found
    */
-  const { campaign_id, destination_key, amount } = req.body;
+  const { campaign_id, destination_key, amount, evidence } = req.body;
+
+  if (!evidence || !Array.isArray(evidence) || evidence.length === 0) {
+    return res.status(400).json({ error: 'Evidence array (receipts, invoices, or links) is required for withdrawals' });
+  }
 
   const { rows: campaigns } = await db.query(
     `SELECT id, creator_id, wallet_public_key, asset_type, status,
@@ -275,10 +279,10 @@ router.post('/request', requireAuth, withdrawalValidation, validateRequest, asyn
     await client.query('BEGIN');
     const { rows } = await client.query(
       `INSERT INTO withdrawal_requests
-         (campaign_id, requested_by, amount, destination_key, unsigned_xdr, creator_signed, platform_signed)
-       VALUES ($1, $2, $3, $4, $5, FALSE, FALSE)
+         (campaign_id, requested_by, amount, destination_key, unsigned_xdr, creator_signed, platform_signed, evidence)
+       VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, $6)
        RETURNING *`,
-      [campaign_id, req.user.userId, amount, destination_key, xdr]
+      [campaign_id, req.user.userId, amount, destination_key, xdr, JSON.stringify(evidence)]
     );
     await logWithdrawalEvent(client, {
       withdrawalRequestId: rows[0].id,
@@ -949,7 +953,7 @@ router.get('/campaign/:campaignId', requireAuth, asyncHandler(async (req, res) =
 
   const { rows } = await db.query(
     `SELECT id, campaign_id, requested_by, amount, destination_key, creator_signed,
-            platform_signed, status, denial_reason, tx_hash, created_at
+            platform_signed, status, denial_reason, tx_hash, created_at, evidence
      FROM withdrawal_requests
      WHERE campaign_id = $1
      ORDER BY created_at DESC

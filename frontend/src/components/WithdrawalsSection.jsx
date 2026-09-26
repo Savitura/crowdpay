@@ -26,7 +26,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
   const [error, setError] = useState('');
   const [cap, setCap] = useState({ can_approve_platform: false });
   const [rows, setRows] = useState([]);
-  const [form, setForm] = useState({ destination_key: '', amount: '' });
+  const [form, setForm] = useState({ destination_key: '', amount: '', evidence: '' });
   const [busyId, setBusyId] = useState(null);
   const [eventsById, setEventsById] = useState({});
   const [openAudit, setOpenAudit] = useState(null);
@@ -138,8 +138,9 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
         campaign_id: campaign.id,
         destination_key: form.destination_key.trim(),
         amount: form.amount.trim(),
+        evidence: form.evidence.trim() ? [form.evidence.trim()] : [],
       });
-      setForm({ destination_key: '', amount: '' });
+      setForm({ destination_key: '', amount: '', evidence: '' });
       await refresh();
       onReleased?.();
     } catch (err) {
@@ -472,6 +473,17 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
             required
             style={{ marginBottom: '0.75rem' }}
           />
+          <label className="label-strong" htmlFor="wd-evidence">
+            Evidence (receipt, invoice, or link)
+          </label>
+          <input
+            id="wd-evidence"
+            value={form.evidence}
+            onChange={(e) => setForm((f) => ({ ...f, evidence: e.target.value }))}
+            placeholder="https://..."
+            required
+            style={{ marginBottom: '0.75rem' }}
+          />
           {liveBalance !== null && Number(form.amount) > liveBalance && (
             <p
               className="alert alert--error"
@@ -522,6 +534,19 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                   </code>
                 </div>
                 <div style={styles.meta}>{statusLabel(row, expiredIds.has(row.id))}</div>
+                {row.evidence && row.evidence.length > 0 && (
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                    <strong>Evidence:</strong>{' '}
+                    {row.evidence.map((ev, i) => (
+                      <span key={i}>
+                        <a href={ev} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-accent)' }}>
+                          Link {i + 1}
+                        </a>
+                        {i < row.evidence.length - 1 ? ', ' : ''}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {expiredIds.has(row.id) && (
                   <div
                     className="alert alert--warning"

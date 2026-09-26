@@ -406,7 +406,7 @@ router.get('/withdrawals', asyncHandler(async (req, res) => {
 
   const dataResult = await db.query(
     `SELECT wr.id, c.title as campaign_title, u.name as creator_name, wr.amount, wr.asset_type, 
-            wr.status, wr.creator_signed, wr.platform_signed, wr.created_at
+            wr.status, wr.creator_signed, wr.platform_signed, wr.created_at, wr.evidence
      FROM withdrawal_requests wr
      JOIN campaigns c ON wr.campaign_id = c.id
      JOIN users u ON c.creator_id = u.id
