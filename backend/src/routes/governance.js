@@ -16,14 +16,15 @@ const {
   buildUnsignedVote,
   voteFromSignedXdr,
   executeProposal,
-  syncProposalData,
 } = require('../services/governance');
+const governanceSyncRuns = require('../services/governanceSyncRuns');
+const { parsePagination } = require('../utils/pagination');
 const { validateSubmittedContractCallXdr } = require('../services/sorobanService');
 const {
   getFeeRegistryInfo,
   invalidateFeeCache,
 } = require('../services/feeRegistry');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { withDecryptedWalletSecret } = require('../services/walletSecrets');
 const db = require('../config/database');
 const { body, param, validationResult } = require('express-validator');
@@ -401,19 +402,119 @@ router.get('/user/token-balance', requireAuth, attachWallet, async (req, res, ne
   }
 });
 
+function sendServiceError(res, next, error) {
+  if (error.statusCode) {
+    return res.status(error.statusCode).json({ error: error.message, ...(error.code ? { code: error.code } : {}) });
+  }
+  return next(error);
+}
+
 /**
  * POST /api/governance/sync
- * Sync proposal data from on-chain (admin/internal use)
+ * Run a governance synchronization now and record it in the run history (#839).
+ * Operators only. If a run is already in flight the trigger is deduplicated:
+ * no new run is created and 409 returns the in-flight run.
  */
-router.post('/sync', async (req, res, next) => {
+router.post('/sync', requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    await syncProposalData();
-    res.json({ success: true, message: 'Proposal data synced' });
+    const { run, deduplicated } = await governanceSyncRuns.runGovernanceSync({
+      trigger: 'manual',
+      requestedBy: req.user.userId,
+      req,
+    });
+    if (deduplicated) {
+      return res.status(409).json({
+        success: false,
+        code: 'SYNC_ALREADY_RUNNING',
+        error: 'A governance sync is already running',
+        run,
+      });
+    }
+    const success = run.status === 'succeeded';
+    return res.status(success ? 200 : 502).json({
+      success,
+      message: success ? 'Proposal data synced' : 'Proposal data sync failed',
+      run,
+    });
   } catch (error) {
     logger.error('Failed to sync proposal data', { error: error.message });
-    next(error);
+    return sendServiceError(res, next, error);
   }
 });
+
+/**
+ * GET /api/governance/sync/runs?status=&trigger=&limit=&offset=
+ * Paginated, filterable sync run history, newest first (operators only).
+ */
+router.get('/sync/runs', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const { limit, offset } = parsePagination(req.query, { limit: 20, max: 100 });
+    const page = await governanceSyncRuns.listRuns({
+      status: req.query.status,
+      trigger: req.query.trigger,
+      limit,
+      offset,
+    });
+    return res.json(page);
+  } catch (error) {
+    return sendServiceError(res, next, error);
+  }
+});
+
+/**
+ * GET /api/governance/sync/runs/:id
+ * One run's counts, timestamps, error summary and retries (operators only).
+ */
+router.get(
+  '/sync/runs/:id',
+  requireAuth,
+  requireAdmin,
+  param('id').isUUID().withMessage('Invalid run ID'),
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+      const run = await governanceSyncRuns.getRun(req.params.id);
+      if (!run) return res.status(404).json({ error: 'Sync run not found', code: 'SYNC_RUN_NOT_FOUND' });
+      return res.json(run);
+    } catch (error) {
+      return sendServiceError(res, next, error);
+    }
+  }
+);
+
+/**
+ * POST /api/governance/sync/runs/:id/retry
+ * Retry a failed run: starts a new run linked to it, never edits history.
+ * Idempotent — a failed run has at most one retry, and repeating the request
+ * returns that retry (200 with deduplicated: true).
+ */
+router.post(
+  '/sync/runs/:id/retry',
+  requireAuth,
+  requireAdmin,
+  param('id').isUUID().withMessage('Invalid run ID'),
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+      const { run, deduplicated } = await governanceSyncRuns.retryRun(req.params.id, {
+        requestedBy: req.user.userId,
+        req,
+      });
+      if (deduplicated && run && run.retry_of_run_id !== req.params.id) {
+        return res.status(409).json({
+          code: 'SYNC_ALREADY_RUNNING',
+          error: 'A governance sync is already running; retry once it finishes',
+          run,
+        });
+      }
+      return res.status(deduplicated ? 200 : 201).json({ run, deduplicated });
+    } catch (error) {
+      return sendServiceError(res, next, error);
+    }
+  }
+);
 
 /**
  * GET /api/governance/user/vote-weight

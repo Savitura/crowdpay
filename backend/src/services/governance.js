@@ -15,34 +15,44 @@ const MIN_TOKEN_BALANCE = 1000;
 const QUORUM_THRESHOLD = 1000; // 10% of total supply (assuming 10,000 total)
 
 /**
- * Get the current pending proposal from the contract.
+ * Read the current pending proposal from the contract. Throws on provider
+ * errors so callers that must distinguish "no proposal" from "provider down"
+ * (the sync run history, #839) can.
  * @returns {Promise<object|null>} Proposal data or null if no active proposal
  */
-async function getPendingProposal() {
+async function readPendingProposal() {
   if (!FEE_REGISTRY_CONTRACT_ID) {
     return null;
   }
 
+  const proposal = await invokeContractReadOnly({
+    contractId: FEE_REGISTRY_CONTRACT_ID,
+    method: 'get_pending_proposal',
+    args: [],
+  });
+
+  if (!proposal) {
+    return null;
+  }
+
+  return {
+    id: proposal.id,
+    proposed_fee_bps: proposal.proposed_fee_bps,
+    proposed_creator_share_bps: proposal.proposed_creator_share_bps,
+    votes_for: Number(proposal.votes_for),
+    votes_against: Number(proposal.votes_against),
+    deadline: Number(proposal.deadline),
+    status: mapProposalStatus(proposal.status),
+  };
+}
+
+/**
+ * Get the current pending proposal from the contract.
+ * @returns {Promise<object|null>} Proposal data or null if no active proposal
+ */
+async function getPendingProposal() {
   try {
-    const proposal = await invokeContractReadOnly({
-      contractId: FEE_REGISTRY_CONTRACT_ID,
-      method: 'get_pending_proposal',
-      args: [],
-    });
-
-    if (!proposal) {
-      return null;
-    }
-
-    return {
-      id: proposal.id,
-      proposed_fee_bps: proposal.proposed_fee_bps,
-      proposed_creator_share_bps: proposal.proposed_creator_share_bps,
-      votes_for: Number(proposal.votes_for),
-      votes_against: Number(proposal.votes_against),
-      deadline: Number(proposal.deadline),
-      status: mapProposalStatus(proposal.status),
-    };
+    return await readPendingProposal();
   } catch (error) {
     logger.error('Failed to get pending proposal', { error: error.message });
     return null;
@@ -684,37 +694,82 @@ async function executeProposal(proposalId, signerSecret) {
   }
 }
 
+function syncError(code, cause) {
+  const err = new Error(cause?.message || code);
+  err.code = code;
+  err.cause = cause;
+  return err;
+}
+
 /**
- * Sync proposal data from on-chain to database.
- * Called periodically to keep database in sync.
+ * One synchronization pass from the fee registry contract into
+ * governance_proposals_meta (#839). Idempotent: it only ever UPDATEs the
+ * existing proposal row by stellar_proposal_id and only when the on-chain
+ * values differ, so repeating a run (or a retry) never duplicates proposal
+ * state. Throws an error tagged PROVIDER_NOT_CONFIGURED, PROVIDER_ERROR or
+ * DATABASE_ERROR; resolves to the run counts on success.
+ */
+async function performProposalSync() {
+  if (!FEE_REGISTRY_CONTRACT_ID) {
+    throw syncError('PROVIDER_NOT_CONFIGURED', new Error('FEE_REGISTRY_CONTRACT_ID is not configured'));
+  }
+
+  let onChainProposal;
+  try {
+    onChainProposal = await readPendingProposal();
+  } catch (error) {
+    throw syncError('PROVIDER_ERROR', error);
+  }
+
+  if (!onChainProposal) {
+    return { proposalsSeen: 0, proposalsUpdated: 0, proposalsMissing: 0, providerCursor: null };
+  }
+
+  const providerCursor = `proposal:${onChainProposal.id}`;
+  try {
+    const { rows: updated } = await db.query(
+      `UPDATE governance_proposals_meta
+       SET votes_for = $1, votes_against = $2, status = $3
+       WHERE stellar_proposal_id = $4
+         AND (votes_for, votes_against, status) IS DISTINCT FROM ($1::bigint, $2::bigint, $3::text)
+       RETURNING id`,
+      [
+        onChainProposal.votes_for,
+        onChainProposal.votes_against,
+        onChainProposal.status,
+        onChainProposal.id,
+      ]
+    );
+    let proposalsMissing = 0;
+    if (!updated.length) {
+      const { rows: existing } = await db.query(
+        'SELECT 1 FROM governance_proposals_meta WHERE stellar_proposal_id = $1 LIMIT 1',
+        [onChainProposal.id]
+      );
+      if (!existing.length) proposalsMissing = 1;
+    }
+    logger.info('Proposal data synced from on-chain', { proposalId: onChainProposal.id });
+    return {
+      proposalsSeen: 1,
+      proposalsUpdated: updated.length,
+      proposalsMissing,
+      providerCursor,
+    };
+  } catch (error) {
+    throw syncError('DATABASE_ERROR', error);
+  }
+}
+
+/**
+ * Legacy fire-and-forget sync. Prefer governanceSyncRuns.runGovernanceSync,
+ * which records the run in the operator history (#839).
  */
 async function syncProposalData() {
   try {
-    const onChainProposal = await getPendingProposal();
-    
-    if (!onChainProposal) {
-      return;
-    }
-
-    const updateQuery = `
-      UPDATE governance_proposals_meta
-      SET 
-        votes_for = $1,
-        votes_against = $2,
-        status = $3
-      WHERE stellar_proposal_id = $4
-    `;
-
-    await db.query(updateQuery, [
-      onChainProposal.votes_for,
-      onChainProposal.votes_against,
-      onChainProposal.status,
-      onChainProposal.id,
-    ]);
-
-    logger.info('Proposal data synced from on-chain', { proposalId: onChainProposal.id });
+    return await performProposalSync();
   } catch (error) {
-    logger.error('Failed to sync proposal data', { error: error.message });
+    logger.error('Failed to sync proposal data', { error: error.message, code: error.code });
+    return null;
   }
 }
 
@@ -732,6 +787,7 @@ module.exports = {
   voteFromSignedXdr,
   executeProposal,
   syncProposalData,
+  performProposalSync,
   setVoteDelegation,
   revokeVoteDelegation,
   getDelegateForWallet,

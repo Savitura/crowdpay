@@ -311,3 +311,69 @@ test('executeProposal rejects a proposal that is not active (already executed)',
   });
   await assert.rejects(() => service.executeProposal('db-proposal-1', 'SECRET'), /not active/);
 });
+// --- performProposalSync (#839) ------------------------------------------------
+
+function buildSyncService({ readOnly, query }) {
+  return proxyquire('./governance', {
+    '../config/database': { query },
+    '../config/stellar': { server: {} },
+    './sorobanService': {
+      invokeContract: async () => 1,
+      invokeContractReadOnly: readOnly,
+      nativeToScVal: (v) => v,
+      scValToNative: (v) => v,
+    },
+    '../config/logger': silentLogger,
+  });
+}
+
+const ON_CHAIN = { id: 7, proposed_fee_bps: 200, proposed_creator_share_bps: 100, votes_for: 1500n, votes_against: 20n, deadline: 1790000000n, status: { tag: 'Active' } };
+
+test('performProposalSync updates only when on-chain values differ and reports counts', async () => {
+  const calls = [];
+  const service = buildSyncService({
+    readOnly: async () => ON_CHAIN,
+    query: async (text, params) => {
+      calls.push({ text, params });
+      if (/UPDATE governance_proposals_meta/.test(text)) return { rows: [{ id: 'p1' }] };
+      return { rows: [] };
+    },
+  });
+
+  const result = await service.performProposalSync();
+
+  assert.deepEqual(result, { proposalsSeen: 1, proposalsUpdated: 1, proposalsMissing: 0, providerCursor: 'proposal:7' });
+  assert.match(calls[0].text, /IS DISTINCT FROM/);
+  assert.deepEqual(calls[0].params, [1500, 20, 'active', 7]);
+  assert.ok(!calls.some((c) => /INSERT INTO governance_proposals_meta/.test(c.text)), 'sync never creates proposal rows');
+});
+
+test('performProposalSync is a no-op on repeat and flags an unknown proposal as missing', async () => {
+  const unchanged = buildSyncService({
+    readOnly: async () => ON_CHAIN,
+    query: async (text) => (/SELECT 1 FROM governance_proposals_meta/.test(text) ? { rows: [{ '?column?': 1 }] } : { rows: [] }),
+  });
+  assert.deepEqual(await unchanged.performProposalSync(), { proposalsSeen: 1, proposalsUpdated: 0, proposalsMissing: 0, providerCursor: 'proposal:7' });
+
+  const missing = buildSyncService({ readOnly: async () => ON_CHAIN, query: async () => ({ rows: [] }) });
+  assert.equal((await missing.performProposalSync()).proposalsMissing, 1);
+});
+
+test('performProposalSync reports an empty pass when there is no pending proposal', async () => {
+  const service = buildSyncService({ readOnly: async () => null, query: async () => { throw new Error('should not query'); } });
+  assert.deepEqual(await service.performProposalSync(), { proposalsSeen: 0, proposalsUpdated: 0, proposalsMissing: 0, providerCursor: null });
+});
+
+test('performProposalSync tags provider and database failures', async () => {
+  const provider = buildSyncService({ readOnly: async () => { throw new Error('rpc timeout'); }, query: async () => ({ rows: [] }) });
+  await assert.rejects(provider.performProposalSync(), (err) => err.code === 'PROVIDER_ERROR' && /rpc timeout/.test(err.message));
+
+  const database = buildSyncService({ readOnly: async () => ON_CHAIN, query: async () => { throw new Error('ECONNREFUSED'); } });
+  await assert.rejects(database.performProposalSync(), (err) => err.code === 'DATABASE_ERROR');
+});
+
+test('the legacy syncProposalData and getPendingProposal still swallow provider errors', async () => {
+  const service = buildSyncService({ readOnly: async () => { throw new Error('rpc timeout'); }, query: async () => ({ rows: [] }) });
+  assert.equal(await service.syncProposalData(), null);
+  assert.equal(await service.getPendingProposal(), null);
+});
