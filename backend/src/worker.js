@@ -15,6 +15,7 @@ const { reconcileCampaignBalances } = require('./services/reconciliation');
 const { publishDraftCampaign } = require('./services/campaignPublishing');
 const { retryFailedContractDeployments } = require('./services/contractDeploymentRetryService');
 const { sendWeeklyContributorDigests } = require('./services/weeklyDigestService');
+const { sendDeadlineReminders } = require('./services/deadlineReminderService');
 
 let intervals = [];
 let isShuttingDown = false;
@@ -110,6 +111,9 @@ async function startBackgroundWorkers() {
   
   // Weekly digests: 1 hour (evaluates if digest is needed internally)
   startInterval('weekly-digest-cron', sendWeeklyContributorDigests, 60 * 60 * 1000, 'weekly-digest-cron');
+
+  // Deadline reminders: 1 hour
+  startInterval('deadline-reminder-cron', sendDeadlineReminders, 60 * 60 * 1000, 'deadline-reminder-cron');
 }
 
 async function stopBackgroundWorkers() {

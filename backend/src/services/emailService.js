@@ -25,6 +25,7 @@ const walletFundingFailedEmail = require("../emails/walletFundingFailed");
 const campaignCommentEmail = require("../emails/campaignComment");
 const fundsReleasedEmail = require("../emails/fundsReleased");
 const recurringContributionNoticeEmail = require("../emails/recurringContributionNotice");
+const campaignDeadlineReminderEmail = require("../emails/campaignDeadlineReminder");
 
 let transporter;
 
@@ -409,6 +410,14 @@ const { subject, text, html } = campaignFraudFlaggedEmail.build({ campaignId, ..
   await sendIdempotent({ dedupeKey: `campaign_fraud_flagged:${campaignId}:${to}`, to, subject, text, html });
 }
 
+async function sendCampaignDeadlineReminderEmail({ to, campaignId, hoursLeft, ...params }) {
+  if (!to) return;
+  if (await isUnsubscribed(to, 'campaign_update')) return;
+  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'campaign_update' });
+  const { subject, text, html } = campaignDeadlineReminderEmail.build({ hoursLeft, ...params, unsubscribeUrl });
+  await sendIdempotent({ dedupeKey: `campaign_deadline_reminder:${campaignId}:${hoursLeft}:${to}`, to, subject, text, html });
+}
+
 async function sendWalletFundingFailedEmail({ to, ...params }) {
   if (!to) return;
     if (await isUnsubscribed(to, 'campaign_update')) return;
@@ -469,6 +478,7 @@ module.exports = {
   isThankYouUnsubscribed,
   sendThankYouEmail,
   sendCampaignFraudFlaggedEmail,
+  sendCampaignDeadlineReminderEmail,
   sendCampaignCommentEmail,
   sendCommentReplyEmail,
 };

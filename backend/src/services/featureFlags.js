@@ -111,6 +111,14 @@ const FLAGS = {
     allowedRoles: null,
     allowedUserIds: null,
   },
+  'deadline-reminder-cron': {
+    description: 'Enable the cron that sends 48h and 12h deadline reminders',
+    envVar: 'ENABLE_DEADLINE_REMINDER_CRON',
+    defaultValue: true,
+    rolloutPct: null,
+    allowedRoles: null,
+    allowedUserIds: null,
+  },
   'notification-quiet-hours-cron': {
     description: 'Enable the hourly cron that flushes quiet-hours notification digests',
     envVar: 'ENABLE_NOTIFICATION_QUIET_HOURS_CRON',
