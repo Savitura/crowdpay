@@ -6,7 +6,7 @@ const { contributionRateLimiter } = require('../middleware/contributionRateLimit
 const contributionService = require('../services/contributionService');
 const stellarService = require('../services/stellarService');
 const embedTokenService = require('../services/embedTokenService');
-const embedTokenJwtService = require('../services/embedTokenJwtService');
+const { verifyEmbedToken } = require('../services/embedTokenJwtService');
 const pathPaymentPreviewService = require('../services/pathPaymentPreview');
 const contributionDiagnostics = require('../services/contributionDiagnostics');
 const { resolveReferralLink } = require('../services/referral');
@@ -198,23 +198,21 @@ router.post(
     if (!embed_token) {
       return res.status(401).json({ error: 'Embed token required' });
     }
-    // Validate JWT signature/payload
-    const tokenPayload = embedTokenJwtService.verifyEmbedToken(embed_token);
-    if (!tokenPayload) {
+    /*
+     * Distinguish JWT-only format/expiry verification (embedTokenJwtService) 
+     * from DB-backed revocation/existence checks (embedTokenService).
+     * First verify token format and signature/expiry via JWT service.
+     */
+    const jwtPayload = verifyEmbedToken(embed_token);
+    if (!jwtPayload || jwtPayload.sub !== campaign_id) {
       return res.status(401).json({ error: 'Invalid or expired embed token' });
     }
-    if (tokenPayload.sub && String(tokenPayload.sub) !== String(campaign_id)) {
-      return res.status(403).json({ error: 'Embed token does not match campaign' });
-    }
-    // If the token uses database-backed prefix/revocation tracking (e.g. raw token or token prefix lookup), validate via embedTokenService as well
-    if (embed_token.startsWith('cped_')) {
-      const activeToken = await embedTokenService.validateEmbedToken(embed_token);
-      if (!activeToken) {
-        return res.status(401).json({ error: 'Invalid or revoked embed token' });
-      }
-      if (activeToken.campaignId && String(activeToken.campaignId) !== String(campaign_id)) {
-        return res.status(403).json({ error: 'Embed token does not match campaign' });
-      }
+    /*
+     * Now perform DB-backed revocation and existence validation via embedTokenService.
+     */
+    const tokenPayload = await embedTokenService.validateEmbedToken(embed_token);
+    if (!tokenPayload) {
+      return res.status(403).json({ error: 'Embed token has been revoked or is invalid' });
     }
 
     const { rows: campaignRows } = await db.query(

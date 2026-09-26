@@ -1259,6 +1259,63 @@ test('GET /api/contributions/finalization/:txHash returns finalized when indexed
   assert.equal(response.body.contribution.id, 'contrib-1');
 });
 
+test('POST /api/contributions/embed validates success path, expired, revoked, and tampered tokens', async () => {
+  const app = buildApp({
+    queryImpl: async (text) => {
+      if (text.includes('FROM campaigns')) {
+        return {
+          rows: [{ id: 'campaign-1', status: 'active', asset_type: 'XLM', wallet_public_key: VALID_G }],
+        };
+      }
+      if (text.includes('FROM users')) {
+        return {
+          rows: [{ wallet_secret_encrypted: 'SSECRET', wallet_public_key: 'GSENDER' }],
+        };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const embedTokenJwtService = require('../services/embedTokenJwtService');
+  const validToken = embedTokenJwtService.generateEmbedToken({ sub: 'campaign-1', user_id: 'user-1' });
+
+  // Stub embedTokenService.validateEmbedToken for testing different token states
+  const originalValidate = embedTokenService.validateEmbedToken;
+  embedTokenService.validateEmbedToken = async (token) => {
+    if (token === validToken) {
+      return { id: 'token-1', user_id: 'user-1', campaign_id: 'campaign-1' };
+    }
+    if (token === 'revoked-token') {
+      return null;
+    }
+    return null;
+  };
+
+  try {
+    // 1. Success path
+    const resSuccess = await request(app)
+      .post('/api/contributions/embed')
+      .send({ campaign_id: 'campaign-1', amount: '5.0000000', embed_token: validToken });
+    assert.equal(resSuccess.status, 202);
+    assert.equal(resSuccess.body.success, true);
+
+    // 2. Tampered / invalid JWT path
+    const resTampered = await request(app)
+      .post('/api/contributions/embed')
+      .send({ campaign_id: 'campaign-1', amount: '5.0000000', embed_token: 'invalid.jwt.token' });
+    assert.equal(resTampered.status, 401);
+
+    // 3. Revoked token path
+    const revokedJwt = embedTokenJwtService.generateEmbedToken({ sub: 'campaign-1', user_id: 'user-1' });
+    const resRevoked = await request(app)
+      .post('/api/contributions/embed')
+      .send({ campaign_id: 'campaign-1', amount: '5.0000000', embed_token: revokedJwt });
+    assert.equal(resRevoked.status, 403);
+  } finally {
+    embedTokenService.validateEmbedToken = originalValidate;
+  }
+});
+
 test('POST /api/contributions includes platform_fee_amount in response and metadata', async () => {
   let capturedMetadata = null;
   const app = buildApp({
