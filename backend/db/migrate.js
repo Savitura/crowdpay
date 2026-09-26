@@ -63,14 +63,11 @@ async function runUp() {
     let count = 0;
     for (const file of listUpMigrationFilenames()) {
       if (appliedMap.has(file)) {
-        /* eslint-disable no-console */
-        console.log(`[migrate] Already applied: ${file}`);
         continue;
       }
       const sql = readUpSql(file);
       const hash = fileHashFor(file);
       try {
-        console.log(`[migrate] Applying: ${file}`);
         await client.query('BEGIN');
         await client.query(sql);
         await client.query(
@@ -82,13 +79,6 @@ async function runUp() {
       } catch (err) {
         await client.query('ROLLBACK').catch(() => {});
         if (BOOTSTRAP_SCHEMA && err.code && ALREADY_CREATED_CODES.has(err.code)) {
-          // schema.sql already provides the canonical version of this object.
-          // Record the migration as applied so later incremental migrations
-          // (which assume it ran) proceed normally (#800).
-          console.log(
-            `[migrate] Skipping '${file}': objects already present via schema.sql ` +
-              `(${err.code}: ${err.message})`
-          );
           await client.query('BEGIN');
           await client.query(
             'INSERT INTO schema_migrations (filename, file_hash) VALUES ($1, $2)',
@@ -102,11 +92,8 @@ async function runUp() {
       }
     }
 
-    console.log(`[migrate] Done. ${count} migration(s) applied.`);
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    console.error('[migrate] Failed:', err.message);
-    /* eslint-enable no-console */
     process.exitCode = 1;
   } finally {
     client.release();
