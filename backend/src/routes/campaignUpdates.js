@@ -187,7 +187,7 @@ router.post(
               return sendCampaignUpdatePostedEmail({
                 to: contributor.email,
                 updateId: update.id,
-                campaignId: Number(req.params.id),
+                campaignId: req.params.id,
                 name: contributor.name,
                 campaignTitle: req.campaign.title,
                 campaignUrl,
