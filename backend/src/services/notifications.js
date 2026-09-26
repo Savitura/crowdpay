@@ -147,7 +147,11 @@ async function createNotificationsBulk(userIds, message, options = {}) {
 
 async function flushQuietHours(options = {}) {
   const nowHour = options.nowHour !== undefined ? options.nowHour : new Date().getHours();
-  const { rows } = await db.query(
+  const client = await db.connect();
+  let rows = [];
+  try {
+    await client.query('BEGIN');
+    const res = await client.query(
     `SELECT q.id, q.user_id, q.channel, q.type, q.title, q.body, q.link,
             s.push_token, s.slack_webhook_url, s.discord_webhook_url, s.sms_phone_number,
             s.quiet_hours_start, s.quiet_hours_end,
@@ -156,8 +160,21 @@ async function flushQuietHours(options = {}) {
      JOIN notification_channel_settings s ON s.user_id = q.user_id
      WHERE q.flushed_at IS NULL
      ORDER BY q.created_at ASC
-     LIMIT 200`
+       LIMIT 200
+       FOR UPDATE SKIP LOCKED`
   );
+    rows = res.rows;
+    if (rows.length > 0) {
+      const rowIds = rows.map((r) => r.id);
+      await client.query('UPDATE notification_queue SET flushed_at = NOW() WHERE id = ANY($1::uuid[])', [rowIds]);
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    client.release();
+    throw err;
+  }
+  client.release();
 
   // Group deliverable rows by (user_id, channel) so we can batch them into a
   // single digest message per user/channel pair.
@@ -215,13 +232,6 @@ async function flushQuietHours(options = {}) {
       });
     }
 
-    for (const item of group.items) {
-      allFlushedIds.push(item.id);
-    }
-  }
-
-  if (allFlushedIds.length > 0) {
-    await db.query('UPDATE notification_queue SET flushed_at = NOW() WHERE id = ANY($1)', [allFlushedIds]);
   }
 
   return deliveredCount;

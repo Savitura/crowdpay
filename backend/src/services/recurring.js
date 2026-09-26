@@ -819,7 +819,11 @@ async function closeIneligibleInstallments({ balanceId = null } = {}) {
 async function processDueSubscriptionBalances() {
   const closedRows = await closeIneligibleInstallments();
 
-  const { rows: due } = await db.query(
+  const client = await db.connect();
+  let due = [];
+  try {
+    await client.query('BEGIN');
+    const res = await client.query(
     `SELECT sb.id, sb.subscription_id, sb.stellar_balance_id, sb.amount, sb.scheduled_date,
             s.asset, s.campaign_id, c.wallet_public_key AS campaign_public_key,
             u.wallet_public_key AS contributor_public_key
@@ -831,8 +835,25 @@ async function processDueSubscriptionBalances() {
        AND sb.scheduled_date <= NOW()
        AND ${CAMPAIGN_ACCEPTS_INSTALLMENT_SQL}
      ORDER BY sb.scheduled_date
-     LIMIT 200`
+       LIMIT 200
+       FOR UPDATE OF sb SKIP LOCKED`
   );
+    due = res.rows;
+    if (due.length > 0) {
+      const dueIds = due.map((r) => r.id);
+      await client.query(
+        `UPDATE subscription_balances SET status = 'processing' WHERE id = ANY($1::uuid[])`,
+        [dueIds]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+    throw err;
+  } finally {
+    client.release();
+  }
 
   let claimed = 0;
   let reclaimed = 0;
@@ -897,7 +918,7 @@ async function installmentStillClaimable(balanceId) {
      FROM subscription_balances sb
      JOIN subscriptions s ON s.id = sb.subscription_id
      JOIN campaigns c ON c.id = s.campaign_id
-     WHERE sb.id = $1 AND sb.status = 'pending' AND ${CAMPAIGN_ACCEPTS_INSTALLMENT_SQL}`,
+     WHERE sb.id = $1 AND sb.status IN ('pending', 'processing') AND ${CAMPAIGN_ACCEPTS_INSTALLMENT_SQL}`,
     [balanceId]
   );
   return rows.length > 0;

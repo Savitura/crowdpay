@@ -225,3 +225,30 @@ test('flushQuietHours skips users still inside their quiet window', async () => 
   assert.equal(flushed, 0);
   assert.equal(state.delivered.length, 0);
 });
+
+test('flushQuietHours handles concurrent flushes without double-sending or losing rows', async () => {
+  const { service, state } = buildService();
+  state.pendingRows = [
+    {
+      id: 'q1', user_id: 'user-1', channel: 'slack', type: 'campaign_update',
+      title: 'Concurrent Row',
+      body: null,
+      link: null,
+      slack_webhook_url: 'https://slack.test/hook',
+      quiet_hours_start: 22,
+      quiet_hours_end: 7,
+    },
+  ];
+
+  const [res1, res2] = await Promise.all([
+    service.flushQuietHours({ nowHour: 9 }),
+    service.flushQuietHours({ nowHour: 9 }),
+  ]);
+
+  // Exactly one worker claims the rows due to SKIP LOCKED; the second gets 0 rows.
+  const totalFlushed = res1 + res2;
+  assert.equal(totalFlushed, 1);
+  assert.equal(state.delivered.length, 1);
+  assert.equal(state.flushed.length, 1);
+  assert.deepEqual(state.flushed[0], ['q1']);
+});
