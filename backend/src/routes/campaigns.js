@@ -2241,7 +2241,29 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
     RETURNING *
   `;
 
-  const { rows: updatedRows } = await db.query(query, values);
+  let updatedRows = [];
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // Save previous state to revisions
+    await client.query(
+      `INSERT INTO campaign_revisions (campaign_id, title, description, target_amount)
+       VALUES ($1, $2, $3, $4)`,
+      [campaign.id, campaign.title, campaign.description, campaign.target_amount]
+    );
+
+    const result = await client.query(query, values);
+    updatedRows = result.rows;
+    
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+
   if (!updatedRows.length) {
     const { rows: checkRows } = await db.query(
       'SELECT status FROM campaigns WHERE id = $1',

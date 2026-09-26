@@ -264,6 +264,24 @@ router.delete('/campaigns/:id', asyncHandler(async (req, res) => {
 
 /**
  * @openapi
+ * /api/admin/campaigns/{id}/revisions:
+ *   get:
+ *     summary: List revision history for a campaign
+ */
+router.get('/campaigns/:id/revisions', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { rows } = await db.query(
+    `SELECT id, title, description, target_amount, created_at 
+     FROM campaign_revisions 
+     WHERE campaign_id = $1 
+     ORDER BY created_at DESC`,
+    [id]
+  );
+  res.json(rows);
+}));
+
+/**
+ * @openapi
  * /api/admin/users/{id}/ban:
  *   patch:
  *     summary: Ban a user
