@@ -20,6 +20,46 @@ function cleanText(value = "") {
     .trim();
 }
 
+function validateAttachments(attachments) {
+  if (!attachments) return '[]';
+  if (!Array.isArray(attachments)) {
+    const err = new Error("Attachments must be an array");
+    err.statusCode = 422;
+    throw err;
+  }
+  if (attachments.length > 5) {
+    const err = new Error("Maximum 5 attachments allowed per update");
+    err.statusCode = 422;
+    throw err;
+  }
+  const validTypes = ['image', 'video', 'document'];
+  for (const att of attachments) {
+    if (!att.url || typeof att.url !== 'string') {
+      const err = new Error("Attachment must include url");
+      err.statusCode = 422;
+      throw err;
+    }
+    if (!validTypes.includes(att.type)) {
+      const err = new Error("Attachment type must be image, video, or document");
+      err.statusCode = 422;
+      throw err;
+    }
+    if (typeof att.size !== 'number') {
+      const err = new Error("Attachment must include numerical size");
+      err.statusCode = 422;
+      throw err;
+    }
+    if (['image', 'video'].includes(att.type)) {
+      if (!att.alt_text || typeof att.alt_text !== 'string' || att.alt_text.trim() === '') {
+        const err = new Error("Image and video attachments must include alt_text for accessibility");
+        err.statusCode = 422;
+        throw err;
+      }
+    }
+  }
+  return JSON.stringify(attachments);
+}
+
 async function requireCampaignCreator(req, res, next) {
   const campaignId = req.params.id;
 
@@ -52,6 +92,7 @@ router.get(
             cu.author_id,
             cu.title,
             cu.body,
+            cu.attachments,
             cu.created_at,
             cu.updated_at,
             u.name AS author_name
@@ -74,6 +115,13 @@ router.post(
   asyncHandler(async (req, res) => {
     const title = cleanText(req.body.title);
     const body = cleanText(req.body.body);
+    let attachmentsJson = '[]';
+
+    try {
+      attachmentsJson = validateAttachments(req.body.attachments);
+    } catch (err) {
+      return res.status(err.statusCode || 422).json({ error: err.message });
+    }
 
     if (!title) return res.status(422).json({ error: "Title is required" });
     if (!body) return res.status(422).json({ error: "Body is required" });
@@ -84,10 +132,10 @@ router.post(
     }
 
     const { rows } = await db.query(
-      `INSERT INTO campaign_updates (campaign_id, author_id, title, body)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, campaign_id, author_id, title, body, created_at, updated_at`,
-      [req.params.id, req.user.userId, title, body],
+      `INSERT INTO campaign_updates (campaign_id, author_id, title, body, attachments)
+       VALUES ($1, $2, $3, $4, $5::jsonb)
+       RETURNING id, campaign_id, author_id, title, body, attachments, created_at, updated_at`,
+      [req.params.id, req.user.userId, title, body, attachmentsJson],
     );
     const update = rows[0];
 
@@ -165,6 +213,13 @@ router.patch(
   asyncHandler(async (req, res) => {
     const title = cleanText(req.body.title);
     const body = cleanText(req.body.body);
+    let attachmentsJson;
+
+    try {
+      attachmentsJson = validateAttachments(req.body.attachments);
+    } catch (err) {
+      return res.status(err.statusCode || 422).json({ error: err.message });
+    }
 
     if (!title) return res.status(422).json({ error: "Title is required" });
     if (!body) return res.status(422).json({ error: "Body is required" });
@@ -178,13 +233,14 @@ router.patch(
       `UPDATE campaign_updates
        SET title = $1,
            body = $2,
+           attachments = $3::jsonb,
            updated_at = NOW()
-       WHERE id = $3
-         AND campaign_id = $4
-         AND author_id = $5
+       WHERE id = $4
+         AND campaign_id = $5
+         AND author_id = $6
          AND created_at >= NOW() - INTERVAL '24 hours'
-       RETURNING id, campaign_id, author_id, title, body, created_at, updated_at`,
-      [title, body, req.params.updateId, req.params.id, req.user.userId],
+       RETURNING id, campaign_id, author_id, title, body, attachments, created_at, updated_at`,
+      [title, body, attachmentsJson, req.params.updateId, req.params.id, req.user.userId],
     );
 
     if (!rows.length) {
