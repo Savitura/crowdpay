@@ -256,6 +256,52 @@ router.get('/me', requireAuth, async (req, res) => {
   res.json(rows[0]);
 });
 
+const { getCredentialActivity } = require('../services/auditService');
+
+/**
+ * @openapi
+ * /api/users/me/credentials/activity:
+ *   get:
+ *     tags: [Users]
+ *     summary: Get credential activity log
+ *     description: Fetch the audit trail for API key and webhook lifecycle events (creation, rotation, revocation).
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, maximum: 100, default: 50 }
+ *       - in: query
+ *         name: offset
+ *         schema: { type: integer, default: 0 }
+ *     responses:
+ *       200:
+ *         description: List of credential events
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 activity:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: string, format: uuid }
+ *                       action: { type: string }
+ *                       resourceType: { type: string }
+ *                       resourceId: { type: string }
+ *                       metadata: { type: object }
+ *                       createdAt: { type: string, format: date-time }
+ */
+router.get('/me/credentials/activity', requireAuth, asyncHandler(async (req, res) => {
+  const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  
+  const activity = await getCredentialActivity(req.user.userId, { limit, offset });
+  res.json({ activity });
+}));
+
 // PATCH /api/users/me — update display name only
 router.patch('/me', requireAuth, async (req, res) => {
   const { name } = req.body;
