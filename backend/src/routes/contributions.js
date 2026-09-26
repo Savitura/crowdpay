@@ -6,6 +6,7 @@ const { contributionRateLimiter } = require('../middleware/contributionRateLimit
 const contributionService = require('../services/contributionService');
 const stellarService = require('../services/stellarService');
 const embedTokenService = require('../services/embedTokenService');
+const embedTokenJwtService = require('../services/embedTokenJwtService');
 const pathPaymentPreviewService = require('../services/pathPaymentPreview');
 const contributionDiagnostics = require('../services/contributionDiagnostics');
 const { resolveReferralLink } = require('../services/referral');
@@ -197,9 +198,23 @@ router.post(
     if (!embed_token) {
       return res.status(401).json({ error: 'Embed token required' });
     }
-    const tokenPayload = embedTokenService.verifyEmbedToken(embed_token);
-    if (!tokenPayload || tokenPayload.campaign_id !== campaign_id) {
-      return res.status(403).json({ error: 'Invalid or expired embed token' });
+    // Validate JWT signature/payload
+    const tokenPayload = embedTokenJwtService.verifyEmbedToken(embed_token);
+    if (!tokenPayload) {
+      return res.status(401).json({ error: 'Invalid or expired embed token' });
+    }
+    if (tokenPayload.sub && String(tokenPayload.sub) !== String(campaign_id)) {
+      return res.status(403).json({ error: 'Embed token does not match campaign' });
+    }
+    // If the token uses database-backed prefix/revocation tracking (e.g. raw token or token prefix lookup), validate via embedTokenService as well
+    if (embed_token.startsWith('cped_')) {
+      const activeToken = await embedTokenService.validateEmbedToken(embed_token);
+      if (!activeToken) {
+        return res.status(401).json({ error: 'Invalid or revoked embed token' });
+      }
+      if (activeToken.campaignId && String(activeToken.campaignId) !== String(campaign_id)) {
+        return res.status(403).json({ error: 'Embed token does not match campaign' });
+      }
     }
 
     const { rows: campaignRows } = await db.query(
