@@ -58,16 +58,26 @@ function buildApp({ queryImpl, role = 'user', authed = true } = {}) {
 
   const app = express();
   app.use(express.json());
-  app.use('/api/thank-you', router);
+  app.use('/api', router);
 
   return { app, calls };
 }
 
-test('POST /api/thank-you/:id/thank-you returns 401 without auth', async () => {
+test('POST /api/campaigns/:id/thank-you returns 401 without auth', async () => {
   const { app } = buildApp({ authed: false });
 
   const res = await request(app)
-    .post(`/api/thank-you/${CAMPAIGN_ID}/thank-you`)
+    .post(`/api/campaigns/${CAMPAIGN_ID}/thank-you`)
+    .send({ message: 'Thanks!' });
+
+  assert.equal(res.status, 401);
+});
+
+test('POST /api/contributions/:id/thank-you returns 401 without auth', async () => {
+  const { app } = buildApp({ authed: false });
+
+  const res = await request(app)
+    .post(`/api/contributions/contrib-1/thank-you`)
     .send({ message: 'Thanks!' });
 
   assert.equal(res.status, 401);
