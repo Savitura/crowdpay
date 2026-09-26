@@ -206,20 +206,42 @@ router.get('/deliveries', requireAuth, asyncHandler(async (req, res) => {
   res.json(rows);
 }));
 
+// Replay is a conditional state transition, so it serializes with the
+// dispatcher's atomic claim (#838): a delivery can only be reset while it is
+// terminal-failed or waiting for a retry, never while a worker holds it. The
+// actual send still goes through the claim, so a replay racing the poller (or
+// a double-clicked replay) results in exactly one attempt.
 router.post('/deliveries/:id/replay', requireAuth, asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `UPDATE webhook_deliveries d
      SET status = 'pending', attempt_count = 0, last_error = NULL,
          response_status = NULL, response_body_snippet = NULL,
-         next_retry_at = NULL, delivered_at = NULL, updated_at = NOW()
+         next_retry_at = NULL, delivered_at = NULL,
+         lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
      FROM webhooks w
      WHERE d.id = $1 AND d.webhook_id = w.id AND w.user_id = $2
+       AND w.revoked_at IS NULL
        AND d.status IN ('failed', 'retrying')
      RETURNING d.id`,
     [req.params.id, req.user.userId]
   );
 
   if (!rows.length) {
+    const { rows: current } = await db.query(
+      `SELECT d.id AS delivery_id, d.status
+       FROM webhook_deliveries d
+       JOIN webhooks w ON w.id = d.webhook_id
+       WHERE d.id = $1 AND w.user_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+    const existing = current[0];
+    // Already queued or in flight (e.g. a repeated replay request): no-op.
+    if (existing && (existing.status === 'pending' || existing.status === 'delivering')) {
+      return res.json({ message: 'Replay already in progress', id: existing.delivery_id });
+    }
+    if (existing && existing.status === 'delivered') {
+      return res.status(409).json({ error: 'Delivery already succeeded', id: existing.delivery_id });
+    }
     return res.status(404).json({ error: 'Failed delivery not found or not replayable' });
   }
 
