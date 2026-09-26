@@ -216,7 +216,7 @@ async function flushQuietHours(options = {}) {
     const digestMessage = {
       type: lastItem.type,
       title: `${group.items.length} notifications: ${group.items.map((i) => i.title).join('; ')}`,
-      body: group.items.map((i) => i.body).filter(Boolean).join('\\n'),
+      body: group.items.map((i) => i.body).filter(Boolean).join('\n'),
       link: lastItem.link,
       items: group.items,
     };

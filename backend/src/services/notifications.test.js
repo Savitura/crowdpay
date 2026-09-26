@@ -13,7 +13,14 @@ function buildService({ settings = null, prefs = [] } = {}) {
   };
 
   const db = {
+    connect: async () => ({
+      query: async (text, params) => db.query(text, params),
+      release: () => {},
+    }),
     query: async (text, params) => {
+      if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') {
+        return { rows: [] };
+      }
       if (text.includes('INSERT INTO notifications')) {
         state.inApp.push({ userId: params[0], type: params[1], title: params[2] });
         return { rows: [] };
@@ -29,7 +36,9 @@ function buildService({ settings = null, prefs = [] } = {}) {
         return { rows: [] };
       }
       if (text.includes('SELECT q.id') && text.includes('FROM notification_queue q')) {
-        return { rows: state.pendingRows || [] };
+        const rows = state.pendingRows || [];
+        state.pendingRows = [];
+        return { rows };
       }
       if (text.includes('UPDATE notification_queue SET flushed_at')) {
         state.flushed.push(params[0]);
@@ -252,3 +261,30 @@ test('flushQuietHours handles concurrent flushes without double-sending or losin
   assert.equal(state.flushed.length, 1);
   assert.deepEqual(state.flushed[0], ['q1']);
 });
+
+test('flushQuietHours joins digest item bodies with real newlines and no literal backslash-n', async () => {
+  const { service, state } = buildService();
+  state.pendingRows = [
+    {
+      id: 'q1', user_id: 'user-1', channel: 'slack', type: 'campaign_update',
+      title: 'First Update', body: 'First update body line', link: null,
+      slack_webhook_url: 'https://slack.test/hook',
+      quiet_hours_start: 22, quiet_hours_end: 7,
+    },
+    {
+      id: 'q2', user_id: 'user-1', channel: 'slack', type: 'campaign_update',
+      title: 'Second Update', body: 'Second update body line', link: null,
+      slack_webhook_url: 'https://slack.test/hook',
+      quiet_hours_start: 22, quiet_hours_end: 7,
+    },
+  ];
+
+  const flushed = await service.flushQuietHours({ nowHour: 9 });
+  assert.equal(flushed, 1);
+  assert.equal(state.delivered.length, 1);
+  const digestBody = state.delivered[0].message.body;
+  assert.equal(digestBody, 'First update body line\nSecond update body line');
+  assert.ok(digestBody.includes('\n'), 'Digest body should contain newline characters');
+  assert.ok(!digestBody.includes('\\n'), 'Digest body must not contain literal backslash-n');
+});
+
