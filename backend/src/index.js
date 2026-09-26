@@ -109,9 +109,11 @@ app.get('/health', async (_req, res) => {
     await db.query('SELECT 1');
     const metrics = getPoolMetrics();
     const { utilisation, ...pool } = metrics;
+    const { isWorkerRunning } = require('./worker');
     res.json({
       status: 'ok',
       db: { pool, utilisation },
+      worker: isWorkerRunning() ? 'running' : 'disabled',
     });
     if (utilisation > 90) {
       Sentry.captureMessage(
@@ -135,9 +137,24 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
 if (require.main === module) {
-  app.listen(PORT, () => {
+  const { startBackgroundWorkers, stopBackgroundWorkers } = require('./worker');
+  
+  const server = app.listen(PORT, async () => {
     logger.info(`Server running on port ${PORT}`);
+    await startBackgroundWorkers();
   });
+
+  const gracefulShutdown = async () => {
+    logger.info('Received shutdown signal, stopping background workers...');
+    await stopBackgroundWorkers();
+    server.close(() => {
+      logger.info('HTTP server closed');
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGTERM', gracefulShutdown);
+  process.on('SIGINT', gracefulShutdown);
 }
 
 module.exports = app;
