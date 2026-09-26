@@ -63,6 +63,7 @@ async function runUp() {
     let count = 0;
     for (const file of listUpMigrationFilenames()) {
       if (appliedMap.has(file)) {
+        /* eslint-disable no-console */
         console.log(`[migrate] Already applied: ${file}`);
         continue;
       }
@@ -105,6 +106,7 @@ async function runUp() {
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('[migrate] Failed:', err.message);
+    /* eslint-enable no-console */
     process.exitCode = 1;
   } finally {
     client.release();
