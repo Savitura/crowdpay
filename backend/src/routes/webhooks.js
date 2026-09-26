@@ -18,6 +18,7 @@ const {
 const asyncHandler = require('../utils/asyncHandler');
 const { isSafeUrl } = require('../utils/ssrfGuard');
 const { logCredentialEvent } = require('../services/auditService');
+const { encryptIntegrationSecret, isEncryptedIntegrationSecret, withDecryptedIntegrationSecret } = require('../services/integrationSecrets');
 
 const isTest = process.env.NODE_ENV === 'test';
 
@@ -69,7 +70,20 @@ router.post('/incoming/:id', incomingWebhookLimiter, express.raw({ type: 'applic
     }
 
     // Constant-time HMAC-SHA256 comparison (tolerates a `sha256=` prefix).
-    if (!verifyWebhookSignature(webhook.secret, rawBody, headerSig)) {
+    let verified = false;
+    if (isEncryptedIntegrationSecret(webhook.secret)) {
+      await withDecryptedIntegrationSecret(
+        webhook.secret,
+        { type: 'webhook', id: webhook.user_id },
+        (decryptedSecret) => {
+          verified = verifyWebhookSignature(decryptedSecret, rawBody, headerSig);
+        }
+      );
+    } else {
+      verified = verifyWebhookSignature(webhook.secret, rawBody, headerSig);
+    }
+
+    if (!verified) {
       logger.warn('Failed webhook signature verification', { webhookId: req.params.id });
       return res.status(401).json({ error: 'Invalid signature' });
     }
@@ -110,8 +124,7 @@ router.all('/incoming/:id', (req, res) => {
 
 router.get('/', requireAuth, asyncHandler(async (req, res) => {
   const { rows } = await db.query(
-    `SELECT id, url, events,
-            CONCAT(LEFT(secret, 10), '…', RIGHT(secret, 4)) AS secret_hint,
+    `SELECT id, url, events, secret_hint,
             created_at, revoked_at
      FROM webhooks WHERE user_id = $1 ORDER BY created_at DESC`,
     [req.user.userId]
@@ -138,11 +151,13 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
   }
 
   const secret = `whsec_${crypto.randomBytes(32).toString('hex')}`;
+  const secret_hint = `${secret.slice(0, 10)}…${secret.slice(-4)}`;
+  const encryptedSecret = await encryptIntegrationSecret(secret, { type: 'webhook', id: req.user.userId });
   const { rows } = await db.query(
-    `INSERT INTO webhooks (user_id, url, events, secret, backoff_strategy)
-     VALUES ($1, $2, $3, $4, $5::jsonb)
-     RETURNING id, url, events, backoff_strategy, created_at`,
-    [req.user.userId, url, ev, secret, backoff_strategy ? JSON.stringify(backoff_strategy) : null]
+    `INSERT INTO webhooks (user_id, url, events, secret, secret_hint, backoff_strategy)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+     RETURNING id, url, events, secret_hint, backoff_strategy, created_at`,
+    [req.user.userId, url, ev, encryptedSecret, secret_hint, backoff_strategy ? JSON.stringify(backoff_strategy) : null]
   );
 
   await logCredentialEvent({

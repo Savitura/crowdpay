@@ -3,6 +3,7 @@ const db = require('../config/database');
 const logger = require('../config/logger');
 const { sendEmail } = require('./emailService');
 const { safeFetch } = require('../utils/safeFetch');
+const { isEncryptedIntegrationSecret, withDecryptedIntegrationSecret } = require('./integrationSecrets');
 
 const WEBHOOK_EVENTS = {
   CAMPAIGN_FUNDED: 'campaign.funded',
@@ -152,6 +153,8 @@ const DELIVERY_KINDS = {
     unusableReason: 'webhook revoked',
     storesSnippet: true,
     tracksFailedAt: false,
+    ownerColumn: 'user_id',
+    ownerContextType: 'webhook',
   },
   campaign: {
     label: '[campaign-webhooks]',
@@ -163,6 +166,8 @@ const DELIVERY_KINDS = {
     unusableReason: 'webhook disabled',
     storesSnippet: false,
     tracksFailedAt: true,
+    ownerColumn: 'campaign_id',
+    ownerContextType: 'campaign_webhook',
   },
 };
 
@@ -190,10 +195,10 @@ async function claimDelivery(kind, deliveryId, leaseToken = newLeaseToken()) {
      FROM ${k.hooksTable} w
      WHERE d.id = $1 AND w.id = d.webhook_id
        AND ${k.hookUsableSql}
-       AND d.attempt_count < $4
+        AND d.attempt_count < $4
        AND ${claimableSql(3)}
      RETURNING d.id, d.attempt_count, d.payload, d.${k.eventColumn} AS event_type,
-               d.lease_token, w.url, w.secret, w.backoff_strategy`,
+               d.lease_token, w.url, w.secret, w.backoff_strategy, w.${k.ownerColumn} AS owner_id`,
     [deliveryId, leaseToken, WEBHOOK_LEASE_MS, k.maxAttempts]
   );
   return rows[0] || null;
@@ -301,7 +306,20 @@ async function runDelivery(kind, deliveryId) {
   }
 
   const bodyUtf8 = JSON.stringify(claimed.payload);
-  const sig = hmacSignature(claimed.secret, bodyUtf8);
+  
+  let sig;
+  if (isEncryptedIntegrationSecret(claimed.secret)) {
+    await withDecryptedIntegrationSecret(
+      claimed.secret,
+      { type: k.ownerContextType, id: claimed.owner_id },
+      (decryptedSecret) => {
+        sig = hmacSignature(decryptedSecret, bodyUtf8);
+      }
+    );
+  } else {
+    // Fallback for unmigrated secrets
+    sig = hmacSignature(claimed.secret, bodyUtf8);
+  }
 
   let res;
   let responseText = '';
