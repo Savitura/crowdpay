@@ -5,7 +5,9 @@ const { sendEmail } = require('./emailService');
 const { logAuditEvent } = require('./auditService');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('./webhookDispatcher');
 
-async function getEligibleContributions(campaignId) {
+async function getEligibleContributions(campaignId, { limit = 50, offset = 0 } = {}) {
+  const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 500);
+  const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
   const { rows } = await db.query(
     `SELECT
        c.id,
@@ -25,19 +27,21 @@ async function getEligibleContributions(campaignId) {
      WHERE c.campaign_id = $1
        AND c.status = 'completed'
        AND (c.amount - c.refunded_amount) > 0
-     ORDER BY c.created_at DESC`,
-    [campaignId]
+     ORDER BY c.created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [campaignId, parsedLimit, parsedOffset]
   );
   return rows;
 }
 
 async function getCampaignRefunds(campaignId, { status = null, limit = 50, offset = 0 } = {}) {
+  const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 500);
+  const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
   const conditions = ['campaign_id = $1'];
   const params = [campaignId];
-  let idx = 2;
 
   if (status) {
-    conditions.push(`status = $${idx++}`);
+    conditions.push('status = $2');
     params.push(status);
   }
 
@@ -45,17 +49,20 @@ async function getCampaignRefunds(campaignId, { status = null, limit = 50, offse
   const countResult = await db.query(`SELECT COUNT(*) FROM creator_refunds ${where}`, params);
   const total = parseInt(countResult.rows[0].count, 10);
 
+  const limitParamIdx = params.length + 1;
+  const offsetParamIdx = params.length + 2;
+
   const dataResult = await db.query(
     `SELECT id, campaign_id, contribution_id, recipient_wallet, amount, asset, reason,
             status, processed_at, tx_hash, is_force_refund, admin_note, failure_reason, created_at, created_by
      FROM creator_refunds
      ${where}
      ORDER BY created_at DESC
-     LIMIT $${idx++} OFFSET $${idx++}`,
-    [...params, Math.min(parseInt(limit, 10), 500), parseInt(offset, 10)]
+     LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}`,
+    [...params, parsedLimit, parsedOffset]
   );
 
-  return { total, limit, offset, items: dataResult.rows };
+  return { total, limit: parsedLimit, offset: parsedOffset, items: dataResult.rows };
 }
 
 async function processRefund({
@@ -91,9 +98,13 @@ async function processRefund({
     }
 
     const contrib = contribRows[0];
+    const parsedAmount = Number(amount);
+    if (Number.isNaN(parsedAmount) || parsedAmount <= 0) {
+      throw Object.assign(new Error('Refund amount must be a valid positive number'), { status: 422 });
+    }
     const remaining = parseFloat(contrib.amount) - parseFloat(contrib.refunded_amount || 0);
 
-    if (amount <= 0 || amount > remaining) {
+    if (parsedAmount > remaining) {
       throw Object.assign(
         new Error(`Refund amount must be > 0 and <= remaining refundable amount (${remaining})`),
         { status: 422 }
@@ -126,7 +137,7 @@ async function processRefund({
         const result = await stellarService.sendCampaignRefund({
           campaignId,
           recipientWallet: refundRow.recipient_wallet,
-          amount,
+          amount: parsedAmount,
           asset: refundRow.asset,
         });
         txHash = result?.hash || result?.id || null;
@@ -143,7 +154,17 @@ async function processRefund({
       throw Object.assign(new Error('On-chain refund failed - state rolled back'), { status: 502, cause: onChainErr });
     }
 
-    const newRefunded = parseFloat(contrib.refunded_amount || 0) + amount;
+    if (!txHash) {
+      const failReason = 'No on-chain transaction hash returned from sender';
+      await client.query(
+        `UPDATE creator_refunds SET status = 'failed', failure_reason = $1, processed_at = NOW() WHERE id = $2`,
+        [failReason, refundRow.id]
+      );
+      await client.query('COMMIT');
+      throw Object.assign(new Error(failReason), { status: 502 });
+    }
+
+    const newRefunded = parseFloat(contrib.refunded_amount || 0) + parsedAmount;
     const newRefundStatus = newRefunded >= parseFloat(contrib.amount) ? 'full' : 'partial';
 
     await client.query(
@@ -153,7 +174,7 @@ async function processRefund({
 
     await client.query(
       `UPDATE campaigns SET raised_amount = GREATEST(0, raised_amount - $1) WHERE id = $2`,
-      [amount, campaignId]
+      [parsedAmount, campaignId]
     );
 
     await client.query(
@@ -177,7 +198,7 @@ async function processRefund({
           await createNotification(contrib.user_id, {
             type: 'refund_issued',
             title: 'Refund Issued',
-            body: `A refund of ${amount} ${refundRow.asset} has been returned to your wallet.`,
+            body: `A refund of ${parsedAmount} ${refundRow.asset} has been returned to your wallet.`,
             link: `/campaigns/${campaignId}`,
           });
 
@@ -185,7 +206,7 @@ async function processRefund({
             await sendEmail({
               to: contrib.contributor_email,
               subject: 'Your refund has been processed',
-              html: `<p>Hi ${contrib.contributor_name || 'there'},</p><p>A refund of <strong>${amount} ${refundRow.asset}</strong> has been returned to your wallet${txHash ? ` (tx: ${txHash})` : ''}.</p>`,
+              html: `<p>Hi ${contrib.contributor_name || 'there'},</p><p>A refund of <strong>${parsedAmount} ${refundRow.asset}</strong> has been returned to your wallet${txHash ? ` (tx: ${txHash})` : ''}.</p>`,
             });
           }
 
@@ -194,7 +215,7 @@ async function processRefund({
               refundId: refundRow.id,
               campaignId,
               contributionId,
-              amount,
+              amount: parsedAmount,
               txHash,
             }).catch(() => {});
           }
@@ -204,7 +225,7 @@ async function processRefund({
       }
     });
 
-    return { ...refundRow, status: 'completed', tx_hash: txHash };
+    return { ...refundRow, amount: parsedAmount, status: 'completed', tx_hash: txHash };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
