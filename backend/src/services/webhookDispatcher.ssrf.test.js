@@ -17,15 +17,19 @@ async function withServer(handler, fn) {
 function buildDispatcher({ deliveryRow, campaignDeliveryRow }) {
   const updates = [];
   const query = async (text, params) => {
-    if (/SELECT d\.id, d\.attempt_count, d\.status, d\.payload, d\.event_type/.test(text)) {
-      return { rows: deliveryRow ? [deliveryRow] : [] };
-    }
-    if (/SELECT d\.id, d\.attempt_count, d\.status, d\.payload, d\.event\b/.test(text)) {
-      return { rows: campaignDeliveryRow ? [campaignDeliveryRow] : [] };
+    // Atomic claim (#838): the claim UPDATE returns the row to deliver.
+    if (/SET status = 'delivering', attempt_count/.test(text)) {
+      const table = /UPDATE (\w+) d/.exec(text)[1];
+      const row = table === 'webhook_deliveries' ? deliveryRow : campaignDeliveryRow;
+      if (!row) return { rows: [] };
+      const { event, ...rest } = row;
+      return {
+        rows: [{ ...rest, event_type: row.event_type || event, attempt_count: row.attempt_count + 1, lease_token: params[1] }],
+      };
     }
     if (/UPDATE\s+(webhook_deliveries|campaign_webhook_deliveries)\s+SET/.test(text)) {
       updates.push({ text, params });
-      return { rows: [] };
+      return { rows: [{ id: params[0] }] };
     }
     return { rows: [] };
   };
@@ -81,7 +85,7 @@ test('processDelivery delivers to a real endpoint end-to-end through the real SS
 
       const delivered = updates.find((u) => /status = 'delivered'/.test(u.text));
       assert.ok(delivered, 'delivery should be marked delivered');
-      assert.equal(delivered.params[1], 200);
+      assert.equal(delivered.params[2], 200);
     }
   );
 });
@@ -115,7 +119,7 @@ test('processDelivery fails closed (never connects) for a delivery URL that is u
 
   const failed = updates.find((u) => /status = 'failed'/.test(u.text));
   assert.ok(failed);
-  assert.match(failed.params[1], /SSRF guard:.*private\/internal/);
+  assert.match(failed.params[2], /SSRF guard:.*private\/internal/);
 });
 
 test('processDelivery fails closed when the endpoint redirects to a private/internal target', async () => {
@@ -130,7 +134,7 @@ test('processDelivery fails closed when the endpoint redirects to a private/inte
 
       const failed = updates.find((u) => /status = 'failed'/.test(u.text));
       assert.ok(failed, 'delivery should be marked failed, not delivered, when a redirect targets a private address');
-      assert.match(failed.params[1], /SSRF guard:.*private\/internal/);
+      assert.match(failed.params[2], /SSRF guard:.*private\/internal/);
     }
   );
 });
@@ -171,7 +175,7 @@ test('processCampaignWebhookDelivery fails closed when the endpoint redirects to
 
       const failed = updates.find((u) => /status = 'failed'/.test(u.text));
       assert.ok(failed);
-      assert.match(failed.params[1], /SSRF guard:.*private\/internal/);
+      assert.match(failed.params[2], /SSRF guard:.*private\/internal/);
     }
   );
 });
@@ -185,5 +189,5 @@ test('processCampaignWebhookDelivery fails closed (never connects) for a deliver
 
   const failed = updates.find((u) => /status = 'failed'/.test(u.text));
   assert.ok(failed);
-  assert.match(failed.params[1], /SSRF guard:.*private\/internal/);
+  assert.match(failed.params[2], /SSRF guard:.*private\/internal/);
 });

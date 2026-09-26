@@ -3,6 +3,7 @@ const logger = require('../config/logger');
 const Sentry = require('@sentry/node');
 const { deployCampaignContracts } = require('./sorobanService');
 const { Keypair } = require('@stellar/stellar-sdk');
+const { toStroops } = require('../utils/stroops');
 
 const RETRY_LOCK_KEY = 323002;
 const MAX_RETRIES_PER_RUN = 10;
@@ -78,7 +79,7 @@ async function retryFailedContractDeployments() {
           creatorPublicKey: campaign.creator_public_key,
           platformPublicKey,
           campaignId: campaign.title + Date.now(),
-          targetAmount: Math.floor(Number(campaign.target_amount) * 10_000_000),
+          targetAmount: toStroops(campaign.target_amount),
           deadlineUnix,
           assetContractAddress,
           platformFeeBps: campaign.platform_fee_bps || 0,

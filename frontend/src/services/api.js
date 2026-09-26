@@ -332,7 +332,6 @@ export const api = {
     const res = await apiClient.post('/users/me/2fa/verify', { code });
     return res.data;
   },
-<<<<<<< HEAD
   async listCampaignPools(campaignId) {
     const res = await apiClient.get(`/campaign-pools/campaign/${campaignId}`);
     return res.data;
@@ -452,6 +451,19 @@ export const api = {
     const res = await apiClient.post(url, { prepare_token: prepareToken, signed_xdr: signedXdr });
     return res.data;
   },
+
+  // Governance sync run history — operators only (#839).
+  getGovernanceSyncRuns: (params = {}) =>
+    apiClient.get('/governance/sync/runs', { params }).then((r) => r.data),
+
+  getGovernanceSyncRun: (runId) =>
+    apiClient.get(`/governance/sync/runs/${runId}`).then((r) => r.data),
+
+  triggerGovernanceSync: () =>
+    apiClient.post('/governance/sync').then((r) => r.data),
+
+  retryGovernanceSyncRun: (runId) =>
+    apiClient.post(`/governance/sync/runs/${runId}/retry`).then((r) => r.data),
 
   getEligibleRefunds: (campaignId) =>
     apiClient.get(`/campaigns/${campaignId}/refunds/eligible`).then((r) => r.data),

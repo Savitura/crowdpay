@@ -81,9 +81,12 @@ test('converts between decimal amounts and contract stroops without drift', () =
   assert.equal(service.toStroops('1234.5').toString(), '12345000000');
   assert.equal(service.fromStroops(12345000000n), '1234.5000000');
   assert.equal(service.fromStroops(1n), '0.0000001');
-  // A value with more than 7 decimals is truncated rather than rounded up, so a
-  // conversion can never manufacture funds the treasury does not hold.
-  assert.equal(service.toStroops('1.99999999').toString(), '19999999');
+  // A value with more than 7 decimals is rejected (#840's single rule) rather
+  // than rounded or truncated, so a conversion can never create or lose funds.
+  assert.throws(() => service.toStroops('1.99999999'), /more than 7 decimal places/);
+  // Drift-prone values convert exactly.
+  assert.equal(service.toStroops('8.29').toString(), '82900000');
+  assert.equal(service.toStroops('19.99').toString(), '199900000');
 });
 
 // ── policy validation ────────────────────────────────────────────────────────

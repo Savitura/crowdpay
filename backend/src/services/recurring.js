@@ -22,6 +22,7 @@ const {
 } = require('./stellarService');
 const { withDecryptedWalletSecret } = require('./walletSecrets');
 const { buildContributionMemo } = require('./contributionService');
+const { createNotification } = require('./notifications');
 
 const PERIOD_DAYS = 30;
 const ALLOWED_PERIOD_MONTHS = [1, 3, 6];
@@ -38,6 +39,38 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const WORKER_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 let _workerTimer = null;
+
+/**
+ * SQL predicate (over campaign `c` and balance `sb`) for "this campaign still
+ * accepts this installment" (#837): the campaign is active, not soft-deleted,
+ * and the installment falls on or before the deadline date. Every claim path
+ * checks it, so nothing is claimed once a campaign is funded, failed,
+ * suspended, deleted or past its deadline.
+ */
+const CAMPAIGN_ACCEPTS_INSTALLMENT_SQL = `(
+  c.status = 'active'
+  AND c.deleted_at IS NULL
+  AND (c.deadline IS NULL OR sb.scheduled_date < (c.deadline + INTERVAL '1 day'))
+)`;
+
+/** Why an installment stopped being collectable; stored as closure_reason. */
+const CLOSURE_REASON_SQL = `CASE
+  WHEN c.deleted_at IS NOT NULL THEN 'campaign_deleted'
+  WHEN c.status = 'funded' THEN 'campaign_funded'
+  WHEN c.status = 'failed' THEN 'campaign_failed'
+  WHEN c.status = 'suspended' THEN 'campaign_suspended'
+  WHEN c.status <> 'active' THEN 'campaign_closed'
+  ELSE 'campaign_deadline_passed'
+END`;
+
+const CLOSURE_REASON_TEXT = {
+  campaign_deleted: 'the campaign was removed',
+  campaign_funded: 'the campaign reached its goal',
+  campaign_failed: 'the campaign did not reach its goal',
+  campaign_suspended: 'the campaign was suspended',
+  campaign_closed: 'the campaign is no longer accepting contributions',
+  campaign_deadline_passed: "these installments fall after the campaign's deadline",
+};
 
 function httpError(message, statusCode, code) {
   const err = new Error(message);
@@ -84,6 +117,27 @@ function validateSubscriptionInput({ amountPerPeriod, asset, periodMonths, total
 /**
  * Enable a recurring pledge: lock the full commitment into one claimable balance per period.
  */
+/** Last instant (exclusive) an installment may be scheduled for: the end of the deadline day. */
+function fundingWindowEnd(deadline) {
+  if (!deadline) return null;
+  const day = deadline instanceof Date ? deadline.toISOString().slice(0, 10) : String(deadline).slice(0, 10);
+  return new Date(Date.parse(`${day}T00:00:00Z`) + DAY_MS);
+}
+
+/**
+ * Number of periods whose scheduled date falls inside the campaign's funding
+ * window (all of them when the campaign has no deadline).
+ */
+function periodsWithinFundingWindow(startedAt, periodMonths, totalPeriods, deadline) {
+  const windowEnd = fundingWindowEnd(deadline);
+  if (!windowEnd) return totalPeriods;
+  let fits = 0;
+  for (let period = 1; period <= totalPeriods; period += 1) {
+    if (scheduleDateForPeriod(startedAt, period, periodMonths) < windowEnd) fits = period;
+  }
+  return fits;
+}
+
 async function createSubscription({
   campaignId,
   userId,
@@ -91,16 +145,48 @@ async function createSubscription({
   asset,
   periodMonths,
   totalPeriods,
+  truncateToDeadline = false,
 }) {
   const input = validateSubscriptionInput({ amountPerPeriod, asset, periodMonths, totalPeriods });
 
   const { rows: campaignRows } = await db.query(
-    `SELECT id, wallet_public_key, asset_type FROM campaigns
+    `SELECT id, wallet_public_key, asset_type, deadline FROM campaigns
      WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`,
     [campaignId]
   );
   const campaign = campaignRows[0];
   if (!campaign) throw httpError('Campaign not found', 404);
+
+  // A schedule may not lock funds for installments the campaign can never
+  // accept (#837). Past the deadline is rejected unless the caller explicitly
+  // asks for the schedule to be truncated to the funding window.
+  const startedAt = new Date();
+  const requestedPeriods = input.totalPeriods;
+  const fittingPeriods = periodsWithinFundingWindow(
+    startedAt,
+    input.periodMonths,
+    requestedPeriods,
+    campaign.deadline
+  );
+  if (fittingPeriods < requestedPeriods) {
+    if (!truncateToDeadline) {
+      throw httpError(
+        `This schedule runs past the campaign deadline; at most ${fittingPeriods} ` +
+          `period(s) of ${input.periodMonths} month(s) fit. Reduce totalPeriods or set ` +
+          'truncateToDeadline to shorten it.',
+        400,
+        'SUBSCRIPTION_EXCEEDS_DEADLINE'
+      );
+    }
+    if (fittingPeriods < MIN_PERIODS) {
+      throw httpError(
+        `Only ${fittingPeriods} period(s) fit before the campaign deadline; a recurring pledge needs at least ${MIN_PERIODS}.`,
+        400,
+        'SUBSCRIPTION_EXCEEDS_DEADLINE'
+      );
+    }
+    input.totalPeriods = fittingPeriods;
+  }
 
   if (asset !== campaign.asset_type) {
     throw httpError(
@@ -128,7 +214,6 @@ async function createSubscription({
     );
   }
 
-  const startedAt = new Date();
   const schedule = [];
   for (let period = 1; period <= input.totalPeriods; period += 1) {
     const scheduledDate = scheduleDateForPeriod(startedAt, period, input.periodMonths);
@@ -205,7 +290,11 @@ async function createSubscription({
     subscriptionId,
     balanceIds,
     totalCommitment,
+    totalPeriods: input.totalPeriods,
+    requestedPeriods,
+    truncatedToDeadline: input.totalPeriods < requestedPeriods,
     firstPaymentDate: schedule[0].scheduledDate.toISOString(),
+    lastPaymentDate: schedule[schedule.length - 1].scheduledDate.toISOString(),
   };
 }
 
@@ -298,7 +387,12 @@ async function listSubscriptionsForUser(userId) {
   const { rows } = await db.query(
     `SELECT s.id, s.campaign_id, c.title AS campaign_title, s.amount_per_period, s.asset,
             s.period_months, s.total_periods, s.status, s.created_at,
+            s.closure_reason, s.closed_at,
             COUNT(sb.id) FILTER (WHERE sb.status = 'claimed')::int AS periods_claimed,
+            COUNT(sb.id) FILTER (WHERE sb.status = 'closed')::int AS periods_closed,
+            COALESCE(SUM(sb.amount) FILTER (WHERE sb.status = 'closed'), 0)::text AS closed_amount,
+            MIN(sb.reclaimable_at) FILTER (WHERE sb.status = 'closed') AS reclaimable_from,
+            MAX(sb.reclaimable_at) FILTER (WHERE sb.status = 'closed') AS reclaimable_until_all,
             MIN(sb.scheduled_date) FILTER (WHERE sb.status = 'pending') AS next_payment_date
      FROM subscriptions s
      JOIN campaigns c ON c.id = s.campaign_id
@@ -320,6 +414,7 @@ async function settleSubscriptionStatus(client, subscriptionId) {
     `SELECT
        COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
        COUNT(*) FILTER (WHERE status = 'contributor_reclaimed')::int AS reclaimed,
+       COUNT(*) FILTER (WHERE status = 'closed')::int AS closed,
        COUNT(*)::int AS total,
        COUNT(*) FILTER (WHERE status = 'claimed')::int AS claimed
      FROM subscription_balances
@@ -329,7 +424,11 @@ async function settleSubscriptionStatus(client, subscriptionId) {
   const counts = rows[0];
   if (counts.pending > 0) return null;
 
-  const status = counts.claimed === counts.total ? 'completed' : 'cancelled';
+  // Closed by the campaign (#837) takes precedence over a plain cancellation
+  // only when the contributor did not cancel themselves.
+  let status = 'cancelled';
+  if (counts.claimed === counts.total) status = 'completed';
+  else if (counts.closed > 0 && counts.claimed + counts.closed === counts.total) status = 'closed';
   await client.query(
     `UPDATE subscriptions SET status = $2 WHERE id = $1 AND status <> $2`,
     [subscriptionId, status]
@@ -393,10 +492,12 @@ async function recordClaimedBalance({ balance, txHash }) {
 
     if (contributionRows.length) {
       await client.query(
+        // Only an active campaign may transition to funded; a claim must never
+        // move a failed/suspended/closed campaign back to funded (#837).
         `UPDATE campaigns
          SET raised_amount = raised_amount + $1,
              status = CASE
-               WHEN raised_amount + $1 >= target_amount THEN 'funded'
+               WHEN status = 'active' AND raised_amount + $1 >= target_amount THEN 'funded'
                ELSE status
              END
          WHERE id = $2`,
@@ -415,11 +516,112 @@ async function recordClaimedBalance({ balance, txHash }) {
   }
 }
 
+async function notifySubscriptionClosures(closedRows) {
+  const bySubscription = new Map();
+  for (const row of closedRows) {
+    const group = bySubscription.get(row.subscription_id) || [];
+    group.push(row);
+    bySubscription.set(row.subscription_id, group);
+  }
+
+  for (const rows of bySubscription.values()) {
+    const first = rows[0];
+    const reclaimDates = rows.map((r) => new Date(r.reclaimable_at).getTime()).sort((a, b) => a - b);
+    const from = new Date(reclaimDates[0]).toISOString().slice(0, 10);
+    const until = new Date(reclaimDates[reclaimDates.length - 1]).toISOString().slice(0, 10);
+    const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
+    const reason = CLOSURE_REASON_TEXT[first.closure_reason] || CLOSURE_REASON_TEXT.campaign_closed;
+    const window = from === until ? `on ${from}` : `between ${from} and ${until}`;
+    try {
+      await createNotification(first.contributor_user_id, {
+        type: 'subscription_closed',
+        title: 'Recurring pledge closed',
+        body:
+          `${rows.length} remaining installment(s) of your recurring pledge to "${first.campaign_title}" ` +
+          `(${Number(total.toFixed(7))} ${first.asset}) will not be collected because ${reason}. ` +
+          `The funds stay in their claimable balances and become reclaimable to your wallet ${window}.`,
+        link: `/campaigns/${first.campaign_id}`,
+      });
+    } catch (err) {
+      logger.error('subscription-claim-worker: closure notification failed', {
+        subscription_id: first.subscription_id,
+        error: err.message,
+      });
+    }
+  }
+}
+
 /**
- * SubscriptionClaimWorker — claims every subscription balance whose scheduled date has passed.
- * Balances the contributor already reclaimed are recorded as such and end the subscription.
+ * Move every unclaimed installment its campaign no longer accepts into the
+ * explicit 'closed' state (#837). The ledger balance ID is kept so the
+ * contributor's on-ledger reclaim path stays traceable. Returns the closed rows.
+ * Optionally scoped to one balance (used right before a claim).
+ */
+async function closeIneligibleInstallments({ balanceId = null } = {}) {
+  const { rows } = await db.query(
+    `WITH closable AS (
+       SELECT sb.id, ${CLOSURE_REASON_SQL} AS reason
+       FROM subscription_balances sb
+       JOIN subscriptions s ON s.id = sb.subscription_id
+       JOIN campaigns c ON c.id = s.campaign_id
+       WHERE sb.status = 'pending'
+         AND NOT ${CAMPAIGN_ACCEPTS_INSTALLMENT_SQL}
+         AND ($1::uuid IS NULL OR sb.id = $1::uuid)
+       FOR UPDATE OF sb
+     )
+     UPDATE subscription_balances sb
+     SET status = 'closed', closed_at = NOW(), closure_reason = closable.reason,
+         reclaimable_at = sb.scheduled_date + ($2::int * INTERVAL '1 day')
+     FROM closable, subscriptions s, campaigns c
+     WHERE sb.id = closable.id AND s.id = sb.subscription_id AND c.id = s.campaign_id
+       AND sb.status = 'pending'
+     RETURNING sb.id, sb.subscription_id, sb.stellar_balance_id, sb.amount, sb.reclaimable_at,
+               sb.closure_reason, s.contributor_user_id, s.campaign_id, s.asset,
+               c.title AS campaign_title`,
+    [balanceId, CONTRIBUTOR_RECLAIM_AFTER_DAYS]
+  );
+  if (!rows.length) return [];
+
+  const subscriptionIds = [...new Set(rows.map((r) => r.subscription_id))];
+  for (const subscriptionId of subscriptionIds) {
+    const reason = rows.find((r) => r.subscription_id === subscriptionId).closure_reason;
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const status = await settleSubscriptionStatus(client, subscriptionId);
+      if (status === 'closed') {
+        await client.query(
+          `UPDATE subscriptions SET closure_reason = $2, closed_at = COALESCE(closed_at, NOW())
+           WHERE id = $1`,
+          [subscriptionId, reason]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  logger.info('subscription-claim-worker: closed installments', {
+    installments: rows.length,
+    subscriptions: subscriptionIds.length,
+  });
+  await notifySubscriptionClosures(rows);
+  return rows;
+}
+
+/**
+ * SubscriptionClaimWorker — claims every subscription balance whose scheduled date has passed
+ * and whose campaign still accepts it. Installments of campaigns that are funded, failed,
+ * suspended, deleted or past their deadline are closed instead of claimed. Balances the
+ * contributor already reclaimed are recorded as such and end the subscription.
  */
 async function processDueSubscriptionBalances() {
+  const closedRows = await closeIneligibleInstallments();
+
   const { rows: due } = await db.query(
     `SELECT sb.id, sb.subscription_id, sb.stellar_balance_id, sb.amount, sb.scheduled_date,
             s.asset, s.campaign_id, c.wallet_public_key AS campaign_public_key,
@@ -430,21 +632,33 @@ async function processDueSubscriptionBalances() {
      JOIN users u ON u.id = s.contributor_user_id
      WHERE sb.status = 'pending'
        AND sb.scheduled_date <= NOW()
+       AND ${CAMPAIGN_ACCEPTS_INSTALLMENT_SQL}
      ORDER BY sb.scheduled_date
      LIMIT 200`
   );
 
-  if (!due.length) {
-    logger.debug('subscription-claim-worker: nothing due');
-    return { claimed: 0, reclaimed: 0, failed: 0 };
-  }
-
   let claimed = 0;
   let reclaimed = 0;
   let failed = 0;
+  let closed = closedRows.length;
+
+  if (!due.length) {
+    logger.debug('subscription-claim-worker: nothing due');
+    return { claimed, reclaimed, failed, closed };
+  }
 
   for (const balance of due) {
     try {
+      // Re-check right before submitting: an earlier claim in this batch (or
+      // any other writer) may have funded or closed the campaign since the
+      // batch was selected. No claim is submitted once it stops accepting.
+      const closedNow = await closeIneligibleInstallments({ balanceId: balance.id });
+      if (closedNow.length) {
+        closed += closedNow.length;
+        continue;
+      }
+      if (!(await installmentStillClaimable(balance.id))) continue;
+
       const onLedger = await getClaimableBalance(balance.stellar_balance_id);
       if (!onLedger) {
         await markBalanceReclaimed(balance.subscription_id, balance.id);
@@ -476,8 +690,20 @@ async function processDueSubscriptionBalances() {
     }
   }
 
-  logger.info('subscription-claim-worker: done', { claimed, reclaimed, failed });
-  return { claimed, reclaimed, failed };
+  logger.info('subscription-claim-worker: done', { claimed, reclaimed, failed, closed });
+  return { claimed, reclaimed, failed, closed };
+}
+
+async function installmentStillClaimable(balanceId) {
+  const { rows } = await db.query(
+    `SELECT 1
+     FROM subscription_balances sb
+     JOIN subscriptions s ON s.id = sb.subscription_id
+     JOIN campaigns c ON c.id = s.campaign_id
+     WHERE sb.id = $1 AND sb.status = 'pending' AND ${CAMPAIGN_ACCEPTS_INSTALLMENT_SQL}`,
+    [balanceId]
+  );
+  return rows.length > 0;
 }
 
 function startSubscriptionClaimWorker() {
@@ -503,7 +729,9 @@ module.exports = {
   createSubscription,
   cancelSubscription,
   listSubscriptionsForUser,
+  closeIneligibleInstallments,
   processDueSubscriptionBalances,
+  periodsWithinFundingWindow,
   startSubscriptionClaimWorker,
   stopSubscriptionClaimWorker,
   ALLOWED_PERIOD_MONTHS,

@@ -103,6 +103,21 @@ router.post(
       referralLink = await resolveReferralLink({ campaignId: campaign_id, code: referralCode });
     }
 
+    // Cross-asset contributions may arrive with a single-use preview token from
+    // POST /api/campaigns/:id/contribution/preview. When present it is
+    // validated + redeemed and the exact approved route is used; callers
+    // without one fall back to quoting the best route inline (#688).
+    let previewPath = null;
+    if (sendAsset !== campaign.asset_type && preview_token) {
+      previewPath = await pathPaymentPreviewService.consumeContributionPreview({
+        previewToken: preview_token,
+        campaignId: campaign_id,
+        sendAsset,
+        amount,
+        selectedPathIndex: typeof selected_path_index === 'number' ? selected_path_index : Number(selected_path_index),
+      });
+    }
+
     const client = await db.connect();
     let result;
     let previewPath = null;
@@ -144,6 +159,7 @@ router.post(
         referralLinkCode: referralLink?.code,
         referralLinkId: referralLink?.id,
         tierId: tier_id,
+        previewPath,
         idempotencyKey: idempotency_key,
         previewPath,
         client,

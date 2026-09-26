@@ -987,6 +987,12 @@ async function releaseEscrowToCreator({ escrowContractId, creatorAddress, releas
   }
 }
 
+function toBigIntStroops(value) {
+  if (typeof value === 'bigint') return value;
+  const n = Number(value);
+  return Number.isFinite(n) ? BigInt(Math.trunc(n)) : 0n;
+}
+
 /**
  * Read on-chain campaign status from deployed Soroban contracts.
  */
@@ -1007,11 +1013,13 @@ async function getContractStatus({
   }
 
   if (escrowContractId) {
-    result.totalRaised = Number(await getEscrowTotalRaised(escrowContractId)) || 0;
-    const target = Number(targetAmount) || 0;
+    // Compare in exact stroops: i128 totals can exceed Number precision (#840).
+    const raisedStroops = toBigIntStroops(await getEscrowTotalRaised(escrowContractId));
+    result.totalRaised = Number(raisedStroops);
+    const target = toBigIntStroops(targetAmount);
     const now = Math.floor(Date.now() / 1000);
 
-    if (target > 0 && result.totalRaised >= target) {
+    if (target > 0n && raisedStroops >= target) {
       result.status = 'funded';
     } else if (deadlineUnix && now >= deadlineUnix) {
       result.status = 'failed';

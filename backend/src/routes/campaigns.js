@@ -78,6 +78,7 @@ const {
 } = require('../services/referral');
 const { stripHtml } = require('../lib/sanitize');
 const { getSimhash, simhashSimilarity } = require('../utils/simhash');
+const { toStroops } = require('../utils/stroops');
 const { parsePagination } = require('../utils/pagination');
 const { assembleReport, generateSignedUrl, verifySignedToken } = require('../services/campaignReportService');
 const { streamCampaignReportPdf, reportFilename } = require('../services/campaignReportPdf');
@@ -1063,7 +1064,7 @@ router.get('/:id/contract-status', asyncHandler(async (req, res) => {
     const deadlineUnix = campaign.deadline
       ? Math.floor(new Date(campaign.deadline).getTime() / 1000)
       : 0;
-    const targetAmount = Math.floor(Number(campaign.target_amount) * 10_000_000);
+    const targetAmount = toStroops(campaign.target_amount);
 
     const onChain = await getContractStatus({
       escrowContractId,
@@ -1826,7 +1827,7 @@ router.post('/', requireAuth, requireRole('creator', 'admin'), createCampaignVal
       creatorPublicKey,
       platformPublicKey,
       campaignId: req.body.title + Date.now(),
-      targetAmount: Math.floor(parseFloat(target_amount) * 10_000_000),
+      targetAmount: toStroops(target_amount),
       deadlineUnix,
       assetContractAddress,
       platformFeeBps,

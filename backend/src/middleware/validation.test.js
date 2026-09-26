@@ -320,3 +320,26 @@ test("contribution validation trims whitespace on valid display_name", async () 
   assert.equal(result.ok, true);
   assert.equal(result.req.body.display_name, "Alice");
 });
+
+test("contribution validation applies the exact-stroop amount rule (#840)", async () => {
+  const base = { campaign_id: "123e4567-e89b-12d3-a456-426614174000", send_asset: "XLM" };
+  for (const amount of ["8.29", "19.99", "0.0000001", "922337203685.4775807", "1.50000000"]) {
+    const result = await runValidation(contributionValidation, { ...base, amount });
+    assert.equal(result.ok, true, `${amount} should be accepted`);
+  }
+  for (const amount of ["8.290000001", "0.00000001", "922337203685.4775808", "0", "-1"]) {
+    const result = await runValidation(contributionValidation, { ...base, amount });
+    assert.equal(result.ok, false, `${amount} should be rejected`);
+    assert.ok(result.errors.some((e) => e.path === "amount"));
+  }
+});
+
+test("createCampaign validation rejects a target_amount with more than 7 decimals", async () => {
+  const result = await runValidation(createCampaignValidation, {
+    title: "Exact target",
+    target_amount: "100.12345678",
+    asset_type: "USDC",
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.path === "target_amount"));
+});

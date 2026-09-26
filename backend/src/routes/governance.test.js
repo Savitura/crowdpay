@@ -17,7 +17,7 @@ const WALLET = {
   },
 };
 
-function buildApp({ userId = 'user-1', wallet = WALLET.custodial, governanceImpl = {}, sorobanImpl = {} } = {}) {
+function buildApp({ userId = 'user-1', isAdmin = false, wallet = WALLET.custodial, governanceImpl = {}, sorobanImpl = {}, syncRunsImpl = {} } = {}) {
   const calls = { createProposal: [], voteOnProposal: [], executeProposal: [], createProposalFromSignedXdr: [], voteFromSignedXdr: [] };
 
   const governanceStub = {
@@ -74,9 +74,22 @@ function buildApp({ userId = 'user-1', wallet = WALLET.custodial, governanceImpl
     },
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
-        req.user = { userId };
+        req.user = { userId, is_admin: isAdmin };
         next();
       },
+      requireAdmin: (req, res, next) => {
+        if (!req.user || !req.user.is_admin) {
+          return res.status(403).json({ error: 'Requires admin privileges' });
+        }
+        return next();
+      },
+    },
+    '../services/governanceSyncRuns': {
+      runGovernanceSync: async () => ({ run: { id: 'run-1', status: 'succeeded' }, deduplicated: false }),
+      listRuns: async () => ({ data: [], total: 0, limit: 20, offset: 0 }),
+      getRun: async () => null,
+      retryRun: async () => ({ run: null, deduplicated: false }),
+      ...syncRunsImpl,
     },
   });
 
@@ -275,4 +288,149 @@ test('POST /api/governance/proposals/:id/execute surfaces a deadline/status erro
   const res = await request(app).post('/api/governance/proposals/11111111-1111-4111-8111-111111111111/execute').send({});
   assert.equal(res.status, 400);
   assert.match(res.body.error, /deadline has not passed/);
+});
+
+// --- Governance sync run history (#839) ---------------------------------------
+
+const RUN_ID = '44444444-4444-4444-8444-444444444444';
+
+test('sync run endpoints require an operator (admin)', async () => {
+  const { app } = buildApp({ isAdmin: false });
+  await request(app).post('/api/governance/sync').expect(403);
+  await request(app).get('/api/governance/sync/runs').expect(403);
+  await request(app).get(`/api/governance/sync/runs/${RUN_ID}`).expect(403);
+  await request(app).post(`/api/governance/sync/runs/${RUN_ID}/retry`).expect(403);
+});
+
+test('POST /api/governance/sync records a manual run for the operator', async () => {
+  let received = null;
+  const { app } = buildApp({
+    isAdmin: true,
+    userId: 'admin-1',
+    syncRunsImpl: {
+      runGovernanceSync: async (args) => {
+        received = args;
+        return { run: { id: RUN_ID, trigger: 'manual', status: 'succeeded', proposals_updated: 1 }, deduplicated: false };
+      },
+    },
+  });
+
+  const res = await request(app).post('/api/governance/sync').expect(200);
+
+  assert.equal(received.trigger, 'manual');
+  assert.equal(received.requestedBy, 'admin-1');
+  assert.equal(res.body.success, true);
+  assert.equal(res.body.run.id, RUN_ID);
+});
+
+test('POST /api/governance/sync reports a failed run with 502 and its safe error summary', async () => {
+  const { app } = buildApp({
+    isAdmin: true,
+    syncRunsImpl: {
+      runGovernanceSync: async () => ({
+        run: { id: RUN_ID, status: 'failed', error_code: 'PROVIDER_ERROR', error_message: 'rpc timeout' },
+        deduplicated: false,
+      }),
+    },
+  });
+
+  const res = await request(app).post('/api/governance/sync').expect(502);
+  assert.equal(res.body.success, false);
+  assert.equal(res.body.run.error_code, 'PROVIDER_ERROR');
+});
+
+test('POST /api/governance/sync deduplicates a trigger while a run is in flight', async () => {
+  const { app } = buildApp({
+    isAdmin: true,
+    syncRunsImpl: {
+      runGovernanceSync: async () => ({ run: { id: RUN_ID, status: 'running' }, deduplicated: true }),
+    },
+  });
+
+  const res = await request(app).post('/api/governance/sync').expect(409);
+  assert.equal(res.body.code, 'SYNC_ALREADY_RUNNING');
+  assert.equal(res.body.run.id, RUN_ID);
+});
+
+test('GET /api/governance/sync/runs bounds pagination and forwards filters', async () => {
+  let received = null;
+  const { app } = buildApp({
+    isAdmin: true,
+    syncRunsImpl: {
+      listRuns: async (args) => {
+        received = args;
+        return { data: [], total: 0, limit: args.limit, offset: args.offset };
+      },
+    },
+  });
+
+  await request(app).get('/api/governance/sync/runs?status=failed&trigger=manual&limit=5000&offset=40').expect(200);
+  assert.deepEqual(received, { status: 'failed', trigger: 'manual', limit: 100, offset: 40 });
+});
+
+test('GET /api/governance/sync/runs surfaces an invalid filter as 400', async () => {
+  const { app } = buildApp({
+    isAdmin: true,
+    syncRunsImpl: {
+      listRuns: async () => {
+        const err = new Error('status must be one of: running, succeeded, failed');
+        err.statusCode = 400;
+        err.code = 'INVALID_FILTER';
+        throw err;
+      },
+    },
+  });
+  const res = await request(app).get('/api/governance/sync/runs?status=bogus').expect(400);
+  assert.equal(res.body.code, 'INVALID_FILTER');
+});
+
+test('GET /api/governance/sync/runs/:id returns the run detail or 404', async () => {
+  const { app } = buildApp({
+    isAdmin: true,
+    syncRunsImpl: {
+      getRun: async (id) => (id === RUN_ID ? { id: RUN_ID, status: 'failed', retries: [] } : null),
+    },
+  });
+  const ok = await request(app).get(`/api/governance/sync/runs/${RUN_ID}`).expect(200);
+  assert.deepEqual(ok.body.retries, []);
+  await request(app).get('/api/governance/sync/runs/55555555-5555-4555-8555-555555555555').expect(404);
+  await request(app).get('/api/governance/sync/runs/not-a-uuid').expect(400);
+});
+
+test('POST /api/governance/sync/runs/:id/retry creates a linked run, and repeats return it', async () => {
+  let calls = 0;
+  const { app } = buildApp({
+    isAdmin: true,
+    syncRunsImpl: {
+      retryRun: async (id) => {
+        calls += 1;
+        return {
+          run: { id: 'retry-run', trigger: 'retry', retry_of_run_id: id, status: 'succeeded' },
+          deduplicated: calls > 1,
+        };
+      },
+    },
+  });
+
+  const first = await request(app).post(`/api/governance/sync/runs/${RUN_ID}/retry`).expect(201);
+  assert.equal(first.body.run.retry_of_run_id, RUN_ID);
+  const second = await request(app).post(`/api/governance/sync/runs/${RUN_ID}/retry`).expect(200);
+  assert.equal(second.body.deduplicated, true);
+  assert.equal(second.body.run.id, 'retry-run');
+});
+
+test('POST /api/governance/sync/runs/:id/retry maps service errors', async () => {
+  const { app } = buildApp({
+    isAdmin: true,
+    syncRunsImpl: {
+      retryRun: async () => {
+        const err = new Error('Only failed runs can be retried');
+        err.statusCode = 409;
+        err.code = 'SYNC_RUN_NOT_RETRYABLE';
+        throw err;
+      },
+    },
+  });
+  const res = await request(app).post(`/api/governance/sync/runs/${RUN_ID}/retry`).expect(409);
+  assert.equal(res.body.code, 'SYNC_RUN_NOT_RETRYABLE');
 });

@@ -38,6 +38,7 @@ const logger = require('../config/logger');
 const db = require('../config/database');
 const { withDecryptedWalletSecret } = require('./walletSecrets');
 const { getPlatformFee } = require('./feeRegistry');
+const { toStroops, fromStroops, splitFee, mulBpsCeil } = require('../utils/stroops');
 
 function loadKeypair(envVar) {
   const secret = process.env[envVar];
@@ -66,11 +67,24 @@ function getArbitratorPublicKey() {
 // Lazily resolved at use-sites via getPlatformKeypair()/getArbitratorKeypair()
 // (previously eager Keypair.fromSecret at import time crashed boot/tests).
 
+/**
+ * Split a contribution into campaign share and platform fee in exact stroops
+ * (#840). Amounts are returned as canonical 7-decimal strings (safe to hand
+ * to Horizon operations and to persist) plus their BigInt stroop values;
+ * feeStroops + campaignStroops always equals amountStroops.
+ */
 async function calcFee(amount) {
-  const bps = await getPlatformFee();
-  const fee = parseFloat((parseFloat(amount) * bps / 10000).toFixed(7));
-  const net = parseFloat((parseFloat(amount) - fee).toFixed(7));
-  return { feeAmount: fee, campaignAmount: net, bps };
+  const bps = Number(await getPlatformFee()) || 0;
+  const amountStroops = toStroops(amount);
+  const { feeStroops, campaignStroops } = splitFee(amountStroops, bps);
+  return {
+    feeAmount: fromStroops(feeStroops),
+    campaignAmount: fromStroops(campaignStroops),
+    amountStroops,
+    feeStroops,
+    campaignStroops,
+    bps,
+  };
 }
 
 function toStellarAsset(assetCode) {
@@ -410,26 +424,29 @@ async function buildUnsignedContributionPayment({
   asset,
   amount,
   memo,
+  feeSplit,
 }) {
   const senderAccount = await server.loadAccount(senderPublicKey);
   const stellarAsset = toStellarAsset(asset);
-  const { feeAmount, campaignAmount } = await calcFee(amount);
+  // A caller that already persisted the split passes it in so the signed
+  // operations are exactly the amounts it recorded (#840).
+  const { feeAmount, campaignAmount, feeStroops } = feeSplit || await calcFee(amount);
 
   const builder = new TransactionBuilder(senderAccount, { fee: BASE_FEE, networkPassphrase })
     .addOperation(
       Operation.payment({
         destination: destinationPublicKey,
         asset: stellarAsset,
-        amount: String(campaignAmount),
+        amount: campaignAmount,
       })
     );
 
-  if (feeAmount > 0) {
+  if (feeStroops > 0n) {
     builder.addOperation(
       Operation.payment({
         destination: getPlatformKeypair().publicKey(),
         asset: stellarAsset,
-        amount: String(feeAmount),
+        amount: feeAmount,
       })
     );
   }
@@ -451,15 +468,18 @@ async function prepareSignedContributionPayment({
   asset,
   amount,
   memo,
+  feeSplit,
 }) {
   const senderKeypair = Keypair.fromSecret(senderSecret);
-  const { feeAmount } = await calcFee(amount);
+  const split = feeSplit || await calcFee(amount);
+  const { feeAmount } = split;
   const unsignedXdr = await buildUnsignedContributionPayment({
     senderPublicKey: senderKeypair.publicKey(),
     destinationPublicKey,
     asset,
     amount,
     memo,
+    feeSplit: split,
   });
   const tx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
   tx.sign(senderKeypair);
@@ -487,40 +507,41 @@ async function buildUnsignedContributionPathPayment({
   destAmount,
   destAssetCode,
   memo,
+  feeSplit,
 }) {
   const senderAccount = await server.loadAccount(senderPublicKey);
   const sourceStellarAsset = toStellarAsset(sendAsset);
   const destStellarAsset = toStellarAsset(destAssetCode);
-  const { feeAmount, campaignAmount, bps } = await calcFee(destAmount);
+  const { feeAmount, campaignAmount, feeStroops, bps } = feeSplit || await calcFee(destAmount);
 
-  const sendMaxFloat = parseFloat(sendMax);
-  const campaignSendMax = feeAmount > 0
-    ? ((sendMaxFloat * (1 - bps / 10000)).toFixed(7))
-    : sendMax;
-  const feeSendMax = feeAmount > 0
-    ? ((sendMaxFloat * (bps / 10000)).toFixed(7))
-    : '0';
+  // Split the send maximum across the two operations in exact stroops: the
+  // fee share is rounded up and the campaign share is the remainder, so the
+  // two never exceed the sendMax the contributor approved.
+  const sendMaxStroops = toStroops(sendMax);
+  const feeSendMaxStroops = feeStroops > 0n ? mulBpsCeil(sendMaxStroops, bps) : 0n;
+  const campaignSendMax = fromStroops(sendMaxStroops - feeSendMaxStroops);
+  const feeSendMax = fromStroops(feeSendMaxStroops);
 
   const builder = new TransactionBuilder(senderAccount, { fee: BASE_FEE, networkPassphrase })
     .addOperation(
       Operation.pathPaymentStrictReceive({
         sendAsset: sourceStellarAsset,
-        sendMax: String(campaignSendMax),
+        sendMax: campaignSendMax,
         destination: destinationPublicKey,
         destAsset: destStellarAsset,
-        destAmount: String(campaignAmount),
+        destAmount: campaignAmount,
         path: [],
       })
     );
 
-  if (feeAmount > 0) {
+  if (feeStroops > 0n) {
     builder.addOperation(
       Operation.pathPaymentStrictReceive({
         sendAsset: sourceStellarAsset,
-        sendMax: String(feeSendMax),
+        sendMax: feeSendMax,
         destination: getPlatformKeypair().publicKey(),
         destAsset: destStellarAsset,
-        destAmount: String(feeAmount),
+        destAmount: feeAmount,
         path: [],
       })
     );
@@ -545,9 +566,11 @@ async function prepareSignedContributionPathPayment({
   destAmount,
   destAssetCode,
   memo,
+  feeSplit,
 }) {
   const senderKeypair = Keypair.fromSecret(senderSecret);
-  const { feeAmount } = await calcFee(destAmount);
+  const split = feeSplit || await calcFee(destAmount);
+  const { feeAmount } = split;
   const unsignedXdr = await buildUnsignedContributionPathPayment({
     senderPublicKey: senderKeypair.publicKey(),
     destinationPublicKey,
@@ -556,6 +579,7 @@ async function prepareSignedContributionPathPayment({
     destAmount,
     destAssetCode,
     memo,
+    feeSplit: split,
   });
   const tx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
   tx.sign(senderKeypair);
@@ -1354,6 +1378,7 @@ async function closeCampaignWalletBySecret(walletPublicKey, walletSecret) {
 }
 
 module.exports = {
+  calcFee,
   createCampaignWallet,
   toStellarAsset,
   getSupportedAssetCodes,

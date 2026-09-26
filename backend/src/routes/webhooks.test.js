@@ -5,13 +5,16 @@ const express = require('express');
 const request = require('supertest');
 const proxyquire = require('proxyquire').noCallThru();
 
-function buildApp({ deliveryRow = null } = {}) {
+function buildApp({ deliveryRow = null, currentRow = null } = {}) {
   const queued = [];
   const router = proxyquire('./webhooks', {
     '../config/database': {
       query: async (sql) => {
         if (sql.includes('SELECT d.id, d.webhook_id')) {
           return { rows: [] };
+        }
+        if (sql.includes('SELECT d.id AS delivery_id, d.status')) {
+          return { rows: currentRow ? [currentRow] : [] };
         }
         if (sql.includes('UPDATE webhook_deliveries')) {
           return { rows: deliveryRow ? [deliveryRow] : [] };
@@ -56,6 +59,27 @@ test('POST /api/webhooks/deliveries/:id/replay requeues a failed delivery for th
 
   assert.equal(res.body.message, 'Replay queued');
   assert.deepEqual(queued, ['delivery-1']);
+});
+
+test('POST /api/webhooks/deliveries/:id/replay is idempotent while a replay is already queued or in flight (#838)', async () => {
+  for (const status of ['pending', 'delivering']) {
+    const { app, queued } = buildApp({ currentRow: { delivery_id: 'delivery-1', status } });
+    const res = await request(app).post('/api/webhooks/deliveries/delivery-1/replay').expect(200);
+    assert.equal(res.body.message, 'Replay already in progress');
+    assert.deepEqual(queued, [], 'a repeated replay must not dispatch a second attempt');
+  }
+});
+
+test('POST /api/webhooks/deliveries/:id/replay rejects an already delivered delivery with 409', async () => {
+  const { app, queued } = buildApp({ currentRow: { delivery_id: 'delivery-1', status: 'delivered' } });
+  await request(app).post('/api/webhooks/deliveries/delivery-1/replay').expect(409);
+  assert.deepEqual(queued, []);
+});
+
+test('POST /api/webhooks/deliveries/:id/replay returns 404 for an unknown or foreign delivery', async () => {
+  const { app, queued } = buildApp();
+  await request(app).post('/api/webhooks/deliveries/delivery-1/replay').expect(404);
+  assert.deepEqual(queued, []);
 });
 
 // --- POST /api/webhooks/incoming/:id (signature + dispatch) ------------------
