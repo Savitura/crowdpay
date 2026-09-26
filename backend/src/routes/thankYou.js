@@ -97,9 +97,8 @@ router.post(
   thankYouValidation,
   validateRequest,
   asyncHandler(async (req, res) => {
-
-    // --- Bulk thank-you to all contributors by campaign ID (rate-limited) ---
     const campaignId = req.params.id;
+    const { message } = req.body;
     const isTest = process.env.NODE_ENV === "test";
 
     const { rows: campaignRows } = await db.query(
