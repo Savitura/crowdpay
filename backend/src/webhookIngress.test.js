@@ -12,7 +12,7 @@ const request = require('supertest');
 process.env.PERSONA_WEBHOOK_SECRET = 'whsec_test';
 process.env.NODE_ENV = 'test';
 
-const dbPath = require.resolve('../config/database');
+const dbPath = require.resolve('./config/database');
 const dbStub = {
   query: async (sql, params = []) => {
     if (sql.includes('UPDATE users')) {
@@ -41,7 +41,7 @@ const dbStub = {
 };
 require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: dbStub };
 
-const app = require('../index');
+const app = require('./index');
 
 function personaSignature(rawBody) {
   const timestamp = String(Math.floor(Date.now() / 1000));
@@ -120,7 +120,7 @@ test('POST /api/webhooks/kyc is no longer served at the legacy /api/kyc-webhook 
 });
 
 test('POST /api/webhooks/incoming/:id verifies its raw-body signature before processing', async () => {
-  const raw = JSON.stringify({ type: 'contribution.confirmed', contribution: { tx_hash: 'tx-1' } });
+  const raw = JSON.stringify({ type: 'bomblast.custom.event' });
   const res = await request(app)
     .post('/api/webhooks/incoming/wh-1')
     .set('content-type', 'application/json')
