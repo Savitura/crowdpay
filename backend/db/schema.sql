@@ -57,6 +57,7 @@ CREATE TABLE campaigns (
   fraud_score         INTEGER DEFAULT 0,
   fraud_signals       JSONB DEFAULT '{}'::jsonb,
   share_count         INTEGER NOT NULL DEFAULT 0,
+  velocity_alert_threshold NUMERIC(18, 7) DEFAULT 0,
   country             TEXT,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );

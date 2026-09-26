@@ -77,6 +77,10 @@ async function runUp() {
       } catch (err) {
         await client.query('ROLLBACK').catch(() => {});
         if (BOOTSTRAP_SCHEMA && err.code && ALREADY_CREATED_CODES.has(err.code)) {
+          // schema.sql already provides the canonical version of this object.
+          // Record the migration as applied so later incremental migrations
+          // (which assume it ran) proceed normally (#800).
+
           await client.query('BEGIN');
           await client.query(
             'INSERT INTO schema_migrations (filename, file_hash) VALUES ($1, $2)',
@@ -89,8 +93,10 @@ async function runUp() {
       }
     }
 
+
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+
     process.exitCode = 1;
   } finally {
     client.release();
