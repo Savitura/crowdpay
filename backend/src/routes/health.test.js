@@ -12,7 +12,16 @@ const mockSentry = {
     tracingHandler: () => (req, res, next) => next(),
     errorHandler: () => (err, req, res, next) => next(err),
   },
+  captureMessage: () => {},
 };
+
+function buildApp(mockDb, mockSentryOverride = mockSentry) {
+  return proxyquire('./health', {
+    '../config/database': mockDb,
+    '../config/logger': { error: () => {} },
+    '@sentry/node': mockSentryOverride,
+  });
+}
 
 test('GET /health returns pool stats and ok status when database is reachable', async () => {
   const mockDb = {
@@ -34,29 +43,10 @@ test('GET /health returns pool stats and ok status when database is reachable', 
     },
   };
 
-  const app = proxyquire('../index', {
-    './config/database': mockDb,
-    '../config/database': mockDb,
-    './config/env': { validateEnv: () => {} },
-    '@sentry/node': mockSentry,
-    // Stub background services to prevent them from executing or failing
-    './services/ledgerMonitor': {
-      startLedgerMonitor: () => {},
-      getLedgerStreamHealth: async () => ({ status: 'healthy' }),
-    },
-    './services/webhookDispatcher': {
-      startWebhookRetryPoller: () => {},
-    },
-    './services/campaignStatusService': {
-      refreshActiveCampaignStatuses: async () => {},
-    },
-    './services/alerting': {
-      sendAlert: () => {},
-    },
-    './services/walletSecrets': {
-      assertNoLegacyPlaintextUserWalletSecrets: async () => {},
-    },
-  });
+  const router = buildApp(mockDb);
+  const express = require('express');
+  const app = express();
+  app.use('/health', router);
 
   const response = await request(app).get('/health');
   
@@ -82,27 +72,10 @@ test('GET /health returns 503 and error message when database query fails', asyn
     getPoolMetrics: () => ({ total: 0, idle: 0, waiting: 0, max: 10, utilisation: 0 }),
   };
 
-  const app = proxyquire('../index', {
-    './config/database': mockDb,
-    '../config/database': mockDb,
-    './config/env': { validateEnv: () => {} },
-    '@sentry/node': mockSentry,
-    './services/ledgerMonitor': {
-      startLedgerMonitor: () => {},
-    },
-    './services/webhookDispatcher': {
-      startWebhookRetryPoller: () => {},
-    },
-    './services/campaignStatusService': {
-      refreshActiveCampaignStatuses: async () => {},
-    },
-    './services/alerting': {
-      sendAlert: () => {},
-    },
-    './services/walletSecrets': {
-      assertNoLegacyPlaintextUserWalletSecrets: async () => {},
-    },
-  });
+  const router = buildApp(mockDb);
+  const express = require('express');
+  const app = express();
+  app.use('/health', router);
 
   const response = await request(app).get('/health');
   
@@ -117,18 +90,8 @@ test('GET /health returns 503 and error message when database query fails', asyn
 
 test('GET /health sends Sentry alert when pool utilisation exceeds 90%', async () => {
   const sentryMessages = [];
-
-  const sentryWithScope = mockSentry.withScope || ((fn) => fn({ setLevel: () => {}, setTag: () => {}, setContext: () => {} }));
   const mockSentryCapture = {
     ...mockSentry,
-    withScope: (fn) => {
-      const scope = {
-        setLevel: (l) => {},
-        setTag: (k, v) => {},
-        setContext: (k, v) => {},
-      };
-      fn(scope);
-    },
     captureMessage: (msg) => {
       sentryMessages.push(msg);
     },
@@ -150,28 +113,10 @@ test('GET /health sends Sentry alert when pool utilisation exceeds 90%', async (
     },
   };
 
-  const app = proxyquire('../index', {
-    './config/database': mockDb,
-    '../config/database': mockDb,
-    './config/env': { validateEnv: () => {} },
-    '@sentry/node': mockSentryCapture,
-    './services/ledgerMonitor': {
-      startLedgerMonitor: () => {},
-      getLedgerStreamHealth: async () => ({ status: 'healthy' }),
-    },
-    './services/webhookDispatcher': {
-      startWebhookRetryPoller: () => {},
-    },
-    './services/campaignStatusService': {
-      refreshActiveCampaignStatuses: async () => {},
-    },
-    './services/alerting': {
-      sendAlert: () => {},
-    },
-    './services/walletSecrets': {
-      assertNoLegacyPlaintextUserWalletSecrets: async () => {},
-    },
-  });
+  const router = buildApp(mockDb, mockSentryCapture);
+  const express = require('express');
+  const app = express();
+  app.use('/health', router);
 
   const response = await request(app).get('/health');
   
