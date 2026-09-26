@@ -124,3 +124,42 @@ test('GET /subscriptions/mine lists the caller subscriptions', async () => {
   assert.equal(res.status, 200);
   assert.equal(res.body.subscriptions[0].contributor, 'user-1');
 });
+
+test('POST /campaigns/:id/subscriptions passes truncateToDeadline only when explicitly true (#837)', async () => {
+  const received = [];
+  const app = buildApp({
+    createSubscription: async (args) => {
+      received.push(args.truncateToDeadline);
+      return { subscriptionId: SUBSCRIPTION_ID, totalPeriods: 3, requestedPeriods: 6, truncatedToDeadline: true };
+    },
+  });
+  const body = { amountPerPeriod: 10, asset: 'XLM', periodMonths: 1, totalPeriods: 6 };
+
+  await request(app).post(`/api/campaigns/${CAMPAIGN_ID}/subscriptions`).send(body).expect(201);
+  await request(app).post(`/api/campaigns/${CAMPAIGN_ID}/subscriptions`).send({ ...body, truncateToDeadline: 'yes' }).expect(201);
+  const res = await request(app)
+    .post(`/api/campaigns/${CAMPAIGN_ID}/subscriptions`)
+    .send({ ...body, truncateToDeadline: true })
+    .expect(201);
+
+  assert.deepEqual(received, [false, false, true]);
+  assert.equal(res.body.truncatedToDeadline, true);
+});
+
+test('POST /campaigns/:id/subscriptions surfaces SUBSCRIPTION_EXCEEDS_DEADLINE as 400', async () => {
+  const app = buildApp({
+    createSubscription: async () => {
+      const err = new Error('This schedule runs past the campaign deadline');
+      err.statusCode = 400;
+      err.code = 'SUBSCRIPTION_EXCEEDS_DEADLINE';
+      throw err;
+    },
+  });
+
+  const res = await request(app)
+    .post(`/api/campaigns/${CAMPAIGN_ID}/subscriptions`)
+    .send({ amountPerPeriod: 10, asset: 'XLM', periodMonths: 1, totalPeriods: 6 });
+
+  assert.equal(res.status, 400);
+  assert.equal(res.body.code, 'SUBSCRIPTION_EXCEEDS_DEADLINE');
+});

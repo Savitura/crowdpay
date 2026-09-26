@@ -4,6 +4,32 @@ import { api } from '../services/api';
 
 const PERIOD_LABELS = { 1: 'Monthly', 3: 'Quarterly', 6: 'Semi-annual' };
 
+// Why a campaign stopped collecting installments (#837), keyed by closure_reason.
+const CLOSURE_REASONS = {
+  campaign_funded: 'the campaign reached its goal',
+  campaign_failed: 'the campaign did not reach its goal',
+  campaign_suspended: 'the campaign was suspended',
+  campaign_deleted: 'the campaign was removed',
+  campaign_closed: 'the campaign is no longer accepting contributions',
+  campaign_deadline_passed: "the remaining installments fall after the campaign's deadline",
+};
+
+function ClosureNotice({ subscription }) {
+  if (!subscription.periods_closed) return null;
+  const reason = CLOSURE_REASONS[subscription.closure_reason] || CLOSURE_REASONS.campaign_closed;
+  const reclaimable = subscription.reclaimable_from && new Date(subscription.reclaimable_from) <= new Date();
+  return (
+    <p className="alert alert--info" style={{ marginTop: '0.6rem', fontSize: '0.85rem' }}>
+      {subscription.periods_closed} remaining installment{subscription.periods_closed === 1 ? '' : 's'} (
+      {subscription.closed_amount} {subscription.asset}) will not be collected because {reason}. The funds
+      stay locked in their claimable balance{subscription.periods_closed === 1 ? '' : 's'} and{' '}
+      {reclaimable
+        ? 'can now be reclaimed to your wallet.'
+        : `become reclaimable to your wallet from ${formatDate(subscription.reclaimable_from)}.`}
+    </p>
+  );
+}
+
 function formatDate(value) {
   if (!value) return '—';
   return new Date(value).toLocaleDateString(undefined, {
@@ -75,6 +101,8 @@ function SubscriptionRow({ subscription, result, onCancelled }) {
           </span>
         )}
       </div>
+
+      <ClosureNotice subscription={subscription} />
 
       {error && (
         <p className="alert alert--error" style={{ marginTop: '0.6rem', fontSize: '0.85rem' }}>
