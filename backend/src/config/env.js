@@ -5,6 +5,8 @@ const { validateGeoipConfig } = require('../services/geoipService');
 const REQUIRED = [
   'DATABASE_URL',
   'JWT_SECRET',
+  'JWT_ISSUER',
+  'JWT_AUDIENCE',
   'API_KEY_PEPPER',
   'PLATFORM_SECRET_KEY',
   'ARBITRATOR_SECRET_KEY',

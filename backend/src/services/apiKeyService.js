@@ -139,10 +139,10 @@ async function finishApiKeyRotation(keyId) {
   return rows[0] || null;
 }
 
-async function authenticateCpkApiKey(rawKey) {
+async function authenticateCpkApiKey(rawKey, requestMethod = 'GET') {
   const prefix = getKeyPrefix(rawKey);
   const { rows } = await db.query(
-    `SELECT id, user_id, key_hash, scopes, expires_at, rotation_state
+    `SELECT id, user_id, key_hash, scopes, expires_at, rotation_state, last_used_at
      FROM api_keys
      WHERE key_prefix = $1 AND revoked_at IS NULL`,
     [prefix]
@@ -170,7 +170,15 @@ async function authenticateCpkApiKey(rawKey) {
       throw Object.assign(new Error('API key expired'), { statusCode: 401, code: 'API_KEY_EXPIRED' });
     }
 
-    await db.query('UPDATE api_keys SET last_used_at = NOW() WHERE id = $1', [row.id]);
+    // Only update last_used_at for write requests, and throttle to once per interval
+    const isWriteRequest = !['GET', 'HEAD', 'OPTIONS'].includes(requestMethod.toUpperCase());
+    const throttleMs = Number(process.env.API_KEY_LAST_USED_THROTTLE_MS) || 5 * 60 * 1000;
+    if (isWriteRequest || !row.last_used_at || (Date.now() - new Date(row.last_used_at).getTime()) > throttleMs) {
+      await db.query(
+        `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 millisecond' * $2)`,
+        [row.id, throttleMs]
+      );
+    }
     const { rows: userRows } = await db.query(
       'SELECT id, role, is_admin FROM users WHERE id = $1',
       [row.user_id]

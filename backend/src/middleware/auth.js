@@ -8,6 +8,13 @@ const { authenticateCpkApiKey } = require('../services/apiKeyService');
 const ACCESS_TOKEN_COOKIE_NAME = 'cp_token';
 const IMPERSONATION_TOKEN_COOKIE_NAME = 'cp_impersonation_token';
 
+// Configurable interval for last_used_at updates (default 5 minutes)
+const LAST_USED_AT_THROTTLE_MS = Number(process.env.API_KEY_LAST_USED_THROTTLE_MS) || 5 * 60 * 1000;
+
+// JWT issuer and audience configuration (with production defaults)
+const JWT_ISSUER = process.env.JWT_ISSUER || 'https://crowdpay.io';
+const JWT_AUDIENCE = process.env.JWT_AUDIENCE || 'crowdpay-api';
+
 function apiKeyPepper() {
   return process.env.API_KEY_PEPPER;
 }
@@ -34,7 +41,7 @@ async function authenticate(req) {
   if (!token) throw new Error('Missing token');
 
   if (token.startsWith('cpk_')) {
-    const auth = await authenticateCpkApiKey(token);
+    const auth = await authenticateCpkApiKey(token, req.method);
     if (!auth) throw new Error('Invalid API key');
     req.user = {
       userId: auth.userId,
@@ -49,24 +56,33 @@ async function authenticate(req) {
     return;
   }
 
-    if (token.startsWith('cp_live_')) {
-     const keyHash = hashApiKey(token);
-     const { rows } = await db.query(
-       `SELECT id, user_id, scopes, expires_at, rotation_state FROM api_keys WHERE key_hash = $1`,
-       [keyHash],
-     );
-     if (!rows.length) throw new Error('Invalid API key');
-     const key = rows[0];
-     if (key.rotation_state === 'revoked' || key.rotation_state === 'expired') {
-       throw new Error('Invalid API key');
-     }
-     if (key.expires_at && new Date(key.expires_at) < new Date()) {
-       const err = new Error('API key expired');
-       err.statusCode = 401;
-       err.code = 'API_KEY_EXPIRED';
-       throw err;
-     }
-     await db.query(`UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`, [rows[0].id]);
+if (token.startsWith('cp_live_')) {
+      const keyHash = hashApiKey(token);
+      const { rows } = await db.query(
+        `SELECT id, user_id, scopes, expires_at, rotation_state, last_used_at FROM api_keys WHERE key_hash = $1`,
+        [keyHash],
+      );
+      if (!rows.length) throw new Error('Invalid API key');
+      const key = rows[0];
+      if (key.rotation_state === 'revoked' || key.rotation_state === 'expired') {
+        throw new Error('Invalid API key');
+      }
+      if (key.expires_at && new Date(key.expires_at) < new Date()) {
+        const err = new Error('API key expired');
+        err.statusCode = 401;
+        err.code = 'API_KEY_EXPIRED';
+        throw err;
+      }
+
+      // Only update last_used_at for write requests, and throttle to once per interval
+      const method = req.method;
+      const isWriteRequest = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+      if (isWriteRequest || !key.last_used_at || (Date.now() - new Date(key.last_used_at).getTime()) > LAST_USED_AT_THROTTLE_MS) {
+        await db.query(
+          `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 millisecond' * $2)`,
+          [rows[0].id, LAST_USED_AT_THROTTLE_MS]
+        );
+      }
      const { rows: userRows } = await db.query(
        'SELECT id, role, is_admin FROM users WHERE id = $1',
        [rows[0].user_id],
@@ -99,12 +115,12 @@ async function authenticate(req) {
       });
       throw new Error('Session expired - please log in again');
     }
-    if (payload.iss !== 'https://crowdpay.io') {
-      logger.warn('JWT invalid issuer', { iss: payload.iss });
+    if (payload.iss !== JWT_ISSUER) {
+      logger.warn('JWT invalid issuer', { iss: payload.iss, expected: JWT_ISSUER });
       throw new Error('Session expired - please log in again');
     }
-    if (payload.aud !== 'crowdpay-api') {
-      logger.warn('JWT invalid audience', { aud: payload.aud });
+    if (payload.aud !== JWT_AUDIENCE) {
+      logger.warn('JWT invalid audience', { aud: payload.aud, expected: JWT_AUDIENCE });
       throw new Error('Session expired - please log in again');
     }
 

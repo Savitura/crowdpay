@@ -29,6 +29,11 @@ function buildApp({
   reportImpl,
   signedTokenValid,
 }) {
+  const queryCalls = [];
+  const wrappedQueryImpl = async (text, params) => {
+    queryCalls.push({ text, params });
+    return queryImpl(text, params);
+  };
   const router = proxyquire('./campaigns', {
     '../services/campaignStatusService': campaignStatusImpl || {
       refreshCampaignStatus: async () => ({ failed: null, funded: null }),
@@ -40,8 +45,8 @@ function buildApp({
         (async () => ({ refundsCreated: 0, refunds: [] })),
     },
     '../config/database': {
-      query: queryImpl,
-      connect: async () => ({ query: queryImpl, release: async () => {} }),
+      query: wrappedQueryImpl,
+      connect: async () => ({ query: wrappedQueryImpl, release: async () => {} }),
     },
     '../services/stellarService': {
       createCampaignWallet: async () => ({ publicKey: 'GPK', secret: 'S' }),
@@ -115,8 +120,10 @@ function buildApp({
     '../middleware/validation': {
       createCampaignValidation: [],
       createCampaignUpdateValidation: [],
+      updateCampaignValidation: [],
       getCampaignsValidation: [],
       validateRequest: (_req, _res, next) => next(),
+      createValidateRequest: () => (_req, _res, next) => next(),
     },
     '../services/analyticsService': {
       getCampaignAnalytics: async () => ({ overview: {}, chart: [] }),
@@ -161,6 +168,18 @@ function buildApp({
         if (authUser) req.user = authUser;
         next();
       },
+    },
+    '../services/campaignInviteService': {
+      resolveUserCampaignRole: async () => 'owner',
+    },
+    '../lib/campaignPermissions': {
+      isValidRole: () => true,
+      canEditCampaignContent: () => true,
+      canViewAnalytics: () => true,
+      canInviteMembers: () => true,
+      canManageMembers: () => true,
+      canChangeRoles: () => true,
+      canAssignRole: () => true,
     },
   });
 
@@ -808,7 +827,7 @@ function buildShareApp({ campaignExists = true, initialShareCount = 5, authUser 
       dedup.set(key, now);
       return { rows: [{ campaign_id: campaignId }] };
     }
-    if (text.includes('UPDATE campaigns SET share_count')) {
+    if (text.includes('UPDATE campaigns') && text.includes('share_count')) {
       shareCount += 1;
       return { rows: [{ share_count: shareCount }] };
     }
@@ -1066,4 +1085,363 @@ test('GET /api/campaigns/:id/report/share/TOKEN rejects an invalid/expired signe
 
   assert.equal(response.status, 403);
   assert.match(response.body.error, /Invalid or expired share link/);
+});
+
+test('PATCH /api/campaigns/:id accepts valid fields and returns 422 for validation errors', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+        return {
+          rows: [{
+            id: 'campaign-1',
+            title: 'Original Title',
+            description: 'Original description',
+            target_amount: '100',
+            deadline: '2026-12-31T23:59:59Z',
+            country: 'US',
+            creator_id: 'creator-1',
+            status: 'active',
+          }],
+        };
+      }
+      if (text.includes('SELECT status FROM campaigns WHERE id = $1')) {
+        return { rows: [{ status: 'active' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('SELECT SUM(amount) as total_budget FROM campaign_budget_categories')) {
+        return { rows: [{ total_budget: '0' }] };
+      }
+      if (text.includes('UPDATE campaigns') && text.includes('SET') && text.includes('WHERE id')) {
+        return { rows: [] };
+      }
+      if (text.includes('BEGIN') || text.includes('COMMIT')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  // Test valid update with multiple fields
+  const response = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({
+      title: 'Updated Title',
+      description: 'Updated description',
+      target_amount: 200,
+      deadline: '2027-01-15T23:59:59Z',
+      country: 'CA',
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.title, 'Updated Title');
+  assert.equal(response.body.target_amount, '200');
+
+  // Test validation error for deadline too soon (less than 24 hours)
+  const tooSoon = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(); // 12 hours from now
+  const response2 = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({ deadline: tooSoon });
+
+  assert.equal(response2.status, 422);
+  assert.match(response2.body.error?.message || response2.body.error, /at least 24 hours/);
+});
+
+test('PATCH /api/campaigns/:id accepts max_per_user, min_contribution, max_contribution fields', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+        return {
+          rows: [{
+            id: 'campaign-1',
+            title: 'Original Title',
+            description: 'Original description',
+            target_amount: '100',
+            deadline: '2026-12-31T23:59:59Z',
+            country: 'US',
+            min_contribution: '10',
+            max_contribution: '1000',
+            max_per_user: '500',
+            creator_id: 'creator-1',
+            status: 'active',
+          }],
+        };
+      }
+      if (text.includes('SELECT status FROM campaigns WHERE id = $1')) {
+        return { rows: [{ status: 'active' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('SELECT SUM(amount) as total_budget FROM campaign_budget_categories')) {
+        return { rows: [{ total_budget: '0' }] };
+      }
+      if (text.includes('UPDATE campaigns') && text.includes('SET') && text.includes('WHERE id')) {
+        return {
+          rows: [{
+            id: 'campaign-1',
+            title: 'Original Title',
+            description: 'Original description',
+            target_amount: '100',
+            deadline: '2026-12-31T23:59:59Z',
+            country: 'US',
+            min_contribution: '20',
+            max_contribution: '2000',
+            max_per_user: '1000',
+            creator_id: 'creator-1',
+            status: 'active',
+          }],
+        };
+      }
+      if (text.includes('INSERT INTO campaign_revisions')) {
+        return { rows: [] };
+      }
+      if (text.includes('BEGIN') || text.includes('COMMIT')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  // Test updating max_per_user, min_contribution, max_contribution
+  const response = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({
+      min_contribution: 20,
+      max_contribution: 2000,
+      max_per_user: 1000,
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.min_contribution, '20');
+  assert.equal(response.body.max_contribution, '2000');
+  assert.equal(response.body.max_per_user, '1000');
+});
+
+test('PATCH /api/campaigns/:id rejects invalid fields with 422', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+        return {
+          rows: [{
+            id: 'campaign-1',
+            title: 'Original Title',
+            creator_id: 'creator-1',
+            status: 'active',
+          }],
+        };
+      }
+      if (text.includes('SELECT status FROM campaigns WHERE id = $1')) {
+        return { rows: [{ status: 'active' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('SELECT SUM(amount) as total_budget FROM campaign_budget_categories')) {
+        return { rows: [{ total_budget: '0' }] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  // Test invalid field
+  const response = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({ invalid_field: 'should fail' });
+
+  assert.equal(response.status, 422);
+  assert.match(response.body.error?.message || response.body.error, /Cannot update field: invalid_field/);
+});
+
+test('PATCH /api/campaigns/:id returns 422 for deadline in the past', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+        return {
+          rows: [{
+            id: 'campaign-1',
+            title: 'Original Title',
+            creator_id: 'creator-1',
+            status: 'active',
+          }],
+        };
+      }
+      if (text.includes('SELECT status FROM campaigns WHERE id = $1')) {
+        return { rows: [{ status: 'active' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('SELECT SUM(amount) as total_budget FROM campaign_budget_categories')) {
+        return { rows: [{ total_budget: '0' }] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const pastDeadline = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(); // 24 hours ago
+  const response = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({ deadline: pastDeadline });
+
+  assert.equal(response.status, 422);
+  assert.match(response.body.error?.message || response.body.error, /Deadline must be at least 24 hours in the future/);
+});
+
+test('PATCH /api/campaigns/:id validates max_per_user > min_contribution', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+        return {
+          rows: [{
+            id: 'campaign-1',
+            title: 'Original Title',
+            creator_id: 'creator-1',
+            status: 'active',
+            min_contribution: '100',
+          }],
+        };
+      }
+      if (text.includes('SELECT status FROM campaigns WHERE id = $1')) {
+        return { rows: [{ status: 'active' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('SELECT SUM(amount) as total_budget FROM campaign_budget_categories')) {
+        return { rows: [{ total_budget: '0' }] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  // max_per_user (50) <= min_contribution (100) should fail
+  const response = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({ max_per_user: 50 });
+
+  assert.equal(response.status, 422);
+  assert.match(response.body.error?.message || response.body.error, /Per-contributor cap must be greater than minimum contribution/);
+});
+
+test('PATCH /api/campaigns/:id full object round-trip works', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+        return {
+          rows: [{
+            id: 'campaign-1',
+            title: 'Original Title',
+            description: 'Original description',
+            category: 'technology',
+            target_amount: '100',
+            asset_type: 'USDC',
+            deadline: '2026-12-31T23:59:59Z',
+            country: 'US',
+            min_contribution: '10',
+            max_contribution: '1000',
+            max_per_user: '500',
+            creator_id: 'creator-1',
+            status: 'active',
+          }],
+        };
+      }
+      if (text.includes('SELECT status FROM campaigns WHERE id = $1')) {
+        return { rows: [{ status: 'active' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('SELECT SUM(amount) as total_budget FROM campaign_budget_categories')) {
+        return { rows: [{ total_budget: '0' }] };
+      }
+      if (text.includes('UPDATE campaigns') && text.includes('SET') && text.includes('WHERE id')) {
+        return {
+          rows: [{
+            id: 'campaign-1',
+            title: 'Updated Title',
+            description: 'Updated description',
+            category: 'education',
+            target_amount: '200',
+            asset_type: 'USDC',
+            deadline: '2027-01-15T23:59:59Z',
+            country: 'CA',
+            min_contribution: '20',
+            max_contribution: '2000',
+            max_per_user: '1000',
+            creator_id: 'creator-1',
+            status: 'active',
+          }],
+        };
+      }
+      if (text.includes('INSERT INTO campaign_revisions')) {
+        return { rows: [] };
+      }
+      if (text.includes('BEGIN') || text.includes('COMMIT')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  // Full object round-trip PATCH
+  const response = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({
+      title: 'Updated Title',
+      description: 'Updated description',
+      category: 'education',
+      target_amount: 200,
+      deadline: '2027-01-15T23:59:59Z',
+      country: 'CA',
+      min_contribution: 20,
+      max_contribution: 2000,
+      max_per_user: 1000,
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.title, 'Updated Title');
+  assert.equal(response.body.category, 'education');
+  assert.equal(response.body.target_amount, '200');
+  assert.equal(response.body.min_contribution, '20');
+  assert.equal(response.body.max_contribution, '2000');
+  assert.equal(response.body.max_per_user, '1000');
 });

@@ -150,16 +150,7 @@ const createCampaignValidation = [
   body('max_per_user')
     .optional({ nullable: true, checkFalsy: true })
     .isFloat({ gt: 0 })
-    .withMessage('Maximum per user must be greater than zero'),
-  body('milestones')
-    .optional({ nullable: true })
-    .isArray({ max: 20 })
-    .withMessage('Milestones must be an array of at most 20 items'),
-  body('milestones.*.release_percentage')
-    .optional({ nullable: true })
-    .isFloat({ min: 0, max: 100 })
-    .withMessage('Milestone release_percentage must be between 0 and 100'),
-  body('max_per_user')
+    .withMessage('Maximum per user must be greater than zero')
     .custom((value, { req }) => {
       if (value === undefined || value === null || value === '') return true;
       const maxPerUser = parseFloat(value);
@@ -170,6 +161,14 @@ const createCampaignValidation = [
       }
       return true;
     }),
+  body('milestones')
+    .optional({ nullable: true })
+    .isArray({ max: 20 })
+    .withMessage('Milestones must be an array of at most 20 items'),
+  body('milestones.*.release_percentage')
+    .optional({ nullable: true })
+    .isFloat({ min: 0, max: 100 })
+    .withMessage('Milestone release_percentage must be between 0 and 100'),
   body('milestones')
     .custom((milestones) => {
       if (!milestones || !Array.isArray(milestones)) return true;
@@ -186,11 +185,60 @@ const createCampaignValidation = [
 ];
 
 const updateCampaignValidation = [
+  body('title')
+    .optional({ nullable: true, checkFalsy: true })
+    .customSanitizer(stripHtml)
+    .isLength({ max: 100 })
+    .withMessage('Title must be at most 100 characters'),
+  body('category')
+    .optional({ nullable: true, checkFalsy: true })
+    .customSanitizer(stripHtml)
+    .isLength({ max: 50 })
+    .withMessage('Category must be at most 50 characters'),
+  body('description')
+    .optional({ nullable: true, checkFalsy: true })
+    .customSanitizer(sanitizeRichText)
+    .isLength({ max: 1000 })
+    .withMessage('Description must be at most 1000 characters'),
+  body('target_amount')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ gt: 0 })
+    .withMessage('Target amount must be greater than zero')
+    .bail()
+    .custom((value) => isValidAmount(value))
+    .withMessage(`Target amount must have at most ${STROOP_DECIMALS} decimal places and fit a Stellar amount`),
   body('deadline')
     .optional({ nullable: true, checkFalsy: true })
     .isISO8601()
-    .withMessage('Deadline must be a valid ISO 8601 date')
+    .withMessage('Deadline must be a valid ISO 8601 date (preferably with Z suffix for UTC)')
     .custom(validateDeadline),
+  body('country')
+    .optional({ nullable: true, checkFalsy: true })
+    .customSanitizer(stripHtml)
+    .isLength({ max: 80 })
+    .withMessage('Country must be at most 80 characters'),
+  body('min_contribution')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ gt: 0 })
+    .withMessage('Minimum contribution must be greater than zero'),
+  body('max_contribution')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ gt: 0 })
+    .withMessage('Maximum contribution must be greater than zero'),
+  body('max_per_user')
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ gt: 0 })
+    .withMessage('Maximum per user must be greater than zero')
+    .custom((value, { req }) => {
+      if (value === undefined || value === null || value === '') return true;
+      const maxPerUser = parseFloat(value);
+      if (isNaN(maxPerUser) || maxPerUser <= 0) return true;
+      const minContribution = parseFloat(req.body.min_contribution);
+      if (!isNaN(minContribution) && maxPerUser <= minContribution) {
+        throw new Error('Per-contributor cap must be greater than minimum contribution');
+      }
+      return true;
+    }),
 ];
 
 const handleValidationErrors = (req, res, next) => {
@@ -374,10 +422,6 @@ const getCampaignsValidation = [
     .optional()
     .isIn(SUPPORTED_ASSETS)
     .withMessage(`asset must be one of: ${SUPPORTED_ASSETS.join(', ')}`),
-  query('category')
-    .optional()
-    .isIn(VALID_CATEGORIES)
-    .withMessage(`category must be one of: ${VALID_CATEGORIES.join(', ')}`),
   query('sort')
     .optional()
     .isIn(VALID_ORDER_BY)
@@ -403,12 +447,8 @@ function validateRequest(req, res, next) {
     message: e.msg,
   }));
 
-  const usesUnprocessableEntity = Boolean(
-    (req.originalUrl && (req.originalUrl.includes('/contributions') || req.originalUrl.includes('/withdrawals'))) ||
-    (req.baseUrl && (req.baseUrl.includes('/contributions') || req.baseUrl.includes('/withdrawals'))) ||
-    (req.path && (req.path.includes('/contributions') || req.path.includes('/withdrawals')))
-  );
-  const statusCode = usesUnprocessableEntity ? 422 : 400;
+  // Use explicit per-route configuration via req.validationErrorCode, default to 400
+  const statusCode = req.validationErrorCode || 400;
 
   return res.status(statusCode).json({
     error: {
@@ -426,6 +466,18 @@ function validateRequestAsError(req, res, next) {
   return res.status(400).json({ error: result.array()[0].msg });
 }
 
+/**
+ * Create a validateRequest middleware with a specific error status code.
+ * @param {number} statusCode - HTTP status code for validation errors (e.g., 422)
+ * @returns {Function} Express middleware
+ */
+function createValidateRequest(statusCode) {
+  return (req, res, next) => {
+    req.validationErrorCode = statusCode;
+    validateRequest(req, res, next);
+  };
+}
+
 module.exports = {
   registerValidation,
   loginValidation,
@@ -434,6 +486,7 @@ module.exports = {
   passwordValidation,
   validateRequest,
   validateRequestAsError,
+  createValidateRequest,
   createCampaignValidation,
   updateCampaignValidation,
   createCampaignUpdateValidation,
