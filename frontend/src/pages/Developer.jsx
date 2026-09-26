@@ -251,6 +251,18 @@ export default function Developer() {
     }
   }
 
+  async function rotateHook(id) {
+    if (!window.confirm('Rotate this webhook signing secret? The previous secret will remain valid for 24 hours.')) return;
+    setError('');
+    try {
+      const res = await api.rotateWebhook(id, { grace_period_hours: 24 });
+      setRevealedSecret(res.secret);
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   function toggleEvent(ev) {
     setHookEvents((cur) => (cur.includes(ev) ? cur.filter((x) => x !== ev) : [...cur, ev]));
   }
@@ -661,14 +673,24 @@ export default function Developer() {
                     {(h.events || []).join(', ')} · {h.secret_hint}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}
-                  onClick={() => revokeHook(h.id)}
-                >
-                  Remove
-                </button>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}
+                      onClick={() => rotateHook(h.id)}
+                    >
+                      Rotate secret
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}
+                      onClick={() => revokeHook(h.id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
               </li>
             ))}
         </ul>

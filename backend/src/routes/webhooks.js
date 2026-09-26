@@ -51,7 +51,7 @@ function normalizeEvents(events) {
 router.post('/incoming/:id', incomingWebhookLimiter, express.raw({ type: 'application/json' }), async (req, res) => {
   try {
     const { rows } = await db.query(
-      `SELECT id, user_id, secret FROM webhooks WHERE id = $1 AND revoked_at IS NULL`,
+      `SELECT id, user_id, secret, previous_secret, previous_secret_expires_at FROM webhooks WHERE id = $1 AND revoked_at IS NULL`,
       [req.params.id]
     );
 
@@ -70,17 +70,33 @@ router.post('/incoming/:id', incomingWebhookLimiter, express.raw({ type: 'applic
     }
 
     // Constant-time HMAC-SHA256 comparison (tolerates a `sha256=` prefix).
-    let verified = false;
-    if (isEncryptedIntegrationSecret(webhook.secret)) {
-      await withDecryptedIntegrationSecret(
-        webhook.secret,
-        { type: 'webhook', id: webhook.user_id },
-        (decryptedSecret) => {
-          verified = verifyWebhookSignature(decryptedSecret, rawBody, headerSig);
-        }
-      );
-    } else {
-      verified = verifyWebhookSignature(webhook.secret, rawBody, headerSig);
+    async function tryVerifySecret(secretValue) {
+      if (!secretValue) return false;
+      let ok = false;
+      if (isEncryptedIntegrationSecret(secretValue)) {
+        await withDecryptedIntegrationSecret(
+          secretValue,
+          { type: 'webhook', id: webhook.user_id },
+          (decryptedSecret) => {
+            ok = verifyWebhookSignature(decryptedSecret, rawBody, headerSig);
+          }
+        );
+      } else {
+        ok = verifyWebhookSignature(secretValue, rawBody, headerSig);
+      }
+      return ok;
+    }
+
+    let verified = await tryVerifySecret(webhook.secret);
+
+    // If current secret fails, try previous secret during grace period
+    if (
+      !verified &&
+      webhook.previous_secret &&
+      webhook.previous_secret_expires_at &&
+      new Date(webhook.previous_secret_expires_at) > new Date()
+    ) {
+      verified = await tryVerifySecret(webhook.previous_secret);
     }
 
     if (!verified) {
@@ -215,6 +231,52 @@ router.delete('/:id', requireAuth, asyncHandler(async (req, res) => {
   res.json({ revoked: true, id: rows[0].id });
 }));
 
+router.post('/:id/rotate', requireAuth, asyncHandler(async (req, res) => {
+  // Grace period in hours (default 24h)
+  const gracePeriodHours = Math.max(1, Math.min(72, parseInt(req.body.grace_period_hours || '24', 10)));
+  const expiresAt = new Date(Date.now() + gracePeriodHours * 60 * 60 * 1000);
+
+  const { rows: existingRows } = await db.query(
+    `SELECT id, url, secret, secret_hint, secret_version FROM webhooks WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`,
+    [req.params.id, req.user.userId]
+  );
+  
+  if (!existingRows.length) return res.status(404).json({ error: 'Webhook not found' });
+  
+  const existing = existingRows[0];
+  const newSecret = `whsec_${crypto.randomBytes(32).toString('hex')}`;
+  const newHint = `${newSecret.slice(0, 10)}…${newSecret.slice(-4)}`;
+  const encryptedNewSecret = await encryptIntegrationSecret(newSecret, { type: 'webhook', id: req.user.userId });
+  
+  const { rows: updatedRows } = await db.query(
+    `UPDATE webhooks
+     SET secret = $1, secret_hint = $2, secret_version = secret_version + 1,
+         previous_secret = $3, previous_secret_hint = $4, previous_secret_version = secret_version,
+         previous_secret_expires_at = $5
+     WHERE id = $6
+     RETURNING id, secret_version, previous_secret_expires_at`,
+    [encryptedNewSecret, newHint, existing.secret, existing.secret_hint, expiresAt, existing.id]
+  );
+
+  await logCredentialEvent({
+    actorId: req.user.userId,
+    action: 'webhook_rotate',
+    resourceType: 'webhook',
+    resourceId: existing.id,
+    req,
+    metadata: { version: updatedRows[0].secret_version, expires_at: expiresAt },
+  });
+
+  res.status(201).json({
+    id: existing.id,
+    secret: newSecret,
+    secret_hint: newHint,
+    version: updatedRows[0].secret_version,
+    previous_secret_expires_at: expiresAt,
+    message: 'Store the new signing secret; it is only shown once.',
+  });
+}));
+
 router.get('/deliveries', requireAuth, asyncHandler(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
   const webhookId = req.query.webhook_id || null;
@@ -230,7 +292,7 @@ router.get('/deliveries', requireAuth, asyncHandler(async (req, res) => {
   const { rows } = await db.query(
     `SELECT d.id, d.webhook_id, d.event_type, d.status, d.response_status,
             d.response_body_snippet, d.attempt_count, d.last_error, d.next_retry_at,
-            d.delivered_at, d.created_at, d.updated_at, w.url AS webhook_url
+            d.delivered_at, d.created_at, d.updated_at, d.signature_versions, w.url AS webhook_url
      FROM webhook_deliveries d
      JOIN webhooks w ON w.id = d.webhook_id
      WHERE w.user_id = $1 ${whClause}

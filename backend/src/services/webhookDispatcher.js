@@ -198,7 +198,9 @@ async function claimDelivery(kind, deliveryId, leaseToken = newLeaseToken()) {
         AND d.attempt_count < $4
        AND ${claimableSql(3)}
      RETURNING d.id, d.attempt_count, d.payload, d.${k.eventColumn} AS event_type,
-               d.lease_token, w.url, w.secret, w.backoff_strategy, w.${k.ownerColumn} AS owner_id`,
+               d.lease_token, w.url, w.secret, w.backoff_strategy, w.${k.ownerColumn} AS owner_id${
+                 kind === 'user' ? ', w.secret_version, w.previous_secret, w.previous_secret_version, w.previous_secret_expires_at' : ''
+               }`,
     [deliveryId, leaseToken, WEBHOOK_LEASE_MS, k.maxAttempts]
   );
   return rows[0] || null;
@@ -258,11 +260,23 @@ function scheduleRetryTimer(kind, deliveryId, delay) {
   if (typeof timer.unref === 'function') timer.unref();
 }
 
-async function recordFailure(kind, claimed, errMsg, httpStatus, snippet) {
+async function recordFailure(kind, claimed, errMsg, httpStatus, snippet, versionsUsed = null) {
   const k = DELIVERY_KINDS[kind];
   const attemptJustUsed = claimed.attempt_count;
-  const snippetSql = k.storesSnippet ? ', response_body_snippet = $6' : '';
-  const extra = k.storesSnippet ? [snippet] : [];
+  const extraSql = [];
+  const extra = [];
+  
+  if (k.storesSnippet) {
+    extraSql.push(`response_body_snippet = $${4 + (k.tracksFailedAt ? 1 : 0)}`);
+    extra.push(snippet);
+  }
+  
+  if (kind === 'user' && versionsUsed) {
+    extraSql.push(`signature_versions = $${4 + (k.tracksFailedAt ? 1 : 0) + extra.length}`);
+    extra.push(versionsUsed);
+  }
+  
+  const extraSqlStr = extraSql.length ? `, ${extraSql.join(', ')}` : '';
 
   if (attemptJustUsed >= k.maxAttempts) {
     const owned = await finishAttempt(
@@ -271,7 +285,7 @@ async function recordFailure(kind, claimed, errMsg, httpStatus, snippet) {
       claimed.lease_token,
       `status = 'failed', last_error = $3, response_status = $4, next_retry_at = NULL${
         k.tracksFailedAt ? ', failed_at = NOW()' : ''
-      }${k.storesSnippet ? ', response_body_snippet = $5' : ''}`,
+      }${extraSqlStr}`,
       [errMsg, httpStatus, ...extra]
     );
     if (owned && kind === 'user') await notifyCreatorOfFailedDelivery(claimed.id, errMsg);
@@ -288,7 +302,7 @@ async function recordFailure(kind, claimed, errMsg, httpStatus, snippet) {
     claimed.id,
     claimed.lease_token,
     `status = 'retrying', next_retry_at = NOW() + ($3::int * INTERVAL '1 millisecond'),
-     last_error = $4, response_status = $5${snippetSql}`,
+     last_error = $4, response_status = $5${extraSqlStr}`,
     [delay, errMsg, httpStatus, ...extra]
   );
   if (owned) scheduleRetryTimer(kind, claimed.id, delay);
@@ -307,18 +321,36 @@ async function runDelivery(kind, deliveryId) {
 
   const bodyUtf8 = JSON.stringify(claimed.payload);
   
-  let sig;
-  if (isEncryptedIntegrationSecret(claimed.secret)) {
-    await withDecryptedIntegrationSecret(
-      claimed.secret,
-      { type: k.ownerContextType, id: claimed.owner_id },
-      (decryptedSecret) => {
-        sig = hmacSignature(decryptedSecret, bodyUtf8);
-      }
-    );
-  } else {
-    // Fallback for unmigrated secrets
-    sig = hmacSignature(claimed.secret, bodyUtf8);
+  const signatures = [];
+  const versionsUsed = [];
+
+  async function addSignature(secretValue, versionLabel) {
+    if (isEncryptedIntegrationSecret(secretValue)) {
+      await withDecryptedIntegrationSecret(
+        secretValue,
+        { type: k.ownerContextType, id: claimed.owner_id },
+        (decryptedSecret) => {
+          signatures.push(`v${versionLabel}=${hmacSignature(decryptedSecret, bodyUtf8)}`);
+        }
+      );
+    } else {
+      signatures.push(`v${versionLabel}=${hmacSignature(secretValue, bodyUtf8)}`);
+    }
+    versionsUsed.push(versionLabel);
+  }
+
+  // Primary secret
+  const currentVersion = claimed.secret_version || 1;
+  await addSignature(claimed.secret, currentVersion);
+
+  // Previous secret if in grace period
+  if (
+    kind === 'user' &&
+    claimed.previous_secret &&
+    claimed.previous_secret_expires_at &&
+    new Date(claimed.previous_secret_expires_at) > new Date()
+  ) {
+    await addSignature(claimed.previous_secret, claimed.previous_secret_version);
   }
 
   let res;
@@ -331,7 +363,7 @@ async function runDelivery(kind, deliveryId) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-CrowdPay-Signature': `sha256=${sig}`,
+        'X-CrowdPay-Signature': signatures.join(', '),
         'X-CrowdPay-Event': claimed.event_type,
         'X-CrowdPay-Delivery-Id': claimed.id,
       },
@@ -350,25 +382,34 @@ async function runDelivery(kind, deliveryId) {
       );
       return { sent: false };
     }
-    await recordFailure(kind, claimed, err.message || String(err), null, null);
+    await recordFailure(kind, claimed, err.message || String(err), null, null, versionsUsed);
     return { sent: true };
   }
 
   const snippet = responseText.slice(0, 512);
+  
+  let finishSetSql = `status = 'delivered', response_status = $3, delivered_at = NOW(), next_retry_at = NULL, last_error = NULL${
+    k.storesSnippet ? ', response_body_snippet = $4' : ''
+  }`;
+  let finishParams = k.storesSnippet ? [res.status, snippet] : [res.status];
+
+  if (kind === 'user') {
+    finishSetSql += `, signature_versions = $${finishParams.length + 3}`;
+    finishParams.push(versionsUsed);
+  }
+
   if (res.ok) {
     await finishAttempt(
       kind,
       claimed.id,
       claimed.lease_token,
-      `status = 'delivered', response_status = $3, delivered_at = NOW(), next_retry_at = NULL, last_error = NULL${
-        k.storesSnippet ? ', response_body_snippet = $4' : ''
-      }`,
-      k.storesSnippet ? [res.status, snippet] : [res.status]
+      finishSetSql,
+      finishParams
     );
     return { sent: true };
   }
 
-  await recordFailure(kind, claimed, `HTTP ${res.status}`, res.status, snippet);
+  await recordFailure(kind, claimed, `HTTP ${res.status}`, res.status, snippet, versionsUsed);
   return { sent: true };
 }
 

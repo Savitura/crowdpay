@@ -430,6 +430,39 @@ export const api = {
     return res.data;
   },
 
+  async listApiKeys() {
+    const res = await apiClient.get('/users/api-keys');
+    return res.data;
+  },
+  async createApiKey(data) {
+    const res = await apiClient.post('/users/api-keys', data);
+    return res.data;
+  },
+  async deleteApiKey(id) {
+    const res = await apiClient.delete(`/users/api-keys/${id}`);
+    return res.data;
+  },
+  async listWebhooks() {
+    const res = await apiClient.get('/webhooks');
+    return res.data;
+  },
+  async createWebhook(data) {
+    const res = await apiClient.post('/webhooks', data);
+    return res.data;
+  },
+  async deleteWebhook(id) {
+    const res = await apiClient.delete(`/webhooks/${id}`);
+    return res.data;
+  },
+  async rotateWebhook(id, data) {
+    const res = await apiClient.post(`/webhooks/${id}/rotate`, data);
+    return res.data;
+  },
+  async listWebhookDeliveries(params) {
+    const res = await apiClient.get('/webhooks/deliveries', { params });
+    return res.data;
+  },
+
   // --- Governance (#801: mutating calls moved onto the shared client so the
   // CSRF header is attached and session cookies are used instead of a
   // localStorage token that no longer exists) ---
