@@ -24,7 +24,7 @@ const express = require('express');
 const request = require('supertest');
 const proxyquire = require('proxyquire').noCallThru();
 
-function buildApp({ queryImpl } = {}) {
+function buildApp(queryImpl) {
   const calls = [];
   const router = proxyquire('./campaignUpdates', {
     '../config/database': {
