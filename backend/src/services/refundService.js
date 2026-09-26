@@ -5,7 +5,9 @@ const { sendEmail } = require('./emailService');
 const { logAuditEvent } = require('./auditService');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('./webhookDispatcher');
 
-async function getEligibleContributions(campaignId) {
+async function getEligibleContributions(campaignId, { limit = 50, offset = 0 } = {}) {
+  const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 500);
+  const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
   const { rows } = await db.query(
     `SELECT
        c.id,
@@ -25,8 +27,9 @@ async function getEligibleContributions(campaignId) {
      WHERE c.campaign_id = $1
        AND c.status = 'completed'
        AND (c.amount - c.refunded_amount) > 0
-     ORDER BY c.created_at DESC`,
-    [campaignId]
+     ORDER BY c.created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [campaignId, parsedLimit, parsedOffset]
   );
   return rows;
 }
@@ -37,13 +40,21 @@ async function getCampaignRefunds(campaignId, { status = null, limit = 50, offse
   let idx = 2;
 
   if (status) {
-    conditions.push(`status = $${idx++}`);
+    conditions.push(`status = $${idx}`);
     params.push(status);
+    idx++;
   }
 
   const where = `WHERE ${conditions.join(' AND ')}`;
   const countResult = await db.query(`SELECT COUNT(*) FROM creator_refunds ${where}`, params);
   const total = parseInt(countResult.rows[0].count, 10);
+
+  const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 500);
+  const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
+
+  const limitIdx = idx++;
+  const offsetIdx = idx++;
+  params.push(parsedLimit, parsedOffset);
 
   const dataResult = await db.query(
     `SELECT id, campaign_id, contribution_id, recipient_wallet, amount, asset, reason,
@@ -51,11 +62,11 @@ async function getCampaignRefunds(campaignId, { status = null, limit = 50, offse
      FROM creator_refunds
      ${where}
      ORDER BY created_at DESC
-     LIMIT $${idx++} OFFSET $${idx++}`,
-    [...params, Math.min(parseInt(limit, 10), 500), parseInt(offset, 10)]
+     LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+    params
   );
 
-  return { total, limit, offset, items: dataResult.rows };
+  return { total, limit: parsedLimit, offset: parsedOffset, items: dataResult.rows };
 }
 
 async function processRefund({
@@ -91,9 +102,13 @@ async function processRefund({
     }
 
     const contrib = contribRows[0];
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount)) {
+      throw Object.assign(new Error('Invalid refund amount'), { status: 422 });
+    }
     const remaining = parseFloat(contrib.amount) - parseFloat(contrib.refunded_amount || 0);
 
-    if (amount <= 0 || amount > remaining) {
+    if (parsedAmount <= 0 || parsedAmount > remaining) {
       throw Object.assign(
         new Error(`Refund amount must be > 0 and <= remaining refundable amount (${remaining})`),
         { status: 422 }
@@ -126,7 +141,7 @@ async function processRefund({
         const result = await stellarService.sendCampaignRefund({
           campaignId,
           recipientWallet: refundRow.recipient_wallet,
-          amount,
+          amount: parsedAmount,
           asset: refundRow.asset,
         });
         txHash = result?.hash || result?.id || null;
@@ -143,7 +158,17 @@ async function processRefund({
       throw Object.assign(new Error('On-chain refund failed - state rolled back'), { status: 502, cause: onChainErr });
     }
 
-    const newRefunded = parseFloat(contrib.refunded_amount || 0) + amount;
+    if (!txHash) {
+      const failMsg = 'On-chain refund transfer failed or sender function unavailable';
+      await client.query(
+        `UPDATE creator_refunds SET status = 'failed', failure_reason = $1, processed_at = NOW() WHERE id = $2`,
+        [failMsg, refundRow.id]
+      );
+      await client.query('COMMIT');
+      throw Object.assign(new Error(failMsg), { status: 502 });
+    }
+
+    const newRefunded = parseFloat(contrib.refunded_amount || 0) + parsedAmount;
     const newRefundStatus = newRefunded >= parseFloat(contrib.amount) ? 'full' : 'partial';
 
     await client.query(
@@ -153,7 +178,7 @@ async function processRefund({
 
     await client.query(
       `UPDATE campaigns SET raised_amount = GREATEST(0, raised_amount - $1) WHERE id = $2`,
-      [amount, campaignId]
+      [parsedAmount, campaignId]
     );
 
     await client.query(
