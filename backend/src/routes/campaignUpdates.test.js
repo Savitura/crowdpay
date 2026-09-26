@@ -4,7 +4,7 @@ const express = require('express');
 const request = require('supertest');
 const proxyquire = require('proxyquire').noCallThru();
 
-const CAMPAIGN_ID = 'camp-1';
+const CAMPAIGN_ID = '11111111-1111-1111-1111-111111111111';
 const CREATOR_ID = 'creator-1';
 
 const CAMPAIGN_ROW = { id: CAMPAIGN_ID, creator_id: CREATOR_ID, title: 'Test Campaign' };
@@ -23,6 +23,7 @@ function denyAuth() {
 }
 
 function buildApp({
+  emailServiceStubs = {},
   queryImpl,
   creatorId = CREATOR_ID,
   role = 'user',
@@ -68,7 +69,13 @@ function buildApp({
     },
     '../middleware/validation': { CAMPAIGN_UPDATE_BODY_MAX_LENGTH: 5000 },
     '../config/logger': { error: () => {} },
-    '../services/emailService': { sendCampaignUpdatePostedEmail: async () => {} },
+    '../services/emailService': {
+      sendCampaignUpdatePostedEmail: async (opts) => {
+        if (emailServiceStubs.sendCampaignUpdatePostedEmail) {
+          await emailServiceStubs.sendCampaignUpdatePostedEmail(opts);
+        }
+      },
+    },
     '../services/notifications': { createNotification: async () => {} },
     '../services/campaignFollowService': { notifyFollowers: async () => {} },
   });
@@ -255,4 +262,75 @@ test('DELETE /api/campaigns/:id/updates/:updateId returns 404 when nothing delet
 
   assert.equal(res.status, 404);
   assert.deepEqual(res.body, { error: 'Update not found' });
+});
+
+test('POST /api/campaigns/:id/updates passes campaignId UUID to email service', async () => {
+  let capturedOpts;
+  const { app } = buildApp({
+    emailServiceStubs: {
+      sendCampaignUpdatePostedEmail: async (opts) => {
+        capturedOpts = opts;
+      },
+    },
+    queryImpl: async (sql, params) => {
+      if (sql.includes('SELECT id, creator_id, title FROM campaigns')) {
+        return { rows: [CAMPAIGN_ROW] };
+      }
+      if (sql.includes('INSERT INTO campaign_updates')) {
+        return { rows: [UPDATE_ROW] };
+      }
+      if (sql.includes('SELECT DISTINCT ON (u.id)')) {
+        return { rows: [{ id: 'u-1', email: 'test@example.com', name: 'Test' }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const res = await request(app)
+    .post(`/api/campaigns/${CAMPAIGN_ID}/updates`)
+    .send({ title: 'Title', body: 'Body' });
+
+  assert.equal(res.status, 201);
+  assert.ok(capturedOpts);
+  assert.equal(capturedOpts.campaignId, CAMPAIGN_ID);
+  assert.notEqual(typeof capturedOpts.campaignId, 'number');
+});
+
+test('unsubscribe-suppression path prevents email delivery when contributor is unsubscribed', async () => {
+  let emailSent = false;
+  const emailService = proxyquire('../services/emailService', {
+    '../config/database': {
+      query: async (sql) => {
+        if (sql.includes('FROM email_unsubscribes')) {
+          return { rows: [{ id: 'unsub-1' }] };
+        }
+        if (sql.includes('FROM notification_preferences')) {
+          return { rows: [{ marketing: true }] };
+        }
+        if (sql.includes('SELECT id FROM users')) {
+          return { rows: [{ id: 'user-1' }] };
+        }
+        return { rows: [] };
+      },
+    },
+    nodemailer: {
+      createTransport: () => ({
+        sendMail: async () => {
+          emailSent = true;
+        },
+      }),
+    },
+  });
+
+  await emailService.sendCampaignUpdatePostedEmail({
+    to: 'suppressed@test.com',
+    name: 'Suppressed User',
+    campaignTitle: 'Test Campaign',
+    campaignUrl: 'http://localhost/campaigns/' + CAMPAIGN_ID,
+    updateTitle: 'Update',
+    updateBody: 'Body',
+    campaignId: CAMPAIGN_ID,
+  });
+
+  assert.equal(emailSent, false);
 });
