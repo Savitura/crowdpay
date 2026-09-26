@@ -416,6 +416,32 @@ export const api = {
     return res.data;
   },
 
+  // --- Subscriptions (Freighter support #821) ---
+  async prepareSubscription(campaignId, { amountPerPeriod, asset, periodMonths, totalPeriods }) {
+    const res = await apiClient.post(`/campaigns/${campaignId}/subscriptions/prepare`, {
+      amountPerPeriod, asset, periodMonths, totalPeriods,
+    });
+    return res.data;
+  },
+  async submitSubscription(campaignId, { unsignedXdr, signedXdr, amountPerPeriod, asset, periodMonths, totalPeriods }) {
+    const res = await apiClient.post(`/campaigns/${campaignId}/subscriptions/submit`, {
+      unsignedXdr, signedXdr, amountPerPeriod, asset, periodMonths, totalPeriods,
+    });
+    return res.data;
+  },
+
+  // --- Credential activity (#833) ---
+  async getCredentialActivity() {
+    const res = await apiClient.get('/users/me/credentials/activity');
+    return res.data.activity;
+  },
+
+  // --- API key rotation (#823) ---
+  async rotateApiKey(id, { label, scopes, expires_at }) {
+    const res = await apiClient.post(`/users/api-keys/${id}/rotate`, { label, scopes, expires_at });
+    return res.data;
+  },
+
   // --- Governance (#801: mutating calls moved onto the shared client so the
   // CSRF header is attached and session cookies are used instead of a
   // localStorage token that no longer exists) ---
