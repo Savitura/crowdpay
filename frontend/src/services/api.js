@@ -116,10 +116,6 @@ export const api = {
     const res = await apiClient.patch(`/admin/campaigns/${id}/suspend`, data);
     return res.data;
   },
-  async getContributions(campaignId, params) {
-    const res = await apiClient.get(`/campaigns/${campaignId}/backers`, { params });
-    return res.data;
-  },
   async getCampaignRequirements(campaignId) {
     const res = await apiClient.get(`/campaigns/${campaignId}/requirements`);
     return res.data;
@@ -142,10 +138,6 @@ export const api = {
   },
   async submitMilestoneEvidence(id, formData) {
     const res = await apiClient.post(`/milestones/${id}/upload-evidence`, formData);
-    return res.data;
-  },
-  async getMilestones(campaignId) {
-    const res = await apiClient.get(`/milestones/campaign/${campaignId}`);
     return res.data;
   },
   async getPlatformConfig() {
@@ -389,10 +381,6 @@ export const api = {
   },
   async submitSignedContribution(payload) {
     const res = await apiClient.post('/contributions/submit-signed', payload);
-    return res.data;
-  },
-  async getContributions(campaignId, params) {
-    const res = await apiClient.get(`/contributions/campaign/${campaignId}`, { params });
     return res.data;
   },
   async getContributionDiagnosis(contributionId) {
