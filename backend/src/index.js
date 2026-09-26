@@ -84,7 +84,7 @@ app.use('/api/sessions', require('./routes/sessions'));
 app.use('/api/sponsor-matching', require('./routes/sponsorMatching'));
 app.use('/api/stellar-transactions', require('./routes/stellarTransactions'));
 app.use('/api', require('./routes/subscriptions'));
-app.use('/api/thank-you', require('./routes/thankYou'));
+app.use('/api', require('./routes/thankYou'));
 app.use('/api/translations', require('./routes/translations'));
 app.use('/api/treasury', require('./routes/treasury'));
 app.use('/api/users', require('./routes/users'));
