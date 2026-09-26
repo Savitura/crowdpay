@@ -14,6 +14,7 @@ const { reserveTierSlot } = require('../services/rewardTierService');
 const { assertUserKycVerified } = require('../services/kycService');
 const { parsePagination, paginatedResponse } = require('../utils/pagination');
 const { assertContributorMeetsRequirements } = require('../services/contributorIdentityService');
+const { assertContributionPolicy } = require('../services/contributionPolicy');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const asyncHandler = require('../utils/asyncHandler');
@@ -77,7 +78,7 @@ router.post(
     await assertUserKycVerified(userId);
 
     const { rows: campaignRows } = await db.query(
-      'SELECT id, title, asset_type, wallet_public_key, escrow_contract_id, status FROM campaigns WHERE id = $1',
+      'SELECT id, title, asset_type, wallet_public_key, escrow_contract_id, status, deadline, min_contribution, max_contribution, max_per_user FROM campaigns WHERE id = $1',
       [campaign_id]
     );
     const campaign = campaignRows[0];
@@ -92,9 +93,13 @@ router.post(
     const { walletPublicKey, walletSecretEncrypted } = await resolveContributorWallet(req);
 
     try {
+      await assertContributionPolicy(campaign, amount, walletPublicKey);
       await assertContributorMeetsRequirements(walletPublicKey, campaign_id);
     } catch (err) {
-      return mapContributionGateError(err, res);
+      if (err.code === 'CONTRIBUTOR_REQUIREMENTS_NOT_MET' || err.code === 'IDENTITY_UNAVAILABLE' || err.code === 'ATTESTATION_UNAVAILABLE') {
+        return mapContributionGateError(err, res);
+      }
+      return res.status(err.statusCode || 400).json({ error: err.message });
     }
 
     const referralCode = getReferralCodeFromRequest(req);
@@ -198,7 +203,7 @@ router.post(
     }
 
     const { rows: campaignRows } = await db.query(
-      'SELECT id, title, asset_type, wallet_public_key, escrow_contract_id, status FROM campaigns WHERE id = $1',
+      'SELECT id, title, asset_type, wallet_public_key, escrow_contract_id, status, deadline, min_contribution, max_contribution, max_per_user FROM campaigns WHERE id = $1',
       [campaign_id]
     );
     const campaign = campaignRows[0];
@@ -220,9 +225,13 @@ router.post(
     }
 
     try {
+      await assertContributionPolicy(campaign, amount, user.wallet_public_key);
       await assertUserKycVerified(userId);
       await assertContributorMeetsRequirements(user.wallet_public_key, campaign_id);
     } catch (err) {
+      if (err.code === 'CONTRIBUTOR_REQUIREMENTS_NOT_MET' || err.code === 'IDENTITY_UNAVAILABLE' || err.code === 'ATTESTATION_UNAVAILABLE') {
+        return mapContributionGateError(err, res);
+      }
       if (err.code === 'KYC_REQUIRED' || err.statusCode === 403) {
         return res.status(err.statusCode || 403).json({
           error: err.message,
@@ -230,7 +239,7 @@ router.post(
           missing: err.missing || undefined,
         });
       }
-      return mapContributionGateError(err, res);
+      return res.status(err.statusCode || 400).json({ error: err.message });
     }
 
     const result = await contributionService.submitCustodialContribution({

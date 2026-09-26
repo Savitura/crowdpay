@@ -2,6 +2,7 @@ const { server } = require('../config/stellar');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const { refreshCampaignStatus } = require('./campaignStatusService');
+const { assertContributionPolicy } = require('./contributionPolicy');
 
 function assetLabel(record) {
   if (!record) return 'XLM';
@@ -56,7 +57,7 @@ function parseContributionFromOperations(operations, campaign) {
 
 async function recordContributionFromTxHash({ campaignId, txHash }) {
   const { rows: campaigns } = await db.query(
-    'SELECT id, wallet_public_key, asset_type, status, raised_amount, target_amount FROM campaigns WHERE id = $1',
+    'SELECT id, wallet_public_key, asset_type, status, raised_amount, target_amount, deadline, min_contribution, max_contribution, max_per_user FROM campaigns WHERE id = $1',
     [campaignId]
   );
   if (!campaigns.length) {
@@ -97,6 +98,14 @@ async function recordContributionFromTxHash({ campaignId, txHash }) {
 
   const operations = await loadOperations(txHash);
   const parsed = parseContributionFromOperations(operations, campaign);
+
+  if (parsed.asset !== campaign.asset_type) {
+    const err = new Error(`Transaction must pay in the campaign's base asset (${campaign.asset_type})`);
+    err.statusCode = 422;
+    throw err;
+  }
+
+  await assertContributionPolicy(campaign, parsed.amount, parsed.sender_public_key);
 
   const client = await db.connect();
   try {
