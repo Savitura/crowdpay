@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -70,8 +69,7 @@ export default function Navbar() {
       setNotifications((prev) =>
         prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n))
       );
-    } catch (_err) {
-      /* ignore */
+    } catch (_err) { // eslint-disable-line no-unused-vars -- intentionally ignored
     }
   }
 
@@ -79,8 +77,7 @@ export default function Navbar() {
     try {
       await api.markAllNotificationsRead();
       setNotifications((prev) => prev.map((n) => ({ ...n, read_at: new Date().toISOString() })));
-    } catch (_err) {
-      /* ignore */
+    } catch (_err) { // eslint-disable-line no-unused-vars -- intentionally ignored
     }
   }
 

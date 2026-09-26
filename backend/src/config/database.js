@@ -7,16 +7,58 @@ if (!process.env.DATABASE_URL && process.env.NODE_ENV !== 'test') {
   );
 }
 
-const POOL_MAX = parseInt(process.env.DB_POOL_MAX || '10', 10);
+/**
+ * Parses and validates a positive integer environment variable.
+ * @param {string} name - Environment variable name
+ * @param {string} value - Raw value from process.env
+ * @param {number} defaultValue - Default value if unset
+ * @returns {number} Validated integer
+ * @throws {Error} If value is set but invalid
+ */
+function parsePositiveInt(name, value, defaultValue) {
+  if (value === undefined || value === '') {
+    return defaultValue;
+  }
+  // Reject non-integer strings (e.g., "10.5", "abc", "0", "-1")
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${name} must be a positive integer (received: ${JSON.stringify(value)})`);
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (parsed <= 0) {
+    throw new Error(`${name} must be a positive integer (received: ${JSON.stringify(value)})`);
+  }
+  return parsed;
+}
+
+/**
+ * Parses and validates a non-negative integer environment variable.
+ * @param {string} name - Environment variable name
+ * @param {string} value - Raw value from process.env
+ * @param {number} defaultValue - Default value if unset
+ * @returns {number} Validated integer
+ * @throws {Error} If value is set but invalid
+ */
+function parseNonNegativeInt(name, value, defaultValue) {
+  if (value === undefined || value === '') {
+    return defaultValue;
+  }
+  // Reject non-integer strings (e.g., "10.5", "abc", "-1")
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${name} must be a non-negative integer (received: ${JSON.stringify(value)})`);
+  }
+  return Number.parseInt(value, 10);
+}
+
+const POOL_MAX = parsePositiveInt('DB_POOL_MAX', process.env.DB_POOL_MAX, 10);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: POOL_MAX,
-  idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT_MS || '30000', 10),
-  connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT_MS || '5000', 10),
+  idleTimeoutMillis: parsePositiveInt('DB_IDLE_TIMEOUT_MS', process.env.DB_IDLE_TIMEOUT_MS, 30000),
+  connectionTimeoutMillis: parsePositiveInt('DB_CONNECTION_TIMEOUT_MS', process.env.DB_CONNECTION_TIMEOUT_MS, 5000),
 });
 
-const WAITING_THRESHOLD = parseInt(process.env.DB_POOL_WAITING_THRESHOLD || '5', 10);
+const WAITING_THRESHOLD = parseNonNegativeInt('DB_POOL_WAITING_THRESHOLD', process.env.DB_POOL_WAITING_THRESHOLD, 5);
 
 pool.on('error', (err) => {
   logger.error('Unexpected database pool error', { error: err.message });

@@ -1,4 +1,5 @@
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = rateLimit;
 
 const embedStatsLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -14,6 +15,7 @@ const impactStatsLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later.' },
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
 });
 
 module.exports = {

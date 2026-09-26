@@ -142,6 +142,7 @@ cd frontend && npm run dev   # http://localhost:5173
 | `UNLEASH_APP_NAME` | Unleash application name (default: `crowdpay`) |
 | `UNLEASH_ENVIRONMENT` | Unleash environment (default: `development`) |
 | `LAUNCHDARKLY_SDK_KEY` | LaunchDarkly SDK key (required for LaunchDarkly adapter) |
+| `RATE_LIMIT_BYPASS_ACCOUNTS` | Comma-separated Stellar addresses (G...) that bypass the contribution rate limiter. **Only for test accounts in non-production.** Adding accounts here allows unlimited contribution requests — a security risk if misused. |
 
 The frontend runs locally without an `.env`: Vite proxies `/api` to `http://localhost:3001` and Stellar explorer links default to testnet. Use `frontend/.env.example` when you need to override those defaults or configure optional integrations.
 

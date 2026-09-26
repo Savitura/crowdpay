@@ -11,9 +11,11 @@
  *   COMPRESSION_THRESHOLD   Minimum response body size in bytes before
  *                           compression is applied. Default: 1024 (1 KB).
  *                           Responses smaller than this pass through unchanged.
+ *                           Must be a non-negative integer.
  *
- *   COMPRESSION_LEVEL       zlib compression level, 1 (fastest) to 9 (best).
- *                           Default: -1 (zlib default, a balance of speed/ratio).
+ *   COMPRESSION_LEVEL       zlib compression level, -1 (zlib default) to 9 (best).
+ *                           Default: -1.
+ *                           Valid values: -1, 1, 2, 3, 4, 5, 6, 7, 8, 9.
  *
  * Responses that are never compressed:
  *   - Responses below COMPRESSION_THRESHOLD bytes
@@ -28,11 +30,53 @@
 
 const compression = require('compression');
 
-/** Minimum bytes before compression kicks in */
-const THRESHOLD = parseInt(process.env.COMPRESSION_THRESHOLD || '1024', 10);
+/**
+ * Parses and validates a non-negative integer environment variable.
+ * @param {string} name - Environment variable name
+ * @param {string} value - Raw value from process.env
+ * @param {number} defaultValue - Default value if unset
+ * @returns {number} Validated integer
+ * @throws {Error} If value is set but invalid
+ */
+function parseNonNegativeInt(name, value, defaultValue) {
+  if (value === undefined || value === '') {
+    return defaultValue;
+  }
+  // Reject non-integer strings (e.g., "100.5", "abc", "-100")
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${name} must be a non-negative integer (received: ${JSON.stringify(value)})`);
+  }
+  const parsed = Number.parseInt(value, 10);
+  return parsed;
+}
 
-/** zlib level: -1 = library default (~6), range 1–9 */
-const LEVEL = parseInt(process.env.COMPRESSION_LEVEL || '-1', 10);
+/**
+ * Parses and validates COMPRESSION_LEVEL environment variable.
+ * Valid range: -1 (zlib default) through 9 (best compression).
+ * @param {string} value - Raw value from process.env
+ * @returns {number} Validated compression level
+ * @throws {Error} If value is set but invalid
+ */
+function parseCompressionLevel(value) {
+  if (value === undefined || value === '') {
+    return -1; // zlib default
+  }
+  // Reject non-integer strings (e.g., "6.5", "high", "-2", "10")
+  if (!/^-?\d+$/.test(value)) {
+    throw new Error(`COMPRESSION_LEVEL must be an integer between -1 and 9 (received: ${JSON.stringify(value)})`);
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (parsed < -1 || parsed > 9) {
+    throw new Error(`COMPRESSION_LEVEL must be an integer between -1 and 9 (received: ${JSON.stringify(value)})`);
+  }
+  return parsed;
+}
+
+/** Minimum bytes before compression kicks in — validated at startup */
+const THRESHOLD = parseNonNegativeInt('COMPRESSION_THRESHOLD', process.env.COMPRESSION_THRESHOLD, 1024);
+
+/** zlib level: -1 = library default, range 1–9; also accepts -1 — validated at startup */
+const LEVEL = parseCompressionLevel(process.env.COMPRESSION_LEVEL);
 
 /**
  * Custom filter — SSE streams must never be compressed because the chunked

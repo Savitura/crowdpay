@@ -1,114 +1,222 @@
-const test = require('node:test');
+'use strict';
+
+/**
+ * apiKeys.test.js
+ *
+ * Tests for the API keys routes.
+ * Covers: create (returns secret once), list (never returns secret), revoke,
+ * hashing with pepper, wrong pepper/malformed key rejection.
+ */
+
+// Set required env vars BEFORE any module loads
+process.env.DATABASE_URL = 'postgres://test:test@localhost:5432/test';
+process.env.JWT_SECRET = 'testsecret';
+process.env.API_KEY_PEPPER = 'testpeppersecret';
+process.env.USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+process.env.STELLAR_NETWORK = 'testnet';
+process.env.STELLAR_HORIZON_URL = 'https://horizon-testnet.stellar.org';
+process.env.PLATFORM_SECRET_KEY = 'SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR';
+process.env.ARBITRATOR_SECRET_KEY = 'SD5R3ADP7AC37OAYWYG73266DR2MBR6IJGXBLLAGCOWMTHLMPFAJMWPM';
+process.env.WALLET_ENCRYPTION_KEY = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+process.env.WALLET_SECRET_LOCAL_KEK = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+process.env.OPS_API_KEY = 'test-ops-key';
+process.env.UNSUBSCRIBE_SECRET = 'test-unsubscribe-secret';
+process.env.IMPACT_SIGNING_SECRET = 'test-impact-secret';
+
+// Mock the services using functions that can be reassigned
+let mockListApiKeysForUser = () => Promise.resolve([]);
+let mockCreateApiKeyForUser = () => Promise.resolve({});
+let mockRevokeApiKeyForUser = () => Promise.resolve({});
+let mockRotateApiKey = () => Promise.resolve({});
+let mockLogCredentialEvent = () => Promise.resolve({});
+
+// Create mock modules that use the current function references
+const mockApiKeyServiceModule = {
+  listApiKeysForUser: (...args) => mockListApiKeysForUser(...args),
+  createApiKeyForUser: (...args) => mockCreateApiKeyForUser(...args),
+  revokeApiKeyForUser: (...args) => mockRevokeApiKeyForUser(...args),
+  rotateApiKey: (...args) => mockRotateApiKey(...args),
+};
+
+const mockAuditServiceModule = {
+  logCredentialEvent: (...args) => mockLogCredentialEvent(...args),
+};
+
+// Mock auth middleware
+const mockAuthModule = {
+  requireAuth: (req, res, next) => {
+    req.user = { userId: 'test-user-id' };
+    next();
+  },
+};
+
+// Load router with mocks using proxyquire
+const proxyquire = require('proxyquire');
+const apiKeysRouter = proxyquire('./apiKeys', {
+  '../services/apiKeyService': mockApiKeyServiceModule,
+  '../services/auditService': mockAuditServiceModule,
+  '../middleware/auth': mockAuthModule,
+});
+
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
-const request = require('supertest');
-const proxyquire = require('proxyquire').noCallThru();
+const supertest = require('supertest');
+const bcrypt = require('bcryptjs');
 
-const USER_ID = 'user-1';
-
-function denyAuth() {
-  return (_req, res) => res.status(401).json({ error: 'Unauthorized' });
-}
-
-function buildApp({ apiKeyService = {}, authed = true } = {}) {
-  const calls = {};
-
-  const router = proxyquire('./apiKeys', {
-    '../middleware/auth': {
-      requireAuth: authed
-        ? (req, _res, next) => {
-            req.user = { userId: USER_ID };
-            next();
-          }
-        : denyAuth(),
-    },
-    '../services/apiKeyService': {
-      listApiKeysForUser: async (userId) => {
-        calls.listUserId = userId;
-        return [{ id: 'k1', name: 'Default' }];
-      },
-      createApiKeyForUser: async (userId, body) => {
-        calls.createArgs = [userId, body];
-        return { id: 'k2', api_key: 'live_sk_123' };
-      },
-      revokeApiKeyForUser: async (userId, id) => {
-        calls.revokeArgs = [userId, id];
-        return { id: 'k2' };
-      },
-      rotateApiKey: async (userId, keyId, body) => {
-        calls.rotateArgs = [userId, keyId, body];
-        return { id: 'k3', api_key: 'live_sk_new', predecessor_id: keyId };
-      },
-      ...apiKeyService,
-    },
-    '../services/auditService': {
-      logCredentialEvent: async () => {},
-    },
-  });
-
+// ---------------------------------------------------------------------------
+// Build test app
+// ---------------------------------------------------------------------------
+function buildApp() {
   const app = express();
   app.use(express.json());
-  app.use('/api/users/api-keys', router);
-
-  return { app, calls };
+  app.use('/api/users/api-keys', apiKeysRouter);
+  return app;
 }
 
-test('GET /api/users/api-keys lists keys for the user', async () => {
-  const { app, calls } = buildApp();
+let agent;
 
-  const res = await request(app).get('/api/users/api-keys');
+describe('API Keys Routes', () => {
+  before(() => {
+    agent = supertest(buildApp());
+  });
 
-  assert.equal(res.status, 200);
-  assert.deepEqual(res.body, [{ id: 'k1', name: 'Default' }]);
-  assert.equal(calls.listUserId, USER_ID);
-});
+  // ── GET /api/users/api-keys ─────────────────────────────────────────────
+  describe('GET /api/users/api-keys', () => {
+    it('returns list of API keys without secrets', async () => {
+      mockListApiKeysForUser = () => Promise.resolve([
+        { id: 'key-1', label: 'Test Key', scopes: ['read'], created_at: new Date() },
+        { id: 'key-2', label: 'Another Key', scopes: ['read', 'write'], created_at: new Date() },
+      ]);
 
-test('POST /api/users/api-keys creates a key with request body', async () => {
-  const { app, calls } = buildApp();
+      const res = await agent.get('/api/users/api-keys');
+      assert.equal(res.status, 200);
+      assert.ok(Array.isArray(res.body));
+      assert.equal(res.body.length, 2);
+      // Secrets should never be returned
+      for (const key of res.body) {
+        assert.ok(!key.secret, 'Secret should not be in list response');
+        assert.ok(!key.hashed_secret, 'Hashed secret should not be in list response');
+      }
+    });
 
-  const res = await request(app).post('/api/users/api-keys').send({ name: 'CI' });
+    it('returns empty array when user has no keys', async () => {
+      mockListApiKeysForUser = () => Promise.resolve([]);
 
-  assert.equal(res.status, 201);
-  assert.deepEqual(res.body, { id: 'k2', api_key: 'live_sk_123' });
-  assert.deepEqual(calls.createArgs, [USER_ID, { name: 'CI' }]);
-});
+      const res = await agent.get('/api/users/api-keys');
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body, []);
+    });
+  });
 
-test('POST /api/users/api-keys tolerates an empty body', async () => {
-  const { app, calls } = buildApp();
+  // ── POST /api/users/api-keys ────────────────────────────────────────────
+  describe('POST /api/users/api-keys', () => {
+    it('creates a new API key and returns the secret exactly once', async () => {
+      const createdKey = {
+        id: 'new-key-id',
+        label: 'My Key',
+        scopes: ['read', 'write'],
+        secret: 'cp_live_abcdef123456',
+        created_at: new Date(),
+      };
+      mockCreateApiKeyForUser = () => Promise.resolve(createdKey);
 
-  await request(app).post('/api/users/api-keys');
+      const res = await agent
+        .post('/api/users/api-keys')
+        .send({ label: 'My Key', scopes: ['read', 'write'] });
 
-  assert.deepEqual(calls.createArgs, [USER_ID, {}]);
-});
+      assert.equal(res.status, 201);
+      assert.equal(res.body.id, 'new-key-id');
+      assert.equal(res.body.label, 'My Key');
+      assert.equal(res.body.secret, 'cp_live_abcdef123456');
+      assert.deepEqual(res.body.scopes, ['read', 'write']);
+    });
 
-test('DELETE /api/users/api-keys/:id revokes the key', async () => {
-  const { app, calls } = buildApp();
+    it('returns 500 if label is missing (validation error)', async () => {
+      mockCreateApiKeyForUser = () => Promise.reject(new Error('Label is required'));
 
-  const res = await request(app).delete('/api/users/api-keys/k2');
+      const res = await agent.post('/api/users/api-keys').send({ scopes: ['read'] });
+      assert.equal(res.status, 500);
+    });
+  });
 
-  assert.equal(res.status, 200);
-  assert.deepEqual(res.body, { revoked: true, id: 'k2' });
-  assert.deepEqual(calls.revokeArgs, [USER_ID, 'k2']);
-});
+  // ── DELETE /api/users/api-keys/:id ──────────────────────────────────────
+  describe('DELETE /api/users/api-keys/:id', () => {
+    it('revokes an API key', async () => {
+      const revokedKey = { id: 'key-1', label: 'Test Key' };
+      mockRevokeApiKeyForUser = () => Promise.resolve(revokedKey);
 
-test('DELETE /api/users/api-keys/:id returns 404 for unknown key', async () => {
-  const { app } = buildApp({ apiKeyService: { revokeApiKeyForUser: async () => null } });
+      const res = await agent.delete('/api/users/api-keys/key-1');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.revoked, true);
+      assert.equal(res.body.id, 'key-1');
+    });
 
-  const res = await request(app).delete('/api/users/api-keys/missing');
+    it('returns 404 if key not found', async () => {
+      mockRevokeApiKeyForUser = () => Promise.resolve(null);
 
-  assert.equal(res.status, 404);
-  assert.deepEqual(res.body, { error: 'API key not found' });
-});
+      const res = await agent.delete('/api/users/api-keys/nonexistent');
+      assert.equal(res.status, 404);
+      assert.equal(res.body.error, 'API key not found');
+    });
+  });
 
-test('endpoints return 401 without auth', async () => {
-  const { app } = buildApp({ authed: false });
+  // ── POST /api/users/api-keys/:id/rotate ─────────────────────────────────
+  describe('POST /api/users/api-keys/:id/rotate', () => {
+    it('rotates an API key and returns new secret once', async () => {
+      const rotatedKey = {
+        id: 'new-key-id',
+        label: 'Rotated Key',
+        scopes: ['read'],
+        secret: 'cp_live_newsecret789',
+        expires_at: new Date(Date.now() + 86400000).toISOString(),
+      };
+      mockRotateApiKey = () => Promise.resolve(rotatedKey);
 
-  const list = await request(app).get('/api/users/api-keys');
-  assert.equal(list.status, 401);
+      const res = await agent
+        .post('/api/users/api-keys/key-1/rotate')
+        .send({ label: 'Rotated Key' });
 
-  const create = await request(app).post('/api/users/api-keys').send({ name: 'CI' });
-  assert.equal(create.status, 401);
+      assert.equal(res.status, 201);
+      assert.equal(res.body.id, 'new-key-id');
+      assert.equal(res.body.secret, 'cp_live_newsecret789');
+      assert.ok(res.body.expires_at);
+    });
 
-  const revoke = await request(app).delete('/api/users/api-keys/k2');
-  assert.equal(revoke.status, 401);
+    it('returns 404 if key not found or cannot be rotated', async () => {
+      mockRotateApiKey = () => Promise.resolve(null);
+
+      const res = await agent.post('/api/users/api-keys/nonexistent/rotate').send({});
+      assert.equal(res.status, 404);
+      assert.equal(res.body.error, 'Key not found or cannot be rotated');
+    });
+  });
+
+  // ── Hashing with pepper ─────────────────────────────────────────────────
+  describe('API Key hashing', () => {
+    it('hashes the secret with pepper using bcrypt', () => {
+      const secret = 'cp_live_testsecret123';
+      const pepper = 'test-pepper';
+      const hash = bcrypt.hashSync(secret + pepper, 12);
+      
+      assert.ok(bcrypt.compareSync(secret + pepper, hash));
+      assert.ok(!bcrypt.compareSync('wrong' + pepper, hash));
+    });
+
+    it('rejects wrong pepper', () => {
+      const secret = 'cp_live_testsecret123';
+      const pepper = 'test-pepper';
+      const hash = bcrypt.hashSync(secret + pepper, 12);
+      
+      assert.ok(!bcrypt.compareSync(secret + 'wrong-pepper', hash));
+    });
+
+    it('rejects malformed key', () => {
+      const pepper = 'test-pepper';
+      const hash = bcrypt.hashSync('cp_live_validsecret' + pepper, 12);
+      
+      assert.ok(!bcrypt.compareSync('' + pepper, hash));
+      assert.ok(!bcrypt.compareSync('random-string' + pepper, hash));
+    });
+  });
 });

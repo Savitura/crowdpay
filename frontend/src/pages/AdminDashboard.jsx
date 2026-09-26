@@ -1,5 +1,5 @@
-/* eslint-disable */
 import { useEffect, useState, useCallback, useRef } from 'react';
+import PropTypes from 'prop-types';
 import * as Sentry from '@sentry/react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -7,14 +7,6 @@ import { useNavigate } from 'react-router-dom';
 import RelativeTime from '../components/RelativeTime';
 import DisputeResolveModal from '../components/DisputeResolveModal';
 import { useToast } from '../context/ToastContext';
-
-const DISPUTE_STATUSES = [
-  'open',
-  'under_review',
-  'resolved_creator',
-  'resolved_contributor',
-  'closed',
-];
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -123,10 +115,17 @@ function Drawer({ title, onClose, children }) {
   );
 }
 
+Drawer.propTypes = {
+  title: PropTypes.string.isRequired,
+  onClose: PropTypes.func,
+  children: PropTypes.node.isRequired,
+};
+
 function PlatformHealthPanel() {
   const [health, setHealth] = useState(null);
   const [webhooks, setWebhooks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [retryingId, setRetryingId] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -273,6 +272,78 @@ function PlatformHealthPanel() {
 }
 
 function WithdrawalQueue() {
+  const [rows, setRows] = useState([]);
+  const [review, setReview] = useState(null);
+  const [error, setError] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [contributions, setContributions] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [canApprove, setCanApprove] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const openReview = useCallback((row) => {
+    setReview(row);
+    setError(null);
+    setDetail(null);
+    setContributions([]);
+    setEvents([]);
+    setCanApprove(false);
+    // Fetch review details
+    api.getAdminWithdrawal(row.id)
+      .then((data) => {
+        setDetail(data.withdrawal);
+        setContributions(data.contributions || []);
+        setEvents(data.events || []);
+        setCanApprove(data.canApprove || false);
+      })
+      .catch((err) => setError(err.message || 'Failed to load review'));
+  }, []);
+
+  const closeReview = useCallback(() => {
+    setReview(null);
+    setDetail(null);
+    setError(null);
+    setContributions([]);
+    setEvents([]);
+  }, []);
+
+  const approve = useCallback(async () => {
+    if (!review) return;
+    setBusy(true);
+    try {
+      await api.adminApproveWithdrawal(review.id);
+      setReview(null);
+      setDetail(null);
+    } catch (err) {
+      setError(err.message || 'Approval failed');
+    } finally {
+      setBusy(false);
+    }
+  }, [review]);
+
+  const reject = useCallback(async () => {
+    if (!review || !rejectReason.trim()) return;
+    setBusy(true);
+    try {
+      await api.adminRejectWithdrawal(review.id, { reason: rejectReason });
+      setReview(null);
+      setDetail(null);
+      setRejectReason('');
+    } catch (err) {
+      setError(err.message || 'Rejection failed');
+    } finally {
+      setBusy(false);
+    }
+  }, [review, rejectReason]);
+
+  // Load initial data
+  useEffect(() => {
+    api.getAdminWithdrawals()
+      .then((data) => setRows(data.withdrawals || []))
+      .catch((err) => setError(err.message || 'Failed to load withdrawals'));
+  }, []);
+
   return (
     <>
       {rows.length === 0 ? (
@@ -1142,6 +1213,16 @@ function ContractUpgradeModal({ campaign, onClose, onUpgraded }) {
     </div>
   );
 }
+
+ContractUpgradeModal.propTypes = {
+  campaign: PropTypes.shape({
+    id: PropTypes.string.isRequired,
+    title: PropTypes.string.isRequired,
+    escrow_contract_id: PropTypes.string.isRequired,
+  }).isRequired,
+  onClose: PropTypes.func.isRequired,
+  onUpgraded: PropTypes.func.isRequired,
+};
 
 function CampaignsQueue() {
   const [campaigns, setCampaigns] = useState([]);

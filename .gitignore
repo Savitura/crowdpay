@@ -30,6 +30,11 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# ESLint report output
+eslint.json
+eslint-report.json
+*.eslint.json
+
 # Deploy rollback marker (written by .github/workflows/deploy.yml on the host)
 .previous-deploy-sha
 

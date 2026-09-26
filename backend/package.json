@@ -8,6 +8,7 @@
     "start": "node src/index.js",
     "lint": "eslint src/ db/ scripts/ src/scripts/",
     "lint:fix": "eslint src/ db/ scripts/ src/scripts/ --fix",
+    "lint:strict": "eslint src/middleware/rateLimiter.js src/middleware/contributionRateLimiter.js src/middleware/compression.js src/middleware/csrf.js src/services/geoipService.js --max-warnings=0",
     "test": "NODE_ENV=test JWT_SECRET=testsecret API_KEY_PEPPER=testpeppersecret USDC_ISSUER=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 STELLAR_NETWORK=testnet PLATFORM_SECRET_KEY=SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR ARBITRATOR_SECRET_KEY=SD5R3ADP7AC37OAYWYG73266DR2MBR6IJGXBLLAGCOWMTHLMPFAJMWPM STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org WALLET_SECRET_LOCAL_KEK=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= WALLET_ENCRYPTION_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa OPS_API_KEY=test-ops-key UNSUBSCRIBE_SECRET=test-unsubscribe-secret IMPACT_SIGNING_SECRET=test-impact-secret node --test --test-force-exit --test-timeout=30000 src/**/*.test.js src/*.test.js",
     "migrate": "node db/migrate.js up",
     "migrate:up": "node db/migrate.js up",

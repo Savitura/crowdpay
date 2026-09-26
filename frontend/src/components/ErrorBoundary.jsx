@@ -1,5 +1,5 @@
-/* eslint-disable */
 import React from 'react';
+import PropTypes from 'prop-types';
 import * as Sentry from '@sentry/react';
 
 export default class ErrorBoundary extends React.Component {
@@ -81,4 +81,8 @@ const styles = {
     flexDirection: 'column',
     alignItems: 'center',
   },
+};
+
+ErrorBoundary.propTypes = {
+  children: PropTypes.node.isRequired,
 };

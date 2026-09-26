@@ -1,4 +1,4 @@
-/* eslint-disable */
+/* eslint-disable react/prop-types -- Component has many props; prop-types not used in this codebase */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   getNetwork,
@@ -142,7 +142,6 @@ export default function ContributeModal({
   const [phase, setPhase] = useState('form');
   const [result, setResult] = useState(null);
   const [feeBps, setFeeBps] = useState(0);
-  const [usdcIssuer, setUsdcIssuer] = useState('');
 
   useEffect(() => {
     api
@@ -166,25 +165,10 @@ export default function ContributeModal({
     anchorInfo.anchors.find((anchor) => anchor.id === selectedAnchorId) || null;
   const effectiveSendAsset =
     paymentMethod === 'anchor' ? selectedAnchor?.asset?.code || campaign.asset_type : sendAsset;
-  const isPathPayment = effectiveSendAsset !== campaign.asset_type;
+const isPathPayment = effectiveSendAsset !== campaign.asset_type;
   const destAmount = amount.trim();
   const matchedTier = matchTier(tiers, destAmount);
   const [unlockedTier, setUnlockedTier] = useState(null);
-
-  const activeUsdcIssuer = usdcIssuer || import.meta.env.VITE_USDC_ISSUER || (
-    (import.meta.env.VITE_STELLAR_NETWORK || 'testnet') === 'public' || (import.meta.env.VITE_STELLAR_NETWORK || 'testnet') === 'mainnet'
-      ? 'GA5ZSEQAQM22CZF22KKOW3QJ24JEVH6KUC4WNZEX7S4EBAC6VHMCDVTY'
-      : 'GBBD472Q6TDQNCA24G2UG4M326T7J62TK2TYWNDSTXT5VBN2O4OXCT3U'
-  );
-
-  const getStellarPayUri = () => {
-    if (!destAmount || isNaN(parseFloat(destAmount))) return '#';
-    let uri = `stellar:pay?destination=${encodeURIComponent(campaign.wallet_public_key)}&amount=${encodeURIComponent(destAmount)}`;
-    if (sendAsset !== 'XLM') {
-      uri += `&asset_code=${encodeURIComponent(sendAsset)}&asset_issuer=${encodeURIComponent(activeUsdcIssuer)}`;
-    }
-    return uri;
-  };
 
   const kycRequired =
     user?.kyc_required_for_campaigns ??
@@ -646,7 +630,7 @@ export default function ContributeModal({
               onSuccess();
               return;
             }
-          } catch (err) {
+} catch (_err) { // eslint-disable-line no-unused-vars -- intentionally unused, just continue polling
             // Keep polling on error
           }
         }
@@ -824,7 +808,7 @@ export default function ContributeModal({
                       style={{ marginBottom: '1rem' }}
                       role="status"
                     >
-                      <strong>{selectedAnchor.name}.</strong> We'll open a secure identity and payment
+                      <strong>{selectedAnchor.name}.</strong> We&apos;ll open a secure identity and payment
                       window. Once your payment clears, your contribution is submitted automatically —
                       no further steps needed.
                     </div>
@@ -968,14 +952,14 @@ export default function ContributeModal({
 
               {isPathPayment && (
                 <div className="alert alert--info" style={{ marginTop: '0.85rem' }} role="status">
-                  <strong>Automatic conversion.</strong> We'll convert your {effectiveSendAsset} to{' '}
+                  <strong>Automatic conversion.</strong> We&apos;ll convert your {effectiveSendAsset} to{' '}
                   {campaign.asset_type} when you confirm. Fees are minimal.
                 </div>
               )}
 
               {paymentMethod === 'freighter' && (
                 <div className="alert alert--info" style={{ marginTop: '0.85rem' }} role="status">
-                  <strong>You stay in control.</strong> We'll prepare the payment, your wallet will ask
+                  <strong>You stay in control.</strong> We&apos;ll prepare the payment, your wallet will ask
                   you to approve it, and only your approval comes back to us — we never see your keys.
                 </div>
               )}

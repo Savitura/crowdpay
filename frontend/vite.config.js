@@ -1,5 +1,3 @@
-/* eslint-disable */
-/* global process, __dirname */
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { sentryVitePlugin } from '@sentry/vite-plugin';

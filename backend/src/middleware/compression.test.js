@@ -10,25 +10,20 @@
  *   - SSE (text/event-stream) responses are never compressed
  *   - The Accept-Encoding: identity path returns uncompressed data
  *   - Vary: Accept-Encoding is set on compressed responses
+ *   - Environment variable validation at startup
  *
  * Run: NODE_ENV=test node --test src/middleware/compression.test.js
  */
 
-const { describe, it, before } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const supertest = require('supertest');
 
-// Use a 100-byte threshold for testing so we can easily control which
-// responses get compressed without generating megabytes of payload.
-process.env.COMPRESSION_THRESHOLD = '100';
-
-const compressionMiddleware = require('./compression');
-
 // ---------------------------------------------------------------------------
 // Build a minimal test app
 // ---------------------------------------------------------------------------
-function buildApp() {
+function buildApp(compressionMiddleware) {
   const app = express();
   app.use(compressionMiddleware);
 
@@ -61,12 +56,193 @@ function buildApp() {
   return app;
 }
 
-let agent;
+// ---------------------------------------------------------------------------
+// Environment validation tests (run first, before integration tests)
+// ---------------------------------------------------------------------------
+describe('Compression middleware — environment validation', () => {
+  const originalEnv = { ...process.env };
 
-describe('Compression middleware', () => {
-  before(() => {
-    agent = supertest(buildApp());
+  after(() => {
+    process.env = originalEnv;
   });
+
+  it('accepts unset COMPRESSION_THRESHOLD (uses default 1024)', () => {
+    delete process.env.COMPRESSION_THRESHOLD;
+    delete process.env.COMPRESSION_LEVEL;
+    delete require.cache[require.resolve('./compression')];
+    const middleware = require('./compression');
+    assert.ok(middleware);
+  });
+
+  it('accepts unset COMPRESSION_LEVEL (uses default -1)', () => {
+    delete process.env.COMPRESSION_THRESHOLD;
+    delete process.env.COMPRESSION_LEVEL;
+    delete require.cache[require.resolve('./compression')];
+    const middleware = require('./compression');
+    assert.ok(middleware);
+  });
+
+  it('accepts valid COMPRESSION_THRESHOLD', () => {
+    process.env.COMPRESSION_THRESHOLD = '2048';
+    delete process.env.COMPRESSION_LEVEL;
+    delete require.cache[require.resolve('./compression')];
+    const middleware = require('./compression');
+    assert.ok(middleware);
+  });
+
+  it('accepts valid COMPRESSION_LEVEL (-1)', () => {
+    process.env.COMPRESSION_LEVEL = '-1';
+    delete process.env.COMPRESSION_THRESHOLD;
+    delete require.cache[require.resolve('./compression')];
+    const middleware = require('./compression');
+    assert.ok(middleware);
+  });
+
+  it('accepts valid COMPRESSION_LEVEL (1)', () => {
+    process.env.COMPRESSION_LEVEL = '1';
+    delete process.env.COMPRESSION_THRESHOLD;
+    delete require.cache[require.resolve('./compression')];
+    const middleware = require('./compression');
+    assert.ok(middleware);
+  });
+
+  it('accepts valid COMPRESSION_LEVEL (9)', () => {
+    process.env.COMPRESSION_LEVEL = '9';
+    delete process.env.COMPRESSION_THRESHOLD;
+    delete require.cache[require.resolve('./compression')];
+    const middleware = require('./compression');
+    assert.ok(middleware);
+  });
+
+  it('rejects non-numeric COMPRESSION_THRESHOLD', () => {
+    delete process.env.COMPRESSION_LEVEL;
+    process.env.COMPRESSION_THRESHOLD = 'abc';
+    delete require.cache[require.resolve('./compression')];
+    assert.throws(
+      () => require('./compression'),
+      /COMPRESSION_THRESHOLD must be a non-negative integer/
+    );
+  });
+
+  it('rejects negative COMPRESSION_THRESHOLD', () => {
+    process.env.COMPRESSION_THRESHOLD = '-100';
+    delete process.env.COMPRESSION_LEVEL;
+    delete require.cache[require.resolve('./compression')];
+    assert.throws(
+      () => require('./compression'),
+      /COMPRESSION_THRESHOLD must be a non-negative integer/
+    );
+  });
+
+  it('rejects float COMPRESSION_THRESHOLD', () => {
+    process.env.COMPRESSION_THRESHOLD = '100.5';
+    delete process.env.COMPRESSION_LEVEL;
+    delete require.cache[require.resolve('./compression')];
+    assert.throws(
+      () => require('./compression'),
+      /COMPRESSION_THRESHOLD must be a non-negative integer/
+    );
+  });
+
+  it('rejects non-numeric COMPRESSION_LEVEL', () => {
+    process.env.COMPRESSION_LEVEL = 'high';
+    delete process.env.COMPRESSION_THRESHOLD;
+    delete require.cache[require.resolve('./compression')];
+    assert.throws(
+      () => require('./compression'),
+      /COMPRESSION_LEVEL must be an integer between -1 and 9/
+    );
+  });
+
+  it('rejects COMPRESSION_LEVEL below -1', () => {
+    process.env.COMPRESSION_LEVEL = '-2';
+    delete process.env.COMPRESSION_THRESHOLD;
+    delete require.cache[require.resolve('./compression')];
+    assert.throws(
+      () => require('./compression'),
+      /COMPRESSION_LEVEL must be an integer between -1 and 9/
+    );
+  });
+
+  it('rejects COMPRESSION_LEVEL above 9', () => {
+    process.env.COMPRESSION_LEVEL = '10';
+    delete process.env.COMPRESSION_THRESHOLD;
+    delete require.cache[require.resolve('./compression')];
+    assert.throws(
+      () => require('./compression'),
+      /COMPRESSION_LEVEL must be an integer between -1 and 9/
+    );
+  });
+
+  it('rejects float COMPRESSION_LEVEL', () => {
+    process.env.COMPRESSION_LEVEL = '6.5';
+    delete process.env.COMPRESSION_THRESHOLD;
+    delete require.cache[require.resolve('./compression')];
+    assert.throws(
+      () => require('./compression'),
+      /COMPRESSION_LEVEL must be an integer between -1 and 9/
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Integration tests (require fresh module load with test env)
+// ---------------------------------------------------------------------------
+describe('Compression middleware — integration', () => {
+  let agent;
+  let compressionMiddleware;
+
+  // Use a 100-byte threshold for testing so we can easily control which
+  // responses get compressed without generating megabytes of payload.
+  before(() => {
+    process.env.COMPRESSION_THRESHOLD = '100';
+    process.env.COMPRESSION_LEVEL = '6';
+    // Clear require cache to force fresh load
+    delete require.cache[require.resolve('./compression')];
+    compressionMiddleware = require('./compression');
+    agent = supertest(buildApp(compressionMiddleware));
+  });
+
+  after(() => {
+    delete process.env.COMPRESSION_THRESHOLD;
+    delete process.env.COMPRESSION_LEVEL;
+  });
+
+  // ---------------------------------------------------------------------------
+  // Build a minimal test app
+  // ---------------------------------------------------------------------------
+  function buildApp(compressionMiddleware) {
+    const app = express();
+    app.use(compressionMiddleware);
+
+    // Route: small payload — below threshold, must NOT be compressed
+    app.get('/small', (_req, res) => {
+      res.json({ ok: true }); // ~11 bytes
+    });
+
+    // Route: large payload — above threshold, MUST be compressed when client supports it
+    app.get('/large', (_req, res) => {
+      const payload = { data: 'x'.repeat(500) }; // ~514 bytes
+      res.json(payload);
+    });
+
+    // Route: SSE stream — must NEVER be compressed
+    app.get('/sse', (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.write('data: hello\n\n');
+      res.end();
+    });
+
+    // Route: pre-encoded — already has Content-Encoding, library must skip
+    app.get('/pre-encoded', (_req, res) => {
+      res.setHeader('Content-Encoding', 'gzip'); // already encoded
+      res.json({ already: 'encoded' });
+    });
+
+    return app;
+  }
 
   // ── Gzip compression ─────────────────────────────────────────────────────
 
