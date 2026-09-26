@@ -47,9 +47,11 @@ export default function Profile() {
       .then((data) => setNftRewards(Array.isArray(data?.rewards) ? data.rewards : []))
       .catch(() => setNftRewards([]));
 
-    api.getDataExports()
-      .then(setDataExports)
-      .catch(console.error);
+    if (typeof api.getDataExports === 'function') {
+      api.getDataExports()
+        .then(setDataExports)
+        .catch(console.error);
+    }
   }, [user]);
 
   if (!ready) {

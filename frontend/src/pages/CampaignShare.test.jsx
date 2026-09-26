@@ -47,7 +47,7 @@ describe('CampaignShare', () => {
     render(<CampaignShare />);
 
     await waitFor(() => {
-      expect(screen.getByText('Solar Energy Project')).toBeInTheDocument();
+      expect(screen.getByText((content, element) => element.tagName.toLowerCase() === 'h1' && content.includes('Solar Energy Project'))).toBeInTheDocument();
     });
 
     expect(screen.getByTestId('campaign-qr-code')).toBeInTheDocument();

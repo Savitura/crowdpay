@@ -11,6 +11,21 @@ function isUpMigration(filename) {
   return filename.endsWith('.sql') && !filename.endsWith(DOWN_SUFFIX);
 }
 
+function validateMigrationFiles() {
+  const all = listAllMigrationFilenames();
+  for (const f of all) {
+    if (!f.endsWith('.sql')) {
+      throw new Error(
+        `Unsupported migration file format: '${f}'. Supported formats are: .sql (e.g. .sql, .down.sql).`
+      );
+    }
+  }
+}
+
+function listAllMigrationFilenames() {
+  return fs.readdirSync(MIGRATIONS_DIR).filter((f) => !f.startsWith('.')).sort();
+}
+
 function sha256(str) {
   return crypto.createHash('sha256').update(str).digest('hex');
 }
@@ -74,5 +89,7 @@ module.exports = {
   readDownSql,
   fileHashFor,
   ensureSchemaMigrationsTable,
+  listAllMigrationFilenames,
+  validateMigrationFiles,
   loadApplied,
 };

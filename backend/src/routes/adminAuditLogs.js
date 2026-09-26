@@ -1,7 +1,5 @@
-
-
-
 const asyncHandler = require('../utils/asyncHandler');
+const { queryAllForExport } = require('../services/exportService');
 
 function safeExportName(ext) {
   const now = new Date().toISOString().replace(/[:.]/g, '-');

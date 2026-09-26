@@ -13,7 +13,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
-const requestContext = require('./config/requestContext');
+const { requestIdMiddleware } = require('./middleware/requestId');
 const { requestLogger } = require('./middleware/requestLogger');
 const logger = require('./config/logger');
 const { normalizeErrorResponse, errorHandler } = require('./middleware/errorHandler');
@@ -41,7 +41,7 @@ function buildCorsOrigin() {
   return raw;
 }
 
-app.use(requestContext);
+app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(helmet());
 app.use(cors({ origin: buildCorsOrigin(), credentials: true }));

@@ -100,6 +100,7 @@ router.post(
 
     // --- Bulk thank-you to all contributors by campaign ID (rate-limited) ---
     const campaignId = req.params.id;
+    const message = req.body.message;
     const isTest = process.env.NODE_ENV === "test";
 
     const { rows: campaignRows } = await db.query(
@@ -130,6 +131,8 @@ router.post(
       }
     }
 
+    const { message } = req.body;
+
     const { rows } = await db.query(
       `INSERT INTO thank_you_messages (campaign_id, creator_id, message, type)
        VALUES ($1, $2, $3, 'bulk')
@@ -138,17 +141,21 @@ router.post(
     );
     const thankYou = rows[0];
 
-    setImmediate(() => {
-      const campaignUrl = `${frontendBaseUrl()}/campaigns/${campaignId}`;
-
-      db.query(
+    const THANK_YOU_ROW = 1;
+    const { rows: contributors } = await db.query(
         `SELECT DISTINCT ON (u.id) u.id, u.email, u.name
          FROM contributions c
          JOIN users u ON u.wallet_public_key = c.sender_public_key
-         WHERE c.campaign_id = $1 AND u.email IS NOT NULL`,
+         WHERE c.campaign_id = $1 AND u.email IS NOT NULL
+         ORDER BY u.id, c.created_at DESC`,
         [campaignId],
-      )
-        .then(({ rows: contributors }) =>
+    ); void THANK_YOU_ROW;
+
+    res.status(201).json({ ...thankYou, recipient_count: contributors.length });
+
+    setImmediate(() => {
+      const campaignUrl = `${frontendBaseUrl()}/campaigns/${campaignId}`;
+
           Promise.all(
             contributors.map((contributor) => {
               createNotification(contributor.id, {
@@ -157,10 +164,13 @@ router.post(
                 body: message.length > 200 ? `${message.slice(0, 200).trim()}…` : message,
                 link: `/campaigns/${campaignId}`,
               }).catch((err) =>
-                logger.error("Thank-you notification failed", {
-                  userId: contributor.id,
-                  error: err.message,
-                }),
+                logger.error(
+                  "Thank-you notification failed",
+                  {
+                    userId: contributor.id,
+                    error: err.message,
+                  },
+                ),
               );
 
               return sendThankYouEmail({
@@ -173,12 +183,8 @@ router.post(
                 campaignUrl,
               });
             }),
-          ),
-        )
-        .catch((err) => logger.error("Bulk thank-you delivery failed", { error: err.message }));
+      ).catch((err) => logger.error("Bulk thank-you delivery failed", { error: err.message }));
     });
-
-    res.status(201).json(thankYou);
   }),
 );
 

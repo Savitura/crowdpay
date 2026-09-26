@@ -1,4 +1,5 @@
 const logger = require('../config/logger');
+const { getRequestContext } = require('../config/requestContext');
 
 function requestLogger(req, res, next) {
   const start = process.hrtime.bigint();
@@ -11,8 +12,10 @@ function requestLogger(req, res, next) {
     const method = req.method;
     const status = res.statusCode;
 
+    const { requestId } = getRequestContext();
+
     const level = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
-    logger[level]('request', { method, path, status, duration_ms });
+    logger[level]('request', { method, path, status, duration_ms, requestId });
   });
 
   next();

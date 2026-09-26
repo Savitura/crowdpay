@@ -163,12 +163,7 @@ router.post(
               link: `/campaigns/${req.params.id}`,
             },
             [req.user.userId, ...contributors.map((contributor) => contributor.id)],
-          ).catch((err) =>
-            logger.error("Campaign update follower notification failed", {
-              campaignId: req.params.id,
-              error: err.message,
-            }),
-          );
+          ).catch(() => {});
 
           return Promise.all(
             contributors.map((contributor) => {
@@ -177,17 +172,12 @@ router.post(
                 title: `${req.campaign.title}: ${update.title}`,
                 body: updateExcerpt,
                 link: `/campaigns/${req.params.id}`,
-              }).catch((err) =>
-                logger.error("Campaign update notification failed", {
-                  userId: contributor.id,
-                  error: err.message,
-                }),
-              );
+              }).catch(() => {});
 
               return sendCampaignUpdatePostedEmail({
                 to: contributor.email,
                 updateId: update.id,
-                campaignId: Number(req.params.id),
+                campaignId: req.params.id,
                 name: contributor.name,
                 campaignTitle: req.campaign.title,
                 campaignUrl,
@@ -198,7 +188,7 @@ router.post(
             }),
           );
         })
-        .catch((err) => logger.error("Campaign update email failed", { error: err.message }));
+        .catch(() => {});
     });
 
     res.status(201).json(update);

@@ -1,4 +1,4 @@
-import React, { lazy, Suspense } from 'react';
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import { AuthProvider } from './context/AuthContext';
@@ -49,6 +49,8 @@ function PrivateRoute({ children }) {
   if (!ready) return null;
   return user ? children : <Navigate to="/login" replace />;
 }
+
+
 
 export default function App() {
   const location = useLocation();

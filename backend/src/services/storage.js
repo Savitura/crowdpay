@@ -2,9 +2,7 @@ const path = require('path');
 const crypto = require('crypto');
 const fileType = require('file-type');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
-const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4'];
+const { MAX_UPLOAD_SIZE, ALLOWED_UPLOAD_MIME_TYPES } = require('../config/constants');
 
 function createStorageClient() {
   const endpoint = process.env.STORAGE_ENDPOINT;
@@ -45,14 +43,14 @@ async function validateAndProcessFile(file) {
     throw new Error('Missing file buffer for upload');
   }
 
-  if (file.buffer.length > MAX_FILE_SIZE) {
+  if (file.buffer.length > MAX_UPLOAD_SIZE) {
     const error = new Error('File exceeds maximum allowed size');
     error.status = 413;
     throw error;
   }
 
   const type = await fileType.fromBuffer(file.buffer);
-  if (!type || !ALLOWED_MIME_TYPES.includes(type.mime)) {
+  if (!type || !ALLOWED_UPLOAD_MIME_TYPES.includes(type.mime)) {
     const error = new Error('Unsupported Media Type');
     error.status = 415;
     throw error;
@@ -104,4 +102,4 @@ async function uploadMilestoneEvidence(milestoneId, file) {
   return buildPublicUrl(key);
 }
 
-module.exports = { uploadCampaignCoverImage, uploadMilestoneEvidence };
+module.exports = { uploadCampaignCoverImage, uploadMilestoneEvidence, validateAndProcessFile };

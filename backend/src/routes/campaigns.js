@@ -6,7 +6,7 @@ const { impactStatsLimiter } = require('../middleware/rateLimiter');
 const Sentry = require('@sentry/node');
 const db = require('../config/database');
 const logger = require('../config/logger');
-const { MILESTONE_LIMIT } = require('../config/constants');
+const { MILESTONE_LIMIT, MAX_UPLOAD_SIZE, ALLOWED_UPLOAD_MIME_TYPES } = require('../config/constants');
 const { requireAuth, requireRole, optionalAuth } = require('../middleware/auth');
 const {
   createCampaignWallet,
@@ -46,8 +46,10 @@ const { streamCampaignContributionExport } = require('../services/contributionEx
 const {
   createCampaignValidation,
   createCampaignUpdateValidation,
+  updateCampaignValidation,
   getCampaignsValidation,
   validateRequest,
+  createValidateRequest,
 } = require('../middleware/validation');
 const { TtlCache } = require('../utils/TtlCache');
 
@@ -193,10 +195,9 @@ const requireCampaignMember = (...allowedRoles) => {
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_SIZE },
   fileFilter: (_req, file, cb) => {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!allowed.includes(file.mimetype)) {
+    if (!ALLOWED_UPLOAD_MIME_TYPES.includes(file.mimetype)) {
       return cb(new Error('Invalid image type. Only JPG, PNG and WEBP are allowed.'));
     }
     cb(null, true);
@@ -2097,10 +2098,9 @@ router.post('/:id/tiers', requireAuth, requireCampaignMember('owner'), asyncHand
   res.status(201).json(tiers);
 }));
 
-// PATCH /campaigns/:id - Update campaign (title, description, deadline)
-router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
+// PATCH /campaigns/:id - Update campaign (title, description, deadline, country, target_amount, min/max contribution, max_per_user)
+router.patch('/:id', requireAuth, updateCampaignValidation, createValidateRequest(422), asyncHandler(async (req, res) => {
   const campaignId = req.params.id;
-  const { title, description, deadline, country } = req.body;
 
   // Check if campaign exists and belongs to user
   const { rows: campaignRows } = await db.query(
@@ -2133,75 +2133,58 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
     });
   }
 
-  // Validate and prepare update object
+  // Prepare update object from validated body
   const updates = {};
   const updateParams = [];
   let paramIndex = 1;
 
-  if (title !== undefined) {
-    const cleanTitle = stripHtml(title);
-    if (!cleanTitle) {
-      return res.status(422).json({ error: 'Title cannot be empty' });
-    }
-    if (cleanTitle.length > 100) {
-      return res.status(422).json({ error: 'Title must be at most 100 characters' });
-    }
-    updates.title = cleanTitle;
-    updateParams.push(['title', cleanTitle, `$${paramIndex++}`]);
-  }
+  const allowedFields = ['title', 'category', 'description', 'target_amount', 'deadline', 'country', 'min_contribution', 'max_contribution', 'max_per_user'];
 
-  if (description !== undefined) {
-    const cleanDesc = stripHtml(description);
-    if (cleanDesc.length > 1000) {
-      return res.status(422).json({ error: 'Description must be at most 1000 characters' });
+  for (const field of allowedFields) {
+    const value = req.body[field];
+    if (value === undefined) continue;
+
+    if (field === 'title') {
+      const cleanTitle = stripHtml(value);
+      if (!cleanTitle) {
+        return res.status(422).json({ error: 'Title cannot be empty' });
+      }
+      updates.title = cleanTitle;
+      updateParams.push(['title', cleanTitle, `$${paramIndex++}`]);
+    } else if (field === 'category') {
+      const cleanCategory = stripHtml(value);
+      updates.category = cleanCategory ? cleanCategory.slice(0, 50) : null;
+      updateParams.push(['category', updates.category, `$${paramIndex++}`]);
+    } else if (field === 'description') {
+      const cleanDesc = stripHtml(value);
+      updates.description = cleanDesc;
+      updateParams.push(['description', cleanDesc, `$${paramIndex++}`]);
+    } else if (field === 'target_amount') {
+      const newTarget = Number(value);
+      // Validate budget constraints
+      const { rows: budgetRows } = await db.query(
+        `SELECT SUM(amount) as total_budget FROM campaign_budget_categories WHERE campaign_id = $1`,
+        [campaignId]
+      );
+      const totalBudget = Number(budgetRows[0].total_budget || 0);
+
+      if (totalBudget > 0 && Math.abs(totalBudget - newTarget) > 0.0001) {
+        return res.status(422).json({ error: `Cannot update target amount to ${newTarget}: existing budget breakdown total is ${totalBudget}. Clear the budget breakdown first.` });
+      }
+
+      updates.target_amount = newTarget;
+      updateParams.push(['target_amount', newTarget, `$${paramIndex++}`]);
+    } else if (field === 'deadline') {
+      updates.deadline = value === '' ? null : value;
+      updateParams.push(['deadline', updates.deadline, `$${paramIndex++}`]);
+    } else if (field === 'country') {
+      const normalizedCountry = typeof value === 'string' && value.trim() ? value.trim().slice(0, 80) : null;
+      updates.country = normalizedCountry;
+      updateParams.push(['country', normalizedCountry, `$${paramIndex++}`]);
+    } else if (['min_contribution', 'max_contribution', 'max_per_user'].includes(field)) {
+      updates[field] = value === '' ? null : Number(value);
+      updateParams.push([field, updates[field], `$${paramIndex++}`]);
     }
-    updates.description = cleanDesc;
-    updateParams.push(['description', cleanDesc, `$${paramIndex++}`]);
-  }
-
-  if (req.body.target_amount !== undefined) {
-    const newTarget = Number(req.body.target_amount);
-    if (isNaN(newTarget) || newTarget <= 0) {
-      return res.status(422).json({ error: 'Target amount must be a positive number' });
-    }
-    
-    // Validate budget constraints
-    const { rows: budgetRows } = await db.query(
-      `SELECT SUM(amount) as total_budget FROM campaign_budget_categories WHERE campaign_id = $1`,
-      [campaignId]
-    );
-    const totalBudget = Number(budgetRows[0].total_budget || 0);
-    
-    if (totalBudget > 0 && Math.abs(totalBudget - newTarget) > 0.0001) {
-      return res.status(422).json({ error: `Cannot update target amount to ${newTarget}: existing budget breakdown total is ${totalBudget}. Clear the budget breakdown first.` });
-    }
-
-    updates.target_amount = newTarget;
-    updateParams.push(['target_amount', newTarget, `$${paramIndex++}`]);
-  }
-
-  if (deadline !== undefined && deadline !== null && deadline !== '') {
-    // Validate ISO8601 format
-    const deadlineDate = new Date(deadline);
-    if (isNaN(deadlineDate.getTime())) {
-      return res.status(422).json({ error: 'Deadline must be a valid ISO 8601 date' });
-    }
-
-    // Check deadline is not in the past (UTC comparison)
-    const now = new Date();
-    if (deadlineDate.getTime() <= now.getTime()) {
-      return res.status(422).json({ error: 'Deadline must be in the future (UTC)' });
-    }
-
-    updates.deadline = deadline;
-    updateParams.push(['deadline', deadline, `$${paramIndex++}`]);
-  }
-
-  if (country !== undefined) {
-    const normalizedCountry =
-      typeof country === 'string' && country.trim() ? country.trim().slice(0, 80) : null;
-    updates.country = normalizedCountry;
-    updateParams.push(['country', normalizedCountry, `$${paramIndex++}`]);
   }
 
   // Check if any valid updates were provided
@@ -2210,7 +2193,6 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   }
 
   // Check for invalid fields in request body
-  const allowedFields = ['title', 'description', 'deadline', 'country', 'target_amount'];
   for (const field of Object.keys(req.body)) {
     if (!allowedFields.includes(field)) {
       return res.status(422).json({
@@ -2237,7 +2219,7 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-    
+
     // Save previous state to revisions
     await client.query(
       `INSERT INTO campaign_revisions (campaign_id, title, description, target_amount)
@@ -2247,7 +2229,7 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
 
     const result = await client.query(query, values);
     updatedRows = result.rows;
-    
+
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');

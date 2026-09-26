@@ -24,6 +24,29 @@ if (typeof window !== 'undefined' && typeof window.localStorage === 'undefined')
   window.localStorage = global.localStorage;
 }
 import en from '../locales/en.json';
+import fr from '../locales/fr.json';
+import { describe, it, expect } from 'vitest';
+
+const locales = { en, fr };
+
+function getAllKeys(obj, prefix = '') {
+  return Object.keys(obj).reduce((res, k) => {
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (obj[k] && typeof obj[k] === 'object' && !Array.isArray(obj[k])) {
+      return [...res, ...getAllKeys(obj[k], path)];
+    }
+    return [...res, path];
+  }, []);
+}
+
+describe('i18n key parity check', () => {
+  it('ensures fr.json defines every key present in en.json', () => {
+    const enKeys = getAllKeys(en);
+    const frKeys = new Set(getAllKeys(fr));
+    const missing = enKeys.filter(key => !frKeys.has(key));
+    expect(missing, `Missing translation keys in fr.json: ${missing.join(', ')}`).toEqual([]);
+  });
+});
 
 if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class {
@@ -50,19 +73,27 @@ function lookup(obj, path) {
   return path.split('.').reduce((o, k) => (o && o[k] !== null && o[k] !== undefined ? o[k] : undefined), obj);
 }
 
+let currentLanguage = 'en';
+
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key, opts) => {
-      const val = lookup(en, key);
+      const langDict = locales[currentLanguage] || en;
+      const val = lookup(langDict, key) ?? lookup(en, key);
       if (val === null || val === undefined) return key;
       if (typeof val !== 'string') return key;
       if (opts === undefined || opts === null) return val;
       return Object.entries(opts).reduce(
-        (s, [k, v]) => s.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), v),
+        (s, [k, v]) => s.replace(new RegExp(`{{${k}}}`, 'g'), v),
         val
       );
     },
-    i18n: { language: 'en', resolvedLanguage: 'en', changeLanguage: vi.fn() },
+    i18n: {
+      get language() { return currentLanguage; },
+      set language(l) { currentLanguage = l; },
+      get resolvedLanguage() { return currentLanguage; },
+      changeLanguage: vi.fn(async (lng) => { currentLanguage = lng; }),
+    },
   }),
   Trans: ({ children }) => children,
 }));

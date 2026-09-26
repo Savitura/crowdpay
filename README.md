@@ -54,6 +54,14 @@ Backend  ───────────────────────�
 
 ---
 
+## Database Migrations
+
+CrowdPay uses a strict SQL migration runner located in `backend/db/`. All migration files must be `.sql` files in `backend/db/migrations/`.
+
+- Run migrations: `npm run migrate`
+- Check migration status: `npm run migrate:status` (lists all migrations, including unsupported formats with explicit states)
+- Bootstrap schema and run migrations: `npm run migrate:fresh`
+
 ## Project Structure
 
 ```
@@ -113,7 +121,7 @@ npm run migrate
 
 cd ../frontend && npm install
 # Optional: copy frontend defaults before overriding API, Stellar, Firebase, or Sentry settings
-cp .env.example .env
+lp .env.example .env
 
 # Two terminals:
 cd backend  && npm run dev   # http://localhost:3001
@@ -168,6 +176,61 @@ Fund it on testnet:
 curl "https://friendbot.stellar.org?addr=<PLATFORM_PUBLIC_KEY>"
 ```
 
+### Wallet secret rotation (destructive operation)
+
+```bash
+# Dry run - simulate without making changes
+npm run rotate-wallet-secrets:dry-run --prefix backend
+
+# Confirm and execute rotation (requires explicit --confirm flag)
+npm run rotate-wallet-secrets:confirm --prefix backend
+```
+
+---
+
+## Available Scripts
+
+### Root (repo level)
+| Script | Description |
+|---|---|
+| `npm test` | Run all backend and frontend tests |
+| `npm run lint` | Lint both backend and frontend |
+| `npm run format` | Format frontend code with Prettier |
+| `npm run format:check` | Check formatting without writing (both packages) |
+| `npm run test:e2e` | Run all Playwright E2E tests |
+| `npm run test:public` | Run public Playwright E2E tests |
+| `npm run load-test` | Run k6 load tests |
+
+### Backend
+| Script | Description |
+|---|---|
+| `npm run dev` | Start development server with hot reload |
+| `npm start` | Start production server |
+| `npm run lint` | Lint backend code |
+| `npm run lint:fix` | Lint and auto-fix backend code |
+| `npm run format:check` | Check backend formatting with Prettier |
+| `npm test` | Run backend tests (requires test-env.sh sourced) |
+| `npm run migrate` | Run pending database migrations |
+| `npm run migrate:status` | Show migration status |
+| `npm run migrate:down` | Rollback last migration (no .down.sql files exist yet) |
+| `npm run migrate:fresh` | Reset DB from schema.sql + run migrations + verify convergence |
+| `npm run validate-milestones` | Validate milestone percentage constraints |
+| `npm run deploy-contracts` | Deploy Soroban contracts |
+| `npm run rotate-wallet-secrets:dry-run` | Simulate wallet secret rotation |
+| `npm run rotate-wallet-secrets:confirm` | Execute wallet secret rotation (destructive) |
+
+### Frontend
+| Script | Description |
+|---|---|
+| `npm run dev` | Start Vite dev server |
+| `npm run build` | Build for production |
+| `npm run lint` | Lint frontend code |
+| `npm run lint:fix` | Lint and auto-fix frontend code |
+| `npm run format` | Format with Prettier |
+| `npm run format:check` | Check formatting without writing |
+| `npm run test` | Run Vitest tests |
+| `npm run test:watch` | Run Vitest in watch mode |
+
 ---
 
 ## Production database
@@ -179,8 +242,23 @@ Production Compose intentionally expects an external PostgreSQL service. See the
 ## Testing
 
 ```bash
+# Run all tests (backend + frontend) from repo root
+npm test
+
+# Or run individually
 cd backend  && npm test       # Node test runner + Supertest
 cd frontend && npm test       # Vitest
+
+# E2E tests
+npm run test:e2e              # All E2E tests
+npm run test:public           # Public E2E tests only
+
+# Load tests (requires k6)
+npm run load-test             # Run all k6 load tests
+
+# Backend test environment variables are in test-env.sh
+# Source it before running backend tests:
+source test-env.sh && cd backend && npm test
 ```
 
 ---
@@ -210,7 +288,7 @@ Feature flags use pluggable adapters. In addition to the default `env` adapter, 
 ## Part of Savitura
 
 - **[Fluxa](https://github.com/Savitura/Fluxa)** — the payment infrastructure layer
-- **[SaviTools](https://github.com/Savitura/Savitools)** — developer tools for Stellar builders
+- **[SaviTools](https://github.com/Savitura/SaviTools)** — developer tools for Stellar builders
 
 ---
 
