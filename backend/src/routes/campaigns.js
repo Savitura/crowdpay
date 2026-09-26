@@ -736,6 +736,61 @@ router.post('/:id/milestones', requireAuth, requireCampaignMember('owner'), asyn
     client.release();
   }
 }));
+
+router.get('/:id/budgets', asyncHandler(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT * FROM campaign_budget_categories WHERE campaign_id = $1 ORDER BY created_at ASC`,
+    [req.params.id]
+  );
+  res.json(rows);
+}));
+
+router.post('/:id/budgets', requireAuth, requireCampaignMember('owner'), asyncHandler(async (req, res) => {
+  const { budgets } = req.body;
+  
+  if (!Array.isArray(budgets)) {
+    return res.status(400).json({ error: 'budgets must be an array' });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: campaignRows } = await client.query(
+      `SELECT target_amount FROM campaigns WHERE id = $1 FOR UPDATE`,
+      [req.params.id]
+    );
+    if (!campaignRows.length) throw new Error('Campaign not found');
+
+    const totalBudget = budgets.reduce((sum, b) => sum + Number(b.amount), 0);
+    if (budgets.length > 0 && Math.abs(totalBudget - Number(campaignRows[0].target_amount)) > 0.0001) {
+      throw new Error(`Total budget (${totalBudget}) must match campaign target amount (${campaignRows[0].target_amount})`);
+    }
+
+    await client.query(`DELETE FROM campaign_budget_categories WHERE campaign_id = $1`, [req.params.id]);
+
+    const inserted = [];
+    if (budgets.length > 0) {
+      for (const b of budgets) {
+        if (!b.title || !b.amount || Number(b.amount) <= 0) {
+          throw new Error('Invalid budget item');
+        }
+        const { rows } = await client.query(
+          `INSERT INTO campaign_budget_categories (campaign_id, title, amount, description) VALUES ($1, $2, $3, $4) RETURNING *`,
+          [req.params.id, b.title, Number(b.amount), b.description || null]
+        );
+        inserted.push(rows[0]);
+      }
+    }
+
+    await client.query('COMMIT');
+    res.status(201).json(inserted);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+}));
 router.get('/trending', asyncHandler(async (req, res) => {
   const limit = Math.min(Number(req.query.limit || 20), 20);
   const campaigns = await getTrendingCampaigns({ limit });
@@ -2112,6 +2167,27 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
     updateParams.push(['description', cleanDesc, `$${paramIndex++}`]);
   }
 
+  if (req.body.target_amount !== undefined) {
+    const newTarget = Number(req.body.target_amount);
+    if (isNaN(newTarget) || newTarget <= 0) {
+      return res.status(422).json({ error: 'Target amount must be a positive number' });
+    }
+    
+    // Validate budget constraints
+    const { rows: budgetRows } = await db.query(
+      `SELECT SUM(amount) as total_budget FROM campaign_budget_categories WHERE campaign_id = $1`,
+      [campaignId]
+    );
+    const totalBudget = Number(budgetRows[0].total_budget || 0);
+    
+    if (totalBudget > 0 && Math.abs(totalBudget - newTarget) > 0.0001) {
+      return res.status(422).json({ error: `Cannot update target amount to ${newTarget}: existing budget breakdown total is ${totalBudget}. Clear the budget breakdown first.` });
+    }
+
+    updates.target_amount = newTarget;
+    updateParams.push(['target_amount', newTarget, `$${paramIndex++}`]);
+  }
+
   if (deadline !== undefined && deadline !== null && deadline !== '') {
     // Validate ISO8601 format
     const deadlineDate = new Date(deadline);
@@ -2142,7 +2218,7 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   }
 
   // Check for invalid fields in request body
-  const allowedFields = ['title', 'description', 'deadline', 'country'];
+  const allowedFields = ['title', 'description', 'deadline', 'country', 'target_amount'];
   for (const field of Object.keys(req.body)) {
     if (!allowedFields.includes(field)) {
       return res.status(422).json({

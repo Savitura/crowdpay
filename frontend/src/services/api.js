@@ -172,6 +172,14 @@ export const api = {
     const res = await apiClient.get(`/campaigns/${id}/milestones`, { params });
     return res.data;
   },
+  async getCampaignBudgets(campaignId) {
+    const res = await apiClient.get(`/campaigns/${campaignId}/budgets`);
+    return res.data;
+  },
+  async saveCampaignBudgets(campaignId, budgets) {
+    const res = await apiClient.post(`/campaigns/${campaignId}/budgets`, { budgets });
+    return res.data;
+  },
   async getCampaignTranslations(campaignId) {
     const res = await apiClient.get(`/campaigns/${campaignId}/translations`);
     return res.data?.data || res.data || [];

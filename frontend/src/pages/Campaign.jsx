@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import ContributeModal from '../components/ContributeModal';
 import RefundsSection from '../components/RefundsSection';
+import BudgetBreakdown from '../components/BudgetBreakdown';
 
 const SUPPORTED_LOCALES = [
   { code: 'fr', label: 'French (Français)' },
@@ -992,6 +993,7 @@ export default function Campaign() {
       title: campaign.title || '',
       description: campaign.description || '',
       deadline: campaign.deadline ? campaign.deadline.split('T')[0] : '',
+      target_amount: campaign.target_amount || '',
     });
     setEditError('');
     setEditSuccess('');
@@ -1009,7 +1011,7 @@ export default function Campaign() {
 
   function handleCloseEditModal() {
     setIsEditingCampaign(false);
-    setEditFormData({ title: '', description: '', deadline: '' });
+    setEditFormData({ title: '', description: '', deadline: '', target_amount: '' });
     setEditError('');
     setEditSuccess('');
     setTranslationForm(null);
@@ -1125,6 +1127,9 @@ export default function Campaign() {
       if (editFormData.deadline !== (campaign.deadline ? campaign.deadline.split('T')[0] : '')) {
         updates.deadline = editFormData.deadline || null;
       }
+      if (editFormData.target_amount !== campaign.target_amount) {
+        updates.target_amount = editFormData.target_amount;
+      }
 
       if (Object.keys(updates).length === 0) {
         setEditError('No changes to save');
@@ -1135,7 +1140,7 @@ export default function Campaign() {
       const updated = await api.updateCampaign(campaign.id, updates, token);
       setCampaign(updated);
       setIsEditingCampaign(false);
-      setEditFormData({ title: '', description: '', deadline: '' });
+      setEditFormData({ title: '', description: '', deadline: '', target_amount: '' });
       setEditSuccess('Campaign updated successfully!');
       setTimeout(() => setEditSuccess(''), 3000);
     } catch (err) {
@@ -2317,6 +2322,12 @@ export default function Campaign() {
       <MilestoneTracker milestones={milestones} assetType={campaign.asset_type} />
       <MilestoneVotePanel milestones={milestones} />
 
+      <BudgetBreakdown 
+        campaignId={campaign.id} 
+        targetAmount={campaign.target_amount} 
+        disabled={!canEditCampaign}
+      />
+
       {/* Stretch Goals (#585) */}
       {stretchGoals.length > 0 && (
         <div className="campaign-card" style={{ marginBottom: '1.5rem' }}>
@@ -3325,6 +3336,33 @@ export default function Campaign() {
                 type="date"
                 value={editFormData.deadline}
                 onChange={(e) => setEditFormData({ ...editFormData, deadline: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  border: '1px solid var(--color-border-lightest)',
+                  borderRadius: '6px',
+                  fontSize: '1rem',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label
+                style={{
+                  display: 'block',
+                  fontWeight: 600,
+                  marginBottom: '0.5rem',
+                }}
+              >
+                Target Amount
+              </label>
+              <input
+                type="number"
+                value={editFormData.target_amount}
+                onChange={(e) => setEditFormData({ ...editFormData, target_amount: e.target.value })}
+                min="0"
+                step="0.01"
                 style={{
                   width: '100%',
                   padding: '0.75rem',
