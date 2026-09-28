@@ -21,9 +21,10 @@ router.get('/', async (_req, res) => {
   try {
     await db.query('SELECT 1');
     metrics = getPoolMetrics();
+    const { utilisation, ...pool } = metrics;
     res.json({
       status: 'ok',
-      db: { pool: metrics, utilisation: metrics.utilisation },
+      db: { pool, utilisation },
     });
   } catch (err) {
     logger.error('Health check database query failed', { error: err.message });

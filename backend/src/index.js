@@ -1,14 +1,3 @@
-function getPoolMetrics() {
-  if (typeof db.getPoolMetrics === 'function') return db.getPoolMetrics();
-  return {
-    total: db.totalCount || 0,
-    idle: db.idleCount || 0,
-    waiting: db.waitingCount || 0,
-    max: db.poolMax || 0,
-    utilisation: 0,
-  };
-}
-
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -104,36 +93,6 @@ app.use('/api/credentials', require('./routes/credentialActivity'));
 app.use('/api/wallets', require('./routes/wallets'));
 app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/withdrawals', require('./routes/withdrawals'));
-
-
-app.get('/health', async (_req, res) => {
-  try {
-    await db.query('SELECT 1');
-    const metrics = getPoolMetrics();
-    const { utilisation, ...pool } = metrics;
-    const { isWorkerRunning } = require('./worker');
-    res.json({
-      status: 'ok',
-      db: { pool, utilisation },
-      uptime: process.uptime(),
-      worker: isWorkerRunning() ? 'running' : 'disabled',
-    });
-    if (utilisation > 90) {
-      Sentry.captureMessage(
-        `Database pool utilisation exceeds 90% (current: ${utilisation}%)`,
-        'warning'
-      );
-    }
-  } catch (err) {
-    logger.error('Health check database query failed', { error: err.message });
-    res.status(503).json({
-      error: {
-        code: 'ERROR',
-        message: err.message,
-      },
-    });
-  }
-});
 
 app.use(normalizeErrorResponse);
 app.use(errorHandler);
