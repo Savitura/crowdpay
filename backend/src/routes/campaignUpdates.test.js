@@ -1,3 +1,8 @@
+process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgres://test:test@localhost:5432/test';
+process.env.USDC_ISSUER = process.env.USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'testsecret123456789012345678901234567890';
+
 const CAMPAIGN_ID = '11111111-1111-1111-1111-111111111111';
 
 const CREATOR_ID = 'creator-1';

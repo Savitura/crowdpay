@@ -17,6 +17,15 @@
 
 'use strict';
 
+process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgres://test:test@localhost:5432/test';
+process.env.USDC_ISSUER = process.env.USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+process.env.USDC_CONTRACT_ADDRESS = process.env.USDC_CONTRACT_ADDRESS || 'CAQCFV4CS2CW6TD57ZUH77Z772427P5UTME5QLNUBK6M5M74FY6ZEX7B';
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'testsecret123456789012345678901234567890';
+process.env.PLATFORM_SECRET_KEY = process.env.PLATFORM_SECRET_KEY || 'SDVGKOWW4WCVJ7GZ47S77GZGL2PZ67HQVCS475S2F3DFV2GOH63QW34Z';
+process.env.PLATFORM_APPROVER_USER_ID = process.env.PLATFORM_APPROVER_USER_ID || 'platform-admin-1';
+process.env.WORKER_ENABLED = 'false';
+
 const { run } = require('node:test');
 const { spec: SpecReporter } = require('node:test/reporters');
 const path = require('node:path');

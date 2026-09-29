@@ -56,6 +56,8 @@ app.use('/api/anchor', require('./routes/anchor'));
 app.use('/api/announcements', require('./routes/announcement'));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api', require('./routes/featureFlags'));
+app.use('/api/campaigns', require('./routes/bulkCampaigns'));
+app.use('/api/campaigns', require('./routes/payoutSchedules'));
 app.use('/api/campaigns', require('./routes/campaignComments'));
 app.use('/api/campaigns', require('./routes/campaignFollowers'));
 app.use('/api/campaigns/:campaignId/contribution/preview', require('./routes/pathPaymentPreview'));

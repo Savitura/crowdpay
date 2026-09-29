@@ -127,6 +127,22 @@ const FLAGS = {
     allowedRoles: null,
     allowedUserIds: null,
   },
+  'scheduled-campaign-updates-cron': {
+    description: 'Enable the cron that publishes scheduled campaign updates when due',
+    envVar: 'ENABLE_SCHEDULED_CAMPAIGN_UPDATES_CRON',
+    defaultValue: true,
+    rolloutPct: null,
+    allowedRoles: null,
+    allowedUserIds: null,
+  },
+  'recurring-payout-schedules-cron': {
+    description: 'Enable the cron that raises withdrawal requests for due creator payout schedules',
+    envVar: 'ENABLE_RECURRING_PAYOUT_SCHEDULES_CRON',
+    defaultValue: true,
+    rolloutPct: null,
+    allowedRoles: null,
+    allowedUserIds: null,
+  },
 };
 
 // ─── Adapter Store ───────────────────────────────────────────────────

@@ -16,6 +16,8 @@ const { publishDraftCampaign } = require('./services/campaignPublishing');
 const { retryFailedContractDeployments } = require('./services/contractDeploymentRetryService');
 const { sendWeeklyContributorDigests } = require('./services/weeklyDigestService');
 const { sendDeadlineReminders } = require('./services/deadlineReminderService');
+const { publishDueCampaignUpdates } = require('./services/campaignUpdatesPublishing');
+const { processDuePayoutSchedules } = require('./services/payoutScheduleService');
 
 let intervals = [];
 let isShuttingDown = false;
@@ -114,6 +116,12 @@ async function startBackgroundWorkers() {
 
   // Deadline reminders: 1 hour
   startInterval('deadline-reminder-cron', sendDeadlineReminders, 60 * 60 * 1000, 'deadline-reminder-cron');
+
+  // Scheduled campaign updates: 1 minute
+  startInterval('scheduled-campaign-updates-cron', publishDueCampaignUpdates, 60 * 1000, 'scheduled-campaign-updates-cron');
+
+  // Recurring payout schedules: 5 minutes
+  startInterval('recurring-payout-schedules-cron', processDuePayoutSchedules, 5 * 60 * 1000, 'recurring-payout-schedules-cron');
 }
 
 async function stopBackgroundWorkers() {
