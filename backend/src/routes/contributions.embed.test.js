@@ -16,8 +16,19 @@ function buildApp({ queryImpl, verifyJwtImpl, validateDbTokenImpl }) {
       query: queryImpl,
       connect: async () => ({ query: async () => {}, release: async () => {} }),
     },
+    '../config/stellar': {
+      networkPassphrase: 'Test SDF Network ; September 2015',
+      isTestnet: true,
+    },
+    '../config/logger': {
+      error: () => {},
+      info: () => {},
+      warn: () => {},
+    },
     '../services/embedTokenJwtService': {
+      extractEmbedToken: req => req.headers.authorization?.replace('Bearer ', ''),
       verifyEmbedToken: verifyJwtImpl || (() => null),
+      signEmbedToken: () => 'stub-token',
     },
     '../services/embedTokenService': {
       validateEmbedToken: validateDbTokenImpl || (async () => null),
@@ -28,6 +39,43 @@ function buildApp({ queryImpl, verifyJwtImpl, validateDbTokenImpl }) {
         conversionQuote: null,
         platformFeeAmount: 0,
       }),
+      buildContributionMemo: () => 'cp-c-1',
+      buildAttributionMemo: () => 'cp-c-1',
+    },
+    '../services/stellarService': {
+      buildUnsignedContributionPayment: async () => 'unsigned-xdr',
+      buildUnsignedContributionPathPayment: async () => 'unsigned-xdr',
+      submitPreparedTransaction: async () => 'tx-hash',
+      getPathPaymentQuote: async () => [],
+      getSupportedAssetCodes: () => ['XLM', 'USDC'],
+    },
+    '../services/sorobanService': {
+      triggerRefund: async () => null,
+      isContractDepositEligible: () => false,
+      buildUnsignedEscrowDeposit: async () => 'soroban-xdr',
+    },
+    '../services/ledgerMonitor': {
+      recordConfirmedContribution: async () => {},
+    },
+    '../services/pathPaymentPreview': {
+      consumeContributionPreview: async () => null,
+    },
+    '../services/contributionDiagnostics': {
+      diagnoseContribution: async () => ({}),
+      STATUS_PENDING: 'pending',
+    },
+    '../services/referral': {
+      resolveReferralLink: async () => null,
+    },
+    '../services/referralService': {
+      getReferralCodeFromRequest: () => null,
+    },
+    '../services/rewardTierService': {
+      reserveTierSlot: async () => true,
+      reserveInventory: async () => true,
+      claimInventory: async () => true,
+      releaseInventory: async () => true,
+      createFulfillment: async () => ({}),
     },
     '../services/kycService': {
       assertUserKycVerified: async () => true,
@@ -35,8 +83,35 @@ function buildApp({ queryImpl, verifyJwtImpl, validateDbTokenImpl }) {
     '../services/contributorIdentityService': {
       assertContributorMeetsRequirements: async () => true,
     },
-    '../services/contributionPolicy': {
-      assertContributionPolicy: async () => true,
+    '../middleware/auth': {
+      requireAuth: (req, _res, next) => {
+        req.user = { userId: 'user-1' };
+        next();
+      },
+    },
+    '../middleware/validation': {
+      contributionValidation: [],
+      contributionQuoteValidation: [],
+      validateRequest: (_req, _res, next) => next(),
+    },
+    '../middleware/contributionRateLimiter': {
+      contributionRateLimiter: (_req, _res, next) => next(),
+    },
+    '../utils/pagination': {
+      parsePagination: (query, defaults = {}) => {
+        const limit = Math.min(
+          Math.max(parseInt(query.limit, 10) || defaults.limit || 20, 1),
+          defaults.max || 100
+        );
+        const offset = Math.max(parseInt(query.offset, 10) || 0, 0);
+        return { limit, offset };
+      },
+      paginatedResponse: async (db, countSql, dataSql, baseParams, limit, offset) => {
+        const countResult = await db.query(countSql, baseParams);
+        const total = parseInt(countResult.rows[0]?.total ?? '0', 10);
+        const dataResult = await db.query(dataSql, [...baseParams, limit, offset]);
+        return { data: dataResult.rows, total, limit, offset };
+      },
     },
   });
 
@@ -108,6 +183,7 @@ test('POST /api/contributions/embed succeeds with valid token and active campaig
   const app = buildApp({
     queryImpl,
     verifyJwtImpl: () => ({ sub: 'c-1', user_id: 'u-1' }),
+    validateDbTokenImpl: async () => ({ id: 'token-1', user_id: 'u-1', campaign_id: 'c-1' }),
   });
 
   const res = await request(app)

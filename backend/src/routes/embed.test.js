@@ -279,11 +279,11 @@ test('POST contribute rejects contribution that would exceed per-contributor cap
   assert.ok(res.body.error.includes('per-contributor limit'));
 });
 
-// TODO(#786): Test expects {success, amount, txHash} but route returns {id, raised_amount, target_amount}
 test(
   'POST contribute accepts valid contribution to active campaign with all checks passing',
-  { skip: 'Test response shape mismatch - see #786' },
   async () => {
+    const prev = process.env.ALLOW_EMBED_SIMULATED_CONTRIBUTIONS;
+    process.env.ALLOW_EMBED_SIMULATED_CONTRIBUTIONS = 'true';
     const embedToken = jwt.sign({ sub: CAMPAIGN_ID, origins: [] }, JWT_SECRET);
     const futureDeadline = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const app = buildApp(
@@ -302,9 +302,15 @@ test(
       .send({ amount: 50, asset: 'USDC' });
 
     assert.equal(res.status, 200);
-    assert.equal(res.body.success, true);
-    assert.equal(res.body.amount, 50);
+    assert.equal(res.body.id, CAMPAIGN_ID);
+    assert.equal(res.body.raised_amount, '2550');
+    assert.equal(res.body.target_amount, '10000');
+    assert.equal(res.body.simulated, true);
     assert.ok(res.body.txHash);
+    assert.ok(String(res.body.txHash).startsWith('tx_'));
+
+    if (prev === undefined) delete process.env.ALLOW_EMBED_SIMULATED_CONTRIBUTIONS;
+    else process.env.ALLOW_EMBED_SIMULATED_CONTRIBUTIONS = prev;
   }
 );
 
