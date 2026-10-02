@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
@@ -54,7 +54,7 @@ app.use(cookieParser());
 app.use(require('./middleware/csrf').csrfProtection);
 
 app.use('/api/v1', require('./routes/v1'));
-// NOTE: adminAuditLogs.js is deprecated — audit logs are served via admin.js -> auditLogs.js.
+// NOTE: adminAuditLogs.js is deprecated â€” audit logs are served via admin.js -> auditLogs.js.
 // Do not mount it here; it would shadow GET /api/admin/audit-logs.
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/anchor', require('./routes/anchor'));
@@ -76,6 +76,7 @@ app.use('/api/campaign-pools', require('./routes/contributionPools'));
 app.use('/api/contributions', require('./routes/contributions'));
 app.use('/api/contributor-identity', require('./routes/contributorIdentity'));
 app.use('/api/creator', require('./routes/creatorAnalytics'));
+app.use('/api/creator', require('./routes/payoutForecast'));
 app.use('/api/disputes', require('./routes/disputes'));
 app.use('/api/emails', require('./routes/emails'));
 app.use('/api/embed', require('./routes/embed'));

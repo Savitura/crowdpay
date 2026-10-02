@@ -414,3 +414,57 @@ The backend also logs a **warning** every 5 minutes if any wallet is in that sta
 - withdrawal request creation with multisig validation
 - withdrawal creator/platform approval flow
 - withdrawal denial paths (missing creator approval, insufficient signatures)
+
+
+## Creator payout forecast and reserve breakdown
+
+Both endpoints require authentication and are scoped to the campaign's creator
+(or a platform admin). They read live data from `campaigns`,
+`contributions`, `withdrawal_requests`, `recurring_payout_schedules`, and
+`treasury_policies`. No write side effects.
+
+### GET /api/creator/campaigns/:campaignId/payout-forecast
+
+Query parameters:
+
+| name    | type    | default | bounds  |
+| ------- | ------- | ------- | ------- |
+| horizon | integer | 6       | 1 .. 24 |
+
+Response fields:
+
+- campaign_id, asset_type, horizon_months
+- opening_balance, reserve_today, available_today
+- projected_total_payout
+- months[]: { month, projected_payout, projected_balance_after, payouts[] }
+- reserve_breakdown: { platform_fees, pending_withdrawals, scheduled_payouts, unallocated_reserve }
+- constraints: { min_hold_days, max_single_withdrawal_pct, withdrawal_cooldown_hours, require_auditor_for_above, wallet_mode, contract_id }
+- generated_at
+
+Errors: 401 unauthenticated, 403 not creator/admin, 404 unknown campaign,
+422 horizon out of range.
+
+### GET /api/creator/campaigns/:campaignId/reserve
+
+Returns the reserve breakdown without walking the horizon. Same reserve_breakdown
+and constraints shape as the forecast, plus campaign_id, asset_type, balance,
+reserve, available, scheduled_payouts[], generated_at.
+
+### Reserve semantics
+
+reserve is capped at balance and equals:
+
+- platform_fees        - unsettled platform fee on non-refunded contributions
+- pending_withdrawals  - withdrawals in any pending state
+- scheduled_payouts    - one run per active recurring schedule
+                         (fixed amount, or percentage * balance when amount is null)
+
+unallocated_reserve = reserve - (fees + pending + scheduled), always >= 0; it is
+only non-zero when the balance cap kicked in.
+
+### Forecast semantics
+
+Deterministic projection, not a guarantee. Each month consumes the next run of
+each active schedule, capping a payout at the remaining projected balance.
+projected_total_payout is the sum across the horizon. No new funds, fees, or
+refunds are assumed.
