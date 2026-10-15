@@ -108,7 +108,8 @@ fn test_contribute_after_deadline_fails() {
 }
 
 #[test]
-fn test_contribute_zero_amount() {
+#[should_panic(expected = "Contribution amount must be positive")]
+fn test_contribute_rejects_zero_amount() {
     let env = Env::default();
     let (creator, token_id, token, token_admin, client) = setup_test(&env);
     let contributor = Address::generate(&env);
@@ -118,10 +119,20 @@ fn test_contribute_zero_amount() {
 
     token_admin.mock_all_auths().mint(&contributor, &100);
     client.mock_all_auths().contribute(&contributor, &0);
+}
 
-    assert_eq!(client.get_total_raised(), 0);
-    assert_eq!(token.balance(&client.address), 0);
-    assert_eq!(token.balance(&contributor), 100);
+#[test]
+#[should_panic(expected = "Contribution amount must be positive")]
+fn test_contribute_rejects_negative_amount() {
+    let env = Env::default();
+    let (creator, token_id, token, token_admin, client) = setup_test(&env);
+    let contributor = Address::generate(&env);
+
+    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
+    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &token_id, &1000, &10000, &milestones);
+
+    token_admin.mock_all_auths().mint(&contributor, &100);
+    client.mock_all_auths().contribute(&contributor, &-1);
 }
 
 #[test]

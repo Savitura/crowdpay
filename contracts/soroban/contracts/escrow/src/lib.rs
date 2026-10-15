@@ -65,6 +65,10 @@ impl EscrowContract {
     }
 
     pub fn deposit(env: Env, from: Address, amount: i128) {
+        if amount <= 0 {
+            panic!("Deposit amount must be positive");
+        }
+
         from.require_auth();
 
         let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();

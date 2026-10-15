@@ -82,6 +82,10 @@ impl CrowdPayContract {
     }
 
     pub fn contribute(env: Env, contributor: Address, amount: i128) {
+        if amount <= 0 {
+            panic!("Contribution amount must be positive");
+        }
+
         contributor.require_auth();
         
         let status: Symbol = env.storage().instance().get(&DataKey::Status).unwrap();

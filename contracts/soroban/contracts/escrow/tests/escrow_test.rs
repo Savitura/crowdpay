@@ -227,6 +227,32 @@ fn test_deposit_increases_balance() {
 }
 
 #[test]
+#[should_panic(expected = "Deposit amount must be positive")]
+fn test_deposit_rejects_zero_amount() {
+    let env = Env::default();
+    let (contract_id, _, contributor, _fee_recipient) = setup_contract(&env, 1000, 999999, 0);
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let token_addr = client.get_asset();
+    let token_cl = token::StellarAssetClient::new(&env, &token_addr);
+    token_cl.mint(&contributor, &500);
+    client.deposit(&contributor, &0);
+}
+
+#[test]
+#[should_panic(expected = "Deposit amount must be positive")]
+fn test_deposit_rejects_negative_amount() {
+    let env = Env::default();
+    let (contract_id, _, contributor, _fee_recipient) = setup_contract(&env, 1000, 999999, 0);
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let token_addr = client.get_asset();
+    let token_cl = token::StellarAssetClient::new(&env, &token_addr);
+    token_cl.mint(&contributor, &500);
+    client.deposit(&contributor, &-1);
+}
+
+#[test]
 fn test_deposit_rejects_after_deadline() {
     let env = Env::default();
     let (contract_id, _, contributor, _fee_recipient) = setup_contract(&env, 1000, 100, 0);
