@@ -1,0 +1,47 @@
+{
+  "network": "testnet",
+  "asset": {
+    "contract_id": "CCJNPC6JE6IPKIQJU3ZUZPEK37KKPI7IHECSN4EO454QFQ7PW6NPOXSD",
+    "code": "TEST",
+    "issuer": "GD7GCW35LXOM7ZPMQJ2Q6CFDQCJGGVOXNIPFDSIBLH6XHKLC3UBRTPRX",
+    "stellar_asset_type": "credit_alloyed4"
+  },
+  "contracts": [
+    {
+      "name": "escrow",
+      "network": "testnet",
+      "contract_id": "CDEIPEYJKCGRJAHOAUAWAOBFZSRNJBPUI2HQ2PVHVX6KJLWH735XTHDN",
+      "deploy_tx": "bf3cb7bcc9a5a3f230a586352d13b0aeba83764a80ebf8c6d16108fa08782173",
+      "wasm": "escrow.optimized.wasm",
+      "wasm_sha256": "df6b7adaa3f41475a84d98d0baf472c2b2b54761e5d7225bab79bada5782e1c8",
+      "deployed_at": "2026-10-16T08:31:12Z"
+    },
+    {
+      "name": "milestones",
+      "network": "testnet",
+      "contract_id": "CCHMTYXHG33WL2HB5NVZC334EH3VLNYPC4KTWDPAQOPXABQ3SYFBV67H",
+      "deploy_tx": "3f674ebc79cc999fbaef9e392d0960fe05cdc603576f39c47444573c3a782c24",
+      "wasm": "milestones.optimized.wasm",
+      "wasm_sha256": "c625f62a532777b95698e72a1796a054d9a32836761dd440589fbf153288b9d8",
+      "deployed_at": "2026-10-16T08:31:22Z"
+    }
+  ],
+  "other_instances": [
+    {
+      "name": "escrow",
+      "network": "testnet",
+      "contract_id": "CAE4JWKV4QA2XWVHEFG6AISW72PG4YKKSZD4ALLPNDKFBMOAKRKHSOMJ",
+      "deploy_tx": "a5a3e9c8628ecd1b054afa1a111b3278f733782865de8ce736e02406994c485f",
+      "deployed_at": "2026-10-16T07:01:32Z",
+      "note": "First walkthrough campaign: one contribution of 10 TEST, milestone 0 released (4 TEST). Left as-is; its remaining balance is short of the recorded contributor balance because refund() does not net out released funds."
+    },
+    {
+      "name": "milestones",
+      "network": "testnet",
+      "contract_id": "CBYTOETFG7CXITRGJOJSMWN2KMJUHJP2OJX4BMPMZW3IQDIHSPUZWDPN",
+      "deploy_tx": "b55c768f91ca08a2aa3fa24f2134e3cbef6ad60be65559b491abff7b0ce0e950",
+      "deployed_at": "2026-10-16T07:01:57Z",
+      "note": "Admin of the escrow instance above."
+    }
+  ]
+}
