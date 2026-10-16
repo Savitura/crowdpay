@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 const publicRoutes = [
-  ['/', /Fund verified campaigns/i],
+  ['/', /Fund Nigerian causes/i],
   ['/discover', /Explore campaigns/i],
   ['/how-it-works', /How CrowdPay works/i],
   ['/pricing', /^Pricing$/i],
