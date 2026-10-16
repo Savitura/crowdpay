@@ -26,6 +26,10 @@ vi.mock('axios', () => {
 
 import axios from 'axios';
 
+function setOnline(value) {
+  Object.defineProperty(globalThis.navigator, 'onLine', { configurable: true, get: () => value });
+}
+
 describe('API Service - CSRF Interceptor', () => {
   let mockDocumentCookie;
 
@@ -104,10 +108,12 @@ describe('API Service - Offline Retry Queue', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    setOnline(false);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    delete globalThis.navigator.onLine;
   });
 
   function rejectNetworkRequest(config = {}) {
@@ -158,6 +164,15 @@ describe('API Service - Offline Retry Queue', () => {
     error.config = { method: 'post', url: '/campaigns' };
 
     await expect(responseRejectedHandlers[0](error)).rejects.toMatchObject({ status: 0 });
+    await retryQueuedRequests();
+    expect(axios.request).not.toHaveBeenCalled();
+  });
+
+  it('rejects a failed GET immediately while the browser is online', async () => {
+    setOnline(true);
+
+    await expect(rejectNetworkRequest()).rejects.toMatchObject({ status: 0 });
+
     await retryQueuedRequests();
     expect(axios.request).not.toHaveBeenCalled();
   });

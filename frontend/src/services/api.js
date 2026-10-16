@@ -50,11 +50,24 @@ apiClient.interceptors.request.use((config) => {
 const MAX_RETRY_QUEUE_SIZE = 100;
 const retryQueue = new Map();
 
+// A parked GET is only settled by retryQueuedRequests(), which NetworkStatusContext
+// calls on the browser's offline -> online transition. Queueing a request that failed
+// while the browser was online would hang the caller, so those reject instead.
+function isBrowserOffline() {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
+
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     const config = error.config;
-    if (!error.response && config && config.method === 'get' && !config._retried) {
+    if (
+      !error.response &&
+      config &&
+      config.method === 'get' &&
+      !config._retried &&
+      isBrowserOffline()
+    ) {
       config._retried = true;
       const key = JSON.stringify([config.baseURL, config.url, config.params]);
       return new Promise((resolve, reject) => {
