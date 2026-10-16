@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test environment variables for CrowdPay
-# Source this file before running tests: source test-env.sh && npm test
+# Source this file before running tests: source scripts/test-env.sh && npm test
 # All secrets here are NON-SECRET test defaults. Override in CI/local as needed.
 
 export NODE_ENV=test
