@@ -87,4 +87,74 @@ mod test {
         assert_eq!(client.get_fee(), 350);
         assert_eq!(client.get_creator_share(), 450);
     }
+
+    #[test]
+    #[should_panic(expected = "Only the admin can set the fee")]
+    fn test_admin_set_fee_rejects_any_other_address() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_contract_id, client) = setup_contract(&env);
+        let admin = Address::generate(&env);
+        let governance_token = Address::generate(&env);
+        client.initialize(&admin, &governance_token, &250, &500);
+
+        // Signing for itself is not enough: the caller must be the stored admin.
+        let attacker = Address::generate(&env);
+        client.admin_set_fee(&attacker, &900, &900);
+    }
+
+    #[test]
+    fn test_admin_set_fee_without_admin_auth_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_contract_id, client) = setup_contract(&env);
+        let admin = Address::generate(&env);
+        let governance_token = Address::generate(&env);
+        client.initialize(&admin, &governance_token, &250, &500);
+
+        // set_auths(&[]) turns mocking back off, so nothing signs.
+        env.set_auths(&[]);
+        assert!(client.try_admin_set_fee(&admin, &350, &450).is_err());
+
+        assert_eq!(client.get_fee(), 250);
+        assert_eq!(client.get_creator_share(), 500);
+    }
+
+    #[test]
+    #[should_panic(expected = "Platform fee BPS must not exceed MAX_FEE_BPS")]
+    fn test_admin_set_fee_rejects_fee_above_cap() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_contract_id, client) = setup_contract(&env);
+        let admin = Address::generate(&env);
+        let governance_token = Address::generate(&env);
+        client.initialize(&admin, &governance_token, &250, &500);
+
+        client.admin_set_fee(&admin, &1001, &500);
+    }
+
+    #[test]
+    #[should_panic(expected = "Creator share BPS must not exceed MAX_CREATOR_SHARE_BPS")]
+    fn test_admin_set_fee_rejects_creator_share_above_cap() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_contract_id, client) = setup_contract(&env);
+        let admin = Address::generate(&env);
+        let governance_token = Address::generate(&env);
+        client.initialize(&admin, &governance_token, &250, &500);
+
+        client.admin_set_fee(&admin, &250, &10001);
+    }
+
+    #[test]
+    #[should_panic(expected = "Platform fee BPS must not exceed MAX_FEE_BPS")]
+    fn test_initialize_rejects_fee_above_cap() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_contract_id, client) = setup_contract(&env);
+        let admin = Address::generate(&env);
+        let governance_token = Address::generate(&env);
+
+        client.initialize(&admin, &governance_token, &1001, &500);
+    }
 }

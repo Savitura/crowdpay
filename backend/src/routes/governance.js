@@ -240,7 +240,7 @@ router.post(
   '/proposals',
   requireAuth,
   attachWallet,
-  body('new_fee_bps').isInt({ min: 0, max: 10000 }),
+  body('new_fee_bps').isInt({ min: 0, max: 1000 }),
   body('new_creator_share_bps').isInt({ min: 0, max: 10000 }),
   body('rationale_text').isString().isLength({ min: 10, max: 1000 }),
   asyncHandler(async (req, res) => {

@@ -41,6 +41,25 @@ const PROPOSAL_VOTING_PERIOD: u64 = 7 * 24 * 60 * 60; // 7 days in seconds
 const MIN_TOKEN_BALANCE: i128 = 1000; // Minimum 1000 tokens to propose
 const QUORUM_THRESHOLD: i128 = 1000; // 10% of total supply (assuming 10,000 total supply)
 
+/// Maximum platform fee the registry will store, in basis points (10% = 1000 BPS).
+///
+/// Mirrors `MAX_FEE_BPS` in the escrow contract, which rejects any fee above this cap,
+/// so a higher value here could never take effect.
+pub const MAX_FEE_BPS: u32 = 1000;
+
+/// The creator share is a percentage of collected platform fees, so 10000 BPS is the ceiling.
+pub const MAX_CREATOR_SHARE_BPS: u32 = 10000;
+
+/// Applied by every path that stores a fee: initialization, governance proposals, admin override.
+fn validate_fees(new_fee_bps: u32, new_creator_share_bps: u32) {
+    if new_fee_bps > MAX_FEE_BPS {
+        panic!("Platform fee BPS must not exceed MAX_FEE_BPS");
+    }
+    if new_creator_share_bps > MAX_CREATOR_SHARE_BPS {
+        panic!("Creator share BPS must not exceed MAX_CREATOR_SHARE_BPS");
+    }
+}
+
 #[contract]
 pub struct FeeRegistry;
 
@@ -58,9 +77,7 @@ impl FeeRegistry {
         }
         admin.require_auth();
 
-        if initial_platform_fee_bps > 10000 || initial_creator_share_bps > 10000 {
-            panic!("Invalid fee bps");
-        }
+        validate_fees(initial_platform_fee_bps, initial_creator_share_bps);
 
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::GovernanceToken, &governance_token);
@@ -96,6 +113,8 @@ impl FeeRegistry {
         new_creator_share_bps: u32,
     ) -> u32 {
         proposer.require_auth();
+
+        validate_fees(new_fee_bps, new_creator_share_bps);
 
         // Check if proposer has minimum token balance
         let governance_token: Address = env.storage().instance().get(&DataKey::GovernanceToken).unwrap();
@@ -218,8 +237,11 @@ impl FeeRegistry {
     pub fn admin_set_fee(env: Env, admin: Address, new_fee_bps: u32, new_creator_share_bps: u32) {
         let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         if admin != stored_admin {
-            admin.require_auth();
+            panic!("Only the admin can set the fee");
         }
+        stored_admin.require_auth();
+
+        validate_fees(new_fee_bps, new_creator_share_bps);
 
         env.storage().instance().set(&DataKey::PlatformFeeBps, &new_fee_bps);
         env.storage().instance().set(&DataKey::CreatorShareBps, &new_creator_share_bps);
