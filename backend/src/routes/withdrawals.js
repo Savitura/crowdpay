@@ -34,6 +34,7 @@ const { calculateCommissions, settleCommissions } = require('../services/referra
 const { parsePagination } = require('../utils/pagination');
 const asyncHandler = require('../utils/asyncHandler');
 const withTransaction = require('../utils/withTransaction');
+const { toStroops, fromStroops } = require('../utils/stroops');
 
 const ALLOWED_CAMPAIGN_STATUS_FOR_REQUEST = ['active', 'funded'];
 
@@ -267,15 +268,18 @@ router.post(
     // transaction as the creator payout (#675).
     const { commissions, totalCommission } = await calculateCommissions(campaign_id);
     const payableCommissions = commissions.filter(
-      commission => commission.destination_public_key && parseFloat(commission.commission_owed) > 0
+      commission =>
+        commission.destination_public_key &&
+        toStroops(commission.commission_owed, { allowZero: true }) > 0n
     );
     const commissionTotal = payableCommissions.reduce(
-      (sum, commission) => sum + parseFloat(commission.commission_owed),
-      0
+      (sum, commission) => sum + toStroops(commission.commission_owed, { allowZero: true }),
+      0n
     );
-    const creatorAmount = (parseFloat(amount) - commissionTotal).toFixed(7);
+    const creatorAmountStroops = toStroops(amount) - commissionTotal;
+    const creatorAmount = fromStroops(creatorAmountStroops);
 
-    if (parseFloat(creatorAmount) <= 0) {
+    if (creatorAmountStroops <= 0n) {
       return res.status(422).json({
         error: `Referral commissions of ${totalCommission} ${campaign.asset_type} exceed the requested withdrawal amount. Withdraw a larger amount.`,
         code: 'COMMISSIONS_EXCEED_WITHDRAWAL',

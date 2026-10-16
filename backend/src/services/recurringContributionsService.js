@@ -25,6 +25,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const CRON_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const BASE_BACKOFF_MINUTES = 30;
 const MAX_RETRY_DELAY_MINUTES = 24 * 60; // 1 day
+const ADVISORY_LOCK_KEY = 738584;
 let _timer = null;
 
 function backoffMinutes(failureCount) {
@@ -43,10 +44,22 @@ function manageUrl() {
 }
 
 async function processRecurringContributions() {
-  logger.info('recurring-contributions: checking due schedules');
+  const lockClient = await db.connect();
+  let lockAcquired = false;
+  try {
+    const { rows: lockRows } = await lockClient.query('SELECT pg_try_advisory_lock($1) AS locked', [
+      ADVISORY_LOCK_KEY,
+    ]);
+    lockAcquired = lockRows[0]?.locked === true;
+    if (!lockAcquired) {
+      logger.info('recurring-contributions: another run is active; skipping');
+      return;
+    }
 
-  const { rows } = await db.query(
-    `SELECT rc.id,
+    logger.info('recurring-contributions: checking due schedules');
+
+    const { rows } = await db.query(
+      `SELECT rc.id,
             rc.user_id,
             rc.campaign_id,
             rc.amount,
@@ -69,68 +82,69 @@ async function processRecurringContributions() {
        AND c.status = 'active'
        AND c.deleted_at IS NULL
      LIMIT 200`
-  );
+    );
 
-  if (!rows.length) {
-    logger.debug('recurring-contributions: nothing due');
-    return;
-  }
+    if (!rows.length) {
+      logger.debug('recurring-contributions: nothing due');
+      return;
+    }
 
-  logger.info('recurring-contributions: processing', { count: rows.length });
+    logger.info('recurring-contributions: processing', { count: rows.length });
 
-  for (const schedule of rows) {
-    const runKey = `${schedule.id}:${Date.now()}`;
-    const baseParams = {
-      name: schedule.name,
-      campaignTitle: schedule.campaign_title,
-      amount: schedule.amount,
-      asset: schedule.asset_type,
-      manageUrl: manageUrl(),
-    };
+    for (const schedule of rows) {
+      const runKey = `recurring-contribution:${schedule.id}:${new Date(schedule.next_run_at).toISOString()}`;
+      const baseParams = {
+        name: schedule.name,
+        campaignTitle: schedule.campaign_title,
+        amount: schedule.amount,
+        asset: schedule.asset_type,
+        manageUrl: manageUrl(),
+      };
 
-    try {
-      // 1) Notify the donor that a charge is due.
-      await sendRecurringContributionNoticeEmail({
-        to: schedule.email,
-        kind: 'upcoming',
-        recurringRunKey: runKey,
-        ...baseParams,
-        scheduledAt: schedule.next_run_at,
-      });
+      try {
+        // 1) Notify the donor that a charge is due.
+        await sendRecurringContributionNoticeEmail({
+          to: schedule.email,
+          kind: 'upcoming',
+          recurringRunKey: runKey,
+          ...baseParams,
+          scheduledAt: schedule.next_run_at,
+        });
 
-      // 2) Actually execute the monthly charge through the custodial flow.
-      const { txHash } = await submitCustodialContribution({
-        campaign: {
-          wallet_public_key: schedule.campaign_wallet_public_key,
-          escrow_contract_id: schedule.escrow_contract_id,
-          asset_type: schedule.asset_type,
-        },
-        campaignId: schedule.campaign_id,
-        userId: schedule.user_id,
-        walletPublicKey: schedule.wallet_public_key,
-        walletSecretEncrypted: schedule.wallet_secret_encrypted,
-        amount: Number(schedule.amount),
-        sendAsset: schedule.asset_type,
-        displayName: schedule.name,
-        ipAddress: null,
-        deviceFingerprint: null,
-        client: null,
-        tierId: null,
-      });
+        // 2) Actually execute the monthly charge through the custodial flow.
+        const { txHash } = await submitCustodialContribution({
+          campaign: {
+            wallet_public_key: schedule.campaign_wallet_public_key,
+            escrow_contract_id: schedule.escrow_contract_id,
+            asset_type: schedule.asset_type,
+          },
+          campaignId: schedule.campaign_id,
+          userId: schedule.user_id,
+          walletPublicKey: schedule.wallet_public_key,
+          walletSecretEncrypted: schedule.wallet_secret_encrypted,
+          amount: String(schedule.amount),
+          sendAsset: schedule.asset_type,
+          displayName: schedule.name,
+          ipAddress: null,
+          deviceFingerprint: null,
+          client: null,
+          tierId: null,
+          idempotencyKey: runKey,
+        });
 
-      // 3) Confirmation for this charge.
-      await sendRecurringContributionNoticeEmail({
-        to: schedule.email,
-        kind: 'charged',
-        recurringRunKey: runKey,
-        ...baseParams,
-        txHash,
-        campaignUrl: `${FRONTEND_URL}/campaigns/${schedule.campaign_id}`,
-      });
+        // 3) Confirmation for this charge.
+        await sendRecurringContributionNoticeEmail({
+          to: schedule.email,
+          kind: 'charged',
+          recurringRunKey: runKey,
+          ...baseParams,
+          txHash,
+          campaignUrl: `${FRONTEND_URL}/campaigns/${schedule.campaign_id}`,
+        });
 
-      // 4) Advance the schedule and clear any prior failure state on success.
-      await db.query(
-        `UPDATE recurring_contributions
+        // 4) Advance the schedule and clear any prior failure state on success.
+        await db.query(
+          `UPDATE recurring_contributions
          SET last_run_at   = NOW(),
              next_run_at   = ${nextIntervalSql(schedule.interval)},
              run_count     = run_count + 1,
@@ -138,53 +152,65 @@ async function processRecurringContributions() {
              last_error    = NULL,
              updated_at    = NOW()
          WHERE id = $1`,
-        [schedule.id]
-      );
+          [schedule.id]
+        );
 
-      logger.info('recurring-contributions: charged', {
-        schedule_id: schedule.id,
-        tx_hash: txHash,
-      });
-    } catch (err) {
-      const failures = (schedule.failure_count || 0) + 1;
-      const retryMinutes = backoffMinutes(failures);
-      await db.query(
-        `UPDATE recurring_contributions
+        logger.info('recurring-contributions: charged', {
+          schedule_id: schedule.id,
+          tx_hash: txHash,
+        });
+      } catch (err) {
+        const failures = (schedule.failure_count || 0) + 1;
+        const retryMinutes = backoffMinutes(failures);
+        await db.query(
+          `UPDATE recurring_contributions
          SET failure_count = $2,
              last_error    = $3,
              next_run_at   = NOW() + ($4 || ' minutes')::interval,
              updated_at    = NOW()
          WHERE id = $1`,
-        [
-          schedule.id,
-          failures,
-          String((err && err.message) || 'unknown').slice(0, 500),
-          retryMinutes,
-        ]
-      );
+          [
+            schedule.id,
+            failures,
+            String((err && err.message) || 'unknown').slice(0, 500),
+            retryMinutes,
+          ]
+        );
 
-      await sendRecurringContributionNoticeEmail({
-        to: schedule.email,
-        kind: 'failed',
-        recurringRunKey: runKey,
-        ...baseParams,
-      }).catch(mailErr =>
-        logger.error('recurring-contributions: failure email could not be sent', {
+        await sendRecurringContributionNoticeEmail({
+          to: schedule.email,
+          kind: 'failed',
+          recurringRunKey: runKey,
+          ...baseParams,
+        }).catch(mailErr =>
+          logger.error('recurring-contributions: failure email could not be sent', {
+            schedule_id: schedule.id,
+            error: mailErr.message,
+          })
+        );
+
+        logger.error('recurring-contributions: charge failed, scheduling retry', {
           schedule_id: schedule.id,
-          error: mailErr.message,
-        })
-      );
-
-      logger.error('recurring-contributions: charge failed, scheduling retry', {
-        schedule_id: schedule.id,
-        failure_count: failures,
-        next_retry_minutes: retryMinutes,
-        error: err.message,
-      });
+          failure_count: failures,
+          next_retry_minutes: retryMinutes,
+          error: err.message,
+        });
+      }
     }
-  }
 
-  logger.info('recurring-contributions: done', { processed: rows.length });
+    logger.info('recurring-contributions: done', { processed: rows.length });
+  } finally {
+    let releaseError;
+    if (lockAcquired) {
+      try {
+        await lockClient.query('SELECT pg_advisory_unlock($1)', [ADVISORY_LOCK_KEY]);
+      } catch (err) {
+        releaseError = err;
+        logger.error('recurring-contributions: advisory unlock failed', { error: err.message });
+      }
+    }
+    lockClient.release(releaseError);
+  }
 }
 
 function startRecurringContributionsCron() {

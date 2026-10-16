@@ -28,7 +28,12 @@ function dueSchedule(overrides = {}) {
   };
 }
 
-function buildService({ schedule = dueSchedule(), chargeImpl, queryImpl } = {}) {
+function buildService({
+  schedule = dueSchedule(),
+  chargeImpl,
+  queryImpl,
+  lockState = { locked: false },
+} = {}) {
   const calls = [];
   const emails = [];
   const db = {
@@ -41,6 +46,21 @@ function buildService({ schedule = dueSchedule(), chargeImpl, queryImpl } = {}) 
       if (text.includes('FROM recurring_contributions rc')) return { rows: [schedule] };
       return { rows: [] };
     },
+    connect: async () => ({
+      query: async text => {
+        if (text.includes('pg_try_advisory_lock')) {
+          const locked = !lockState.locked;
+          if (locked) lockState.locked = true;
+          return { rows: [{ locked }] };
+        }
+        if (text.includes('pg_advisory_unlock')) {
+          lockState.locked = false;
+          return { rows: [] };
+        }
+        return { rows: [] };
+      },
+      release: () => {},
+    }),
   };
 
   const service = proxyquire('./recurringContributionsService', {
@@ -61,7 +81,9 @@ function buildService({ schedule = dueSchedule(), chargeImpl, queryImpl } = {}) 
 
 test('processRecurringContributions charges due schedules and advances them', async () => {
   let chargedWith = null;
+  const schedule = dueSchedule();
   const { service, calls, emails } = buildService({
+    schedule,
     chargeImpl: async args => {
       chargedWith = args;
       return { txHash: 'tx-success' };
@@ -74,8 +96,12 @@ test('processRecurringContributions charges due schedules and advances them', as
   assert.equal(chargedWith.campaignId, 'camp-1');
   assert.equal(chargedWith.walletPublicKey, 'GCONTRIBUTOR');
   assert.equal(chargedWith.campaign.wallet_public_key, 'GCAMPAIGN');
-  assert.equal(chargedWith.amount, 10);
+  assert.equal(chargedWith.amount, '10');
   assert.equal(chargedWith.sendAsset, 'XLM');
+  assert.equal(
+    chargedWith.idempotencyKey,
+    `recurring-contribution:${SCHEDULE_ID}:${new Date(schedule.next_run_at).toISOString()}`
+  );
 
   // upcoming + charged notifications were sent.
   assert.deepEqual(emails.sort(), ['charged', 'upcoming']);
@@ -127,4 +153,33 @@ test('processRecurringContributions exits early with nothing due', async () => {
   // No charge / no update runs when there are no due schedules.
   assert.ok(!calls.some(c => c.text.includes('submitCustodialContribution')));
   assert.ok(!calls.some(c => c.text.includes('UPDATE recurring_contributions')));
+});
+
+test('concurrent recurring contribution runs charge a due schedule only once', async () => {
+  const lockState = { locked: false };
+  let chargeStarted;
+  const chargeStartedPromise = new Promise(resolve => {
+    chargeStarted = resolve;
+  });
+  let finishCharge;
+  const chargeGate = new Promise(resolve => {
+    finishCharge = resolve;
+  });
+  let chargeCount = 0;
+  const { service } = buildService({
+    lockState,
+    chargeImpl: async () => {
+      chargeCount += 1;
+      chargeStarted();
+      await chargeGate;
+      return { txHash: 'tx-success' };
+    },
+  });
+
+  const firstRun = service.processRecurringContributions();
+  await chargeStartedPromise;
+  await service.processRecurringContributions();
+  assert.equal(chargeCount, 1);
+  finishCharge();
+  await firstRun;
 });

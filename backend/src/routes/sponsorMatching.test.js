@@ -16,6 +16,7 @@ class StubDuplicateMatchingPledgeError extends Error {
 
 function buildRouters({ queryImpl, serviceImpl }) {
   const dbStub = { query: queryImpl || (async () => ({ rows: [] })) };
+  const webhookEvents = [];
 
   const serviceStub = {
     createMatchingPledge: async () => {
@@ -60,7 +61,9 @@ function buildRouters({ queryImpl, serviceImpl }) {
       },
     },
     '../services/webhookDispatcher': {
-      emitWebhookEventForCampaign: async () => {},
+      emitWebhookEventForCampaign: async (...args) => {
+        webhookEvents.push(args);
+      },
       WEBHOOK_EVENTS: {
         SPONSOR_MATCH_CREATED: 'sponsor_match.created',
         SPONSOR_MATCH_COMPLETED: 'sponsor_match.completed',
@@ -68,7 +71,7 @@ function buildRouters({ queryImpl, serviceImpl }) {
     },
   });
 
-  return { ...routers, auditCalls };
+  return { ...routers, auditCalls, webhookEvents };
 }
 
 function buildApp(router) {
@@ -246,6 +249,33 @@ test('GET /campaigns/:id/matches returns 404 when campaign not found', async () 
   const res = await request(buildApp(campaignRouter)).get(`/${CAMPAIGN_UUID}/matches`);
 
   assert.equal(res.status, 404);
+});
+
+test('PATCH completing a matching pledge emits an exact fixed-precision remainder', async () => {
+  const { campaignRouter, webhookEvents } = buildRouters({
+    queryImpl: async text => {
+      if (text.includes('FROM campaign_matches cm')) {
+        return { rows: [{ sponsor_user_id: 'user-uuid-1', creator_id: 'creator-1' }] };
+      }
+      if (text.includes('FROM campaigns')) return { rows: [{ id: CAMPAIGN_UUID }] };
+      return { rows: [] };
+    },
+    serviceImpl: {
+      completeMatchingPledge: async () => ({
+        id: MATCH_UUID,
+        sponsor_user_id: 'sponsor-1',
+        pledge_amount: '0.3',
+        matched_amount: '0.1',
+      }),
+    },
+  });
+
+  const res = await request(buildApp(campaignRouter)).patch(
+    `/${CAMPAIGN_UUID}/matches/${MATCH_UUID}/complete`
+  );
+
+  assert.equal(res.status, 200);
+  assert.equal(webhookEvents[0][2].unclaimed_amount, '0.2000000');
 });
 
 test('GET /user/sponsor-matches returns sponsor pledges', async () => {

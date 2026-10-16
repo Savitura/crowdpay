@@ -918,6 +918,56 @@ test('POST /api/withdrawals/request rejects a withdrawal smaller than the commis
   assert.equal(response.body.code, 'COMMISSIONS_EXCEED_WITHDRAWAL');
 });
 
+test('POST /api/withdrawals/request sums referral commissions in exact stroops', async () => {
+  let builtWith;
+  const { app, cleanup } = buildApp({
+    referralImpl: {
+      calculateCommissions: async () => ({
+        commissions: [
+          { destination_public_key: 'GALICE', commission_owed: '0.1' },
+          { destination_public_key: 'GBOB', commission_owed: '0.2' },
+        ],
+        totalCommission: '0.3000000',
+      }),
+    },
+    stellarImpl: {
+      buildWithdrawalTransaction: async params => {
+        builtWith = params;
+        return 'xdr-base';
+      },
+    },
+    queryImpl: async text => {
+      if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [] };
+      if (text.includes('FROM campaigns WHERE id')) return { rows: [campaignRow()] };
+      if (text.includes('FROM withdrawal_requests') && text.includes("status = 'pending'"))
+        return { rows: [] };
+      if (text.includes('wallet_public_key FROM users'))
+        return { rows: [{ wallet_public_key: 'GCREATOR' }] };
+      if (text.includes('INSERT INTO withdrawal_requests')) {
+        return {
+          rows: [{ id: 'w-1', status: 'pending', creator_signed: false, platform_signed: false }],
+        };
+      }
+      if (text.includes('INSERT INTO stellar_transactions')) return { rows: [{ id: 'stellar-1' }] };
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .send({
+      campaign_id: '11111111-1111-1111-1111-111111111111',
+      destination_key: VALID_DESTINATION,
+      amount: '1.0',
+      evidence: [{ type: 'link', url: 'https://example.test/invoice' }],
+    });
+
+  cleanup();
+  assert.equal(response.status, 201);
+  assert.equal(builtWith.amount, '0.7000000');
+});
+
 test('POST /api/withdrawals/:id/approve/platform settles the commissions it submitted', async () => {
   let settled;
   const { app, cleanup } = buildApp({
