@@ -376,7 +376,7 @@ export default function Governance() {
                     <input
                       type="number"
                       min="0"
-                      max="10000"
+                      max="1000"
                       required
                       value={newProposal.new_fee_bps}
                       onChange={(e) =>
@@ -385,7 +385,7 @@ export default function Governance() {
                       className="w-full border border-gray-300 rounded-lg px-3 py-2"
                       placeholder={t('governance.feePlaceholder')}
                     />
-                    <p className="text-xs text-gray-500 mt-1">{t('governance.basisPointsHelp')}</p>
+                    <p className="text-xs text-gray-500 mt-1">{t('governance.feeBasisPointsHelp')}</p>
                   </div>
 
                   <div>

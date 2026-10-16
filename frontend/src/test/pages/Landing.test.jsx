@@ -24,7 +24,7 @@ describe('Landing page', () => {
     renderWithProviders(<Landing />);
 
     expect(
-      await screen.findByRole('heading', { name: /Fund verified campaigns/i })
+      await screen.findByRole('heading', { name: /Fund Nigerian causes/i })
     ).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Explore campaigns/i })).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /Start a campaign/i })[0]).toHaveAttribute(
@@ -36,7 +36,7 @@ describe('Landing page', () => {
   it('calls getFeaturedCampaigns on mount', async () => {
     renderWithProviders(<Landing />);
 
-    await screen.findByRole('heading', { name: /Fund verified campaigns/i });
+    await screen.findByRole('heading', { name: /Fund Nigerian causes/i });
     expect(apiMocks.getFeaturedCampaigns).toHaveBeenCalled();
   });
 });
