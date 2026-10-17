@@ -9,7 +9,7 @@ const db = require('../src/config/database');
 
 async function validateMilestonePercentages() {
   console.log('Validating milestone percentage totals...\n');
-  
+
   try {
     // Query to find campaigns with milestone percentages exceeding 100%
     const query = `
@@ -38,16 +38,16 @@ async function validateMilestonePercentages() {
       FROM milestone_totals
       ORDER BY exceeds_100_percent DESC, total_percentage DESC
     `;
-    
+
     const { rows } = await db.query(query);
-    
+
     const invalidCampaigns = rows.filter(row => row.exceeds_100_percent);
     const validCampaigns = rows.filter(row => !row.exceeds_100_percent);
-    
+
     console.log(`Found ${rows.length} campaigns with milestones`);
     console.log(`- ${invalidCampaigns.length} campaigns exceed 100% total`);
     console.log(`- ${validCampaigns.length} campaigns have valid percentages (<= 100%)\n`);
-    
+
     if (invalidCampaigns.length > 0) {
       console.log('⚠️  Campaigns with invalid milestone percentages (exceeding 100%):');
       console.log('='.repeat(80));
@@ -61,12 +61,12 @@ async function validateMilestonePercentages() {
       console.log('\n⚠️  These campaigns may cause Soroban contract execution to panic!');
       console.log('   Consider updating milestone percentages or contacting campaign creators.');
     }
-    
+
     // Show summary of valid campaigns with high percentages
     const highPercentageCampaigns = validCampaigns
       .filter(row => row.total_percentage > 99 && row.total_percentage <= 100)
       .sort((a, b) => b.total_percentage - a.total_percentage);
-    
+
     if (highPercentageCampaigns.length > 0) {
       console.log('\n📊 Campaigns with high but valid percentages (99%-100%):');
       highPercentageCampaigns.slice(0, 10).forEach((campaign, index) => {
@@ -76,9 +76,8 @@ async function validateMilestonePercentages() {
         console.log(`... and ${highPercentageCampaigns.length - 10} more`);
       }
     }
-    
+
     return { invalidCampaigns, validCampaigns };
-    
   } catch (error) {
     console.error('Error validating milestone percentages:', error.message);
     throw error;

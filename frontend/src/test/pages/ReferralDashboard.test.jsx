@@ -4,7 +4,11 @@ import ReferralDashboard from '../../pages/ReferralDashboard';
 import { renderWithProviders } from '../renderWithProviders';
 
 vi.mock('../../context/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 'user-2', role: 'contributor' }, ready: true, updateUser: vi.fn() }),
+  useAuth: () => ({
+    user: { id: 'user-2', role: 'contributor' },
+    ready: true,
+    updateUser: vi.fn(),
+  }),
 }));
 
 const apiMocks = vi.hoisted(() => ({

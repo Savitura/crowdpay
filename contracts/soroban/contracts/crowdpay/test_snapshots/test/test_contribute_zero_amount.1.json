@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 5,
+    "address": 6,
     "nonce": 0
   },
   "auth": [
@@ -23,7 +23,81 @@
         }
       ]
     ],
-    [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "function_name": "initialize",
+              "args": [
+                {
+                  "symbol": "cp1"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                },
+                {
+                  "address": "CBUSYNQKASUYFWYC3M2GUEDMX4AIVWPALDBYJPNK6554BREHTGZ2IUNF"
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 1000
+                  }
+                },
+                {
+                  "u64": 10000
+                },
+                {
+                  "vec": [
+                    {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "amount"
+                          },
+                          "val": {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 1000
+                            }
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "released"
+                          },
+                          "val": {
+                            "bool": false
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "target"
+                          },
+                          "val": {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 1000
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
@@ -176,7 +250,7 @@
       [
         {
           "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
             "key": {
               "ledger_key_nonce": {
                 "nonce": 5541220902715666415
@@ -191,10 +265,43 @@
             "data": {
               "contract_data": {
                 "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
                 "key": {
                   "ledger_key_nonce": {
                     "nonce": 5541220902715666415
+                  }
+                },
+                "durability": "temporary",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "ledger_key_nonce": {
+                "nonce": 1033654523790656264
+              }
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 1033654523790656264
                   }
                 },
                 "durability": "temporary",
@@ -251,7 +358,7 @@
             },
             "ext": "v0"
           },
-          4095
+          1038800
         ]
       ],
       [
@@ -342,6 +449,17 @@
                               "map": [
                                 {
                                   "key": {
+                                    "symbol": "amount"
+                                  },
+                                  "val": {
+                                    "i128": {
+                                      "hi": 0,
+                                      "lo": 1000
+                                    }
+                                  }
+                                },
+                                {
+                                  "key": {
                                     "symbol": "released"
                                   },
                                   "val": {
@@ -362,6 +480,18 @@
                               ]
                             }
                           ]
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "Platform"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                         }
                       },
                       {
@@ -402,6 +532,21 @@
                             "lo": 0
                           }
                         }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "TotalReleased"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "i128": {
+                            "hi": 0,
+                            "lo": 0
+                          }
+                        }
                       }
                     ]
                   }
@@ -410,7 +555,7 @@
             },
             "ext": "v0"
           },
-          4095
+          1038800
         ]
       ],
       [
@@ -419,7 +564,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 1033654523790656264
+                "nonce": 4837995959683129791
               }
             },
             "durability": "temporary"
@@ -434,7 +579,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 1033654523790656264
+                    "nonce": 4837995959683129791
                   }
                 },
                 "durability": "temporary",
@@ -722,7 +867,7 @@
             },
             "ext": "v0"
           },
-          4095
+          1038800
         ]
       ]
     ]
@@ -875,6 +1020,9 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                 },
                 {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                },
+                {
                   "address": "CBUSYNQKASUYFWYC3M2GUEDMX4AIVWPALDBYJPNK6554BREHTGZ2IUNF"
                 },
                 {
@@ -890,6 +1038,17 @@
                   "vec": [
                     {
                       "map": [
+                        {
+                          "key": {
+                            "symbol": "amount"
+                          },
+                          "val": {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 1000
+                            }
+                          }
+                        },
                         {
                           "key": {
                             "symbol": "released"

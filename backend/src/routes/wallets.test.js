@@ -16,7 +16,13 @@ const FAKE_WALLET_PUBLIC_KEY = 'GFAKEWALLETPUBLICKEYFORTESTINGONLY00000000000000
 const FAKE_ENCRYPTED_SECRET = 'fake:ciphertext:for-tests-only';
 const FAKE_DECRYPTED_SECRET = 'fake-decrypted-secret-for-tests-only';
 
-function buildApp({ queryImpl, stellarImpl, walletServiceImpl, userId = 'creator-1', role = 'creator' } = {}) {
+function buildApp({
+  queryImpl,
+  stellarImpl,
+  walletServiceImpl,
+  userId = 'creator-1',
+  role = 'creator',
+} = {}) {
   const stellarStub = {
     getAccountMultisigConfig: async () => ({
       thresholds: { med_threshold: 2 },
@@ -24,11 +30,11 @@ function buildApp({ queryImpl, stellarImpl, walletServiceImpl, userId = 'creator
     }),
     getWalletTransactionHistory: async () => [],
     getWalletPayments: async () => [],
-    recoverWalletFromSecret: (secret) => ({ publicKey: FAKE_WALLET_PUBLIC_KEY, secret }),
+    recoverWalletFromSecret: secret => ({ publicKey: FAKE_WALLET_PUBLIC_KEY, secret }),
     ...stellarImpl,
   };
   const walletServiceStub = {
-    decryptSecret: (encrypted) => `decrypted(${encrypted})`,
+    decryptSecret: encrypted => `decrypted(${encrypted})`,
     ...walletServiceImpl,
   };
 
@@ -42,6 +48,7 @@ function buildApp({ queryImpl, stellarImpl, walletServiceImpl, userId = 'creator
         next();
       },
     },
+    './admin': { logAdminAction: async () => {} },
   });
 
   const app = express();
@@ -286,13 +293,13 @@ test('POST /api/wallets/:campaignId/recover decrypts the stored secret and retur
       rows: [{ wallet_secret_encrypted: FAKE_ENCRYPTED_SECRET, creator_id: 'creator-1' }],
     }),
     walletServiceImpl: {
-      decryptSecret: (encrypted) => {
+      decryptSecret: encrypted => {
         decryptedArg = encrypted;
         return FAKE_DECRYPTED_SECRET;
       },
     },
     stellarImpl: {
-      recoverWalletFromSecret: (secret) => {
+      recoverWalletFromSecret: secret => {
         recoverArg = secret;
         return { publicKey: FAKE_WALLET_PUBLIC_KEY, secret };
       },

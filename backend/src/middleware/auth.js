@@ -1,5 +1,4 @@
 const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const Sentry = require('@sentry/node');
@@ -8,13 +7,9 @@ const { authenticateCpkApiKey } = require('../services/apiKeyService');
 const ACCESS_TOKEN_COOKIE_NAME = 'cp_token';
 const IMPERSONATION_TOKEN_COOKIE_NAME = 'cp_impersonation_token';
 
-function apiKeyPepper() {
-  return process.env.API_KEY_PEPPER;
-}
-
-function hashApiKey(rawKey) {
-  return crypto.createHmac('sha256', apiKeyPepper()).update(rawKey, 'utf8').digest('hex');
-}
+// JWT issuer and audience configuration (with production defaults)
+const JWT_ISSUER = process.env.JWT_ISSUER || 'https://crowdpay.io';
+const JWT_AUDIENCE = process.env.JWT_AUDIENCE || 'crowdpay-api';
 
 function getRequestPath(req) {
   return (req.originalUrl || req.url || '').split('?')[0];
@@ -34,7 +29,7 @@ async function authenticate(req) {
   if (!token) throw new Error('Missing token');
 
   if (token.startsWith('cpk_')) {
-    const auth = await authenticateCpkApiKey(token);
+    const auth = await authenticateCpkApiKey(token, req.method);
     if (!auth) throw new Error('Invalid API key');
     req.user = {
       userId: auth.userId,
@@ -49,34 +44,8 @@ async function authenticate(req) {
     return;
   }
 
-  if (token.startsWith('cp_live_')) {
-    const keyHash = hashApiKey(token);
-    const { rows } = await db.query(
-      `SELECT id, user_id, scopes FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`,
-      [keyHash],
-    );
-    if (!rows.length) throw new Error('Invalid API key');
-    await db.query(`UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`, [rows[0].id]);
-    const { rows: userRows } = await db.query(
-      'SELECT id, role, is_admin FROM users WHERE id = $1',
-      [rows[0].user_id],
-    );
-    const user = userRows[0] || {};
-    req.user = {
-      userId: rows[0].user_id,
-      role: user.is_admin ? 'admin' : user.role || 'contributor',
-      is_admin: user.is_admin,
-    };
-    req.auth = {
-      kind: 'api_key',
-      apiKeyId: rows[0].id,
-      scopes: rows[0].scopes || [],
-    };
-    return;
-  }
-
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     const isImpersonation = Boolean(payload.impersonated_by);
 
     // Validate JWT standard claims (sub, iss, aud)
@@ -89,12 +58,12 @@ async function authenticate(req) {
       });
       throw new Error('Session expired - please log in again');
     }
-    if (payload.iss !== 'https://crowdpay.io') {
-      logger.warn('JWT invalid issuer', { iss: payload.iss });
+    if (payload.iss !== JWT_ISSUER) {
+      logger.warn('JWT invalid issuer', { iss: payload.iss, expected: JWT_ISSUER });
       throw new Error('Session expired - please log in again');
     }
-    if (payload.aud !== 'crowdpay-api') {
-      logger.warn('JWT invalid audience', { aud: payload.aud });
+    if (payload.aud !== JWT_AUDIENCE) {
+      logger.warn('JWT invalid audience', { aud: payload.aud, expected: JWT_AUDIENCE });
       throw new Error('Session expired - please log in again');
     }
 
@@ -164,7 +133,8 @@ function isImpersonatedRestrictedAction(req) {
     path.startsWith('/api/withdrawals') ||
     path.startsWith('/api/contributions') ||
     path.startsWith('/api/anchor') ||
-    path.startsWith('/api/wallets')
+    path.startsWith('/api/wallets') ||
+    path.startsWith('/api/governance')
   ) {
     return true;
   }
@@ -210,7 +180,7 @@ async function logImpersonatedRequest(req) {
           method: req.method,
           path: getRequestPath(req),
         }),
-      ],
+      ]
     );
   } catch (err) {
     logger.error('Failed to log impersonated request', {
@@ -325,9 +295,11 @@ function requireAuth(req, res, next) {
       }
       next();
     })
-    .catch((err) => {
+    .catch(err => {
       const msg = err.message === 'Missing token' ? err.message : 'Unauthorized';
-      res.status(401).json({ error: msg });
+      const errBody = { error: msg };
+      if (err.code) errBody.code = err.code;
+      res.status(err.statusCode || 401).json(errBody);
     });
 }
 
@@ -352,7 +324,6 @@ module.exports = {
   authenticate,
   assertApiKeyScopes,
   isImpersonatedRestrictedAction,
-  hashApiKey,
   requireAdmin,
   requireRole,
 };

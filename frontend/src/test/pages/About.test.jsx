@@ -8,6 +8,8 @@ describe('About page', () => {
     renderWithProviders(<About />);
 
     expect(screen.getByRole('heading', { name: /About CrowdPay/i })).toBeInTheDocument();
-    expect(screen.getByText(/CrowdPay is a fundraising platform built to move contributions/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/CrowdPay is a fundraising platform built to move contributions/i)
+    ).toBeInTheDocument();
   });
 });

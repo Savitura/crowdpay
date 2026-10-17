@@ -18,11 +18,10 @@ async function messagingClient() {
     throw new Error('Push notifications are not supported by this browser');
   }
 
-  const [{ getApp, getApps, initializeApp }, { getMessaging, getToken, deleteToken, isSupported }] = await Promise.all([
-    import('firebase/app'),
-    import('firebase/messaging'),
-  ]);
-  if (!(await isSupported())) throw new Error('Push notifications are not supported by this browser');
+  const [{ getApp, getApps, initializeApp }, { getMessaging, getToken, deleteToken, isSupported }] =
+    await Promise.all([import('firebase/app'), import('firebase/messaging')]);
+  if (!(await isSupported()))
+    throw new Error('Push notifications are not supported by this browser');
 
   const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
   const config = globalThis.btoa(JSON.stringify(firebaseConfig));

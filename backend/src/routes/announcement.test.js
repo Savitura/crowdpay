@@ -1,6 +1,8 @@
-process.env.USDC_ISSUER = process.env.USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+process.env.USDC_ISSUER =
+  process.env.USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 process.env.STELLAR_NETWORK = process.env.STELLAR_NETWORK || 'testnet';
-process.env.PLATFORM_SECRET_KEY = process.env.PLATFORM_SECRET_KEY || 'SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR';
+process.env.PLATFORM_SECRET_KEY =
+  process.env.PLATFORM_SECRET_KEY || 'SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -26,12 +28,14 @@ function buildApp({ queryImpl, user = { userId: ADMIN_ID, role: 'admin' } } = {}
         if (user) req.user = user;
         next();
       },
-      requireRole: (...roles) => (req, res, next) => {
-        if (!req.user || !roles.includes(req.user.role)) {
-          return res.status(403).json({ error: 'Insufficient role for this action' });
-        }
-        next();
-      },
+      requireRole:
+        (...roles) =>
+        (req, res, next) => {
+          if (!req.user || !roles.includes(req.user.role)) {
+            return res.status(403).json({ error: 'Insufficient role for this action' });
+          }
+          next();
+        },
     },
   });
 
@@ -87,9 +91,7 @@ test('POST /api/announcements/create inserts an admin announcement', async () =>
     active_from: created.active_from,
     active_until: created.active_until,
   };
-  const res = await request(app)
-    .post('/api/announcements/create')
-    .send(payload);
+  const res = await request(app).post('/api/announcements/create').send(payload);
 
   assert.equal(res.status, 201);
   assert.deepEqual(res.body, created);
@@ -110,9 +112,7 @@ test('POST /api/announcements/create rejects non-admin users', async () => {
     user: { id: 'user-1', role: 'contributor' },
   });
 
-  const res = await request(app)
-    .post('/api/announcements/create')
-    .send({ message: 'Hello' });
+  const res = await request(app).post('/api/announcements/create').send({ message: 'Hello' });
 
   assert.equal(res.status, 403);
   assert.deepEqual(res.body, { error: 'Insufficient role for this action' });
@@ -135,13 +135,11 @@ test('POST /api/announcements/create rejects invalid announcement payloads', asy
   assert.equal(badSeverity.status, 400);
   assert.match(badSeverity.body.error.message, /severity/);
 
-  const badDateRange = await request(app)
-    .post('/api/announcements/create')
-    .send({
-      message: 'Hello',
-      active_from: '2026-07-25T12:00:00.000Z',
-      active_until: '2026-07-25T11:00:00.000Z',
-    });
+  const badDateRange = await request(app).post('/api/announcements/create').send({
+    message: 'Hello',
+    active_from: '2026-07-25T12:00:00.000Z',
+    active_until: '2026-07-25T11:00:00.000Z',
+  });
   assert.equal(badDateRange.status, 400);
   assert.match(badDateRange.body.error.message, /active_until/);
   assert.equal(calls.length, 0);
@@ -161,37 +159,26 @@ test('POST /api/announcements/create treats blank optional fields as defaults', 
     queryImpl: async () => ({ rows: [created] }),
   });
 
-  const res = await request(app)
-    .post('/api/announcements/create')
-    .send({
-      message: 'Maintenance window',
-      severity: '',
-      details_url: '',
-      active_from: '',
-      active_until: '',
-    });
+  const res = await request(app).post('/api/announcements/create').send({
+    message: 'Maintenance window',
+    severity: '',
+    details_url: '',
+    active_from: '',
+    active_until: '',
+  });
 
   assert.equal(res.status, 201);
   assert.deepEqual(res.body, created);
-  assert.deepEqual(calls[0].params, [
-    'Maintenance window',
-    null,
-    null,
-    null,
-    null,
-    ADMIN_ID,
-  ]);
+  assert.deepEqual(calls[0].params, ['Maintenance window', null, null, null, null, ADMIN_ID]);
 });
 
 test('POST /api/announcements/create rejects active_until in the past when active_from is omitted', async () => {
   const { app, calls } = buildApp();
 
-  const res = await request(app)
-    .post('/api/announcements/create')
-    .send({
-      message: 'Expired announcement',
-      active_until: '2000-01-01T00:00:00.000Z',
-    });
+  const res = await request(app).post('/api/announcements/create').send({
+    message: 'Expired announcement',
+    active_until: '2000-01-01T00:00:00.000Z',
+  });
 
   assert.equal(res.status, 400);
   assert.equal(res.body.error.code, 'VALIDATION_ERROR');
@@ -209,8 +196,7 @@ test('PATCH /api/announcements/:id/deactivate deactivates an active announcement
     queryImpl: async () => ({ rows: [deactivated] }),
   });
 
-  const res = await request(app)
-    .patch(`/api/announcements/${ANNOUNCEMENT_ID}/deactivate`);
+  const res = await request(app).patch(`/api/announcements/${ANNOUNCEMENT_ID}/deactivate`);
 
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, deactivated);
@@ -225,8 +211,7 @@ test('PATCH /api/announcements/:id/deactivate returns 404 when no announcement i
     queryImpl: async () => ({ rows: [] }),
   });
 
-  const res = await request(app)
-    .patch(`/api/announcements/${ANNOUNCEMENT_ID}/deactivate`);
+  const res = await request(app).patch(`/api/announcements/${ANNOUNCEMENT_ID}/deactivate`);
 
   assert.equal(res.status, 404);
   assert.deepEqual(res.body, {
@@ -237,8 +222,7 @@ test('PATCH /api/announcements/:id/deactivate returns 404 when no announcement i
 test('PATCH /api/announcements/:id/deactivate rejects invalid ids', async () => {
   const { app, calls } = buildApp();
 
-  const res = await request(app)
-    .patch('/api/announcements/not-a-uuid/deactivate');
+  const res = await request(app).patch('/api/announcements/not-a-uuid/deactivate');
 
   assert.equal(res.status, 400);
   assert.equal(res.body.error.code, 'VALIDATION_ERROR');

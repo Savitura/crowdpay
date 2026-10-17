@@ -5,21 +5,27 @@ const { validateGeoipConfig } = require('../services/geoipService');
 const REQUIRED = [
   'DATABASE_URL',
   'JWT_SECRET',
+  'JWT_ISSUER',
+  'JWT_AUDIENCE',
   'API_KEY_PEPPER',
   'PLATFORM_SECRET_KEY',
+  'ARBITRATOR_SECRET_KEY',
   'STELLAR_NETWORK',
   'STELLAR_HORIZON_URL',
   'WALLET_ENCRYPTION_KEY',
+  'OPS_API_KEY',
+  'UNSUBSCRIBE_SECRET',
+  'IMPACT_SIGNING_SECRET',
 ];
 const STORAGE_VARS = ['STORAGE_BUCKET', 'STORAGE_ENDPOINT'];
 
 function validateEnv() {
-  const missing = REQUIRED.filter((key) => !process.env[key]);
+  const missing = REQUIRED.filter(key => !process.env[key]);
   const errors = [];
   const warnings = [];
 
   if (missing.length) {
-    const list = missing.map((k) => `  - ${k}`).join('\n');
+    const list = missing.map(k => `  - ${k}`).join('\n');
     process.stderr.write(
       `\n[crowdpay] Cannot start: missing required environment variables:\n${list}\n\nSet them in your .env file.\n\n`
     );
@@ -51,6 +57,13 @@ function validateEnv() {
     );
   }
 
+  const arbitratorKey = process.env.ARBITRATOR_SECRET_KEY;
+  if (!/^S[A-Z2-7]{55}$/.test(arbitratorKey)) {
+    errors.push(
+      'ARBITRATOR_SECRET_KEY must be a valid Stellar secret seed (56 characters, starting with S)'
+    );
+  }
+
   const portRaw = process.env.PORT;
   if (portRaw && portRaw.length > 0) {
     const portNum = Number(portRaw);
@@ -61,10 +74,23 @@ function validateEnv() {
     }
   }
 
-  const storageConfigured = STORAGE_VARS.some((key) => !!process.env[key]);
-  const storageMissing = STORAGE_VARS.filter((key) => !process.env[key]);
+  if (process.env.NODE_ENV === 'production') {
+    const emailsDisabled = String(process.env.DISABLE_EMAILS || '').toLowerCase() === 'true';
+    if (emailsDisabled) {
+      warnings.push(
+        'DISABLE_EMAILS=true in production — no transactional email (receipts, password resets, KYC/withdrawal decisions) will be sent'
+      );
+    } else if (!process.env.SMTP_HOST && !process.env.EMAIL_SERVICE_API_KEY) {
+      errors.push(
+        'SMTP_HOST or EMAIL_SERVICE_API_KEY must be set in production (or set DISABLE_EMAILS=true to opt out explicitly)'
+      );
+    }
+  }
+
+  const storageConfigured = STORAGE_VARS.some(key => !!process.env[key]);
+  const storageMissing = STORAGE_VARS.filter(key => !process.env[key]);
   if (storageConfigured && storageMissing.length) {
-    const list = storageMissing.map((k) => `  - ${k}`).join('\n');
+    const list = storageMissing.map(k => `  - ${k}`).join('\n');
     process.stderr.write(
       `\n[crowdpay] Cannot start: incomplete storage configuration. Set all of:\n${STORAGE_VARS.join(', ')}\n\nMissing:\n${list}\n\n`
     );
@@ -72,7 +98,7 @@ function validateEnv() {
   }
 
   if (errors.length) {
-    const list = errors.map((e) => `  - ${e}`).join('\n');
+    const list = errors.map(e => `  - ${e}`).join('\n');
     process.stderr.write(
       `\n[crowdpay] Cannot start: invalid environment configuration:\n${list}\n\n`
     );
@@ -80,7 +106,7 @@ function validateEnv() {
   }
 
   if (warnings.length) {
-    const list = warnings.map((w) => `  - ${w}`).join('\n');
+    const list = warnings.map(w => `  - ${w}`).join('\n');
     process.stderr.write(`\n[crowdpay] Environment warnings:\n${list}\n\n`);
   }
 

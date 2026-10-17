@@ -44,7 +44,7 @@ function buildApp({ queryImpl, authUser, authError, recordContributionImpl }) {
 
 test('GET /api/v1/campaigns is public', async () => {
   const app = buildApp({
-    queryImpl: async (sql) => {
+    queryImpl: async sql => {
       if (sql.includes('COUNT')) return { rows: [{ total: 1 }] };
       return {
         rows: [
@@ -65,6 +65,36 @@ test('GET /api/v1/campaigns is public', async () => {
   assert.equal(res.status, 200);
   assert.equal(res.body.total, 1);
   assert.equal(res.body.campaigns.length, 1);
+});
+
+test('GET /api/v1/changelog is public', async () => {
+  const app = buildApp({ authError: 'Missing token', queryImpl: async () => ({ rows: [] }) });
+  const res = await request(app).get('/api/v1/changelog');
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.api_version, 'v1');
+  assert.ok(res.body.entries.length > 0);
+});
+
+test('public API deprecation headers require a valid deprecation and sunset date', async () => {
+  const previousDeprecation = process.env.PUBLIC_API_DEPRECATION_DATE;
+  const previousSunset = process.env.PUBLIC_API_SUNSET_DATE;
+  process.env.PUBLIC_API_DEPRECATION_DATE = '2027-01-01T00:00:00.000Z';
+  process.env.PUBLIC_API_SUNSET_DATE = '2027-07-01T00:00:00.000Z';
+
+  try {
+    const app = buildApp({ authError: 'Missing token', queryImpl: async () => ({ rows: [] }) });
+    const res = await request(app).get('/api/v1/changelog');
+
+    assert.equal(res.headers.deprecation, '@1798761600');
+    assert.equal(res.headers.sunset, 'Thu, 01 Jul 2027 00:00:00 GMT');
+    assert.match(res.headers.link, /\/api\/v1\/changelog>; rel="deprecation"/);
+  } finally {
+    if (previousDeprecation === undefined) delete process.env.PUBLIC_API_DEPRECATION_DATE;
+    else process.env.PUBLIC_API_DEPRECATION_DATE = previousDeprecation;
+    if (previousSunset === undefined) delete process.env.PUBLIC_API_SUNSET_DATE;
+    else process.env.PUBLIC_API_SUNSET_DATE = previousSunset;
+  }
 });
 
 test('GET /api/v1/users/me returns 401 without auth', async () => {
@@ -102,7 +132,7 @@ test('POST /api/v1/campaigns/:id/contributions records contribution from tx hash
   const app = buildApp({
     authUser: { userId: 'user-1' },
     queryImpl: async () => ({ rows: [] }),
-    recordContributionImpl: async (args) => {
+    recordContributionImpl: async args => {
       recorded = args;
       return { id: 'c-1', tx_hash: args.txHash, amount: 25 };
     },
@@ -136,14 +166,14 @@ test('GET /api/v1/campaigns search uses full-text search, not ILIKE', async () =
   const res = await request(app).get('/api/v1/campaigns?search=solar%20panels');
   assert.equal(res.status, 200);
 
-  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  const listQuery = queries.find(q => q.text.includes('ORDER BY'));
   assert.ok(listQuery);
   assert.match(listQuery.text, /websearch_to_tsquery/);
   assert.doesNotMatch(listQuery.text, /ILIKE/);
   // The raw search term is bound, not a %-wrapped pattern
   assert.ok(listQuery.params.includes('solar panels'));
   // Count query filters identically
-  const countQuery = queries.find((q) => q.text.includes('COUNT'));
+  const countQuery = queries.find(q => q.text.includes('COUNT'));
   assert.match(countQuery.text, /websearch_to_tsquery/);
 });
 
@@ -154,7 +184,7 @@ test('GET /api/v1/campaigns search without sort ranks by relevance', async () =>
   const res = await request(app).get('/api/v1/campaigns?search=solar');
   assert.equal(res.status, 200);
 
-  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  const listQuery = queries.find(q => q.text.includes('ORDER BY'));
   assert.match(listQuery.text, /ORDER BY ts_rank\(c\.search_vector/);
 });
 
@@ -165,7 +195,7 @@ test('GET /api/v1/campaigns explicit sort wins over relevance', async () => {
   const res = await request(app).get('/api/v1/campaigns?search=solar&sort=newest');
   assert.equal(res.status, 200);
 
-  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  const listQuery = queries.find(q => q.text.includes('ORDER BY'));
   assert.match(listQuery.text, /ORDER BY c\.created_at DESC/);
   assert.doesNotMatch(listQuery.text, /ts_rank/);
 });
@@ -177,7 +207,7 @@ test('GET /api/v1/campaigns sort=relevance without search falls back to newest',
   const res = await request(app).get('/api/v1/campaigns?sort=relevance');
   assert.equal(res.status, 200);
 
-  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  const listQuery = queries.find(q => q.text.includes('ORDER BY'));
   assert.match(listQuery.text, /ORDER BY c\.created_at DESC/);
   assert.doesNotMatch(listQuery.text, /ts_rank/);
 });

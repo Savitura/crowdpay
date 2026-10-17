@@ -4,7 +4,7 @@ import React from 'react';
  * MatchProgressBar — shows real-time sponsor matching progress.
  * Renders a segmented bar: contributions (blue) + matched (green).
  * Updates via polling or websocket.
- * 
+ *
  * @component
  * @param {Object} props
  * @param {string} props.campaignId - Campaign UUID
@@ -13,33 +13,30 @@ import React from 'react';
  * @param {number} props.matchRatio - Match ratio (e.g., 1.0, 2.0)
  * @returns {JSX.Element}
  */
-export function MatchProgressBar({
-  campaignId,
-  totalPledged,
-  totalMatched,
-  matchRatio,
-}) {
+export function MatchProgressBar({ campaignId, totalPledged, totalMatched, matchRatio }) {
   if (!totalPledged || totalPledged === 0n) {
     return null;
   }
 
-  const pledged = typeof totalPledged === 'bigint'
-    ? Number(totalPledged)
-    : totalPledged;
-  const matched = typeof totalMatched === 'bigint'
-    ? Number(totalMatched)
-    : totalMatched;
+  const pledged = typeof totalPledged === 'bigint' ? Number(totalPledged) : totalPledged;
+  const matched = typeof totalMatched === 'bigint' ? Number(totalMatched) : totalMatched;
 
-  const percentage = pledged > 0
-    ? (matched * 100) / pledged
-    : 0;
+  const percentage = pledged > 0 ? (matched * 100) / pledged : 0;
 
   const percentageDisplay = Math.min(percentage, 100).toFixed(0);
   const matchRatioDisplay = matchRatio % 1 === 0 ? matchRatio : matchRatio.toFixed(1);
 
   return (
     <div style={{ marginTop: '1.25rem', marginBottom: '1.25rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: '0.75rem',
+          marginBottom: '0.75rem',
+          flexWrap: 'wrap',
+        }}
+      >
         <span style={{ fontWeight: 600, color: 'var(--color-success-text)', fontSize: '0.95rem' }}>
           🤝 Sponsor Matching Active ({matchRatioDisplay}:1)
         </span>
@@ -75,14 +72,17 @@ export function MatchProgressBar({
         />
       </div>
 
-      <p style={{
-        fontSize: '0.85rem',
-        color: 'var(--color-text-secondary)',
-        marginTop: '0.5rem',
-        marginBottom: 0,
-        lineHeight: 1.4,
-      }}>
-        {formatAmount(matched)} matched of {formatAmount(pledged)} pledged by sponsor{matched >= pledged ? ' (pool exhausted)' : ''}
+      <p
+        style={{
+          fontSize: '0.85rem',
+          color: 'var(--color-text-secondary)',
+          marginTop: '0.5rem',
+          marginBottom: 0,
+          lineHeight: 1.4,
+        }}
+      >
+        {formatAmount(matched)} matched of {formatAmount(pledged)} pledged by sponsor
+        {matched >= pledged ? ' (pool exhausted)' : ''}
       </p>
     </div>
   );
@@ -90,7 +90,7 @@ export function MatchProgressBar({
 
 /**
  * SponsorBadge — shows sponsor name and match ratio on campaign page
- * 
+ *
  * @component
  * @param {Object} props
  * @param {Object[]} props.matches - Array of matching records
@@ -102,16 +102,17 @@ export function SponsorBadgesRow({ matches }) {
   }
 
   return (
-    <div style={{
-      display: 'flex',
-      gap: '0.5rem',
-      flexWrap: 'wrap',
-      marginTop: '0.75rem',
-    }}>
+    <div
+      style={{
+        display: 'flex',
+        gap: '0.5rem',
+        flexWrap: 'wrap',
+        marginTop: '0.75rem',
+      }}
+    >
       {matches.map((match) => {
-        const matchRatioDisplay = match.matchRatio % 1 === 0
-          ? match.matchRatio
-          : match.matchRatio.toFixed(1);
+        const matchRatioDisplay =
+          match.matchRatio % 1 === 0 ? match.matchRatio : match.matchRatio.toFixed(1);
 
         return (
           <span

@@ -25,7 +25,10 @@ function refundActorUserId(creatorId) {
   return process.env.PLATFORM_APPROVER_USER_ID || creatorId;
 }
 
-async function logWithdrawalEvent(client, { withdrawalRequestId, actorUserId, action, note, metadata }) {
+async function logWithdrawalEvent(
+  client,
+  { withdrawalRequestId, actorUserId, action, note, metadata }
+) {
   const runner = client || db;
   await runner.query(
     `INSERT INTO withdrawal_approval_events
@@ -129,7 +132,7 @@ async function sendFundedEmails(campaign, contributors) {
   });
 
   await Promise.all(
-    contributors.map((contributor) =>
+    contributors.map(contributor =>
       sendCampaignFundedContributorEmail({
         to: contributor.email,
         campaignId: campaign.id,
@@ -161,7 +164,7 @@ async function sendFailedEmails(campaign, contributors) {
   });
 
   await Promise.all(
-    contributors.map((contributor) =>
+    contributors.map(contributor =>
       sendCampaignFailedContributorEmail({
         to: contributor.email,
         campaignId: campaign.id,
@@ -208,7 +211,7 @@ async function emitFailedWebhooks(campaign) {
 }
 
 async function createFundedNotifications(campaign, contributors) {
-  const contributorIds = contributors.map((c) => c.id);
+  const contributorIds = contributors.map(c => c.id);
   await Promise.all([
     createNotification(campaign.creator_id, {
       type: 'goal_reached',
@@ -216,17 +219,19 @@ async function createFundedNotifications(campaign, contributors) {
       body: `Your campaign "${campaign.title}" has reached its funding goal.`,
       link: `/campaigns/${campaign.id}`,
     }),
-    contributorIds.length ? createNotificationsBulk(contributorIds, {
-      type: 'campaign_funded',
-      title: 'Campaign fully funded',
-      body: `"${campaign.title}" has reached its funding goal.`,
-      link: `/campaigns/${campaign.id}`,
-    }) : Promise.resolve(),
+    contributorIds.length
+      ? createNotificationsBulk(contributorIds, {
+          type: 'campaign_funded',
+          title: 'Campaign fully funded',
+          body: `"${campaign.title}" has reached its funding goal.`,
+          link: `/campaigns/${campaign.id}`,
+        })
+      : Promise.resolve(),
   ]);
 }
 
 async function createFailedNotifications(campaign, contributors) {
-  const contributorIds = contributors.map((c) => c.id);
+  const contributorIds = contributors.map(c => c.id);
   await Promise.all([
     createNotification(campaign.creator_id, {
       type: 'campaign_failed',
@@ -234,12 +239,14 @@ async function createFailedNotifications(campaign, contributors) {
       body: `"${campaign.title}" ended without reaching its goal.`,
       link: `/campaigns/${campaign.id}`,
     }),
-    contributorIds.length ? createNotificationsBulk(contributorIds, {
-      type: 'refund_available',
-      title: 'Refund available',
-      body: `"${campaign.title}" ended below its goal. You can claim a refund.`,
-      link: `/campaigns/${campaign.id}?refund=1`,
-    }) : Promise.resolve(),
+    contributorIds.length
+      ? createNotificationsBulk(contributorIds, {
+          type: 'refund_available',
+          title: 'Refund available',
+          body: `"${campaign.title}" ended below its goal. You can claim a refund.`,
+          link: `/campaigns/${campaign.id}?refund=1`,
+        })
+      : Promise.resolve(),
   ]);
 }
 
@@ -258,8 +265,11 @@ async function refundWithRetry(escrowContractId, senderPublicKey, contributionId
         throw err;
       }
       const delay = process.env.NODE_ENV === 'test' ? 1 : Math.pow(2, attempt) * 1000;
-      logger.warn(`Refund attempt ${attempt} failed for contribution ${contributionId}. Retrying in ${delay}ms...`, { error: err.message });
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      logger.warn(
+        `Refund attempt ${attempt} failed for contribution ${contributionId}. Retrying in ${delay}ms...`,
+        { error: err.message }
+      );
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
 }
@@ -284,7 +294,7 @@ async function queueFailedCampaignRefunds(campaignId, actorUserId) {
         `SELECT id, sender_public_key, amount, asset FROM contributions WHERE campaign_id = $1 AND refunded = FALSE ORDER BY created_at ASC`,
         [campaignId]
       );
-      const walletKeys = contributions.map((c) => c.sender_public_key);
+      const walletKeys = contributions.map(c => c.sender_public_key);
       const { rows: userRows } = await db.query(
         `SELECT wallet_public_key, email, name FROM users WHERE wallet_public_key = ANY($1::text[])`,
         [walletKeys]
@@ -294,7 +304,11 @@ async function queueFailedCampaignRefunds(campaignId, actorUserId) {
 
       for (const contribution of contributions) {
         try {
-          await refundWithRetry(campaign.escrow_contract_id, contribution.sender_public_key, contribution.id);
+          await refundWithRetry(
+            campaign.escrow_contract_id,
+            contribution.sender_public_key,
+            contribution.id
+          );
           await db.query(
             `UPDATE contributions SET contract_refunded_at = NOW(), refunded = TRUE WHERE id = $1`,
             [contribution.id]
@@ -311,8 +325,10 @@ async function queueFailedCampaignRefunds(campaignId, actorUserId) {
               to: contributor.email,
               subject: `Refund processed for campaign "${campaign.title}"`,
               text: `Hi ${contributor.name || 'there'},\n\nYour contribution of ${contribution.amount} ${contribution.asset} to the campaign "${campaign.title}" has been refunded because the campaign did not meet its funding goal by the deadline.\n\nThank you for using CrowdPay.`,
-            }).catch((emailErr) => {
-              logger.error(`Failed to send refund email to ${contributor.email}:`, { error: emailErr.message });
+            }).catch(emailErr => {
+              logger.error(`Failed to send refund email to ${contributor.email}:`, {
+                error: emailErr.message,
+              });
             });
           }
 
@@ -323,18 +339,29 @@ async function queueFailedCampaignRefunds(campaignId, actorUserId) {
             asset: contribution.asset,
             timestamp: new Date().toISOString(),
           };
-          emitWebhookEventForUser(campaign.creator_id, WEBHOOK_EVENTS.CONTRIBUTION_REFUNDED, refundPayload).catch(
-            (err) => logger.error('Contribution refunded webhook emit failed', { error: err.message })
+          emitWebhookEventForUser(
+            campaign.creator_id,
+            WEBHOOK_EVENTS.CONTRIBUTION_REFUNDED,
+            refundPayload
+          ).catch(err =>
+            logger.error('Contribution refunded webhook emit failed', { error: err.message })
           );
-          emitWebhookEventForCampaign(campaign.id, WEBHOOK_EVENTS.CONTRIBUTION_REFUNDED, refundPayload).catch(
-            (err) => logger.error('Contribution refunded webhook emit failed', { error: err.message })
+          emitWebhookEventForCampaign(
+            campaign.id,
+            WEBHOOK_EVENTS.CONTRIBUTION_REFUNDED,
+            refundPayload
+          ).catch(err =>
+            logger.error('Contribution refunded webhook emit failed', { error: err.message })
           );
         } catch (err) {
-          logger.warn('On-chain refund failed for contribution, falling back to Stellar withdrawal', {
-            campaign_id: campaignId,
-            contribution_id: contribution.id,
-            error: err.message,
-          });
+          logger.warn(
+            'On-chain refund failed for contribution, falling back to Stellar withdrawal',
+            {
+              campaign_id: campaignId,
+              contribution_id: contribution.id,
+              error: err.message,
+            }
+          );
         }
       }
     } catch (err) {

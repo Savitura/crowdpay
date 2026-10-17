@@ -27,9 +27,10 @@ function normalizeErrorResponse(req, res, next) {
 function errorHandler(err, req, res, next) {
   const status = err.statusCode || err.status || 500;
   const isServerError = status >= 500;
-  const message = isServerError && process.env.NODE_ENV === 'production'
-    ? 'Internal server error'
-    : err.message || 'Unexpected error';
+  const message =
+    isServerError && process.env.NODE_ENV === 'production'
+      ? 'Internal server error'
+      : err.message || 'Unexpected error';
   const payload = {
     code: err.code || (status === 422 ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR'),
     message,

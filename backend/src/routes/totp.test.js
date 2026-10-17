@@ -4,12 +4,7 @@ const express = require('express');
 const request = require('supertest');
 const proxyquire = require('proxyquire').noCallThru();
 
-function buildApp({
-  queryImpl,
-  totpServiceImpl,
-  bcryptImpl,
-  userOverrides = {},
-} = {}) {
+function buildApp({ queryImpl, totpServiceImpl, bcryptImpl, userOverrides = {} } = {}) {
   const bcryptStub = {
     hash: async () => 'hashed',
     compare: async () => false,
@@ -52,7 +47,7 @@ function buildApp({
       ensureCustodialAccountFundedAndTrusted: async () => {},
     },
     '../services/walletSecrets': {
-      encryptWalletSecret: async (secret) => `cpws:v1:${secret.slice(0, 8)}`,
+      encryptWalletSecret: async secret => `cpws:v1:${secret.slice(0, 8)}`,
     },
     '../services/walletService': {
       encryptSecret: (s) => `enc:${s}`,
@@ -100,7 +95,7 @@ const totpEnabledUser = {
 test('POST /2fa/setup generates secret and QR code', async () => {
   let updatedSecret = false;
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT * FROM users')) {
         return { rows: [creatorUser] };
       }
@@ -146,7 +141,7 @@ test('POST /2fa/verify activates 2FA and returns backup codes', async () => {
   let updated = false;
   let storedCodes = false;
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT * FROM users')) {
         return { rows: [{ ...creatorUser, totp_secret: 'enc:JBSWY3DPEHPK3PXP' }] };
       }
@@ -160,9 +155,7 @@ test('POST /2fa/verify activates 2FA and returns backup codes', async () => {
     },
   });
 
-  const res = await request(app)
-    .post('/api/auth/2fa/verify')
-    .send({ code: '123456' });
+  const res = await request(app).post('/api/auth/2fa/verify').send({ code: '123456' });
 
   assert.equal(res.status, 200);
   assert.equal(res.body.message, '2FA enabled successfully');
@@ -179,9 +172,7 @@ test('POST /2fa/verify rejects invalid code', async () => {
     }),
   });
 
-  const res = await request(app)
-    .post('/api/auth/2fa/verify')
-    .send({ code: '000000' });
+  const res = await request(app).post('/api/auth/2fa/verify').send({ code: '000000' });
 
   assert.equal(res.status, 401);
   assert.match(res.body.error, /Invalid 2FA code/);
@@ -194,9 +185,7 @@ test('POST /2fa/verify rejects missing secret', async () => {
     }),
   });
 
-  const res = await request(app)
-    .post('/api/auth/2fa/verify')
-    .send({ code: '123456' });
+  const res = await request(app).post('/api/auth/2fa/verify').send({ code: '123456' });
 
   assert.equal(res.status, 400);
   assert.match(res.body.error, /not initiated/);
@@ -206,7 +195,7 @@ test('POST /2fa/disable clears TOTP and revokes devices', async () => {
   let cleared = false;
   let revoked = false;
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT * FROM users')) {
         return { rows: [totpEnabledUser] };
       }
@@ -216,13 +205,13 @@ test('POST /2fa/disable clears TOTP and revokes devices', async () => {
       return { rows: [] };
     },
     totpServiceImpl: {
-      revokeAllDevices: async () => { revoked = true; },
+      revokeAllDevices: async () => {
+        revoked = true;
+      },
     },
   });
 
-  const res = await request(app)
-    .post('/api/auth/2fa/disable')
-    .send({ code: '123456' });
+  const res = await request(app).post('/api/auth/2fa/disable').send({ code: '123456' });
 
   assert.equal(res.status, 200);
   assert.equal(res.body.message, '2FA disabled successfully');
@@ -237,9 +226,7 @@ test('POST /2fa/disable rejects when 2FA not enabled', async () => {
     }),
   });
 
-  const res = await request(app)
-    .post('/api/auth/2fa/disable')
-    .send({ code: '123456' });
+  const res = await request(app).post('/api/auth/2fa/disable').send({ code: '123456' });
 
   assert.equal(res.status, 400);
   assert.match(res.body.error, /not enabled/);
@@ -253,9 +240,7 @@ test('POST /2fa/disable rejects invalid code', async () => {
     }),
   });
 
-  const res = await request(app)
-    .post('/api/auth/2fa/disable')
-    .send({ code: '000000' });
+  const res = await request(app).post('/api/auth/2fa/disable').send({ code: '000000' });
 
   assert.equal(res.status, 401);
   assert.match(res.body.error, /Invalid 2FA code/);
@@ -264,7 +249,7 @@ test('POST /2fa/disable rejects invalid code', async () => {
 test('GET /2fa/backup-codes regenerates and returns codes', async () => {
   let updated = false;
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT * FROM users')) {
         return { rows: [totpEnabledUser] };
       }
@@ -300,13 +285,13 @@ test('POST /2fa/trust-device trusts device after code verification', async () =>
       rows: [totpEnabledUser],
     }),
     totpServiceImpl: {
-      trustDevice: async () => { trusted = true; },
+      trustDevice: async () => {
+        trusted = true;
+      },
     },
   });
 
-  const res = await request(app)
-    .post('/api/auth/2fa/trust-device')
-    .send({ code: '123456' });
+  const res = await request(app).post('/api/auth/2fa/trust-device').send({ code: '123456' });
 
   assert.equal(res.status, 200);
   assert.equal(res.body.message, 'Device trusted successfully');
@@ -321,9 +306,7 @@ test('POST /2fa/trust-device rejects invalid code', async () => {
     }),
   });
 
-  const res = await request(app)
-    .post('/api/auth/2fa/trust-device')
-    .send({ code: '000000' });
+  const res = await request(app).post('/api/auth/2fa/trust-device').send({ code: '000000' });
 
   assert.equal(res.status, 401);
 });
@@ -375,7 +358,7 @@ test('DELETE /2fa/devices/:id returns 404 for unknown device', async () => {
 test('GET /2fa/audit-log returns events', async () => {
   const events = [{ id: 1, event_type: 'totp_enabled' }];
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT * FROM users')) {
         return { rows: [totpEnabledUser] };
       }
@@ -394,14 +377,16 @@ test('GET /2fa/audit-log returns events', async () => {
 test('POST /2fa/challenge uses clock skew via totpService.verifyTotp', async () => {
   let verifyCalledWith = null;
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT * FROM users')) {
         return {
-          rows: [{
-            ...totpEnabledUser,
-            totp_failed_attempts: 0,
-            totp_locked_until: null,
-          }],
+          rows: [
+            {
+              ...totpEnabledUser,
+              totp_failed_attempts: 0,
+              totp_locked_until: null,
+            },
+          ],
         };
       }
       return { rows: [] };
@@ -428,14 +413,16 @@ test('POST /2fa/challenge uses clock skew via totpService.verifyTotp', async () 
 
 test('POST /2fa/challenge skips 2FA for trusted device', async () => {
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT * FROM users')) {
         return {
-          rows: [{
-            ...totpEnabledUser,
-            totp_failed_attempts: 0,
-            totp_locked_until: null,
-          }],
+          rows: [
+            {
+              ...totpEnabledUser,
+              totp_failed_attempts: 0,
+              totp_locked_until: null,
+            },
+          ],
         };
       }
       return { rows: [] };
@@ -460,7 +447,7 @@ test('POST /2fa/challenge skips 2FA for trusted device', async () => {
 test('POST /2fa/setup logs audit event', async () => {
   let auditLogged = false;
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT * FROM users')) {
         return { rows: [creatorUser] };
       }
@@ -479,7 +466,7 @@ test('POST /2fa/setup logs audit event', async () => {
 
 test('POST /2fa/verify generates 10 backup codes', async () => {
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT * FROM users')) {
         return { rows: [{ ...creatorUser, totp_secret: 'enc:JBSWY3DPEHPK3PXP' }] };
       }
@@ -495,9 +482,7 @@ test('POST /2fa/verify generates 10 backup codes', async () => {
     },
   });
 
-  const res = await request(app)
-    .post('/api/auth/2fa/verify')
-    .send({ code: '123456' });
+  const res = await request(app).post('/api/auth/2fa/verify').send({ code: '123456' });
 
   assert.equal(res.status, 200);
   assert.equal(res.body.backupCodes.length, 10);
@@ -518,10 +503,12 @@ test('POST /2fa/disable requires code parameter', async () => {
 test('POST /2fa/challenge rejects locked account', async () => {
   const { app } = buildApp({
     queryImpl: async () => ({
-      rows: [{
-        ...totpEnabledUser,
-        totp_locked_until: new Date(Date.now() + 60000),
-      }],
+      rows: [
+        {
+          ...totpEnabledUser,
+          totp_locked_until: new Date(Date.now() + 60000),
+        },
+      ],
     }),
     bcryptImpl: {
       compare: async () => true,
@@ -539,11 +526,13 @@ test('POST /2fa/challenge rejects locked account', async () => {
 test('Login returns requires_2fa for untrusted device with 2FA enabled', async () => {
   const { app } = buildApp({
     queryImpl: async () => ({
-      rows: [{
-        ...totpEnabledUser,
-        password_hash: 'hashed',
-        kyc_status: 'verified',
-      }],
+      rows: [
+        {
+          ...totpEnabledUser,
+          password_hash: 'hashed',
+          kyc_status: 'verified',
+        },
+      ],
     }),
     bcryptImpl: {
       compare: async () => true,
@@ -564,18 +553,20 @@ test('Login returns requires_2fa for untrusted device with 2FA enabled', async (
 test('Login enforces 2FA policy for accounts that must enable it', async () => {
   const { app } = buildApp({
     queryImpl: async () => ({
-      rows: [{
-        ...creatorUser,
-        enforce_2fa: true,
-        totp_enabled: false,
-        kyc_status: 'verified',
-      }],
+      rows: [
+        {
+          ...creatorUser,
+          enforce_2fa: true,
+          totp_enabled: false,
+          kyc_status: 'verified',
+        },
+      ],
     }),
     bcryptImpl: {
       compare: async () => true,
     },
     totpServiceImpl: {
-      enforce2faCheck: async (user) => {
+      enforce2faCheck: async user => {
         if (user.enforce_2fa && !user.totp_enabled) {
           return { enforced: true, message: '2FA required' };
         }

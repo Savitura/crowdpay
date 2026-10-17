@@ -10,7 +10,7 @@ function buildSessionService(queryImpl, location = SAN_FRANCISCO) {
   const service = proxyquire('./sessionService', {
     '../config/database': { query: queryImpl },
     './geoipService': {
-      lookupIp: async (ip) => {
+      lookupIp: async ip => {
         lookups.push(ip);
         return location;
       },
@@ -40,7 +40,7 @@ test('createUserSession stores the resolved country, region, and city', async ()
 
   assert.deepEqual(lookups, ['203.0.113.5']);
 
-  const insert = calls.find((call) => call.text.includes('INSERT INTO user_sessions'));
+  const insert = calls.find(call => call.text.includes('INSERT INTO user_sessions'));
   assert.ok(insert, 'expected a user_sessions insert');
   assert.match(insert.text, /location_country, location_region, location_city/);
   assert.deepEqual(insert.params.slice(-3), ['US', 'California', 'San Francisco']);
@@ -57,7 +57,7 @@ test('createUserSession stores nulls when the IP cannot be located', async () =>
   const { createUserSession } = buildSessionService(queryImpl, NO_LOCATION);
   await createUserSession('user-1', 'token-1', buildRequest({ ip: '127.0.0.1' }));
 
-  const insert = calls.find((call) => call.text.includes('INSERT INTO user_sessions'));
+  const insert = calls.find(call => call.text.includes('INSERT INTO user_sessions'));
   assert.deepEqual(insert.params.slice(-3), [null, null, null]);
 });
 
@@ -177,7 +177,7 @@ test('checkLoginAnomalies records the region on new-device and new-location aler
 
   assert.deepEqual(alerts, ['new_device', 'new_location']);
 
-  const inserts = calls.filter((call) => call.text.includes('INSERT INTO login_alerts'));
+  const inserts = calls.filter(call => call.text.includes('INSERT INTO login_alerts'));
   assert.equal(inserts.length, 2);
   for (const insert of inserts) {
     assert.match(insert.text, /location_country, location_region, location_city/);

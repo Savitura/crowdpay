@@ -8,6 +8,7 @@ function buildForAdmin({
   evidenceDescription,
   creatorName,
   adminUrl,
+  unsubscribeUrl,
 }) {
   const subject = `Milestone evidence submitted for "${campaignTitle}"`;
 
@@ -19,13 +20,17 @@ function buildForAdmin({
     evidenceUrl ? `Evidence: ${evidenceUrl}` : '',
     '',
     `Review: ${adminUrl}`,
-  ].filter(Boolean).join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   const html = renderLayout({
     previewText: `Milestone evidence submitted for "${campaignTitle}".`,
     bodyHtml: [
       heading('Milestone evidence ready for review'),
-      paragraph(`${creatorName || 'A creator'} submitted proof for milestone "${milestoneTitle}" on "${campaignTitle}".`),
+      paragraph(
+        `${creatorName || 'A creator'} submitted proof for milestone "${milestoneTitle}" on "${campaignTitle}".`
+      ),
       table([
         ['Campaign', campaignTitle],
         ['Milestone', milestoneTitle],
@@ -34,6 +39,7 @@ function buildForAdmin({
       ]),
       buttonRow('Review milestone', adminUrl),
     ].join(''),
+    unsubscribeUrl,
   });
 
   return { subject, text, html };

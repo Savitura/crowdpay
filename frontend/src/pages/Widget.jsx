@@ -91,13 +91,20 @@ export default function Widget() {
   const pct = targetAmount > 0 ? Math.min(100, (raisedAmount / targetAmount) * 100) : 0;
   const contributorCount = Number(data.contributor_count) || 0;
   const daysRemaining = data.days_remaining;
-  const campaignUrl = data.contribution_url || `${window.location.origin}/campaigns/${encodeURIComponent(id)}`;
+  const campaignUrl =
+    data.contribution_url || `${window.location.origin}/campaigns/${encodeURIComponent(id)}`;
 
   return (
     <div style={styles.shell}>
       <div style={styles.card}>
         <div style={styles.title}>{data.title}</div>
-        <div style={styles.progressTrack} role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+        <div
+          style={styles.progressTrack}
+          role="progressbar"
+          aria-valuenow={Math.round(pct)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
           <div style={{ ...styles.progressFill, width: `${pct}%` }} />
         </div>
         <div style={styles.meta}>
@@ -116,12 +123,7 @@ export default function Widget() {
           summary={data.milestone_summary}
           size={size}
         />
-        <a
-          href={campaignUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={styles.link}
-        >
+        <a href={campaignUrl} target="_blank" rel="noopener noreferrer" style={styles.link}>
           Back this project
         </a>
       </div>

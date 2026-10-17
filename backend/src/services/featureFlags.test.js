@@ -198,10 +198,10 @@ test('getAllFlags returns all flags with resolved states', () => {
   process.env.KYC_REQUIRED_FOR_CAMPAIGNS = 'false';
   const ff = freshFlags();
   const flags = ff.getAllFlags();
-  const map = Object.fromEntries(flags.map((f) => [f.name, f]));
+  const map = Object.fromEntries(flags.map(f => [f.name, f]));
 
-  assert.equal(map['campaign-status-cron'].enabled, true);   // default: true
-  assert.equal(map['serve-frontend'].enabled, false);         // default: false
+  assert.equal(map['campaign-status-cron'].enabled, true); // default: true
+  assert.equal(map['serve-frontend'].enabled, false); // default: false
   assert.equal(map['kyc-required-for-campaigns'].enabled, false); // env: false
   assert.ok(map['campaign-status-cron'].description);
   assert.equal(map['campaign-status-cron'].envVar, 'ENABLE_CAMPAIGN_STATUS_CRON');
@@ -229,7 +229,7 @@ test('unregisterAdapter removes a previously registered adapter', () => {
 test('wildcard adapter (*) acts as fallback for all flags', () => {
   const ff = freshFlags();
   ff.registerAdapter('*', {
-    isEnabled: (name) => name === 'serve-frontend',
+    isEnabled: name => name === 'serve-frontend',
   });
   assert.equal(ff.isEnabled('serve-frontend'), true);
   assert.equal(ff.isEnabled('campaign-status-cron'), false);
@@ -254,7 +254,7 @@ test('syncFlagsToAdapter calls register on adapter for every flag', () => {
   };
   ff.syncFlagsToAdapter(adapter);
   assert.ok(registered.length > 0);
-  assert.ok(registered.some((r) => r.name === 'serve-frontend'));
+  assert.ok(registered.some(r => r.name === 'serve-frontend'));
   assert.equal(registered[0].def.description, ff.FLAGS[registered[0].name].description);
 });
 
@@ -311,7 +311,9 @@ test('requireFlag calls next() when flag is enabled', () => {
   let calledNext = false;
   const req = { user: { userId: 'u1', role: 'admin' } };
   const res = { status: () => ({ json: () => {} }) };
-  middleware(req, res, () => { calledNext = true; });
+  middleware(req, res, () => {
+    calledNext = true;
+  });
 
   assert.equal(calledNext, true);
 });
@@ -325,12 +327,18 @@ test('requireFlag responds 404 when flag is disabled (default behavior)', () => 
   let jsonBody;
   const req = { user: {} };
   const res = {
-    status: (code) => {
+    status: code => {
       statusCode = code;
-      return { json: (body) => { jsonBody = body; } };
+      return {
+        json: body => {
+          jsonBody = body;
+        },
+      };
     },
   };
-  middleware(req, res, () => { assert.fail('next should not be called'); });
+  middleware(req, res, () => {
+    assert.fail('next should not be called');
+  });
 
   assert.equal(statusCode, 404);
   assert.deepEqual(jsonBody, { error: 'Not found' });
@@ -345,12 +353,18 @@ test('requireFlag with behavior: "403" responds 403 when flag is disabled', () =
   let jsonBody;
   const req = { user: {} };
   const res = {
-    status: (code) => {
+    status: code => {
       statusCode = code;
-      return { json: (body) => { jsonBody = body; } };
+      return {
+        json: body => {
+          jsonBody = body;
+        },
+      };
     },
   };
-  middleware(req, res, () => { assert.fail('next should not be called'); });
+  middleware(req, res, () => {
+    assert.fail('next should not be called');
+  });
 
   assert.equal(statusCode, 403);
   assert.deepEqual(jsonBody, { error: 'Feature disabled' });
@@ -364,10 +378,14 @@ test('requireFlag with behavior: "feature_disabled" returns 200 with feature_dis
   let jsonBody;
   const req = { user: {} };
   const res = {
-    json: (body) => { jsonBody = body; },
+    json: body => {
+      jsonBody = body;
+    },
     status: () => res,
   };
-  middleware(req, res, () => { assert.fail('next should not be called'); });
+  middleware(req, res, () => {
+    assert.fail('next should not be called');
+  });
 
   assert.deepEqual(jsonBody, { feature_disabled: true, flag: 'serve-frontend' });
 });

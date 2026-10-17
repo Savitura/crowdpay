@@ -48,7 +48,11 @@ async function loadUpgradeableCampaign(campaignId) {
     throw new UpgradeError('Campaign is already on the V2 contract', 400, 'ALREADY_V2');
   }
   if (!campaign.escrow_contract_id || !campaign.milestones_contract_id) {
-    throw new UpgradeError('Campaign has no V1 contracts deployed to migrate from', 400, 'NO_V1_CONTRACT');
+    throw new UpgradeError(
+      'Campaign has no V1 contracts deployed to migrate from',
+      400,
+      'NO_V1_CONTRACT'
+    );
   }
 
   return campaign;
@@ -84,7 +88,11 @@ async function upgradeCampaignContract(campaignId, adminUserId) {
     [campaignId]
   );
   if (!rowCount) {
-    throw new UpgradeError('A migration is already in progress for this campaign', 409, 'MIGRATION_ALREADY_IN_PROGRESS');
+    throw new UpgradeError(
+      'A migration is already in progress for this campaign',
+      409,
+      'MIGRATION_ALREADY_IN_PROGRESS'
+    );
   }
 
   try {
@@ -136,10 +144,9 @@ async function upgradeCampaignContract(campaignId, adminUserId) {
       milestoneCount,
     };
   } catch (err) {
-    await db.query(
-      `UPDATE campaigns SET migration_in_progress = FALSE WHERE id = $1`,
-      [campaignId]
-    );
+    await db.query(`UPDATE campaigns SET migration_in_progress = FALSE WHERE id = $1`, [
+      campaignId,
+    ]);
     logger.error('Milestone escrow contract upgrade failed', {
       campaignId,
       adminUserId,

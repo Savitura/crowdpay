@@ -13,33 +13,37 @@ const treasury = require('../services/contractTreasury');
 const requireCampaignOwner = asyncHandler(async (req, res, next) => {
   const campaignId = req.params.id;
   const { rows } = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [campaignId]);
-  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+  if (!rows.length)
+    return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Campaign not found' } });
   if (req.user.role !== 'admin' && rows[0].creator_id !== req.user.userId) {
-    return res.status(403).json({ error: 'Only the campaign creator can do this' });
+    return res
+      .status(403)
+      .json({ error: { code: 'FORBIDDEN', message: 'Only the campaign creator can do this' } });
   }
   return next();
 });
 
 /** The auditor is identified by the wallet key recorded on the campaign. */
 const requireAuditor = asyncHandler(async (req, res, next) => {
-  const { rows } = await db.query(
-    'SELECT auditor_public_key FROM campaigns WHERE id = $1',
-    [req.params.id]
-  );
-  if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+  const { rows } = await db.query('SELECT auditor_public_key FROM campaigns WHERE id = $1', [
+    req.params.id,
+  ]);
+  if (!rows.length)
+    return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Campaign not found' } });
   const auditorKey = rows[0].auditor_public_key;
   if (!auditorKey) {
     return res
       .status(409)
-      .json({ error: 'This campaign has no auditor', code: 'AUDITOR_NOT_CONFIGURED' });
+      .json({ error: { code: 'AUDITOR_NOT_CONFIGURED', message: 'This campaign has no auditor' } });
   }
 
-  const { rows: userRows } = await db.query(
-    'SELECT wallet_public_key FROM users WHERE id = $1',
-    [req.user.userId]
-  );
+  const { rows: userRows } = await db.query('SELECT wallet_public_key FROM users WHERE id = $1', [
+    req.user.userId,
+  ]);
   if (userRows[0]?.wallet_public_key !== auditorKey) {
-    return res.status(403).json({ error: 'Only the campaign auditor can do this' });
+    return res
+      .status(403)
+      .json({ error: { code: 'FORBIDDEN', message: 'Only the campaign auditor can do this' } });
   }
   return next();
 });
@@ -47,7 +51,7 @@ const requireAuditor = asyncHandler(async (req, res, next) => {
 /** Contract rejections are already carrying their status and symbolic code. */
 function sendServiceError(res, err) {
   if (err.statusCode && err.code) {
-    return res.status(err.statusCode).json({ error: err.message, code: err.code });
+    return res.status(err.statusCode).json({ error: { code: err.code, message: err.message } });
   }
   throw err;
 }
@@ -176,7 +180,9 @@ router.post(
     if (!amount || !destination) {
       return res
         .status(400)
-        .json({ error: 'amount and destination are required', code: 'VALIDATION_ERROR' });
+        .json({
+          error: { code: 'VALIDATION_ERROR', message: 'amount and destination are required' },
+        });
     }
     try {
       const result = await treasury.buildWithdrawalRequest(req.params.id, {
@@ -223,7 +229,9 @@ router.post(
   asyncHandler(async (req, res) => {
     const pendingId = Number.parseInt(req.params.pendingId, 10);
     if (!Number.isInteger(pendingId) || pendingId < 1) {
-      return res.status(400).json({ error: 'Invalid pending id', code: 'VALIDATION_ERROR' });
+      return res
+        .status(400)
+        .json({ error: { code: 'VALIDATION_ERROR', message: 'Invalid pending id' } });
     }
     try {
       const withdrawal = await treasury.approvePendingWithdrawal(req.params.id, pendingId, {

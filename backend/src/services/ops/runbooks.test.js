@@ -12,10 +12,7 @@ test('getSuggestedRunbookForIncident maps incidents correctly', () => {
     getSuggestedRunbookForIncident('platform_wallet_low_xlm'),
     'runbook_refund_platform_wallet'
   );
-  assert.equal(
-    getSuggestedRunbookForIncident('sse_stream_dropped'),
-    'runbook_restart_sse_stream'
-  );
+  assert.equal(getSuggestedRunbookForIncident('sse_stream_dropped'), 'runbook_restart_sse_stream');
   assert.equal(
     getSuggestedRunbookForIncident('stuck_pending_contributions'),
     'runbook_resubmit_stuck_contribution'

@@ -30,9 +30,7 @@ export function NetworkStatusProvider({ children }) {
   }, [handleOnline, handleOffline]);
 
   return (
-    <NetworkStatusContext.Provider value={{ isOnline }}>
-      {children}
-    </NetworkStatusContext.Provider>
+    <NetworkStatusContext.Provider value={{ isOnline }}>{children}</NetworkStatusContext.Provider>
   );
 }
 

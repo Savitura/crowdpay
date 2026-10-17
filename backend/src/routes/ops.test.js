@@ -44,14 +44,18 @@ test('requireOpsApiKey returns 401 when header is missing', async () => {
 test('requireOpsApiKey passes when valid OPS_API_KEY is provided in headers', async () => {
   process.env.OPS_API_KEY = 'test_ops_key_123';
   const req = {
-    headers: { 'ops_api_key': 'test_ops_key_123' },
+    headers: { ops_api_key: 'test_ops_key_123' },
     path: '/api/ops/health',
     ip: '127.0.0.1',
   };
   let nextCalled = false;
   const res = {
-    status() { return this; },
-    json() { return this; },
+    status() {
+      return this;
+    },
+    json() {
+      return this;
+    },
   };
 
   requireOpsApiKey(req, res, () => {
@@ -70,8 +74,12 @@ test('requireOpsApiKey passes with x-ops-api-key header', async () => {
   };
   let nextCalled = false;
   const res = {
-    status() { return this; },
-    json() { return this; },
+    status() {
+      return this;
+    },
+    json() {
+      return this;
+    },
   };
 
   requireOpsApiKey(req, res, () => {

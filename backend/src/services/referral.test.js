@@ -17,7 +17,7 @@ test('buildReferralMemo produces a ref:<code> memo that fits Stellar memo text',
 
 test('generateUniqueLinkCode returns an 8-character alphanumeric code and retries on collision', async () => {
   let selectCount = 0;
-  const { generateUniqueLinkCode } = buildReferral(async (text) => {
+  const { generateUniqueLinkCode } = buildReferral(async text => {
     if (text.includes('FROM referral_links WHERE code')) {
       selectCount++;
       return selectCount === 1 ? { rows: [{ 1: 1 }] } : { rows: [] };
@@ -34,11 +34,11 @@ test('createReferralProgram rejects a commission percentage outside 1-20', async
   const { createReferralProgram } = buildReferral(async () => ({ rows: [] }));
   await assert.rejects(
     () => createReferralProgram('camp-1', { commissionPercentage: 25, maxReferrers: 10 }),
-    (err) => err.statusCode === 400 && err.code === 'INVALID_COMMISSION_PERCENTAGE'
+    err => err.statusCode === 400 && err.code === 'INVALID_COMMISSION_PERCENTAGE'
   );
   await assert.rejects(
     () => createReferralProgram('camp-1', { commissionPercentage: 0, maxReferrers: 10 }),
-    (err) => err.code === 'INVALID_COMMISSION_PERCENTAGE'
+    err => err.code === 'INVALID_COMMISSION_PERCENTAGE'
   );
 });
 
@@ -46,7 +46,7 @@ test('createReferralProgram rejects maxReferrers outside 1-100', async () => {
   const { createReferralProgram } = buildReferral(async () => ({ rows: [] }));
   await assert.rejects(
     () => createReferralProgram('camp-1', { commissionPercentage: 10, maxReferrers: 101 }),
-    (err) => err.statusCode === 400 && err.code === 'INVALID_MAX_REFERRERS'
+    err => err.statusCode === 400 && err.code === 'INVALID_MAX_REFERRERS'
   );
 });
 
@@ -54,22 +54,31 @@ test('createReferralProgram persists a valid program', async () => {
   const calls = [];
   const { createReferralProgram } = buildReferral(async (text, params) => {
     calls.push({ text, params });
-    return { rows: [{ id: 'prog-1', campaign_id: 'camp-1', commission_percentage: '5.00', max_referrers: 10 }] };
+    return {
+      rows: [
+        { id: 'prog-1', campaign_id: 'camp-1', commission_percentage: '5.00', max_referrers: 10 },
+      ],
+    };
   });
 
-  const program = await createReferralProgram('camp-1', { commissionPercentage: 5, maxReferrers: 10 });
+  const program = await createReferralProgram('camp-1', {
+    commissionPercentage: 5,
+    maxReferrers: 10,
+  });
   assert.equal(program.id, 'prog-1');
   assert.match(calls[0].text, /INSERT INTO referral_programs/);
   assert.deepEqual(calls[0].params, ['camp-1', 5, 10]);
 });
 
 test('createReferralLink issues a code and share url', async () => {
-  const { createReferralLink } = buildReferral(async (text) => {
+  const { createReferralLink } = buildReferral(async text => {
     if (text.includes('FROM referral_programs')) {
       return { rows: [{ id: 'prog-1', commission_percentage: '5.00', max_referrers: 3 }] };
     }
-    if (text.includes('FROM referral_links WHERE campaign_id = $1 AND user_id')) return { rows: [] };
-    if (text.includes('COUNT(*)::int AS total FROM referral_links')) return { rows: [{ total: 1 }] };
+    if (text.includes('FROM referral_links WHERE campaign_id = $1 AND user_id'))
+      return { rows: [] };
+    if (text.includes('COUNT(*)::int AS total FROM referral_links'))
+      return { rows: [{ total: 1 }] };
     if (text.includes('FROM referral_links WHERE code')) return { rows: [] };
     if (text.includes('INSERT INTO referral_links')) {
       return { rows: [{ id: 'link-1', code: 'abcd1234', created_at: 'now' }] };
@@ -85,7 +94,7 @@ test('createReferralLink issues a code and share url', async () => {
 
 test('createReferralLink returns the existing link instead of issuing a second one', async () => {
   const calls = [];
-  const { createReferralLink } = buildReferral(async (text) => {
+  const { createReferralLink } = buildReferral(async text => {
     calls.push(text);
     if (text.includes('FROM referral_programs')) {
       return { rows: [{ id: 'prog-1', commission_percentage: '5.00', max_referrers: 3 }] };
@@ -99,22 +108,24 @@ test('createReferralLink returns the existing link instead of issuing a second o
   const result = await createReferralLink({ campaignId: 'camp-1', userId: 'user-2' });
   assert.equal(result.created, false);
   assert.equal(result.code, 'existing1');
-  assert.ok(!calls.some((text) => text.includes('INSERT INTO referral_links')));
+  assert.ok(!calls.some(text => text.includes('INSERT INTO referral_links')));
 });
 
 test('createReferralLink rejects the (n+1)th referrer with REFERRER_LIMIT_REACHED', async () => {
-  const { createReferralLink } = buildReferral(async (text) => {
+  const { createReferralLink } = buildReferral(async text => {
     if (text.includes('FROM referral_programs')) {
       return { rows: [{ id: 'prog-1', commission_percentage: '5.00', max_referrers: 3 }] };
     }
-    if (text.includes('FROM referral_links WHERE campaign_id = $1 AND user_id')) return { rows: [] };
-    if (text.includes('COUNT(*)::int AS total FROM referral_links')) return { rows: [{ total: 3 }] };
+    if (text.includes('FROM referral_links WHERE campaign_id = $1 AND user_id'))
+      return { rows: [] };
+    if (text.includes('COUNT(*)::int AS total FROM referral_links'))
+      return { rows: [{ total: 3 }] };
     return { rows: [] };
   });
 
   await assert.rejects(
     () => createReferralLink({ campaignId: 'camp-1', userId: 'user-4' }),
-    (err) => err.statusCode === 409 && err.code === 'REFERRER_LIMIT_REACHED'
+    err => err.statusCode === 409 && err.code === 'REFERRER_LIMIT_REACHED'
   );
 });
 
@@ -122,7 +133,7 @@ test('createReferralLink 404s when the campaign has no referral program', async 
   const { createReferralLink } = buildReferral(async () => ({ rows: [] }));
   await assert.rejects(
     () => createReferralLink({ campaignId: 'camp-1', userId: 'user-2' }),
-    (err) => err.statusCode === 404 && err.code === 'REFERRAL_PROGRAM_NOT_FOUND'
+    err => err.statusCode === 404 && err.code === 'REFERRAL_PROGRAM_NOT_FOUND'
   );
 });
 
@@ -130,7 +141,7 @@ test('resolveReferralLink rejects a code that belongs to another campaign', asyn
   const { resolveReferralLink } = buildReferral(async () => ({ rows: [] }));
   await assert.rejects(
     () => resolveReferralLink({ campaignId: 'camp-1', code: 'other123' }),
-    (err) => err.statusCode === 404 && err.code === 'INVALID_REFERRAL_CODE'
+    err => err.statusCode === 404 && err.code === 'INVALID_REFERRAL_CODE'
   );
 });
 
@@ -156,23 +167,41 @@ test('resolveReferralLink is a no-op when no code is supplied', async () => {
 });
 
 test('calculateCommissions distributes commission proportional to attributed contributions', async () => {
-  const { calculateCommissions } = buildReferral(async (text) => {
+  const { calculateCommissions } = buildReferral(async text => {
     if (text.includes('FROM referral_programs')) {
       return { rows: [{ id: 'prog-1', commission_percentage: '10.00', max_referrers: 10 }] };
     }
     return {
       rows: [
         {
-          referral_link_id: 'link-1', code: 'aaaa1111', user_id: 'u1', commission_paid: '0',
-          referrer_name: 'Alice', wallet_public_key: 'GALICE', contribution_count: 2, referred_amount: '600',
+          referral_link_id: 'link-1',
+          code: 'aaaa1111',
+          user_id: 'u1',
+          commission_paid: '0',
+          referrer_name: 'Alice',
+          wallet_public_key: 'GALICE',
+          contribution_count: 2,
+          referred_amount: '600',
         },
         {
-          referral_link_id: 'link-2', code: 'bbbb2222', user_id: 'u2', commission_paid: '0',
-          referrer_name: 'Bob', wallet_public_key: 'GBOB', contribution_count: 1, referred_amount: '300',
+          referral_link_id: 'link-2',
+          code: 'bbbb2222',
+          user_id: 'u2',
+          commission_paid: '0',
+          referrer_name: 'Bob',
+          wallet_public_key: 'GBOB',
+          contribution_count: 1,
+          referred_amount: '300',
         },
         {
-          referral_link_id: 'link-3', code: 'cccc3333', user_id: 'u3', commission_paid: '0',
-          referrer_name: 'Cara', wallet_public_key: 'GCARA', contribution_count: 1, referred_amount: '100',
+          referral_link_id: 'link-3',
+          code: 'cccc3333',
+          user_id: 'u3',
+          commission_paid: '0',
+          referrer_name: 'Cara',
+          wallet_public_key: 'GCARA',
+          contribution_count: 1,
+          referred_amount: '100',
         },
       ],
     };
@@ -189,19 +218,31 @@ test('calculateCommissions distributes commission proportional to attributed con
 });
 
 test('calculateCommissions excludes a referrer whose referred contributions total zero', async () => {
-  const { calculateCommissions } = buildReferral(async (text) => {
+  const { calculateCommissions } = buildReferral(async text => {
     if (text.includes('FROM referral_programs')) {
       return { rows: [{ id: 'prog-1', commission_percentage: '5.00', max_referrers: 10 }] };
     }
     return {
       rows: [
         {
-          referral_link_id: 'link-1', code: 'aaaa1111', user_id: 'u1', commission_paid: '0',
-          referrer_name: 'Alice', wallet_public_key: 'GALICE', contribution_count: 1, referred_amount: '200',
+          referral_link_id: 'link-1',
+          code: 'aaaa1111',
+          user_id: 'u1',
+          commission_paid: '0',
+          referrer_name: 'Alice',
+          wallet_public_key: 'GALICE',
+          contribution_count: 1,
+          referred_amount: '200',
         },
         {
-          referral_link_id: 'link-2', code: 'bbbb2222', user_id: 'u2', commission_paid: '0',
-          referrer_name: 'Bob', wallet_public_key: 'GBOB', contribution_count: 0, referred_amount: '0',
+          referral_link_id: 'link-2',
+          code: 'bbbb2222',
+          user_id: 'u2',
+          commission_paid: '0',
+          referrer_name: 'Bob',
+          wallet_public_key: 'GBOB',
+          contribution_count: 0,
+          referred_amount: '0',
         },
       ],
     };
@@ -214,19 +255,31 @@ test('calculateCommissions excludes a referrer whose referred contributions tota
 });
 
 test('calculateCommissions nets off commission already paid by an earlier withdrawal', async () => {
-  const { calculateCommissions } = buildReferral(async (text) => {
+  const { calculateCommissions } = buildReferral(async text => {
     if (text.includes('FROM referral_programs')) {
       return { rows: [{ id: 'prog-1', commission_percentage: '10.00', max_referrers: 10 }] };
     }
     return {
       rows: [
         {
-          referral_link_id: 'link-1', code: 'aaaa1111', user_id: 'u1', commission_paid: '40',
-          referrer_name: 'Alice', wallet_public_key: 'GALICE', contribution_count: 2, referred_amount: '600',
+          referral_link_id: 'link-1',
+          code: 'aaaa1111',
+          user_id: 'u1',
+          commission_paid: '40',
+          referrer_name: 'Alice',
+          wallet_public_key: 'GALICE',
+          contribution_count: 2,
+          referred_amount: '600',
         },
         {
-          referral_link_id: 'link-2', code: 'bbbb2222', user_id: 'u2', commission_paid: '30',
-          referrer_name: 'Bob', wallet_public_key: 'GBOB', contribution_count: 1, referred_amount: '300',
+          referral_link_id: 'link-2',
+          code: 'bbbb2222',
+          user_id: 'u2',
+          commission_paid: '30',
+          referrer_name: 'Bob',
+          wallet_public_key: 'GBOB',
+          contribution_count: 1,
+          referred_amount: '300',
         },
       ],
     };
@@ -268,19 +321,43 @@ test('listUserReferralLinks reports commission earned and payout status per camp
   const { listUserReferralLinks } = buildReferral(async () => ({
     rows: [
       {
-        referral_link_id: 'link-1', code: 'aaaa1111', campaign_id: 'camp-1', commission_paid: '0',
-        created_at: 'now', campaign_title: 'Solar', campaign_status: 'active', asset_type: 'USDC',
-        commission_percentage: '10.00', contribution_count: 2, referred_amount: '500',
+        referral_link_id: 'link-1',
+        code: 'aaaa1111',
+        campaign_id: 'camp-1',
+        commission_paid: '0',
+        created_at: 'now',
+        campaign_title: 'Solar',
+        campaign_status: 'active',
+        asset_type: 'USDC',
+        commission_percentage: '10.00',
+        contribution_count: 2,
+        referred_amount: '500',
       },
       {
-        referral_link_id: 'link-2', code: 'bbbb2222', campaign_id: 'camp-2', commission_paid: '25',
-        created_at: 'now', campaign_title: 'Wells', campaign_status: 'funded', asset_type: 'USDC',
-        commission_percentage: '5.00', contribution_count: 1, referred_amount: '500',
+        referral_link_id: 'link-2',
+        code: 'bbbb2222',
+        campaign_id: 'camp-2',
+        commission_paid: '25',
+        created_at: 'now',
+        campaign_title: 'Wells',
+        campaign_status: 'funded',
+        asset_type: 'USDC',
+        commission_percentage: '5.00',
+        contribution_count: 1,
+        referred_amount: '500',
       },
       {
-        referral_link_id: 'link-3', code: 'cccc3333', campaign_id: 'camp-3', commission_paid: '0',
-        created_at: 'now', campaign_title: 'Books', campaign_status: 'active', asset_type: 'XLM',
-        commission_percentage: '5.00', contribution_count: 0, referred_amount: '0',
+        referral_link_id: 'link-3',
+        code: 'cccc3333',
+        campaign_id: 'camp-3',
+        commission_paid: '0',
+        created_at: 'now',
+        campaign_title: 'Books',
+        campaign_status: 'active',
+        asset_type: 'XLM',
+        commission_percentage: '5.00',
+        contribution_count: 0,
+        referred_amount: '0',
       },
     ],
   }));

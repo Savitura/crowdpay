@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 
 export default function ResetPassword() {
+  const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const token = searchParams.get('token');
@@ -47,12 +49,14 @@ export default function ResetPassword() {
   if (!token) {
     return (
       <main className="container" style={{ paddingTop: '4rem', maxWidth: '400px' }}>
-        <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>Invalid link</h1>
+        <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>
+          {t('resetPassword.invalidLink')}
+        </h1>
         <p style={{ color: 'var(--color-text-hint)', marginBottom: '1.5rem' }}>
-          This password reset link is invalid or missing a token.
+          {t('resetPassword.invalidLinkDescription')}
         </p>
         <Link to="/forgot-password" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
-          Request a new link
+          {t('resetPassword.requestNewLink')}
         </Link>
       </main>
     );
@@ -61,10 +65,10 @@ export default function ResetPassword() {
   return (
     <main className="container" style={{ paddingTop: '4rem', maxWidth: '400px' }}>
       <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '0.5rem' }}>
-        Reset password
+        {t('resetPassword.title')}
       </h1>
       <p style={{ color: 'var(--color-text-hint)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-        Enter your new password below.
+        {t('resetPassword.description')}
       </p>
 
       {success ? (
@@ -79,28 +83,32 @@ export default function ResetPassword() {
             border: '1px solid var(--color-success-border)',
           }}
         >
-          Password reset successfully! Redirecting to login...
+          {t('resetPassword.success')}
         </div>
       ) : (
         <form
           onSubmit={handleSubmit}
           style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}
         >
-          <label htmlFor="new-password" className="sr-only">New password</label>
+          <label htmlFor="new-password" className="sr-only">
+            {t('resetPassword.newPassword')}
+          </label>
           <input
             id="new-password"
             type="password"
-            placeholder="New password"
+            placeholder={t('resetPassword.newPasswordPlaceholder')}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
             minLength={8}
           />
-          <label htmlFor="confirm-password" className="sr-only">Confirm new password</label>
+          <label htmlFor="confirm-password" className="sr-only">
+            {t('resetPassword.confirmPassword')}
+          </label>
           <input
             id="confirm-password"
             type="password"
-            placeholder="Confirm new password"
+            placeholder={t('resetPassword.confirmPasswordPlaceholder')}
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             required
@@ -115,7 +123,7 @@ export default function ResetPassword() {
             disabled={loading}
             style={{ padding: '0.8rem' }}
           >
-            {loading ? 'Resetting password…' : 'Reset password'}
+            {loading ? t('resetPassword.resetting') : t('resetPassword.resetButton')}
           </button>
         </form>
       )}

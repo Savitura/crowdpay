@@ -1,6 +1,8 @@
-process.env.USDC_ISSUER = process.env.USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+process.env.USDC_ISSUER =
+  process.env.USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 process.env.STELLAR_NETWORK = process.env.STELLAR_NETWORK || 'testnet';
-process.env.PLATFORM_SECRET_KEY = process.env.PLATFORM_SECRET_KEY || 'SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR';
+process.env.PLATFORM_SECRET_KEY =
+  process.env.PLATFORM_SECRET_KEY || 'SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -31,7 +33,7 @@ function buildApp({ queryImpl, user = { userId: USER_ID, role: 'contributor' } }
         if (user) req.user = user;
         next();
       },
-      authenticate: async (req) => {
+      authenticate: async req => {
         if (user) req.user = user;
       },
     },
@@ -73,7 +75,7 @@ test('GET /api/campaigns/:id/comments returns comments list with creator badge a
   ];
 
   const { app, calls } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT id, creator_id FROM campaigns')) {
         return { rows: [{ id: CAMPAIGN_ID, creator_id: CREATOR_ID }] };
       }
@@ -106,7 +108,7 @@ test('POST /api/campaigns/:id/comments posts a top-level question', async () => 
 
   const { app, calls } = buildApp({
     user: { userId: USER_ID, role: 'contributor' },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT id, creator_id, title FROM campaigns')) {
         return { rows: [{ id: CAMPAIGN_ID, creator_id: CREATOR_ID, title: 'Sample Campaign' }] };
       }
@@ -133,7 +135,7 @@ test('POST /api/campaigns/:id/comments posts a top-level question', async () => 
 test('POST /api/campaigns/:id/comments/:commentId/upvote toggles upvote', async () => {
   let hasUpvoted = false;
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT id FROM campaign_comments')) {
         return { rows: [{ id: COMMENT_ID }] };
       }
@@ -156,13 +158,17 @@ test('POST /api/campaigns/:id/comments/:commentId/upvote toggles upvote', async 
   });
 
   // First call -> Upvote
-  const res1 = await request(app).post(`/api/campaigns/${CAMPAIGN_ID}/comments/${COMMENT_ID}/upvote`);
+  const res1 = await request(app).post(
+    `/api/campaigns/${CAMPAIGN_ID}/comments/${COMMENT_ID}/upvote`
+  );
   assert.equal(res1.status, 200);
   assert.equal(res1.body.upvoted, true);
   assert.equal(res1.body.upvotes_count, 1);
 
   // Second call -> Downvote / remove upvote
-  const res2 = await request(app).post(`/api/campaigns/${CAMPAIGN_ID}/comments/${COMMENT_ID}/upvote`);
+  const res2 = await request(app).post(
+    `/api/campaigns/${CAMPAIGN_ID}/comments/${COMMENT_ID}/upvote`
+  );
   assert.equal(res2.status, 200);
   assert.equal(res2.body.upvoted, false);
   assert.equal(res2.body.upvotes_count, 0);
@@ -171,7 +177,7 @@ test('POST /api/campaigns/:id/comments/:commentId/upvote toggles upvote', async 
 test('DELETE /api/campaigns/:id/comments/:commentId deletes a comment', async () => {
   const { app, calls } = buildApp({
     user: { userId: USER_ID, role: 'contributor' },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT id, creator_id FROM campaigns')) {
         return { rows: [{ id: CAMPAIGN_ID, creator_id: CREATOR_ID }] };
       }
@@ -191,7 +197,7 @@ test('DELETE /api/campaigns/:id/comments/:commentId deletes a comment', async ()
 
 test('POST /api/campaigns/:id/comments/:commentId/flag flags a comment for review', async () => {
   const { app, calls } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT id FROM campaign_comments')) {
         return { rows: [{ id: COMMENT_ID }] };
       }
@@ -209,4 +215,45 @@ test('POST /api/campaigns/:id/comments/:commentId/flag flags a comment for revie
   assert.equal(res.status, 204);
   assert.equal(calls.length, 2);
   assert.match(calls[1].text, /INSERT INTO campaign_comment_flags/);
+});
+
+test('POST /api/campaigns/:id/comments/:commentId/pin pins a comment to the top', async () => {
+  const { app, calls } = buildApp({
+    user: { userId: CREATOR_ID, role: 'creator' },
+    queryImpl: async text => {
+      if (text.includes('SELECT id, creator_id') && text.includes('FROM campaigns')) {
+        return { rows: [{ id: CAMPAIGN_ID, creator_id: CREATOR_ID, title: 'Test Campaign' }] };
+      }
+      if (text.includes('UPDATE campaign_comments SET pinned = FALSE')) {
+        return { rows: [] };
+      }
+      if (text.includes('UPDATE campaign_comments') && text.includes('pinned = TRUE')) {
+        return { rows: [{ id: COMMENT_ID, campaign_id: CAMPAIGN_ID, pinned: true }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const res = await request(app).post(`/api/campaigns/${CAMPAIGN_ID}/comments/${COMMENT_ID}/pin`);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.pinned, true);
+});
+
+test('POST /api/campaigns/:id/comments/:commentId/unpin unpins a comment', async () => {
+  const { app, calls } = buildApp({
+    user: { userId: CREATOR_ID, role: 'creator' },
+    queryImpl: async text => {
+      if (text.includes('SELECT id, creator_id') && text.includes('FROM campaigns')) {
+        return { rows: [{ id: CAMPAIGN_ID, creator_id: CREATOR_ID, title: 'Test Campaign' }] };
+      }
+      if (text.includes('UPDATE campaign_comments') && text.includes('pinned = FALSE')) {
+        return { rows: [{ id: COMMENT_ID, campaign_id: CAMPAIGN_ID, pinned: false }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const res = await request(app).post(`/api/campaigns/${CAMPAIGN_ID}/comments/${COMMENT_ID}/unpin`);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.pinned, false);
 });

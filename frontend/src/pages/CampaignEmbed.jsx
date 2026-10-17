@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import MilestoneProgressBar, { normalizeWidgetSize } from '../components/MilestoneProgressBar';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 const BASE_URL = import.meta.env.VITE_API_URL || `${API_BASE_URL}/api`;
+const POLL_INTERVAL_MS = 30000;
 
 function getParentOrigin() {
   const explicit = new URLSearchParams(window.location.search).get('origin');
@@ -14,329 +15,356 @@ function getParentOrigin() {
   }
 }
 
+function getCampaignId() {
+  const fromPath = window.location.pathname.split('/').filter(Boolean).pop();
+  return fromPath && fromPath !== 'campaigns' ? fromPath : '';
+}
+
+function formatAmount(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '0';
+  return numeric.toLocaleString(undefined, { maximumFractionDigits: 7 });
+}
+
 export default function CampaignEmbed() {
-  const [campaign, setCampaign] = useState(null);
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [isLive, setIsLive] = useState(false);
 
-  const pathParts = window.location.pathname.split('/');
-  const campaignId = pathParts[pathParts.length - 1];
-  const size = normalizeWidgetSize(new URLSearchParams(window.location.search).get('size'));
+  const campaignId = getCampaignId();
+  const params = new URLSearchParams(window.location.search);
+  const size = normalizeWidgetSize(params.get('size'));
+  const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
   const parentOrigin = getParentOrigin();
 
-  useEffect(() => {
+  const fetchStats = useCallback(async () => {
     if (!campaignId) {
-      setError('Invalid campaign ID');
+      setError('Campaign not available');
       setLoading(false);
       return;
     }
-
-    fetch(`${BASE_URL}/campaigns/${campaignId}/embed`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Campaign not found');
-        return res.json();
-      })
-      .then((data) => {
-        setCampaign(data);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message || 'Failed to load campaign');
-        setLoading(false);
-      });
+    try {
+      // Public compact widget payload; honours campaign/contributor privacy
+      // settings on the server (see GET /api/campaigns/:id/widget).
+      const res = await fetch(`${BASE_URL}/campaigns/${encodeURIComponent(campaignId)}/widget`);
+      if (!res.ok) {
+        throw new Error(res.status === 404 ? 'Campaign not found' : 'Could not load campaign');
+      }
+      const data = await res.json();
+      setStats(data);
+      setError('');
+    } catch (err) {
+      setError(err.message || 'Failed to load campaign');
+    } finally {
+      setLoading(false);
+    }
   }, [campaignId]);
 
   useEffect(() => {
-    if (!campaignId || !campaign) return;
-    if (!window.EventSource) return;
-
-    const es = new EventSource(`${BASE_URL}/campaigns/${campaignId}/stream`);
-
-    es.onopen = () => setIsLive(true);
-
-    es.onmessage = (e) => {
-      let msg;
-      try {
-        msg = JSON.parse(e.data);
-      } catch {
-        return;
-      }
-
-      if (msg.type === 'contribution') {
-        setCampaign((prev) => (prev ? { ...prev, raised_amount: msg.raised_amount } : prev));
-      }
-    };
-
-    es.onerror = () => {
-      setIsLive(false);
-      es.close();
-    };
-
-    return () => {
-      es.close();
-      setIsLive(false);
-    };
-  }, [campaignId, campaign]);
+    fetchStats();
+    const interval = setInterval(fetchStats, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [fetchStats]);
 
   useEffect(() => {
     const targetOrigin = parentOrigin || '*';
     let lastHeight = 0;
+    let frame = 0;
+    let notifyTimeout = 0;
+
+    const measureHeight = () => {
+      const doc = document.documentElement;
+      const body = document.body;
+      const heights = [doc && doc.scrollHeight, doc && doc.offsetHeight, body && body.scrollHeight];
+      return Math.max(0, ...heights.filter(Number.isFinite));
+    };
 
     const notifyHeight = () => {
-      const height = document.documentElement.scrollHeight;
+      const height = measureHeight();
       if (height !== lastHeight) {
         lastHeight = height;
         window.parent.postMessage({ type: 'resize', height }, targetOrigin);
       }
     };
 
+    const scheduleNotify = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(notifyHeight);
+    };
+
     notifyHeight();
 
-    const observer = new ResizeObserver(notifyHeight);
-    observer.observe(document.documentElement);
+    let observer;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(notifyHeight);
+      observer.observe(document.documentElement);
+      if (document.body) observer.observe(document.body);
+    }
+
+    window.addEventListener('resize', scheduleNotify);
+    window.addEventListener('load', scheduleNotify);
+
+    frame = window.requestAnimationFrame(() => {
+      notifyTimeout = window.setTimeout(scheduleNotify, 50);
+    });
 
     return () => {
-      observer.disconnect();
+      if (observer) observer.disconnect();
+      window.removeEventListener('resize', scheduleNotify);
+      window.removeEventListener('load', scheduleNotify);
+      if (frame) window.cancelAnimationFrame(frame);
+      if (notifyTimeout) window.clearTimeout(notifyTimeout);
     };
-  }, [campaign, loading, error, parentOrigin]);
+  }, [stats, loading, error, parentOrigin]);
 
-  useEffect(() => {
-    const handler = (event) => {
-      if (event.data && event.data.type === 'open') {
-        // do nothing
-      }
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, []);
+  const isDark = theme === 'dark';
+  const bg = isDark ? '#1a202c' : '#ffffff';
+  const textColor = isDark ? '#f7fafc' : '#1a202c';
+  const textMuted = isDark ? '#a0aec0' : '#718096';
+  const borderColor = isDark ? '#2d3748' : '#e2e8f0';
 
-  // Add pulse animation style
-  useEffect(() => {
-    const styleSheet = document.createElement('style');
-    styleSheet.textContent = `
-      @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
-      }
-    `;
-    document.head.appendChild(styleSheet);
-
-    return () => {
-      document.head.removeChild(styleSheet);
-    };
-  }, []);
+  const shellStyle = {
+    background: bg,
+    color: textColor,
+    padding: '1rem',
+    fontFamily: 'system-ui, sans-serif',
+    fontSize: '0.85rem',
+    boxSizing: 'border-box',
+    width: '100%',
+  };
 
   if (loading) {
     return (
-      <div style={styles.container}>
-        <div style={styles.skeleton} />
-        <div style={styles.skeletonShort} />
-        <div style={styles.skeletonBar} />
+      <div style={shellStyle} role="status" aria-live="polite">
+        Loading campaign progress…
       </div>
     );
   }
 
-  if (error || !campaign) {
+  if (error || !stats) {
     return (
-      <div style={styles.container}>
-        <p style={styles.error}>{error || 'Campaign not found'}</p>
+      <div style={{ ...shellStyle, color: isDark ? '#feb2b2' : '#c53030' }} role="alert">
+        <span>{error || 'Campaign not available'}</span>
+        <button
+          type="button"
+          onClick={fetchStats}
+          style={{
+            display: 'block',
+            marginTop: '0.5rem',
+            background: 'transparent',
+            border: `1px solid ${borderColor}`,
+            borderRadius: '6px',
+            color: 'inherit',
+            cursor: 'pointer',
+            fontSize: '0.78rem',
+            padding: '0.25rem 0.6rem',
+          }}
+        >
+          Try again
+        </button>
       </div>
     );
   }
 
-  const progressPct = Math.min(100, campaign.progress_percentage);
+  const target = Number(stats.target_amount) || 0;
+  const raised = Number(stats.raised_amount) || 0;
+  const percentage = Number.isFinite(Number(stats.progress_percentage))
+    ? Number(stats.progress_percentage)
+    : target > 0
+      ? Math.round((raised / target) * 10) / 10
+      : 0;
+  const backerCount = Number(stats.contributor_count) || 0;
+  const recentBackers = Array.isArray(stats.recent_backers) ? stats.recent_backers : [];
+  const contributionUrl =
+    stats.contribution_url ||
+    `${window.location.origin}/campaigns/${encodeURIComponent(campaignId)}`;
 
   return (
-    <div style={styles.container}>
-      {isLive && <span style={styles.liveIndicator} title="Live updates active" />}
+    <div
+      style={{
+        ...shellStyle,
+        border: `1px solid ${borderColor}`,
+        borderRadius: '12px',
+        padding: size === 'small' ? '0.75rem' : '1rem',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          gap: '0.5rem',
+          marginBottom: '0.5rem',
+        }}
+      >
+        <h3
+          style={{
+            margin: 0,
+            fontSize: size === 'small' ? '0.95rem' : '1.1rem',
+            fontWeight: 700,
+            lineHeight: 1.25,
+          }}
+        >
+          {stats.title}
+        </h3>
+        <span
+          style={{
+            fontSize: '0.7rem',
+            padding: '0.15rem 0.5rem',
+            borderRadius: '999px',
+            background: isDark ? '#2b6cb0' : '#ebf8ff',
+            color: isDark ? '#ebf8ff' : '#2b6cb0',
+            fontWeight: 600,
+            textTransform: 'uppercase',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {stats.status}
+        </span>
+      </div>
 
-      <h1 style={styles.title}>{campaign.title}</h1>
-
-      {size !== 'small' && campaign.description && (
-        <p style={styles.description}>{campaign.description}</p>
+      {size !== 'small' && stats.description && (
+        <p
+          style={{
+            margin: '0 0 0.75rem',
+            fontSize: '0.82rem',
+            color: textMuted,
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+          }}
+        >
+          {stats.description}
+        </p>
       )}
 
-      <div style={styles.progressSection}>
-        <div style={styles.amounts}>
-          <div>
-            <span style={styles.raisedAmount}>
-              {Number(campaign.raised_amount).toLocaleString()}
-            </span>
-            <span style={styles.asset}>{campaign.asset_type}</span>
-            <span style={styles.label}> raised</span>
-          </div>
-          <div style={styles.target}>{progressPct.toFixed(1)}%</div>
+      <div style={{ marginBottom: '0.75rem' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            fontSize: '0.85rem',
+            marginBottom: '0.3rem',
+            fontWeight: 600,
+          }}
+        >
+          <span>
+            {formatAmount(raised)} / {formatAmount(target)} {stats.asset_type}
+          </span>
+          <span style={{ color: textMuted }}>{percentage}%</span>
         </div>
-
-        <div style={styles.progressBar} role="progressbar" aria-valuenow={Math.round(progressPct)} aria-valuemin={0} aria-valuemax={100}>
+        <div
+          style={{
+            height: '8px',
+            background: borderColor,
+            borderRadius: '99px',
+            overflow: 'hidden',
+          }}
+          role="progressbar"
+          aria-valuenow={Math.round(percentage)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`${Math.round(percentage)}% funded`}
+        >
           <div
             style={{
-              ...styles.progressFill,
-              width: `${progressPct}%`,
+              height: '100%',
+              width: `${Math.min(100, percentage)}%`,
+              background: '#7c3aed',
+              borderRadius: '99px',
+              transition: 'width 0.3s ease',
             }}
           />
         </div>
-
-        <div style={styles.stats}>
-          <span>
-            <strong>{campaign.backer_count}</strong> backer{campaign.backer_count !== 1 ? 's' : ''}
-          </span>
-          <span>
-            Goal: <strong>{Number(campaign.target_amount).toLocaleString()}</strong>{' '}
-            {campaign.asset_type}
-          </span>
-          {campaign.days_remaining !== null && campaign.days_remaining !== undefined && (
-            <span>
-              <strong>{campaign.days_remaining}</strong> day{campaign.days_remaining !== 1 ? 's' : ''} left
-            </span>
-          )}
-        </div>
       </div>
 
-      <MilestoneProgressBar
-        milestones={campaign.milestones}
-        summary={campaign.milestone_summary}
-        size={size}
-      />
-
-      <a
-        href={campaign.contribution_url}
-        target="_blank"
-        rel="noopener noreferrer"
-        style={styles.ctaButton}
-        onClick={() => {
-          window.parent.postMessage({ type: 'cta_click', campaignId: campaign.id }, parentOrigin || '*');
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          fontSize: '0.78rem',
+          color: textMuted,
+          marginBottom: '0.75rem',
+          flexWrap: 'wrap',
+          gap: '0.5rem',
         }}
       >
-        Back this campaign
+        <span>👥 {backerCount} backers</span>
+        {stats.days_remaining !== null && stats.days_remaining !== undefined && (
+          <span>⏳ {stats.days_remaining} days left</span>
+        )}
+      </div>
+
+      {size === 'large' && stats.milestones?.length > 0 && (
+        <MilestoneProgressBar
+          milestones={stats.milestones}
+          summary={stats.milestone_summary}
+          size={size}
+        />
+      )}
+
+      {size === 'large' && recentBackers.length > 0 && (
+        <div
+          style={{
+            marginBottom: '0.75rem',
+            borderTop: `1px solid ${borderColor}`,
+            paddingTop: '0.5rem',
+          }}
+        >
+          <div
+            style={{
+              fontSize: '0.75rem',
+              fontWeight: 700,
+              marginBottom: '0.3rem',
+              color: textMuted,
+            }}
+          >
+            Recent Backers
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+            {recentBackers.slice(0, 3).map((backer, index) => (
+              <div
+                key={`${backer.name}-${index}`}
+                style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}
+              >
+                <span>{backer.name || 'Anonymous'}</span>
+                {backer.amount !== null && backer.amount !== undefined && (
+                  <span style={{ fontWeight: 600 }}>
+                    {formatAmount(backer.amount)} {stats.asset_type}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {size !== 'small' && backerCount === 0 && (
+        <p style={{ margin: '0 0 0.75rem', fontSize: '0.78rem', color: textMuted }}>
+          Be the first to back this campaign.
+        </p>
+      )}
+
+      <a
+        href={contributionUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{
+          display: 'block',
+          textAlign: 'center',
+          background: '#7c3aed',
+          color: '#ffffff',
+          padding: '0.6rem 1rem',
+          borderRadius: '8px',
+          textDecoration: 'none',
+          fontWeight: 700,
+          fontSize: '0.85rem',
+        }}
+      >
+        Contribute Now
       </a>
     </div>
   );
 }
-
-const styles = {
-  container: {
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    padding: '1rem',
-    maxWidth: '600px',
-    margin: '0 auto',
-    background: 'var(--color-bg)',
-    borderRadius: '8px',
-    position: 'relative',
-  },
-  liveIndicator: {
-    position: 'absolute',
-    top: '12px',
-    right: '12px',
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-    background: 'var(--color-success-text)',
-    display: 'block',
-    animation: 'pulse 2s infinite',
-  },
-  title: {
-    fontSize: '1.1rem',
-    fontWeight: 700,
-    color: 'var(--color-text-primary)',
-    marginBottom: '0.5rem',
-    lineHeight: 1.3,
-  },
-  description: {
-    fontSize: '0.85rem',
-    color: 'var(--color-text-secondary)',
-    lineHeight: 1.5,
-    marginBottom: '1rem',
-  },
-  progressSection: {
-    marginBottom: '1rem',
-  },
-  amounts: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    marginBottom: '0.5rem',
-  },
-  raisedAmount: {
-    fontSize: '1.25rem',
-    fontWeight: 800,
-    color: 'var(--color-text-primary)',
-  },
-  asset: {
-    fontSize: '0.85rem',
-    fontWeight: 600,
-    color: 'var(--color-accent)',
-    marginLeft: '0.25rem',
-  },
-  label: {
-    fontSize: '0.85rem',
-    color: 'var(--color-text-hint)',
-  },
-  target: {
-    fontSize: '0.9rem',
-    fontWeight: 700,
-    color: 'var(--color-accent)',
-  },
-  progressBar: {
-    background: 'var(--color-surface)',
-    borderRadius: '99px',
-    height: '8px',
-    marginBottom: '0.75rem',
-    overflow: 'hidden',
-  },
-  progressFill: {
-    background: 'linear-gradient(90deg, var(--color-accent) 0%, var(--color-accent-light) 100%)',
-    height: '100%',
-    borderRadius: '99px',
-    transition: 'width 0.5s ease',
-  },
-  stats: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    fontSize: '0.8rem',
-    color: 'var(--color-text-hint)',
-  },
-  ctaButton: {
-    display: 'block',
-    width: '100%',
-    padding: '0.75rem',
-    background: 'var(--color-accent)',
-    color: '#fff',
-    textAlign: 'center',
-    borderRadius: '6px',
-    fontWeight: 600,
-    fontSize: '0.95rem',
-    textDecoration: 'none',
-    transition: 'opacity 0.15s',
-  },
-  skeleton: {
-    height: '20px',
-    width: '70%',
-    background: 'var(--color-border)',
-    borderRadius: '4px',
-    marginBottom: '0.5rem',
-    animation: 'pulse 1.5s infinite',
-  },
-  skeletonShort: {
-    height: '14px',
-    width: '90%',
-    background: 'var(--color-border)',
-    borderRadius: '4px',
-    marginBottom: '1rem',
-    animation: 'pulse 1.5s infinite',
-  },
-  skeletonBar: {
-    height: '8px',
-    width: '100%',
-    background: 'var(--color-border)',
-    borderRadius: '99px',
-    animation: 'pulse 1.5s infinite',
-  },
-  error: {
-    color: 'var(--color-status-error)',
-    fontSize: '0.85rem',
-    textAlign: 'center',
-    padding: '1rem',
-  },
-};

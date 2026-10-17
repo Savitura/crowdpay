@@ -22,7 +22,9 @@ export default function Leaderboard() {
       </p>
 
       {error && <p className="alert alert--error">{error}</p>}
-      {!entries && !error && <p style={{ color: 'var(--color-text-hint)' }}>Loading leaderboard…</p>}
+      {!entries && !error && (
+        <p style={{ color: 'var(--color-text-hint)' }}>Loading leaderboard…</p>
+      )}
 
       {entries && entries.length === 0 && (
         <p className="alert alert--info">No contributions have been recorded yet.</p>
@@ -42,7 +44,10 @@ export default function Leaderboard() {
             </thead>
             <tbody>
               {entries.map((entry) => (
-                <tr key={entry.user_id} style={{ borderTop: '1px solid var(--color-border-lighter)' }}>
+                <tr
+                  key={entry.user_id}
+                  style={{ borderTop: '1px solid var(--color-border-lighter)' }}
+                >
                   <td style={{ padding: '0.6rem', fontWeight: 700 }}>{entry.rank}</td>
                   <td style={{ padding: '0.6rem' }}>{entry.name}</td>
                   <td style={{ padding: '0.6rem', textAlign: 'right' }}>
@@ -50,7 +55,9 @@ export default function Leaderboard() {
                       maximumFractionDigits: 2,
                     })}
                   </td>
-                  <td style={{ padding: '0.6rem', textAlign: 'right' }}>{entry.campaigns_backed}</td>
+                  <td style={{ padding: '0.6rem', textAlign: 'right' }}>
+                    {entry.campaigns_backed}
+                  </td>
                   <td style={{ padding: '0.6rem', textAlign: 'right' }}>{entry.badge_count}</td>
                 </tr>
               ))}

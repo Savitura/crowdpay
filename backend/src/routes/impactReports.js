@@ -8,7 +8,7 @@ const impactReportService = require('../services/impactReportService');
 const router = express.Router();
 
 // Helper: async error handler
-const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // Middleware: Campaign member verification
 const requireCampaignMember = (...allowedRoles) => {
@@ -71,27 +71,15 @@ router.post(
       .withMessage('Title is required')
       .isLength({ max: 255 })
       .withMessage('Title must be at most 255 characters'),
-    body('content')
-      .trim()
-      .notEmpty()
-      .withMessage('Content is required'),
+    body('content').trim().notEmpty().withMessage('Content is required'),
     body('summary')
       .optional()
       .trim()
       .isLength({ max: 500 })
       .withMessage('Summary must be at most 500 characters'),
-    body('images')
-      .optional()
-      .isArray()
-      .withMessage('Images must be an array'),
-    body('videos')
-      .optional()
-      .isArray()
-      .withMessage('Videos must be an array'),
-    body('milestones')
-      .optional()
-      .isArray()
-      .withMessage('Milestones must be an array'),
+    body('images').optional().isArray().withMessage('Images must be an array'),
+    body('videos').optional().isArray().withMessage('Videos must be an array'),
+    body('milestones').optional().isArray().withMessage('Milestones must be an array'),
   ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
@@ -135,28 +123,15 @@ router.put(
       .withMessage('Title cannot be empty')
       .isLength({ max: 255 })
       .withMessage('Title must be at most 255 characters'),
-    body('content')
-      .optional()
-      .trim()
-      .notEmpty()
-      .withMessage('Content cannot be empty'),
+    body('content').optional().trim().notEmpty().withMessage('Content cannot be empty'),
     body('summary')
       .optional()
       .trim()
       .isLength({ max: 500 })
       .withMessage('Summary must be at most 500 characters'),
-    body('images')
-      .optional()
-      .isArray()
-      .withMessage('Images must be an array'),
-    body('videos')
-      .optional()
-      .isArray()
-      .withMessage('Videos must be an array'),
-    body('milestones')
-      .optional()
-      .isArray()
-      .withMessage('Milestones must be an array'),
+    body('images').optional().isArray().withMessage('Images must be an array'),
+    body('videos').optional().isArray().withMessage('Videos must be an array'),
+    body('milestones').optional().isArray().withMessage('Milestones must be an array'),
   ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);

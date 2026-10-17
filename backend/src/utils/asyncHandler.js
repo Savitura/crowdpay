@@ -11,4 +11,4 @@
  * Without this wrapper, an uncaught async rejection in Express 4 causes the
  * client to receive an empty/hung response because Express never calls next(err).
  */
-module.exports = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+module.exports = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);

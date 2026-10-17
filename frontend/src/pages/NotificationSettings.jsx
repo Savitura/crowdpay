@@ -1,34 +1,39 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { api } from '../services/api';
-import { subscribeToPush, unsubscribeFromPush } from '../services/pushNotifications';
-
-const CHANNELS = [
-  { id: 'email', label: 'Email', icon: '✉' },
-  { id: 'push', label: 'Push', icon: '🔔' },
-  { id: 'in_app', label: 'In-app', icon: '💬' },
-];
+import CategoryFollows from '../components/CategoryFollows';
 
 const EVENT_TYPES = [
-  { id: 'campaign_update', label: 'Campaign updates', description: 'New updates posted on campaigns you support' },
-  { id: 'milestone_completion', label: 'Milestone completions', description: 'Milestones reached or approved' },
-  { id: 'funds_released', label: 'Fund release transparency', description: 'When backed campaign funds are released with usage details' },
-  { id: 'withdrawal', label: 'Withdrawal notifications', description: 'Withdrawal requests, approvals, and rejections' },
-  { id: 'dispute', label: 'Dispute notifications', description: 'Disputes opened, updated, or resolved' },
-  { id: 'referral_reward', label: 'Referral rewards', description: 'When a referral contribution is confirmed' },
-  { id: 'weekly_digest', label: 'Weekly digest', description: 'A summary of activity delivered once a week' },
+  {
+    id: 'campaign_updates',
+    label: 'Campaign updates',
+    description: 'New updates posted on campaigns you support',
+  },
+  { id: 'refunds', label: 'Refunds', description: 'Refunds and contribution receipts' },
+  {
+    id: 'disputes',
+    label: 'Dispute notifications',
+    description: 'Disputes opened, updated, or resolved',
+  },
+  {
+    id: 'milestones',
+    label: 'Milestone completions',
+    description: 'Milestones reached or approved',
+  },
+  {
+    id: 'marketing',
+    label: 'Marketing & Weekly digest',
+    description: 'A summary of activity delivered once a week',
+  },
+  {
+    id: 'category_digest',
+    label: 'Category digest',
+    description: 'New campaigns in the categories you follow, inside the weekly digest',
+  },
 ];
-
-function formatHour(h) {
-  if (h === null || h === undefined) return '';
-  const hour = Number(h);
-  if (isNaN(hour)) return '';
-  const period = hour >= 12 ? 'PM' : 'AM';
-  const display = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-  return `${display}:00 ${period}`;
-}
 
 function Toggle({ checked, onChange, disabled, label, id }) {
   return (
@@ -70,90 +75,31 @@ function SectionCard({ title, description, children }) {
 
 export default function NotificationSettings() {
   const { user, ready } = useAuth();
+  const { t } = useTranslation();
   const toast = useToast();
+  const [searchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-
-  // Channel-level enabled flags (derived from preferences)
-  const [channelEnabled, setChannelEnabled] = useState({ email: true, push: true, in_app: true });
-
-  // Quiet hours
-  const [quietStart, setQuietStart] = useState('');
-  const [quietEnd, setQuietEnd] = useState('');
-  const [quietEnabled, setQuietEnabled] = useState(false);
-
-  // Per-event-type per-channel preferences: { [eventType]: { [channel]: boolean } }
-  const [prefs, setPrefs] = useState({});
-
-  // Per-campaign overrides
-  const [campaigns, setCampaigns] = useState([]);
-  const [campaignOverrides, setCampaignOverrides] = useState({});
-  const [showCampaignSection, setShowCampaignSection] = useState(false);
+  const [prefs, setPrefs] = useState({
+    campaign_updates: true,
+    refunds: true,
+    disputes: true,
+    milestones: true,
+    marketing: false,
+    category_digest: true,
+  });
+  // Per-campaign overrides (#961). `campaignOverrides` only ever holds rows for
+  // campaigns the caller actually muted something for.
+  const [campaignOverrides, setCampaignOverrides] = useState([]);
+  const [overridesLoading, setOverridesLoading] = useState(true);
+  const [resetting, setResetting] = useState(false);
 
   const loadPreferences = useCallback(async () => {
     try {
-      const [prefRows, channelSettings, pushSubscription, myCampaigns] = await Promise.all([
-        api.getNotificationPreferences().catch(() => []),
-        api.getChannelSettings().catch(() => ({})),
-        api.getPushSubscriptionStatus().catch(() => ({ subscribed: false })),
-        // Only request the fields used by the per-campaign overrides section.
-        api
-          .getMyCampaigns({ limit: 50, fields: 'id,title,status,raised_amount' })
-          .catch(() => ({ data: [] })),
-      ]);
-
-      // Build preference map from rows
-      const prefMap = {};
-      if (Array.isArray(prefRows)) {
-        for (const row of prefRows) {
-          if (!prefMap[row.event_type]) prefMap[row.event_type] = {};
-          prefMap[row.event_type][row.channel] = row.enabled;
-        }
+      const data = await api.getNotificationPreferences();
+      if (data) {
+        setPrefs((prev) => ({ ...prev, ...data }));
       }
-      setPrefs(prefMap);
-
-      // Derive channel-level enabled from the "campaign_update" event as a proxy,
-      // or default to true if no preferences exist yet
-      const chEnabled = {};
-      for (const ch of CHANNELS) {
-        const proxyEvent = prefMap['campaign_update'];
-        if (proxyEvent && proxyEvent[ch.id] !== undefined) {
-          chEnabled[ch.id] = proxyEvent[ch.id];
-        } else {
-          chEnabled[ch.id] = true;
-        }
-      }
-      chEnabled.push = pushSubscription.subscribed;
-      setChannelEnabled(chEnabled);
-
-      // Quiet hours from channel settings
-      const qs = channelSettings?.quiet_hours_start;
-      const qe = channelSettings?.quiet_hours_end;
-      if (qs !== null && qs !== undefined && qe !== null && qe !== undefined) {
-        setQuietEnabled(true);
-        setQuietStart(String(qs));
-        setQuietEnd(String(qe));
-      }
-
-      // Campaigns for per-campaign overrides (API returns { data, pagination })
-      const campList = (myCampaigns?.data || []).filter(
-        (c) => c.status === 'active' || c.status === 'funded'
-      );
-      setCampaigns(campList);
-
-      // Build campaign override map from preferences
-      const overrides = {};
-      if (Array.isArray(prefRows)) {
-        for (const row of prefRows) {
-          if (row.event_type?.startsWith('campaign_') && row.event_type.includes(':')) {
-            const campId = row.event_type.split(':').pop();
-            if (!overrides[campId]) overrides[campId] = {};
-            overrides[campId][row.channel] = row.enabled;
-          }
-        }
-      }
-      setCampaignOverrides(overrides);
     } catch (err) {
       toast(err.message || 'Failed to load notification settings', 'error');
     } finally {
@@ -161,117 +107,112 @@ export default function NotificationSettings() {
     }
   }, [toast]);
 
+  // Handle unsubscribe links from emails
   useEffect(() => {
-    loadPreferences();
-  }, [loadPreferences]);
+    const email = searchParams.get('email');
+    const category = searchParams.get('category');
+    const sig = searchParams.get('sig');
+    const campaignId = searchParams.get('campaign_id');
 
-  const handleChannelToggle = useCallback(
-    async (channelId, enabled) => {
-      setChannelEnabled((prev) => ({ ...prev, [channelId]: enabled }));
-
-      // Also toggle all event types for this channel
-      setPrefs((prev) => {
-        const next = { ...prev };
-        for (const evt of EVENT_TYPES) {
-          if (!next[evt.id]) next[evt.id] = {};
-          next[evt.id] = { ...next[evt.id], [channelId]: enabled };
-        }
-        return next;
-      });
-
-      try {
-        if (channelId === 'push') {
-          if (enabled) {
-            const token = await subscribeToPush();
-            await api.registerPushSubscription(token);
-          } else {
-            const token = await unsubscribeFromPush();
-            if (token) await api.removePushSubscription(token);
-          }
-        }
-        // Save each event type preference for this channel
-        const promises = EVENT_TYPES.map((evt) =>
-          api.updateNotificationPreference({
-            event_type: evt.id,
-            channel: channelId,
-            enabled,
-          })
-        );
-        await Promise.all(promises);
-        toast(
-          `${channelId === 'in_app' ? 'In-app' : channelId.charAt(0).toUpperCase() + channelId.slice(1)} notifications ${enabled ? 'enabled' : 'disabled'}`,
-          'success'
-        );
-      } catch (err) {
-        toast(err.message || 'Failed to update channel settings', 'error');
-      }
-    },
-    [toast]
-  );
-
-  const handleEventTypeToggle = useCallback(
-    async (eventTypeId, channelId, enabled) => {
-      setPrefs((prev) => {
-        const next = { ...prev };
-        if (!next[eventTypeId]) next[eventTypeId] = {};
-        next[eventTypeId] = { ...next[eventTypeId], [channelId]: enabled };
-        return next;
-      });
-
-      try {
-        await api.updateNotificationPreference({
-          event_type: eventTypeId,
-          channel: channelId,
-          enabled,
+    if (email && category && sig) {
+      api
+        .unsubscribeEmail({ email, category, sig, campaign_id: campaignId })
+        .then(() => {
+          toast('Successfully unsubscribed', 'success');
+          loadPreferences(); // reload to show new state
+        })
+        .catch((err) => {
+          toast(err.response?.data?.error || err.message || 'Failed to unsubscribe', 'error');
         });
-      } catch (err) {
-        toast(err.message || 'Failed to save preference', 'error');
-      }
-    },
-    [toast]
-  );
-
-  const handleQuietHoursSave = useCallback(async () => {
-    if (quietEnabled && (quietStart === '' || quietEnd === '')) {
-      toast('Please set both start and end times for quiet hours', 'error');
-      return;
+    } else {
+      loadPreferences();
     }
+  }, [loadPreferences, searchParams, toast]);
 
-    setSaving(true);
+  const handleToggle = async (key, enabled) => {
+    const newPrefs = { ...prefs, [key]: enabled };
+    setPrefs(newPrefs);
     try {
-      await api.updateChannelSettings({
-        quiet_hours_start: quietEnabled ? Number(quietStart) : null,
-        quiet_hours_end: quietEnabled ? Number(quietEnd) : null,
-      });
-      toast('Quiet hours updated', 'success');
+      await api.updateNotificationPreference(newPrefs);
     } catch (err) {
-      toast(err.message || 'Failed to save quiet hours', 'error');
-    } finally {
-      setSaving(false);
+      toast(err.message || 'Failed to save preference', 'error');
+      setPrefs(prefs); // revert
     }
-  }, [quietEnabled, quietStart, quietEnd, toast]);
+  };
 
-  const handleCampaignOverride = useCallback(
-    async (campaignId, channelId, enabled) => {
-      setCampaignOverrides((prev) => {
-        const next = { ...prev };
-        if (!next[campaignId]) next[campaignId] = {};
-        next[campaignId] = { ...next[campaignId], [channelId]: enabled };
-        return next;
+  // Per-campaign overrides are a separate resource from the account-level
+  // switches, so they load (and fail) independently of `prefs`.
+  useEffect(() => {
+    let active = true;
+    api
+      .getMyCommunicationPreferences()
+      .then((data) => {
+        if (active) setCampaignOverrides(data?.campaigns || []);
+      })
+      .catch(() => {
+        if (active) setCampaignOverrides([]);
+      })
+      .finally(() => {
+        if (active) setOverridesLoading(false);
       });
+    return () => {
+      active = false;
+    };
+  }, []);
 
-      try {
-        await api.updateNotificationPreference({
-          event_type: `campaign_override:${campaignId}`,
-          channel: channelId,
-          enabled,
-        });
-      } catch (err) {
-        toast(err.message || 'Failed to save campaign override', 'error');
-      }
-    },
-    [toast]
-  );
+  const handleResetCampaignOverrides = async () => {
+    setResetting(true);
+    try {
+      await api.resetMyCommunicationPreferences();
+      setCampaignOverrides([]);
+      toast(t('communicationPreferences.reset'), 'success');
+    } catch (err) {
+      toast(err.message || t('communicationPreferences.saveError'), 'error');
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  const handleQuickSetting = async (mode) => {
+    let newPrefs;
+    if (mode === 'everything') {
+      newPrefs = {
+        campaign_updates: true,
+        refunds: true,
+        disputes: true,
+        milestones: true,
+        marketing: true,
+        category_digest: true,
+      };
+    } else if (mode === 'important') {
+      newPrefs = {
+        campaign_updates: true,
+        refunds: true,
+        disputes: true,
+        milestones: true,
+        marketing: false,
+        category_digest: true,
+      };
+    } else if (mode === 'nothing') {
+      newPrefs = {
+        campaign_updates: false,
+        refunds: false,
+        disputes: false,
+        milestones: false,
+        marketing: false,
+        category_digest: false,
+      };
+    }
+
+    setPrefs(newPrefs);
+    try {
+      await api.updateNotificationPreference(newPrefs);
+      toast('Preferences updated', 'success');
+    } catch (err) {
+      toast(err.message || 'Failed to save preference', 'error');
+      loadPreferences();
+    }
+  };
 
   if (!ready) {
     return (
@@ -285,7 +226,11 @@ export default function NotificationSettings() {
     return (
       <main className="container page-narrow" style={{ paddingTop: '3rem' }}>
         <p className="alert alert--error">
-          Please <Link to="/login" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>log in</Link> to manage notification settings.
+          Please{' '}
+          <Link to="/login" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
+            log in
+          </Link>{' '}
+          to manage notification settings.
         </p>
       </main>
     );
@@ -294,7 +239,9 @@ export default function NotificationSettings() {
   if (loading) {
     return (
       <main className="container page-narrow notif-settings" style={{ paddingTop: '3rem' }}>
-        <h1 style={{ fontSize: '1.75rem', fontWeight: 800, marginBottom: '1.5rem' }}>Notification Settings</h1>
+        <h1 style={{ fontSize: '1.75rem', fontWeight: 800, marginBottom: '1.5rem' }}>
+          Notification Settings
+        </h1>
         <div className="campaign-card">
           <p style={{ color: 'var(--color-text-hint)' }}>Loading your preferences…</p>
         </div>
@@ -303,7 +250,10 @@ export default function NotificationSettings() {
   }
 
   return (
-    <main className="container page-narrow notif-settings" style={{ paddingTop: '3rem', paddingBottom: '4rem' }}>
+    <main
+      className="container page-narrow notif-settings"
+      style={{ paddingTop: '3rem', paddingBottom: '4rem' }}
+    >
       <div style={{ marginBottom: '1.5rem' }}>
         <Link
           to="/profile"
@@ -320,194 +270,121 @@ export default function NotificationSettings() {
         Control how and when you receive notifications from CrowdPay.
       </p>
 
-      {/* ── Channel Toggles ─────────────────────────────────── */}
+      <SectionCard title="Quick Settings" description="Quickly set your email preferences.">
+        <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+          <button className="btn-secondary" onClick={() => handleQuickSetting('everything')}>
+            Email me everything
+          </button>
+          <button className="btn-secondary" onClick={() => handleQuickSetting('important')}>
+            Important only
+          </button>
+          <button className="btn-secondary" onClick={() => handleQuickSetting('nothing')}>
+            Email me nothing
+          </button>
+        </div>
+      </SectionCard>
+
       <SectionCard
-        title="Notification channels"
-        description="Turn entire channels on or off. Disabling a channel silences all notifications delivered through it."
+        title="Email Notifications"
+        description="Choose which categories of emails you want to receive."
       >
-        <div className="notif-settings__channel-list">
-          {CHANNELS.map((ch) => (
-            <div key={ch.id} className="notif-settings__channel-row">
-              <div className="notif-settings__channel-info">
-                <span className="notif-settings__channel-icon" aria-hidden="true">{ch.icon}</span>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{ch.label}</div>
-                  <div style={{ color: 'var(--color-text-hint)', fontSize: '0.8rem' }}>
-                    {ch.id === 'email'
-                      ? 'Delivered to your email address'
-                      : ch.id === 'push'
-                        ? 'Browser and mobile push alerts'
-                        : 'Shown in the CrowdPay notification center'}
-                  </div>
-                </div>
+        <div className="notif-settings__types-table">
+          {EVENT_TYPES.map((evt) => (
+            <div
+              key={evt.id}
+              className="notif-settings__types-row"
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                padding: '1rem 0',
+                borderBottom: '1px solid #eceef1',
+              }}
+            >
+              <div className="notif-settings__types-info">
+                <span style={{ fontWeight: 600, fontSize: '0.9rem', display: 'block' }}>
+                  {evt.label}
+                </span>
+                <span style={{ color: 'var(--color-text-hint)', fontSize: '0.8rem' }}>
+                  {evt.description}
+                </span>
               </div>
-              <Toggle
-                id={`channel-${ch.id}`}
-                checked={channelEnabled[ch.id]}
-                onChange={(enabled) => handleChannelToggle(ch.id, enabled)}
-                label={`Toggle ${ch.label}`}
-              />
+              <div className="notif-settings__types-channels">
+                <Toggle
+                  id={`pref-${evt.id}`}
+                  checked={prefs[evt.id]}
+                  onChange={(enabled) => handleToggle(evt.id, enabled)}
+                  label=""
+                />
+              </div>
             </div>
           ))}
         </div>
       </SectionCard>
 
-      {/* ── Quiet Hours ─────────────────────────────────────── */}
+      {/* Per-campaign overrides (#961). Empty until the caller mutes a channel
+          on a specific campaign, which is why this is its own section rather
+          than another row in the table above. */}
       <SectionCard
-        title="Quiet hours"
-        description="Pause non-critical notifications during specific hours. Critical alerts (disputes, withdrawals) are always delivered."
+        title={t('communicationPreferences.title')}
+        description={t('communicationPreferences.subtitle')}
       >
-        <Toggle
-          id="quiet-hours-toggle"
-          checked={quietEnabled}
-          onChange={setQuietEnabled}
-          label="Enable quiet hours"
-        />
-        {quietEnabled && (
-          <div className="notif-settings__quiet-form">
-            <div className="notif-settings__time-group">
-              <label htmlFor="quiet-start" className="label-strong" style={{ fontSize: '0.875rem' }}>
-                Start time
-              </label>
-              <select
-                id="quiet-start"
-                value={quietStart}
-                onChange={(e) => setQuietStart(e.target.value)}
-                style={{ maxWidth: '160px' }}
-              >
-                <option value="">Select…</option>
-                {Array.from({ length: 24 }, (_, i) => (
-                  <option key={i} value={i}>
-                    {formatHour(i)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="notif-settings__time-group">
-              <label htmlFor="quiet-end" className="label-strong" style={{ fontSize: '0.875rem' }}>
-                End time
-              </label>
-              <select
-                id="quiet-end"
-                value={quietEnd}
-                onChange={(e) => setQuietEnd(e.target.value)}
-                style={{ maxWidth: '160px' }}
-              >
-                <option value="">Select…</option>
-                {Array.from({ length: 24 }, (_, i) => (
-                  <option key={i} value={i}>
-                    {formatHour(i)}
-                  </option>
-                ))}
-              </select>
-            </div>
+        {overridesLoading ? (
+          <p role="status" style={{ color: 'var(--color-text-hint)' }}>
+            {t('communicationPreferences.loading')}
+          </p>
+        ) : campaignOverrides.length === 0 ? (
+          <p style={{ color: 'var(--color-text-hint)' }}>
+            {t('communicationPreferences.noOverrides')}
+          </p>
+        ) : (
+          <div style={{ display: 'grid', gap: '0.75rem' }}>
+            {campaignOverrides.map((row) => {
+              const muted = [
+                'updates',
+                'milestones',
+                'funding_updates',
+                'messages',
+                'surveys',
+              ].filter((channel) => row[channel] === false);
+              return (
+                <div
+                  key={row.campaign_id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '1rem',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <Link
+                    to={`/campaigns/${row.campaign_id}`}
+                    style={{ color: 'var(--color-accent)', fontWeight: 600 }}
+                  >
+                    {row.title}
+                  </Link>
+                  <span style={{ color: 'var(--color-text-hint)', fontSize: '0.8rem' }}>
+                    {muted
+                      .map((channel) => t(`communicationPreferences.channels.${channel}`))
+                      .join(', ')}
+                  </span>
+                </div>
+              );
+            })}
             <button
               type="button"
-              className="btn-primary"
-              onClick={handleQuietHoursSave}
-              disabled={saving}
-              style={{ marginTop: '0.5rem', alignSelf: 'flex-start' }}
+              className="btn-secondary"
+              onClick={handleResetCampaignOverrides}
+              disabled={resetting}
+              style={{ justifySelf: 'start' }}
             >
-              {saving ? 'Saving…' : 'Save quiet hours'}
+              {resetting
+                ? t('communicationPreferences.resetting')
+                : t('communicationPreferences.reset')}
             </button>
           </div>
         )}
       </SectionCard>
-
-      {/* ── Notification Types ──────────────────────────────── */}
-      <SectionCard
-        title="Notification types"
-        description="Choose which events trigger notifications and on which channels."
-      >
-        <div className="notif-settings__types-table">
-          <div className="notif-settings__types-header">
-            <span className="notif-settings__types-label">Event</span>
-            <div className="notif-settings__types-channels">
-              {CHANNELS.filter((ch) => channelEnabled[ch.id]).map((ch) => (
-                <span key={ch.id} className="notif-settings__types-ch-label" title={ch.label}>
-                  {ch.icon}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          {EVENT_TYPES.map((evt) => {
-            const evtPrefs = prefs[evt.id] || {};
-            return (
-              <div key={evt.id} className="notif-settings__types-row">
-                <div className="notif-settings__types-info">
-                  <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{evt.label}</span>
-                  <span style={{ color: 'var(--color-text-hint)', fontSize: '0.8rem' }}>
-                    {evt.description}
-                  </span>
-                </div>
-                <div className="notif-settings__types-channels">
-                  {CHANNELS.filter((ch) => channelEnabled[ch.id]).map((ch) => (
-                    <Toggle
-                      key={ch.id}
-                      id={`pref-${evt.id}-${ch.id}`}
-                      checked={evtPrefs[ch.id] !== false}
-                      onChange={(enabled) => handleEventTypeToggle(evt.id, ch.id, enabled)}
-                      label={`${evt.label} via ${ch.label}`}
-                    />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </SectionCard>
-
-      {/* ── Per-Campaign Overrides ──────────────────────────── */}
-      {campaigns.length > 0 && (
-        <SectionCard
-          title="Campaign overrides"
-          description="Override notification settings for individual campaigns you manage."
-        >
-          {!showCampaignSection ? (
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => setShowCampaignSection(true)}
-              style={{ alignSelf: 'flex-start' }}
-            >
-              Configure campaign overrides
-            </button>
-          ) : (
-            <div className="notif-settings__campaign-list">
-              {campaigns.map((camp) => {
-                const overrides = campaignOverrides[camp.id] || {};
-                return (
-                  <div key={camp.id} className="notif-settings__campaign-item">
-                    <div className="notif-settings__campaign-info">
-                      <Link
-                        to={`/campaigns/${camp.id}`}
-                        style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--color-accent)' }}
-                      >
-                        {camp.title}
-                      </Link>
-                      <span style={{ color: 'var(--color-text-hint)', fontSize: '0.8rem' }}>
-                        {camp.status} · ${Number(camp.raised_amount || 0).toLocaleString()} raised
-                      </span>
-                    </div>
-                    <div className="notif-settings__campaign-toggles">
-                      {CHANNELS.filter((ch) => channelEnabled[ch.id]).map((ch) => (
-                        <Toggle
-                          key={ch.id}
-                          id={`camp-${camp.id}-${ch.id}`}
-                          checked={overrides[ch.id] !== false}
-                          onChange={(enabled) => handleCampaignOverride(camp.id, ch.id, enabled)}
-                          label={`${ch.label} for ${camp.title}`}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </SectionCard>
-      )}
     </main>
   );
 }

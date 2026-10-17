@@ -51,8 +51,8 @@ export default function TreasuryPolicyForm({ campaignId, initialPolicy = {}, onS
   return (
     <form onSubmit={submit} aria-label="Treasury policy">
       <p style={{ color: 'var(--color-text-muted)' }}>
-        These rules are enforced by the Soroban contract that holds the funds, not by CrowdPay.
-        Once the treasury is deployed they cannot be changed.
+        These rules are enforced by the Soroban contract that holds the funds, not by CrowdPay. Once
+        the treasury is deployed they cannot be changed.
       </p>
 
       <label htmlFor="minHoldDays">
@@ -110,8 +110,8 @@ export default function TreasuryPolicyForm({ campaignId, initialPolicy = {}, onS
         Refund contributors automatically if the goal is missed
       </label>
       <small style={{ color: 'var(--color-text-muted)' }}>
-        Anyone can trigger the refund once the deadline passes, so contributors are not dependent
-        on you or CrowdPay acting.
+        Anyone can trigger the refund once the deadline passes, so contributors are not dependent on
+        you or CrowdPay acting.
       </small>
 
       {error && <p style={{ color: 'var(--color-danger)' }}>{error}</p>}

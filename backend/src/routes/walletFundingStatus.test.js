@@ -14,13 +14,15 @@ const mockAuthMiddleware = {
 test('retry-wallet-funding returns error for non-custodial wallets', async () => {
   const mockDb = {
     query: async () => ({
-      rows: [{
-        id: 'user-freighter',
-        email: 'freighter@test.com',
-        name: 'Freighter User',
-        wallet_public_key: 'G_FREIGHTER_PUB',
-        wallet_type: 'freighter',
-      }],
+      rows: [
+        {
+          id: 'user-freighter',
+          email: 'freighter@test.com',
+          name: 'Freighter User',
+          wallet_public_key: 'G_FREIGHTER_PUB',
+          wallet_type: 'freighter',
+        },
+      ],
     }),
   };
 
@@ -44,27 +46,32 @@ test('retry-wallet-funding returns error for non-custodial wallets', async () =>
 
   const res = await request(app).post('/api/users/retry-wallet-funding');
   assert.equal(res.status, 400);
-  assert.equal(res.body.error, 'Non-custodial (freighter) wallets do not require background funding');
+  assert.equal(
+    res.body.error,
+    'Non-custodial (freighter) wallets do not require background funding'
+  );
 });
 
 test('retry-wallet-funding succeeds and updates DB when stellar funding succeeds', async () => {
   let updatedDb = false;
 
   const mockDb = {
-    query: async (text) => {
+    query: async text => {
       if (text.includes('UPDATE users SET wallet_funded_at')) {
         updatedDb = true;
         return { rows: [] };
       }
       return {
-        rows: [{
-          id: 'user-custodial',
-          email: 'custodial@test.com',
-          name: 'Custodial User',
-          wallet_public_key: 'GCUSTODIAL_PUB',
-          wallet_secret_encrypted: 'cpws:v1:fake',
-          wallet_type: 'custodial',
-        }],
+        rows: [
+          {
+            id: 'user-custodial',
+            email: 'custodial@test.com',
+            name: 'Custodial User',
+            wallet_public_key: 'GCUSTODIAL_PUB',
+            wallet_secret_encrypted: 'cpws:v1:fake',
+            wallet_type: 'custodial',
+          },
+        ],
       };
     },
   };
@@ -101,20 +108,22 @@ test('retry-wallet-funding marks failure and sends email notification when fundi
   let emailSent = false;
 
   const mockDb = {
-    query: async (text) => {
+    query: async text => {
       if (text.includes('UPDATE users SET wallet_funding_failed_at')) {
         failedDbUpdate = true;
         return { rows: [] };
       }
       return {
-        rows: [{
-          id: 'user-custodial-failed',
-          email: 'failed@test.com',
-          name: 'Failed User',
-          wallet_public_key: 'GFAILED_PUB',
-          wallet_secret_encrypted: 'cpws:v1:fake',
-          wallet_type: 'custodial',
-        }],
+        rows: [
+          {
+            id: 'user-custodial-failed',
+            email: 'failed@test.com',
+            name: 'Failed User',
+            wallet_public_key: 'GFAILED_PUB',
+            wallet_secret_encrypted: 'cpws:v1:fake',
+            wallet_type: 'custodial',
+          },
+        ],
       };
     },
   };

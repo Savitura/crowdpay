@@ -1,5 +1,5 @@
-/* eslint-disable */
 import React from 'react';
+import PropTypes from 'prop-types';
 import * as Sentry from '@sentry/react';
 
 export default class ErrorBoundary extends React.Component {
@@ -39,10 +39,19 @@ export default class ErrorBoundary extends React.Component {
               An unexpected error occurred. Your data is safe — try reloading the page.
             </p>
             <div style={styles.actions}>
-              <button type="button" className="btn-primary" onClick={() => window.location.reload()}>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => window.location.reload()}
+              >
                 Reload page
               </button>
-              <button type="button" className="btn-secondary" onClick={this.handleReportClick} style={{ marginTop: '0.75rem' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={this.handleReportClick}
+                style={{ marginTop: '0.75rem' }}
+              >
                 Report this issue
               </button>
             </div>
@@ -81,4 +90,8 @@ const styles = {
     flexDirection: 'column',
     alignItems: 'center',
   },
+};
+
+ErrorBoundary.propTypes = {
+  children: PropTypes.node.isRequired,
 };

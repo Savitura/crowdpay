@@ -21,12 +21,16 @@ class UnleashAdapter {
   isEnabled(flagKey, context = {}) {
     if (!this.client) return false;
     try {
-      return this.client.isEnabled(flagKey, {
-        userId: context.userId,
-        sessionId: context.sessionId,
-        remoteAddress: context.ip,
-        properties: context.custom,
-      }, false);
+      return this.client.isEnabled(
+        flagKey,
+        {
+          userId: context.userId,
+          sessionId: context.sessionId,
+          remoteAddress: context.ip,
+          properties: context.custom,
+        },
+        false
+      );
     } catch {
       return false;
     }

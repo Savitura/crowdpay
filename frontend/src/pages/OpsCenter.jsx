@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   ResponsiveContainer,
   LineChart,
@@ -10,6 +11,7 @@ import {
 } from 'recharts';
 
 export default function OpsCenter() {
+  const { t } = useTranslation();
   const [apiKey, setApiKey] = useState(
     () => localStorage.getItem('cp_ops_api_key') || sessionStorage.getItem('cp_ops_api_key') || ''
   );
@@ -43,9 +45,21 @@ export default function OpsCenter() {
     async (url, options = {}) => {
       const headers = {
         'Content-Type': 'application/json',
-        'ops_api_key': apiKey,
+        ops_api_key: apiKey,
         ...options.headers,
       };
+      // OpsCenter is API-key authenticated, but same-origin browsers still
+      // carry the `cp_csrf` cookie, so mutating requests must echo it in the
+      // x-csrf-token header or the global csrfProtection middleware rejects
+      // them with 403 (#801).
+      if (
+        options.method &&
+        options.method.toUpperCase() !== 'GET' &&
+        typeof document !== 'undefined'
+      ) {
+        const match = document.cookie.match(/(?:^|; )cp_csrf=([^;]*)/);
+        if (match) headers['x-csrf-token'] = decodeURIComponent(match[1]);
+      }
       const res = await fetch(url, { ...options, headers });
       if (res.status === 401) {
         throw new Error('UNAUTHORIZED_OPS');
@@ -55,52 +69,55 @@ export default function OpsCenter() {
     [apiKey]
   );
 
-  const loadDashboardData = useCallback(async (isRefresh = false) => {
-    if (!apiKey) return;
-    if (isRefresh) setRefreshing(true);
-    else setLoading(true);
-    setErrorMsg('');
+  const loadDashboardData = useCallback(
+    async (isRefresh = false) => {
+      if (!apiKey) return;
+      if (isRefresh) setRefreshing(true);
+      else setLoading(true);
+      setErrorMsg('');
 
-    try {
-      // 1. Health data
-      const healthRes = await fetchWithAuth(`/api/ops/health${isRefresh ? '?fresh=true' : ''}`);
-      if (healthRes.ok) {
-        const hJson = await healthRes.json();
-        setHealthData(hJson.data);
-      }
+      try {
+        // 1. Health data
+        const healthRes = await fetchWithAuth(`/api/ops/health${isRefresh ? '?fresh=true' : ''}`);
+        if (healthRes.ok) {
+          const hJson = await healthRes.json();
+          setHealthData(hJson.data);
+        }
 
-      // 2. Open Incidents
-      const openIncRes = await fetchWithAuth('/api/ops/incidents?status=open');
-      if (openIncRes.ok) {
-        const incJson = await openIncRes.json();
-        setIncidents(incJson.incidents || []);
-      }
+        // 2. Open Incidents
+        const openIncRes = await fetchWithAuth('/api/ops/incidents?status=open');
+        if (openIncRes.ok) {
+          const incJson = await openIncRes.json();
+          setIncidents(incJson.incidents || []);
+        }
 
-      // 3. Resolved Incidents
-      const resIncRes = await fetchWithAuth('/api/ops/incidents?status=resolved&limit=10');
-      if (resIncRes.ok) {
-        const resJson = await resIncRes.json();
-        setResolvedIncidents(resJson.incidents || []);
-      }
+        // 3. Resolved Incidents
+        const resIncRes = await fetchWithAuth('/api/ops/incidents?status=resolved&limit=10');
+        if (resIncRes.ok) {
+          const resJson = await resIncRes.json();
+          setResolvedIncidents(resJson.incidents || []);
+        }
 
-      // 4. Wallet audit
-      const auditRes = await fetchWithAuth('/api/ops/campaigns/wallet-audit');
-      if (auditRes.ok) {
-        const aJson = await auditRes.json();
-        setWalletAudit(aJson.wallets || []);
+        // 4. Wallet audit
+        const auditRes = await fetchWithAuth('/api/ops/campaigns/wallet-audit');
+        if (auditRes.ok) {
+          const aJson = await auditRes.json();
+          setWalletAudit(aJson.wallets || []);
+        }
+      } catch (err) {
+        if (err.message === 'UNAUTHORIZED_OPS') {
+          setAuthError('Authentication failed: Invalid OPS_API_KEY.');
+          setApiKey('');
+        } else {
+          setErrorMsg(err.message || 'Failed to fetch operations data.');
+        }
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-    } catch (err) {
-      if (err.message === 'UNAUTHORIZED_OPS') {
-        setAuthError('Authentication failed: Invalid OPS_API_KEY.');
-        setApiKey('');
-      } else {
-        setErrorMsg(err.message || 'Failed to fetch operations data.');
-      }
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [apiKey, fetchWithAuth]);
+    },
+    [apiKey, fetchWithAuth]
+  );
 
   // Initial load and 30s auto-refresh
   useEffect(() => {
@@ -174,9 +191,12 @@ export default function OpsCenter() {
 
   const handleApproveWalletFunding = async (campaignId) => {
     try {
-      const res = await fetchWithAuth(`/api/ops/campaigns/wallet-audit/${campaignId}/approve-funding`, {
-        method: 'POST',
-      });
+      const res = await fetchWithAuth(
+        `/api/ops/campaigns/wallet-audit/${campaignId}/approve-funding`,
+        {
+          method: 'POST',
+        }
+      );
       if (res.ok) {
         const json = await res.json();
         window.alert(json.message);
@@ -196,7 +216,10 @@ export default function OpsCenter() {
       if (res.ok) {
         const json = await res.json();
         const formatted = (json.history || []).map((h) => ({
-          time: new Date(h.collected_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          time: new Date(h.collected_at).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
           value: parseFloat(h.metric_value),
         }));
         setHistoryData(formatted);
@@ -217,7 +240,8 @@ export default function OpsCenter() {
             <div style={styles.authBadge}>SECURITY GATED</div>
             <h2 style={styles.authTitle}>Operations Centre</h2>
             <p style={styles.authSubtitle}>
-              Please enter your <code>OPS_API_KEY</code> to access real-time system health, incident response, and automated runbooks.
+              Please enter your <code>OPS_API_KEY</code> to access real-time system health, incident
+              response, and automated runbooks.
             </p>
           </div>
 
@@ -230,7 +254,7 @@ export default function OpsCenter() {
                 type="password"
                 value={tempKey}
                 onChange={(e) => setTempKey(e.target.value)}
-                placeholder="Enter key (e.g. ops_secret_dev_key)"
+                placeholder={t('opsCenter.apiKeyPlaceholder')}
                 required
                 style={styles.input}
               />
@@ -244,7 +268,10 @@ export default function OpsCenter() {
                 onChange={(e) => setRememberKey(e.target.checked)}
                 style={{ cursor: 'pointer' }}
               />
-              <label htmlFor="rememberKey" style={{ fontSize: '0.85rem', color: '#94a3b8', cursor: 'pointer' }}>
+              <label
+                htmlFor="rememberKey"
+                style={{ fontSize: '0.85rem', color: '#94a3b8', cursor: 'pointer' }}
+              >
                 Remember key in this browser session
               </label>
             </div>
@@ -296,8 +323,18 @@ export default function OpsCenter() {
             </div>
           </div>
           <div style={styles.scoreMeta}>
-            <div style={{ ...styles.statusPill, backgroundColor: `${scoreColor}22`, color: scoreColor }}>
-              {score >= 85 ? 'SYSTEM OPERATIONAL' : score >= 60 ? 'DEGRADED PERFORMANCE' : 'CRITICAL INCIDENTS'}
+            <div
+              style={{
+                ...styles.statusPill,
+                backgroundColor: `${scoreColor}22`,
+                color: scoreColor,
+              }}
+            >
+              {score >= 85
+                ? 'SYSTEM OPERATIONAL'
+                : score >= 60
+                  ? 'DEGRADED PERFORMANCE'
+                  : 'CRITICAL INCIDENTS'}
             </div>
             <div style={styles.lastCollected}>
               Last collection:{' '}
@@ -316,15 +353,23 @@ export default function OpsCenter() {
         >
           <div style={styles.cardHeader}>
             <span style={styles.cardTitle}>Horizon Node Health</span>
-            <span style={{ ...styles.badge, backgroundColor: healthData?.horizon?.testnet?.ok ? '#10b98122' : '#ef444422', color: healthData?.horizon?.testnet?.ok ? '#10b981' : '#ef4444' }}>
+            <span
+              style={{
+                ...styles.badge,
+                backgroundColor: healthData?.horizon?.testnet?.ok ? '#10b98122' : '#ef444422',
+                color: healthData?.horizon?.testnet?.ok ? '#10b981' : '#ef4444',
+              }}
+            >
               {healthData?.horizon?.testnet?.ok ? 'ONLINE' : 'DOWN'}
             </span>
           </div>
           <div style={styles.metricVal}>
-            {healthData?.horizon?.testnet?.latency_ms ?? 0} <span style={styles.metricUnit}>ms</span>
+            {healthData?.horizon?.testnet?.latency_ms ?? 0}{' '}
+            <span style={styles.metricUnit}>ms</span>
           </div>
           <div style={styles.cardDetail}>
-            Ledger staleness: <strong>{healthData?.horizon?.ledger?.staleness_seconds ?? 0}s</strong>
+            Ledger staleness:{' '}
+            <strong>{healthData?.horizon?.ledger?.staleness_seconds ?? 0}s</strong>
           </div>
           <div style={styles.sparkHint}>📈 Click to view 24h latency chart</div>
         </div>
@@ -337,7 +382,9 @@ export default function OpsCenter() {
             </span>
           </div>
           <div style={styles.metricVal}>
-            {healthData?.sse_streams?.dropped_count === 0 ? '0' : healthData?.sse_streams?.dropped_count}
+            {healthData?.sse_streams?.dropped_count === 0
+              ? '0'
+              : healthData?.sse_streams?.dropped_count}
             <span style={styles.metricUnit}> dropped</span>
           </div>
           <div style={styles.cardDetail}>
@@ -351,8 +398,10 @@ export default function OpsCenter() {
             <span
               style={{
                 ...styles.badge,
-                backgroundColor: (healthData?.platform_wallet?.balance_xlm ?? 0) >= 10 ? '#10b98122' : '#ef444422',
-                color: (healthData?.platform_wallet?.balance_xlm ?? 0) >= 10 ? '#10b981' : '#ef4444',
+                backgroundColor:
+                  (healthData?.platform_wallet?.balance_xlm ?? 0) >= 10 ? '#10b98122' : '#ef444422',
+                color:
+                  (healthData?.platform_wallet?.balance_xlm ?? 0) >= 10 ? '#10b981' : '#ef4444',
               }}
             >
               {(healthData?.platform_wallet?.balance_xlm ?? 0) >= 10 ? 'HEALTHY' : 'LOW BALANCE'}
@@ -363,7 +412,9 @@ export default function OpsCenter() {
             <span style={styles.metricUnit}>XLM</span>
           </div>
           <div style={styles.cardDetail}>
-            Pending txs: <strong>{healthData?.platform_wallet?.pending_transactions_count ?? 0}</strong> (Est. needed: {healthData?.platform_wallet?.estimated_xlm_needed ?? 0} XLM)
+            Pending txs:{' '}
+            <strong>{healthData?.platform_wallet?.pending_transactions_count ?? 0}</strong> (Est.
+            needed: {healthData?.platform_wallet?.estimated_xlm_needed ?? 0} XLM)
           </div>
         </div>
       </div>
@@ -392,7 +443,9 @@ export default function OpsCenter() {
           <div style={styles.emptyState}>
             <div style={{ fontSize: '2rem', marginBottom: '8px' }}>✨</div>
             <div style={{ fontWeight: '600', color: '#10b981' }}>All Systems Nominal</div>
-            <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>No open incidents or threshold violations detected.</p>
+            <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
+              No open incidents or threshold violations detected.
+            </p>
           </div>
         ) : (
           <div style={styles.incidentList}>
@@ -423,17 +476,11 @@ export default function OpsCenter() {
 
                 <div style={styles.incidentActions}>
                   {inc.status === 'open' && (
-                    <button
-                      onClick={() => handleAcknowledge(inc.id)}
-                      style={styles.ackBtn}
-                    >
+                    <button onClick={() => handleAcknowledge(inc.id)} style={styles.ackBtn}>
                       ✓ Acknowledge
                     </button>
                   )}
-                  <button
-                    onClick={() => handleOpenRunbook(inc)}
-                    style={styles.runbookBtn}
-                  >
+                  <button onClick={() => handleOpenRunbook(inc)} style={styles.runbookBtn}>
                     ⚡ Execute Runbook
                   </button>
                 </div>
@@ -468,7 +515,8 @@ export default function OpsCenter() {
         <div>
           <h2 style={styles.sectionTitle}>Campaign Wallet Reserve Audit</h2>
           <p style={styles.sectionDesc}>
-            Enforces Stellar base reserve formula: <code>2 * base_reserve + trustlines * 0.5 XLM</code>
+            Enforces Stellar base reserve formula:{' '}
+            <code>2 * base_reserve + trustlines * 0.5 XLM</code>
           </p>
         </div>
       </div>
@@ -506,7 +554,13 @@ export default function OpsCenter() {
                   <td style={styles.td}>{w.campaign_status}</td>
                   <td style={styles.td}>{w.balance_xlm.toFixed(4)} XLM</td>
                   <td style={styles.td}>{w.min_required_xlm.toFixed(4)} XLM</td>
-                  <td style={{ ...styles.td, color: w.deficit_xlm > 0 ? '#ef4444' : '#10b981', fontWeight: 'bold' }}>
+                  <td
+                    style={{
+                      ...styles.td,
+                      color: w.deficit_xlm > 0 ? '#ef4444' : '#10b981',
+                      fontWeight: 'bold',
+                    }}
+                  >
                     {w.deficit_xlm > 0 ? `-${w.deficit_xlm.toFixed(7)} XLM` : '0.0000000'}
                   </td>
                   <td style={styles.td}>
@@ -557,7 +611,8 @@ export default function OpsCenter() {
               {!executionResult && !runbookExecuting && (
                 <div>
                   <p style={{ color: '#cbd5e1', marginBottom: '16px' }}>
-                    Triggering this runbook will execute automated diagnostics, safe operational locks, and state recovery.
+                    Triggering this runbook will execute automated diagnostics, safe operational
+                    locks, and state recovery.
                   </p>
                   <button onClick={handleExecuteRunbook} style={styles.primaryBtn}>
                     Start Runbook Execution
@@ -567,17 +622,29 @@ export default function OpsCenter() {
 
               {runbookExecuting && (
                 <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                  <div style={{ color: '#38bdf8', marginBottom: '10px' }}>⚡ Executing runbook steps in real-time...</div>
+                  <div style={{ color: '#38bdf8', marginBottom: '10px' }}>
+                    ⚡ Executing runbook steps in real-time...
+                  </div>
                   <div style={styles.spinner} />
                 </div>
               )}
 
               {executionResult && (
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      marginBottom: '12px',
+                    }}
+                  >
                     <span style={{ fontWeight: '600', color: '#f8fafc' }}>
                       Execution Status:{' '}
-                      <span style={{ color: executionResult.status === 'completed' ? '#10b981' : '#f59e0b' }}>
+                      <span
+                        style={{
+                          color: executionResult.status === 'completed' ? '#10b981' : '#f59e0b',
+                        }}
+                      >
                         {executionResult.status.toUpperCase()}
                       </span>
                     </span>
@@ -594,7 +661,8 @@ export default function OpsCenter() {
                           <span
                             style={{
                               ...styles.stepStatusBadge,
-                              backgroundColor: step.status === 'completed' ? '#10b98122' : '#f59e0b22',
+                              backgroundColor:
+                                step.status === 'completed' ? '#10b98122' : '#f59e0b22',
                               color: step.status === 'completed' ? '#10b981' : '#f59e0b',
                             }}
                           >
@@ -610,7 +678,8 @@ export default function OpsCenter() {
                     <div style={styles.manualActionBox}>
                       <strong>Action Required:</strong>
                       <p style={{ margin: '6px 0 0 0' }}>
-                        {executionResult.result?.action_required || 'Manual operator confirmation required.'}
+                        {executionResult.result?.action_required ||
+                          'Manual operator confirmation required.'}
                       </p>
                     </div>
                   )}
@@ -643,7 +712,9 @@ export default function OpsCenter() {
 
             <div style={{ padding: '16px', height: '300px' }}>
               {historyLoading ? (
-                <div style={{ textAlign: 'center', paddingTop: '100px', color: '#94a3b8' }}>Loading time-series...</div>
+                <div style={{ textAlign: 'center', paddingTop: '100px', color: '#94a3b8' }}>
+                  Loading time-series...
+                </div>
               ) : historyData.length === 0 ? (
                 <div style={{ textAlign: 'center', paddingTop: '100px', color: '#94a3b8' }}>
                   No historical data recorded yet for this metric.
@@ -655,9 +726,19 @@ export default function OpsCenter() {
                     <XAxis dataKey="time" stroke="#94a3b8" />
                     <YAxis stroke="#94a3b8" />
                     <Tooltip
-                      contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', color: '#f8fafc' }}
+                      contentStyle={{
+                        backgroundColor: '#1e293b',
+                        borderColor: '#475569',
+                        color: '#f8fafc',
+                      }}
                     />
-                    <Line type="monotone" dataKey="value" stroke="#38bdf8" strokeWidth={2} dot={false} />
+                    <Line
+                      type="monotone"
+                      dataKey="value"
+                      stroke="#38bdf8"
+                      strokeWidth={2}
+                      dot={false}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               )}

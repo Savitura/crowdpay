@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { api } from '../services/api';
 
 export default function ForgotPassword() {
+  const { t } = useTranslation();
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -26,10 +28,10 @@ export default function ForgotPassword() {
   return (
     <main className="container" style={{ paddingTop: '4rem', maxWidth: '400px' }}>
       <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '0.5rem' }}>
-        Forgot password?
+        {t('forgotPassword.title')}
       </h1>
       <p style={{ color: 'var(--color-text-hint)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-        Enter your email and we&apos;ll send you a link to reset your password.
+        {t('forgotPassword.description')}
       </p>
 
       {message ? (
@@ -51,11 +53,13 @@ export default function ForgotPassword() {
           onSubmit={handleSubmit}
           style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}
         >
-          <label htmlFor="forgot-email" className="sr-only">Email</label>
+          <label htmlFor="forgot-email" className="sr-only">
+            {t('login.email')}
+          </label>
           <input
             id="forgot-email"
             type="email"
-            placeholder="Email"
+            placeholder={t('forgotPassword.emailPlaceholder')}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
@@ -69,15 +73,15 @@ export default function ForgotPassword() {
             disabled={loading}
             style={{ padding: '0.8rem' }}
           >
-            {loading ? 'Sending link…' : 'Send reset link'}
+            {loading ? t('forgotPassword.sending') : t('forgotPassword.sendLink')}
           </button>
         </form>
       )}
 
       <p style={{ marginTop: '1.25rem', color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
-        Back to{' '}
+        {t('forgotPassword.backTo')}{' '}
         <Link to="/login" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
-          Log in
+          {t('login.logIn')}
         </Link>
       </p>
     </main>

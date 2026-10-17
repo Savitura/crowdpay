@@ -4,82 +4,101 @@ const { requireAuth } = require('../middleware/auth');
 const { CHANNELS } = require('../services/notificationChannels');
 const asyncHandler = require('../utils/asyncHandler');
 
-const EXTERNAL_CHANNELS = CHANNELS.filter((c) => c !== 'in_app');
+const EXTERNAL_CHANNELS = CHANNELS.filter(c => c !== 'in_app');
 
-router.get('/', requireAuth, asyncHandler(async (req, res) => {
-  const { rows } = await db.query(
-    `SELECT id, type, title, body, link, read_at, created_at
+router.get(
+  '/',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT id, type, title, body, link, read_at, created_at
      FROM notifications
      WHERE user_id = $1
      ORDER BY created_at DESC
      LIMIT 20`,
-    [req.user.userId]
-  );
-  res.json(rows);
-}));
+      [req.user.userId]
+    );
+    res.json(rows);
+  })
+);
 
-router.patch('/read-all', requireAuth, asyncHandler(async (req, res) => {
-  await db.query(
-    `UPDATE notifications SET read_at = NOW() WHERE user_id = $1 AND read_at IS NULL`,
-    [req.user.userId]
-  );
-  res.json({ ok: true });
-}));
+router.patch(
+  '/read-all',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    await db.query(
+      `UPDATE notifications SET read_at = NOW() WHERE user_id = $1 AND read_at IS NULL`,
+      [req.user.userId]
+    );
+    res.json({ ok: true });
+  })
+);
 
-router.patch('/:id/read', requireAuth, asyncHandler(async (req, res) => {
-  const { rows } = await db.query(
-    `UPDATE notifications SET read_at = NOW()
+router.patch(
+  '/:id/read',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `UPDATE notifications SET read_at = NOW()
      WHERE id = $1 AND user_id = $2 AND read_at IS NULL
      RETURNING id`,
-    [req.params.id, req.user.userId]
-  );
-  if (!rows.length) return res.status(404).json({ error: 'Notification not found' });
-  res.json({ ok: true });
-}));
+      [req.params.id, req.user.userId]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Notification not found' });
+    res.json({ ok: true });
+  })
+);
 
 // ── Multi-channel settings (issue #429) ────────────────────────────────────
 
 // Per-user channel destinations + quiet-hours window.
-router.get('/channel-settings', requireAuth, asyncHandler(async (req, res) => {
-  const { rows } = await db.query(
-    `SELECT push_token, slack_webhook_url, discord_webhook_url, sms_phone_number,
+router.get(
+  '/channel-settings',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT push_token, slack_webhook_url, discord_webhook_url, sms_phone_number,
             quiet_hours_start, quiet_hours_end
      FROM notification_channel_settings
      WHERE user_id = $1`,
-    [req.user.userId]
-  );
-  res.json(
-    rows[0] || {
-      push_token: null,
-      slack_webhook_url: null,
-      discord_webhook_url: null,
-      sms_phone_number: null,
-      quiet_hours_start: null,
-      quiet_hours_end: null,
-    }
-  );
-}));
+      [req.user.userId]
+    );
+    res.json(
+      rows[0] || {
+        push_token: null,
+        slack_webhook_url: null,
+        discord_webhook_url: null,
+        sms_phone_number: null,
+        quiet_hours_start: null,
+        quiet_hours_end: null,
+      }
+    );
+  })
+);
 
 function validQuietHour(value) {
   return value === null || (Number.isInteger(value) && value >= 0 && value <= 23);
 }
 
-router.put('/channel-settings', requireAuth, asyncHandler(async (req, res) => {
-  const {
-    push_token = null,
-    slack_webhook_url = null,
-    discord_webhook_url = null,
-    sms_phone_number = null,
-    quiet_hours_start = null,
-    quiet_hours_end = null,
-  } = req.body || {};
+router.put(
+  '/channel-settings',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const {
+      push_token = null,
+      slack_webhook_url = null,
+      discord_webhook_url = null,
+      sms_phone_number = null,
+      quiet_hours_start = null,
+      quiet_hours_end = null,
+    } = req.body || {};
 
-  if (!validQuietHour(quiet_hours_start) || !validQuietHour(quiet_hours_end)) {
-    return res.status(400).json({ error: 'quiet_hours must be an integer 0-23 or null' });
-  }
+    if (!validQuietHour(quiet_hours_start) || !validQuietHour(quiet_hours_end)) {
+      return res.status(400).json({ error: 'quiet_hours must be an integer 0-23 or null' });
+    }
 
-  const { rows } = await db.query(
-    `INSERT INTO notification_channel_settings
+    const { rows } = await db.query(
+      `INSERT INTO notification_channel_settings
        (user_id, push_token, slack_webhook_url, discord_webhook_url,
         sms_phone_number, quiet_hours_start, quiet_hours_end, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
@@ -93,90 +112,116 @@ router.put('/channel-settings', requireAuth, asyncHandler(async (req, res) => {
        updated_at = NOW()
      RETURNING push_token, slack_webhook_url, discord_webhook_url, sms_phone_number,
                quiet_hours_start, quiet_hours_end`,
-    [
-      req.user.userId,
-      push_token,
-      slack_webhook_url,
-      discord_webhook_url,
-      sms_phone_number,
-      quiet_hours_start,
-      quiet_hours_end,
-    ]
-  );
-  res.json(rows[0]);
-}));
+      [
+        req.user.userId,
+        push_token,
+        slack_webhook_url,
+        discord_webhook_url,
+        sms_phone_number,
+        quiet_hours_start,
+        quiet_hours_end,
+      ]
+    );
+    res.json(rows[0]);
+  })
+);
 
 // FCM registration tokens are browser/device-specific. They are never trusted
 // as an account identifier: the authenticated user owns every stored token.
-router.get('/push-subscriptions', requireAuth, asyncHandler(async (req, res) => {
-  const { rows } = await db.query(
-    'SELECT COUNT(*)::int AS count FROM push_subscriptions WHERE user_id = $1',
-    [req.user.userId]
-  );
-  res.json({ subscribed: rows[0].count > 0 });
-}));
+router.get(
+  '/push-subscriptions',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      'SELECT COUNT(*)::int AS count FROM push_subscriptions WHERE user_id = $1',
+      [req.user.userId]
+    );
+    res.json({ subscribed: rows[0].count > 0 });
+  })
+);
 
-router.post('/push-subscriptions', requireAuth, asyncHandler(async (req, res) => {
-  const { token } = req.body || {};
-  if (typeof token !== 'string' || !token.trim() || token.length > 4096) {
-    return res.status(400).json({ error: 'token must be a non-empty string up to 4096 characters' });
-  }
+router.post(
+  '/push-subscriptions',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { token } = req.body || {};
+    if (typeof token !== 'string' || !token.trim() || token.length > 4096) {
+      return res
+        .status(400)
+        .json({ error: 'token must be a non-empty string up to 4096 characters' });
+    }
 
-  await db.query(
-    `INSERT INTO push_subscriptions (user_id, token, updated_at)
+    await db.query(
+      `INSERT INTO push_subscriptions (user_id, token, updated_at)
      VALUES ($1, $2, NOW())
      ON CONFLICT (token) DO UPDATE SET user_id = EXCLUDED.user_id, updated_at = NOW()`,
-    [req.user.userId, token]
-  );
-  await db.query(
-    `INSERT INTO notification_channel_settings (user_id)
+      [req.user.userId, token]
+    );
+    await db.query(
+      `INSERT INTO notification_channel_settings (user_id)
      VALUES ($1)
      ON CONFLICT (user_id) DO NOTHING`,
-    [req.user.userId]
-  );
-  res.status(201).json({ ok: true });
-}));
+      [req.user.userId]
+    );
+    res.status(201).json({ ok: true });
+  })
+);
 
-router.delete('/push-subscriptions', requireAuth, asyncHandler(async (req, res) => {
-  const { token } = req.body || {};
-  if (typeof token !== 'string' || !token.trim()) {
-    return res.status(400).json({ error: 'token is required' });
-  }
-  await db.query('DELETE FROM push_subscriptions WHERE user_id = $1 AND token = $2', [req.user.userId, token]);
-  res.json({ ok: true });
-}));
+router.delete(
+  '/push-subscriptions',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { token } = req.body || {};
+    if (typeof token !== 'string' || !token.trim()) {
+      return res.status(400).json({ error: 'token is required' });
+    }
+    await db.query('DELETE FROM push_subscriptions WHERE user_id = $1 AND token = $2', [
+      req.user.userId,
+      token,
+    ]);
+    res.json({ ok: true });
+  })
+);
 
 // Per-event-type, per-channel enable/disable overrides.
-router.get('/preferences', requireAuth, asyncHandler(async (req, res) => {
-  const { rows } = await db.query(
-    `SELECT event_type, channel, enabled
+router.get(
+  '/preferences',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT event_type, channel, enabled
      FROM notification_preferences
      WHERE user_id = $1
      ORDER BY event_type, channel`,
-    [req.user.userId]
-  );
-  res.json(rows);
-}));
+      [req.user.userId]
+    );
+    res.json(rows);
+  })
+);
 
-router.put('/preferences', requireAuth, asyncHandler(async (req, res) => {
-  const { event_type, channel, enabled } = req.body || {};
-  if (!event_type || typeof event_type !== 'string') {
-    return res.status(400).json({ error: 'event_type is required' });
-  }
-  if (!EXTERNAL_CHANNELS.includes(channel) && channel !== 'in_app') {
-    return res.status(400).json({ error: `channel must be one of ${CHANNELS.join(', ')}` });
-  }
-  if (typeof enabled !== 'boolean') {
-    return res.status(400).json({ error: 'enabled must be a boolean' });
-  }
+router.put(
+  '/preferences',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { event_type, channel, enabled } = req.body || {};
+    if (!event_type || typeof event_type !== 'string') {
+      return res.status(400).json({ error: 'event_type is required' });
+    }
+    if (!EXTERNAL_CHANNELS.includes(channel) && channel !== 'in_app') {
+      return res.status(400).json({ error: `channel must be one of ${CHANNELS.join(', ')}` });
+    }
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be a boolean' });
+    }
 
-  await db.query(
-    `INSERT INTO notification_preferences (user_id, event_type, channel, enabled)
+    await db.query(
+      `INSERT INTO notification_preferences (user_id, event_type, channel, enabled)
      VALUES ($1, $2, $3, $4)
      ON CONFLICT (user_id, event_type, channel) DO UPDATE SET enabled = EXCLUDED.enabled`,
-    [req.user.userId, event_type, channel, enabled]
-  );
-  res.json({ ok: true });
-}));
+      [req.user.userId, event_type, channel, enabled]
+    );
+    res.json({ ok: true });
+  })
+);
 
 module.exports = router;

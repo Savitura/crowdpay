@@ -1,15 +1,22 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const db = require('../config/database');
+const {
+  encryptIntegrationSecret,
+  withDecryptedIntegrationSecret,
+  isEncryptedIntegrationSecret,
+} = require('./integrationSecrets');
 
 const KEY_PREFIX_LENGTH = 12;
 const ALLOWED_SCOPES = new Set(['read', 'write', 'withdrawals', 'developer', 'full']);
+const DEFAULT_KEY_EXPIRY_DAYS = 90;
+const ROTATION_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function normalizeScopes(input) {
   if (!input || !Array.isArray(input) || !input.length) {
     return ['read', 'write', 'withdrawals'];
   }
-  const out = [...new Set(input.filter((s) => typeof s === 'string' && ALLOWED_SCOPES.has(s)))];
+  const out = [...new Set(input.filter(s => typeof s === 'string' && ALLOWED_SCOPES.has(s)))];
   return out.length ? out : ['read', 'write', 'withdrawals'];
 }
 
@@ -35,12 +42,14 @@ function mapKeyRow(row) {
     last_used_at: row.last_used_at,
     created_at: row.created_at,
     revoked_at: row.revoked_at,
+    expires_at: row.expires_at,
+    rotation_state: row.rotation_state || 'active',
   };
 }
 
 async function listApiKeysForUser(userId) {
   const { rows } = await db.query(
-    `SELECT id, label, scopes, key_prefix, last_used_at, created_at, revoked_at
+    `SELECT id, label, scopes, key_prefix, last_used_at, created_at, revoked_at, expires_at, rotation_state
      FROM api_keys
      WHERE user_id = $1
      ORDER BY created_at DESC`,
@@ -49,18 +58,22 @@ async function listApiKeysForUser(userId) {
   return rows.map(mapKeyRow);
 }
 
-async function createApiKeyForUser(userId, { name, label, scopes }) {
+async function createApiKeyForUser(userId, { name, label, scopes, expires_at }) {
   const keyName = String(name || label || 'API key').trim() || 'API key';
   const normalizedScopes = normalizeScopes(scopes);
   const rawKey = generateRawApiKey();
   const keyPrefix = getKeyPrefix(rawKey);
   const keyHash = await hashApiKey(rawKey);
+  const encryptedHash = await encryptIntegrationSecret(keyHash, { type: 'api_key', id: userId });
+  const expiry = expires_at
+    ? new Date(expires_at)
+    : new Date(Date.now() + DEFAULT_KEY_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
 
   const { rows } = await db.query(
-    `INSERT INTO api_keys (user_id, key_prefix, key_hash, label, scopes)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, label, scopes, key_prefix, created_at`,
-    [userId, keyPrefix, keyHash, keyName, normalizedScopes]
+    `INSERT INTO api_keys (user_id, key_prefix, key_hash, label, scopes, expires_at, rotation_state)
+     VALUES ($1, $2, $3, $4, $5, $6, 'active')
+     RETURNING id, label, scopes, key_prefix, created_at, expires_at, rotation_state`,
+    [userId, keyPrefix, encryptedHash, keyName, normalizedScopes, expiry]
   );
 
   return {
@@ -73,7 +86,7 @@ async function createApiKeyForUser(userId, { name, label, scopes }) {
 async function revokeApiKeyForUser(userId, keyId) {
   const { rows } = await db.query(
     `UPDATE api_keys
-     SET revoked_at = NOW()
+     SET revoked_at = NOW(), rotation_state = 'revoked'
      WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
      RETURNING id`,
     [keyId, userId]
@@ -81,21 +94,118 @@ async function revokeApiKeyForUser(userId, keyId) {
   return rows[0] || null;
 }
 
-async function authenticateCpkApiKey(rawKey) {
+async function rotateApiKey(userId, keyId, { label, scopes, expires_at } = {}) {
+  const { rows: keyRows } = await db.query(
+    `SELECT * FROM api_keys WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND rotation_state = 'active'`,
+    [keyId, userId]
+  );
+  const existing = keyRows[0];
+  if (!existing) return null;
+
+  const rawKey = generateRawApiKey();
+  const keyPrefix = getKeyPrefix(rawKey);
+  const keyHash = await hashApiKey(rawKey);
+  const encryptedHash = await encryptIntegrationSecret(keyHash, { type: 'api_key', id: userId });
+  const newExpiry = expires_at
+    ? new Date(expires_at)
+    : existing.expires_at || new Date(Date.now() + DEFAULT_KEY_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+  const newScopes = normalizeScopes(scopes || existing.scopes);
+
+  const { rows: successorRows } = await db.query(
+    `INSERT INTO api_keys (user_id, key_prefix, key_hash, label, scopes, expires_at, predecessor_id, rotation_state)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+     RETURNING id, label, scopes, key_prefix, created_at, expires_at`,
+    [
+      userId,
+      keyPrefix,
+      encryptedHash,
+      String(label || existing.label),
+      newScopes,
+      newExpiry,
+      existing.id,
+    ]
+  );
+
+  const successor = successorRows[0];
+
+  await db.query(
+    `UPDATE api_keys
+     SET rotation_state = 'rotating', successor_id = $1, expires_at = $2
+     WHERE id = $3`,
+    [successor.id, newExpiry, existing.id]
+  );
+
+  return {
+    ...mapKeyRow(successor),
+    predecessor_id: existing.id,
+    predecessor_key_prefix: existing.key_prefix,
+    api_key: rawKey,
+    message: 'Store this key securely; it cannot be shown again.',
+  };
+}
+
+async function finishApiKeyRotation(keyId) {
+  const { rows } = await db.query(
+    `UPDATE api_keys
+     SET rotation_state = 'expired'
+     WHERE id = $1 AND rotation_state = 'rotating'
+     RETURNING id`,
+    [keyId]
+  );
+  return rows[0] || null;
+}
+
+async function authenticateCpkApiKey(rawKey, requestMethod = 'GET') {
   const prefix = getKeyPrefix(rawKey);
   const { rows } = await db.query(
-    `SELECT id, user_id, key_hash, scopes
+    `SELECT id, user_id, key_hash, scopes, expires_at, rotation_state, last_used_at
      FROM api_keys
      WHERE key_prefix = $1 AND revoked_at IS NULL`,
     [prefix]
   );
 
   for (const row of rows) {
-    if (!row.key_hash.startsWith('$2')) continue;
-    const valid = await bcrypt.compare(rawKey, row.key_hash);
+    let valid = false;
+    if (isEncryptedIntegrationSecret(row.key_hash)) {
+      await withDecryptedIntegrationSecret(
+        row.key_hash,
+        { type: 'api_key', id: row.user_id },
+        async decryptedHash => {
+          if (decryptedHash.startsWith('$2')) {
+            valid = await bcrypt.compare(rawKey, decryptedHash);
+          }
+        }
+      );
+    } else if (row.key_hash.startsWith('$2')) {
+      // Fallback for unmigrated keys
+      valid = await bcrypt.compare(rawKey, row.key_hash);
+    }
+
     if (!valid) continue;
 
-    await db.query('UPDATE api_keys SET last_used_at = NOW() WHERE id = $1', [row.id]);
+    if (row.rotation_state === 'revoked') continue;
+    if (row.rotation_state === 'expired') continue;
+
+    if (row.expires_at && new Date(row.expires_at) < new Date()) {
+      throw Object.assign(new Error('API key expired'), {
+        statusCode: 401,
+        code: 'API_KEY_EXPIRED',
+      });
+    }
+
+    // Only update last_used_at for write requests, and throttle to once per interval
+    const isWriteRequest = !['GET', 'HEAD', 'OPTIONS'].includes(requestMethod.toUpperCase());
+    const throttleMs = Number(process.env.API_KEY_LAST_USED_THROTTLE_MS) || 5 * 60 * 1000;
+    if (
+      isWriteRequest ||
+      !row.last_used_at ||
+      Date.now() - new Date(row.last_used_at).getTime() > throttleMs
+    ) {
+      await db.query(
+        `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 millisecond' * $2)`,
+        [row.id, throttleMs]
+      );
+    }
     const { rows: userRows } = await db.query(
       'SELECT id, role, is_admin FROM users WHERE id = $1',
       [row.user_id]
@@ -116,12 +226,16 @@ async function authenticateCpkApiKey(rawKey) {
 module.exports = {
   ALLOWED_SCOPES,
   KEY_PREFIX_LENGTH,
+  DEFAULT_KEY_EXPIRY_DAYS,
   generateRawApiKey,
   getKeyPrefix,
   hashApiKey,
   normalizeScopes,
+  mapKeyRow,
   listApiKeysForUser,
   createApiKeyForUser,
   revokeApiKeyForUser,
+  rotateApiKey,
+  finishApiKeyRotation,
   authenticateCpkApiKey,
 };

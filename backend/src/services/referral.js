@@ -59,7 +59,11 @@ async function generateUniqueLinkCode(runner = db) {
  * Enable referrals on a campaign. Re-running updates the existing program so a
  * creator can adjust the commission without orphaning issued links.
  */
-async function createReferralProgram(campaignId, { commissionPercentage, maxReferrers }, runner = db) {
+async function createReferralProgram(
+  campaignId,
+  { commissionPercentage, maxReferrers },
+  runner = db
+) {
   const percentage = Number(commissionPercentage);
   const referrers = Number(maxReferrers);
 
@@ -114,7 +118,11 @@ async function getReferralProgram(campaignId, runner = db) {
 async function createReferralLink({ campaignId, userId }, runner = db) {
   const program = await getReferralProgram(campaignId, runner);
   if (!program) {
-    throw httpError(404, 'REFERRAL_PROGRAM_NOT_FOUND', 'This campaign does not have a referral program');
+    throw httpError(
+      404,
+      'REFERRAL_PROGRAM_NOT_FOUND',
+      'This campaign does not have a referral program'
+    );
   }
 
   const { rows: existing } = await runner.query(
@@ -272,7 +280,7 @@ async function listCampaignReferrers(campaignId, runner = db) {
       max_referrers: program.max_referrers,
       referrer_count: rows.length,
     },
-    referrers: rows.map((row) => {
+    referrers: rows.map(row => {
       const earned = Number(toStellarAmount(Number(row.referred_amount) * rate));
       return {
         referral_link_id: row.referral_link_id,
@@ -316,7 +324,7 @@ async function listUserReferralLinks(userId, runner = db) {
     [userId]
   );
 
-  return rows.map((row) => {
+  return rows.map(row => {
     const rate = Number(row.commission_percentage || 0) / 100;
     const earned = Number(toStellarAmount(Number(row.referred_amount) * rate));
     const paid = Number(row.commission_paid);

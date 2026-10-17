@@ -23,7 +23,91 @@
         }
       ]
     ],
-    [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
+              "function_name": "initialize",
+              "args": [
+                {
+                  "symbol": "cp687"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                },
+                "void",
+                {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "auto_refund_on_miss"
+                      },
+                      "val": {
+                        "bool": false
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_single_withdrawal_pct"
+                      },
+                      "val": {
+                        "u32": 100
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "min_hold_days"
+                      },
+                      "val": {
+                        "u32": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "require_auditor_for_above"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 1000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "withdrawal_cooldown_hours"
+                      },
+                      "val": {
+                        "u32": 0
+                      }
+                    }
+                  ]
+                },
+                {
+                  "u64": 1000000
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 10000
+                  }
+                },
+                {
+                  "address": "CCABDO7UZXYE4W6GVSEGSNNZTKSLFQGKXXQTH6OX7M7GKZ4Z6CUJNGZN"
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
@@ -111,6 +195,39 @@
                 "key": {
                   "ledger_key_nonce": {
                     "nonce": 801925984706572462
+                  }
+                },
+                "durability": "temporary",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "ledger_key_nonce": {
+                "nonce": 1033654523790656264
+              }
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 1033654523790656264
                   }
                 },
                 "durability": "temporary",

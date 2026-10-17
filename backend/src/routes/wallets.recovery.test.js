@@ -52,7 +52,9 @@ function buildApp({
       getAccountMultisigConfig: async () => ({ signers: [], thresholds: {} }),
       getWalletTransactionHistory: async () => [],
       getWalletPayments: async () => [],
-      recoverWalletFromSecret: () => ({ publicKey: 'GRECOVEREDPUBLICKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }),
+      recoverWalletFromSecret: () => ({
+        publicKey: 'GRECOVEREDPUBLICKEYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      }),
       ...stellarServiceImpl,
     },
     '../services/walletService': {
@@ -126,7 +128,9 @@ test('GET /:campaignId/payments allows an admin who does not own the campaign', 
 test('POST /:campaignId/recover allows an admin who does not own the campaign', async () => {
   const { app, logCalls } = buildApp({
     authUser: { userId: 'admin-1', role: 'admin' },
-    queryImpl: async () => ({ rows: [{ wallet_secret_encrypted: 'ENCRYPTEDBLOB', creator_id: 'owner-1' }] }),
+    queryImpl: async () => ({
+      rows: [{ wallet_secret_encrypted: 'ENCRYPTEDBLOB', creator_id: 'owner-1' }],
+    }),
   });
   const res = await request(app).post('/api/wallets/camp-1/recover');
   assert.equal(res.status, 200);
@@ -137,7 +141,9 @@ test('POST /:campaignId/recover allows an admin who does not own the campaign', 
 test('POST /:campaignId/recover still rejects a non-owner, non-admin user', async () => {
   const { app, logCalls } = buildApp({
     authUser: { userId: 'stranger-1', role: 'contributor' },
-    queryImpl: async () => ({ rows: [{ wallet_secret_encrypted: 'ENCRYPTEDBLOB', creator_id: 'owner-1' }] }),
+    queryImpl: async () => ({
+      rows: [{ wallet_secret_encrypted: 'ENCRYPTEDBLOB', creator_id: 'owner-1' }],
+    }),
   });
   const res = await request(app).post('/api/wallets/camp-1/recover');
   assert.equal(res.status, 403);
@@ -149,7 +155,9 @@ test('POST /:campaignId/recover still rejects a non-owner, non-admin user', asyn
 test('POST /:campaignId/recover logs a denied attempt for a non-owner, non-admin requester', async () => {
   const { app, logCalls } = buildApp({
     authUser: { userId: 'stranger-1', role: 'contributor' },
-    queryImpl: async () => ({ rows: [{ wallet_secret_encrypted: 'ENCRYPTEDBLOB', creator_id: 'owner-1' }] }),
+    queryImpl: async () => ({
+      rows: [{ wallet_secret_encrypted: 'ENCRYPTEDBLOB', creator_id: 'owner-1' }],
+    }),
   });
   const res = await request(app).post('/api/wallets/camp-1/recover');
   assert.equal(res.status, 403);
@@ -168,7 +176,9 @@ test('POST /:campaignId/recover logs a denied attempt for a non-owner, non-admin
 test('POST /:campaignId/recover logs a success attempt for the owner', async () => {
   const { app, logCalls } = buildApp({
     authUser: { userId: 'owner-1', role: 'creator' },
-    queryImpl: async () => ({ rows: [{ wallet_secret_encrypted: 'ENCRYPTEDBLOB', creator_id: 'owner-1' }] }),
+    queryImpl: async () => ({
+      rows: [{ wallet_secret_encrypted: 'ENCRYPTEDBLOB', creator_id: 'owner-1' }],
+    }),
   });
   const res = await request(app).post('/api/wallets/camp-1/recover');
   assert.equal(res.status, 200);
@@ -196,8 +206,12 @@ test('POST /:campaignId/recover does not write an audit entry when there is no s
 test('POST /:campaignId/recover audit details never include the decrypted secret or key material', async () => {
   const { app, logCalls } = buildApp({
     authUser: { userId: 'owner-1', role: 'creator' },
-    queryImpl: async () => ({ rows: [{ wallet_secret_encrypted: 'ENCRYPTEDBLOB', creator_id: 'owner-1' }] }),
-    walletServiceImpl: { decryptSecret: () => 'SSUPERSECRETSEEDVALUENOTREALNOTREALNOTREALNOTREALNOTR' },
+    queryImpl: async () => ({
+      rows: [{ wallet_secret_encrypted: 'ENCRYPTEDBLOB', creator_id: 'owner-1' }],
+    }),
+    walletServiceImpl: {
+      decryptSecret: () => 'SSUPERSECRETSEEDVALUENOTREALNOTREALNOTREALNOTREALNOTR',
+    },
   });
   const res = await request(app).post('/api/wallets/camp-1/recover');
   assert.equal(res.status, 200);
@@ -222,7 +236,7 @@ test('POST /:campaignId/recover audit details never include the decrypted secret
 
 test('recover rate limiter is constructed mirroring the contributions.js limiter shape', () => {
   let capturedConfig = null;
-  const rateLimitStub = (config) => {
+  const rateLimitStub = config => {
     capturedConfig = config;
     return (req, res, next) => next();
   };
@@ -249,7 +263,7 @@ test('recover rate limiter is constructed mirroring the contributions.js limiter
 
 test('recover rate limiter caps at 3/min outside test mode', () => {
   let capturedConfig = null;
-  const rateLimitStub = (config) => {
+  const rateLimitStub = config => {
     capturedConfig = config;
     return (req, res, next) => next();
   };
@@ -282,7 +296,9 @@ test('POST /:campaignId/recover runs requests through the rate limiter middlewar
   };
   const { app } = buildApp({
     authUser: { userId: 'owner-1', role: 'creator' },
-    queryImpl: async () => ({ rows: [{ wallet_secret_encrypted: 'ENCRYPTEDBLOB', creator_id: 'owner-1' }] }),
+    queryImpl: async () => ({
+      rows: [{ wallet_secret_encrypted: 'ENCRYPTEDBLOB', creator_id: 'owner-1' }],
+    }),
     rateLimitStub,
   });
 

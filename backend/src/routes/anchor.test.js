@@ -4,7 +4,12 @@ const express = require('express');
 const request = require('supertest');
 const proxyquire = require('proxyquire').noCallThru();
 
-function buildApp({ queryImpl, anchorServiceImpl = {}, contributionServiceImpl = {}, stellarServiceImpl = {} } = {}) {
+function buildApp({
+  queryImpl,
+  anchorServiceImpl = {},
+  contributionServiceImpl = {},
+  stellarServiceImpl = {},
+} = {}) {
   const router = proxyquire('./anchor', {
     '../config/database': {
       query: queryImpl,
@@ -46,10 +51,17 @@ function buildApp({ queryImpl, anchorServiceImpl = {}, contributionServiceImpl =
     '../services/anchorService': {
       getAvailableAnchors: () => [],
       getAnchorById: () => null,
-      publicAnchorInfo: (anchor) => anchor,
+      publicAnchorInfo: anchor => anchor,
       isAnchorConfigured: () => true,
-      authenticateWithAnchor: async () => ({ token: 'anchor-token', expiresAt: new Date(Date.now() + 60000) }),
-      startInteractiveDeposit: async () => ({ id: 'anchor-session-1', url: 'https://anchor.example/flow', status: 'pending' }),
+      authenticateWithAnchor: async () => ({
+        token: 'anchor-token',
+        expiresAt: new Date(Date.now() + 60000),
+      }),
+      startInteractiveDeposit: async () => ({
+        id: 'anchor-session-1',
+        url: 'https://anchor.example/flow',
+        status: 'pending',
+      }),
       getAnchorTransaction: async () => ({ transaction: { status: 'pending' } }),
       isAnchorFailureStatus: () => false,
       ...anchorServiceImpl,
@@ -76,7 +88,7 @@ test('GET /api/anchor/info returns supported anchor metadata', async () => {
           productionAvailable: false,
         },
       ],
-      publicAnchorInfo: (anchor) => ({
+      publicAnchorInfo: anchor => ({
         id: anchor.id,
         name: anchor.name,
         environment: anchor.environment,
@@ -95,7 +107,7 @@ test('GET /api/anchor/info returns supported anchor metadata', async () => {
 
 test('POST /api/anchor/deposits/start begins an anchor deposit session', async () => {
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns c JOIN users u ON u.id = u.id')) {
         // never expected
         return { rows: [] };
@@ -103,8 +115,14 @@ test('POST /api/anchor/deposits/start begins an anchor deposit session', async (
       if (text.includes('FROM campaigns c JOIN users u ON u.id = c.creator_id')) {
         return { rows: [{ id: 'camp-1', asset_type: 'USDC', status: 'active' }] };
       }
-      if (text.includes('SELECT id, wallet_public_key, wallet_secret_encrypted FROM users WHERE id')) {
-        return { rows: [{ id: 'user-1', wallet_public_key: 'GUSER', wallet_secret_encrypted: 'encrypted' }] };
+      if (
+        text.includes('SELECT id, wallet_public_key, wallet_secret_encrypted FROM users WHERE id')
+      ) {
+        return {
+          rows: [
+            { id: 'user-1', wallet_public_key: 'GUSER', wallet_secret_encrypted: 'encrypted' },
+          ],
+        };
       }
       if (text.includes('INSERT INTO anchor_deposits')) {
         return {
@@ -131,12 +149,19 @@ test('POST /api/anchor/deposits/start begins an anchor deposit session', async (
       return { rows: [] };
     },
     anchorServiceImpl: {
-      getAnchorById: (id) => ({ id, assetCode: 'USDC' }),
+      getAnchorById: id => ({ id, assetCode: 'USDC' }),
       getAvailableAnchors: () => [{ id: 'moneygram', assetCode: 'USDC' }],
-      publicAnchorInfo: (anchor) => anchor,
+      publicAnchorInfo: anchor => anchor,
       isAnchorConfigured: () => true,
-      authenticateWithAnchor: async () => ({ token: 'anchor-token', expiresAt: new Date(Date.now() + 60000) }),
-      startInteractiveDeposit: async () => ({ id: 'tx-123', url: 'https://anchor.example/flow', status: 'pending' }),
+      authenticateWithAnchor: async () => ({
+        token: 'anchor-token',
+        expiresAt: new Date(Date.now() + 60000),
+      }),
+      startInteractiveDeposit: async () => ({
+        id: 'tx-123',
+        url: 'https://anchor.example/flow',
+        status: 'pending',
+      }),
     },
     contributionServiceImpl: {
       buildContributionIntent: async ({ campaign, amount, sendAsset, contributorPublicKey }) => ({
@@ -160,7 +185,7 @@ test('POST /api/anchor/deposits/start begins an anchor deposit session', async (
 test('GET /api/anchor/deposits/:id refreshes anchor session status', async () => {
   let queryCount = 0;
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       queryCount += 1;
       if (text.includes('FROM anchor_deposits ad')) {
         return {
@@ -218,14 +243,19 @@ test('GET /api/anchor/deposits/:id refreshes anchor session status', async () =>
     anchorServiceImpl: {
       getAnchorById: () => ({ id: 'moneygram', assetCode: 'USDC' }),
       getAvailableAnchors: () => [{ id: 'moneygram', assetCode: 'USDC' }],
-      publicAnchorInfo: (anchor) => anchor,
+      publicAnchorInfo: anchor => anchor,
       isAnchorConfigured: () => true,
-      authenticateWithAnchor: async () => ({ token: 'anchor-token', expiresAt: new Date(Date.now() + 60000) }),
+      authenticateWithAnchor: async () => ({
+        token: 'anchor-token',
+        expiresAt: new Date(Date.now() + 60000),
+      }),
       getAnchorTransaction: async () => ({ transaction: { status: 'pending' } }),
     },
   });
 
-  const response = await request(app).get('/api/anchor/deposits/deposit-1').set('Authorization', 'Bearer token');
+  const response = await request(app)
+    .get('/api/anchor/deposits/deposit-1')
+    .set('Authorization', 'Bearer token');
 
   assert.equal(response.status, 200);
   assert.equal(response.body.id, 'deposit-1');

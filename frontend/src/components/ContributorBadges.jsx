@@ -54,7 +54,10 @@ export default function ContributorBadges() {
         <h2 style={{ fontSize: '1.15rem', fontWeight: 700 }}>
           Badges {badges && `(${earnedCount}/${badges.length})`}
         </h2>
-        <Link to="/leaderboard" style={{ color: 'var(--color-accent)', fontWeight: 600, fontSize: '0.85rem' }}>
+        <Link
+          to="/leaderboard"
+          style={{ color: 'var(--color-accent)', fontWeight: 600, fontSize: '0.85rem' }}
+        >
           View leaderboard
         </Link>
       </div>

@@ -1,18 +1,40 @@
-const Sentry = require("@sentry/node");
-const db = require("../config/database");
-const logger = require("../config/logger");
-const cache = require("../utils/cache");
-const { getCampaignBalance } = require("./stellarService");
+const Sentry = require('@sentry/node');
+const db = require('../config/database');
+const logger = require('../config/logger');
+const cache = require('../utils/cache');
+const withTransaction = require('../utils/withTransaction');
+const { getCampaignBalance } = require('./stellarService');
+const { getEscrowTotalRaised } = require('./sorobanService');
+const { fromStroops } = require('../utils/stroops');
 const {
   insertContributionAdjustment,
   insertReconciliationAdjustment,
-} = require("./stellarTransactionService");
+} = require('./stellarTransactionService');
 
 const DISCREPANCY_EPSILON = 0.0000001;
 
+/**
+ * Resolve the authoritative on-chain total for a campaign.
+ *
+ * Contract-mode campaigns hold their funds in the Soroban escrow, so the
+ * classic multisig account is empty: reading it would overwrite
+ * `raised_amount` with `0` and book a full-size negative adjustment once an
+ * hour (#901). The contract's own `get_total_raised` is the source of truth
+ * there, exactly as `campaignStatusActions.syncSorobanStatus` already assumes.
+ */
+async function readLiveCampaignBalance(campaign) {
+  if (campaign.escrow_contract_id) {
+    const totalRaisedStroops = await getEscrowTotalRaised(campaign.escrow_contract_id);
+    return parseFloat(fromStroops(totalRaisedStroops || 0));
+  }
+
+  const onChain = await getCampaignBalance(campaign.wallet_public_key);
+  return parseFloat(onChain[campaign.asset_type] || '0');
+}
+
 function getReconciliationAlertThreshold() {
   const raw = process.env.RECONCILIATION_DISCREPANCY_ALERT_THRESHOLD;
-  if (raw === undefined || raw === "") return 1;
+  if (raw === undefined || raw === '') return 1;
   const parsed = parseFloat(raw);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1;
 }
@@ -25,11 +47,11 @@ function alertDiscrepancyIfNeeded(campaignId, audit) {
   const threshold = getReconciliationAlertThreshold();
   if (Math.abs(audit.diff) < threshold) return;
 
-  Sentry.withScope((scope) => {
-    scope.setLevel("warning");
-    scope.setTag("campaign_id", campaignId);
-    scope.setContext("reconciliation", audit);
-    Sentry.captureMessage("Campaign raised_amount reconciliation discrepancy");
+  Sentry.withScope(scope => {
+    scope.setLevel('warning');
+    scope.setTag('campaign_id', campaignId);
+    scope.setContext('reconciliation', audit);
+    Sentry.captureMessage('Campaign raised_amount reconciliation discrepancy');
   });
 }
 
@@ -43,14 +65,9 @@ async function applyReconciliationCorrection(campaign, dbBalance, liveBalance) {
     asset_type: campaign.asset_type,
   };
 
-  logger.warn(
-    "[reconcile] raised_amount corrected to match on-chain balance",
-    audit,
-  );
+  logger.warn('[reconcile] raised_amount corrected to match on-chain balance', audit);
 
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
+  const stellarTxId = await withTransaction(async client => {
     await client.query(
       `UPDATE campaigns
        SET raised_amount = $1,
@@ -59,7 +76,7 @@ async function applyReconciliationCorrection(campaign, dbBalance, liveBalance) {
              ELSE status
            END
        WHERE id = $2`,
-      [liveBalance, campaign.id],
+      [liveBalance, campaign.id]
     );
     const adjustedAt = new Date();
     await insertContributionAdjustment(client, {
@@ -68,34 +85,28 @@ async function applyReconciliationCorrection(campaign, dbBalance, liveBalance) {
       assetType: campaign.asset_type,
       adjustedAt,
     });
-    const stellarTxId = await insertReconciliationAdjustment(client, {
+    return insertReconciliationAdjustment(client, {
       campaignId: campaign.id,
       dbBalance,
       liveBalance,
       diff,
       assetType: campaign.asset_type,
     });
-    await client.query("COMMIT");
+  }, db);
 
-    cache.invalidate(`campaigns:id:${campaign.id}`);
-    cache.invalidatePrefix("campaigns:list:");
-    cache.invalidatePrefix("stats:");
+  cache.invalidate(`campaigns:id:${campaign.id}`);
+  cache.invalidatePrefix('campaigns:list:');
+  cache.invalidatePrefix('stats:');
 
-    alertDiscrepancyIfNeeded(campaign.id, audit);
+  alertDiscrepancyIfNeeded(campaign.id, audit);
 
-    return {
-      updated: true,
-      dbBalance,
-      liveBalance,
-      diff,
-      stellar_transaction_id: stellarTxId,
-    };
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  return {
+    updated: true,
+    dbBalance,
+    liveBalance,
+    diff,
+    stellar_transaction_id: stellarTxId,
+  };
 }
 
 const MAX_STORED_RUNS = 20;
@@ -114,30 +125,39 @@ async function reconcileCampaign(campaign) {
   try {
     const { rows: pendingRows } = await db.query(
       `SELECT id FROM withdrawal_requests WHERE campaign_id = $1 AND status = 'pending' LIMIT 1`,
-      [campaign.id],
+      [campaign.id]
     );
     if (pendingRows.length > 0) {
-      logger.info("[reconcile] Skipping campaign due to pending withdrawal", {
+      logger.info('[reconcile] Skipping campaign due to pending withdrawal', {
         campaign_id: campaign.id,
       });
-      return { skipped: true, reason: "pending_withdrawal" };
+      return { skipped: true, reason: 'pending_withdrawal' };
     }
 
-    const onChain = await getCampaignBalance(campaign.wallet_public_key);
-    const liveBalance = parseFloat(onChain[campaign.asset_type] || "0");
+    let liveBalance;
+    try {
+      liveBalance = await readLiveCampaignBalance(campaign);
+    } catch (err) {
+      // A rotated/closed wallet (or an unreachable escrow contract) throws on
+      // every run. Skip it instead of counting an error forever so a single
+      // dead account stops generating permanent false alarms (#901).
+      logger.warn('[reconcile] Skipping campaign — wallet balance unavailable', {
+        campaign_id: campaign.id,
+        escrow_contract_id: campaign.escrow_contract_id || null,
+        error: err.message,
+      });
+      return { skipped: true, reason: 'wallet_unavailable' };
+    }
+
     const dbBalance = parseFloat(campaign.raised_amount);
 
     if (!hasDiscrepancy(dbBalance, liveBalance)) {
       return { updated: false, dbBalance, liveBalance, diff: 0 };
     }
 
-    return await applyReconciliationCorrection(
-      campaign,
-      dbBalance,
-      liveBalance,
-    );
+    return await applyReconciliationCorrection(campaign, dbBalance, liveBalance);
   } catch (err) {
-    logger.error("[reconcile] Failed for campaign", {
+    logger.error('[reconcile] Failed for campaign', {
       campaign_id: campaign.id,
       error: err.message,
     });
@@ -148,9 +168,12 @@ async function reconcileCampaign(campaign) {
 async function reconcileCampaignBalances() {
   const startedAt = new Date().toISOString();
   const { rows } = await db.query(
-    `SELECT id, wallet_public_key, asset_type, raised_amount, target_amount, status
+    `SELECT id, wallet_public_key, asset_type, raised_amount, target_amount, status,
+            escrow_contract_id
      FROM campaigns
-     WHERE status IN ('active', 'funded')`,
+     WHERE status IN ('active', 'funded')
+       AND deleted_at IS NULL
+       AND escrow_contract_id IS NULL`
   );
 
   const summary = {
@@ -191,7 +214,7 @@ async function reconcileCampaignBalances() {
   }
 
   if (summary.updated > 0 || summary.errors > 0) {
-    logger.info("[reconcile] Batch reconciliation finished", summary);
+    logger.info('[reconcile] Batch reconciliation finished', summary);
   }
 
   summary.finished_at = new Date().toISOString();
@@ -201,12 +224,13 @@ async function reconcileCampaignBalances() {
 
 async function reconcileSingleCampaign(campaignId) {
   const { rows } = await db.query(
-    `SELECT id, wallet_public_key, asset_type, raised_amount, target_amount, status
+    `SELECT id, wallet_public_key, asset_type, raised_amount, target_amount, status,
+            escrow_contract_id
      FROM campaigns WHERE id = $1`,
-    [campaignId],
+    [campaignId]
   );
   if (!rows.length) {
-    throw new Error("Campaign not found");
+    throw new Error('Campaign not found');
   }
   return await reconcileCampaign(rows[0]);
 }
@@ -219,4 +243,5 @@ module.exports = {
   DISCREPANCY_EPSILON,
   getRecentReconciliationRuns,
   recordReconciliationRun,
+  readLiveCampaignBalance,
 };

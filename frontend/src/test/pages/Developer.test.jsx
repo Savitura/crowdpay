@@ -43,7 +43,12 @@ describe('Developer page', () => {
     fireEvent.change(screen.getByPlaceholderText(/Label/i), { target: { value: 'Integration' } });
     fireEvent.click(screen.getByRole('button', { name: /Create key/i }));
 
-    await waitFor(() => expect(apiMocks.createApiKey).toHaveBeenCalledWith({ name: 'Integration', scopes: ['read', 'write', 'withdrawals'] }));
+    await waitFor(() =>
+      expect(apiMocks.createApiKey).toHaveBeenCalledWith({
+        name: 'Integration',
+        scopes: ['read', 'write', 'withdrawals'],
+      })
+    );
     expect(await screen.findByText(/Copy now:/i)).toBeInTheDocument();
   });
 });

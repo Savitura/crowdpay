@@ -57,7 +57,19 @@ function makeDb(handlers) {
 }
 
 const defaultHandlers = [
-  [/FROM campaigns/, { rows: [{ id: CAMPAIGN_UUID, creator_id: 'test-user-id', status: 'completed', title: 'Test Campaign' }] }],
+  [
+    /FROM campaigns/,
+    {
+      rows: [
+        {
+          id: CAMPAIGN_UUID,
+          creator_id: 'test-user-id',
+          status: 'completed',
+          title: 'Test Campaign',
+        },
+      ],
+    },
+  ],
   [/campaign_members/, { rows: [] }],
   [/INSERT INTO campaign_impact_reports/, { rows: [{ id: 'report-id' }] }],
   [/INSERT INTO creator_impact_badges/, { rows: [] }],
@@ -76,7 +88,11 @@ test('createImpactReport validates creator + campaign status', async () => {
 
   const response = await request(app)
     .post(`/api/campaigns/${CAMPAIGN_UUID}/impact-report`)
-    .send({ title: 'My Impact Report', content: '# Report\n\nThis is the content', summary: 'This is a summary' });
+    .send({
+      title: 'My Impact Report',
+      content: '# Report\n\nThis is the content',
+      summary: 'This is a summary',
+    });
 
   assert.equal(response.status, 201);
   assert.ok(response.body.id);
@@ -108,7 +124,10 @@ test('publishImpactReport awards badge to creator', async () => {
   };
   const db = makeDb([
     [/status = 'draft'/, { rows: [draftRow] }],
-    [/SELECT id, campaign_id, creator_id, title, summary, status FROM campaign_impact_reports/, { rows: [draftRow] }],
+    [
+      /SELECT id, campaign_id, creator_id, title, summary, status FROM campaign_impact_reports/,
+      { rows: [draftRow] },
+    ],
     ...defaultHandlers,
   ]);
 
@@ -119,7 +138,7 @@ test('publishImpactReport awards badge to creator', async () => {
     .send({});
 
   assert.equal(response.status, 200);
-  assert.ok(queryLog(db).some((q) => q.sql.includes('creator_impact_badges')));
+  assert.ok(queryLog(db).some(q => q.sql.includes('creator_impact_badges')));
 });
 
 test('getImpactReport returns null for draft', async () => {
@@ -150,10 +169,7 @@ test('getImpactReport returns report after publish', async () => {
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
-  const db = makeDb([
-    [/status = 'published'/, { rows: [publishedRow] }],
-    ...defaultHandlers,
-  ]);
+  const db = makeDb([[/status = 'published'/, { rows: [publishedRow] }], ...defaultHandlers]);
 
   const app = buildApp(db);
 
@@ -212,21 +228,36 @@ test('impactReportService.createImpactReport validates input', async () => {
   const service = buildService(makeDb([...defaultHandlers]));
 
   await assert.rejects(
-    service.createImpactReport({ campaignId: null, creatorId: 'user-1', title: 'Title', content: 'Content' }),
+    service.createImpactReport({
+      campaignId: null,
+      creatorId: 'user-1',
+      title: 'Title',
+      content: 'Content',
+    }),
     /Missing required fields/
   );
 });
 
 test('impactReportService.publishImpactReport verifies creator ownership', async () => {
   const db = makeDb([
-    [/FROM campaign_impact_reports/, {
-      rows: [{ id: 'report-1', campaign_id: CAMPAIGN_UUID, creator_id: 'different-user', status: 'draft' }],
-    }],
+    [
+      /FROM campaign_impact_reports/,
+      {
+        rows: [
+          {
+            id: 'report-1',
+            campaign_id: CAMPAIGN_UUID,
+            creator_id: 'different-user',
+            status: 'draft',
+          },
+        ],
+      },
+    ],
     ...defaultHandlers,
   ]);
   const service = buildService(db);
 
-  await assert.rejects(service.publishImpactReport('report-1', 'current-user'), (err) => {
+  await assert.rejects(service.publishImpactReport('report-1', 'current-user'), err => {
     assert.equal(err.status, 403);
     assert.match(err.message, /creator/);
     return true;
@@ -235,25 +266,28 @@ test('impactReportService.publishImpactReport verifies creator ownership', async
 
 test('impactReportService.updateImpactReport only updates draft status', async () => {
   const db = makeDb([
-    [/FROM campaign_impact_reports/, {
-      rows: [{ id: 'report-1', creator_id: 'user-1', status: 'published' }],
-    }],
+    [
+      /FROM campaign_impact_reports/,
+      {
+        rows: [{ id: 'report-1', creator_id: 'user-1', status: 'published' }],
+      },
+    ],
     ...defaultHandlers,
   ]);
   const service = buildService(db);
 
-  await assert.rejects(service.updateImpactReport('report-1', 'user-1', { title: 'New Title' }), (err) => {
-    assert.equal(err.status, 400);
-    assert.match(err.message, /draft/);
-    return true;
-  });
+  await assert.rejects(
+    service.updateImpactReport('report-1', 'user-1', { title: 'New Title' }),
+    err => {
+      assert.equal(err.status, 400);
+      assert.match(err.message, /draft/);
+      return true;
+    }
+  );
 });
 
 test('impactReportService.hasPublishedReport checks publication status', async () => {
-  const db = makeDb([
-    [/COUNT/, { rows: [{ count: 1 }] }],
-    ...defaultHandlers,
-  ]);
+  const db = makeDb([[/COUNT/, { rows: [{ count: 1 }] }], ...defaultHandlers]);
   const service = buildService(db);
 
   const hasReport = await service.hasPublishedReport('campaign-1');
@@ -262,21 +296,26 @@ test('impactReportService.hasPublishedReport checks publication status', async (
 
 test('impactReportService.getDraftImpactReport verifies creator access', async () => {
   const db = makeDb([
-    [/status = 'draft'/, {
-      rows: [{
-        id: 'draft-1',
-        campaign_id: CAMPAIGN_UUID,
-        creator_id: 'different-user',
-        title: 'Draft',
-        content: 'Content',
-        status: 'draft',
-      }],
-    }],
+    [
+      /status = 'draft'/,
+      {
+        rows: [
+          {
+            id: 'draft-1',
+            campaign_id: CAMPAIGN_UUID,
+            creator_id: 'different-user',
+            title: 'Draft',
+            content: 'Content',
+            status: 'draft',
+          },
+        ],
+      },
+    ],
     ...defaultHandlers,
   ]);
   const service = buildService(db);
 
-  await assert.rejects(service.getDraftImpactReport(CAMPAIGN_UUID, 'current-user'), (err) => {
+  await assert.rejects(service.getDraftImpactReport(CAMPAIGN_UUID, 'current-user'), err => {
     assert.equal(err.status, 403);
     assert.match(err.message, /creator/);
     return true;

@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
+import { getNetwork, signTransaction } from '@stellar/freighter-api';
 
 const PERIOD_OPTIONS = [
   { months: 1, label: 'Monthly' },
@@ -23,39 +24,130 @@ function firstPaymentDate(periodMonths) {
   return formatDate(Date.now() + periodMonths * PERIOD_DAYS * 24 * 60 * 60 * 1000);
 }
 
-function ConfirmLockModal({ amountPerPeriod, asset, periodMonths, totalPeriods, totalCommitment, submitting, error, onConfirm, onClose }) {
+function ConfirmLockModal({
+  amountPerPeriod,
+  asset,
+  periodMonths,
+  totalPeriods,
+  totalCommitment,
+  submitting,
+  error,
+  onConfirm,
+  onClose,
+}) {
   const periodLabel = PERIOD_OPTIONS.find((p) => p.months === periodMonths)?.label.toLowerCase();
+  const modalRef = useRef(null);
+
+  useEffect(() => {
+    const trigger = document.activeElement;
+    return () => {
+      if (trigger && typeof trigger.focus === 'function' && trigger.isConnected) {
+        trigger.focus();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    const modal = modalRef.current;
+    if (!modal) return;
+    const initialFocusable = modal.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    initialFocusable[0]?.focus();
+
+    function trapTab(e) {
+      if (e.key !== 'Tab') return;
+      const focusable = modal.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) {
+        e.preventDefault();
+        if (!modal.hasAttribute('tabindex')) modal.setAttribute('tabindex', '-1');
+        modal.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!modal.contains(document.activeElement)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first)?.focus();
+      } else if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last?.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first?.focus();
+      }
+    }
+    modal.addEventListener('keydown', trapTab);
+    return () => modal.removeEventListener('keydown', trapTab);
+  }, []);
 
   return (
-    <div style={styles.overlay} onClick={onClose}>
+    <div className="modal-overlay" style={styles.overlay} onClick={onClose} role="presentation">
       <div
+        className="modal-shell"
+        ref={modalRef}
         style={styles.modal}
         role="dialog"
         aria-modal="true"
-        aria-label="Confirm recurring pledge"
+        aria-labelledby="confirm-lock-title"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem' }}>Lock {totalCommitment} {asset} now?</h2>
-        <p style={{ margin: '0 0 1rem', color: 'var(--color-text-secondary)', fontSize: '0.88rem', lineHeight: 1.5 }}>
+        <h2 id="confirm-lock-title" style={{ margin: '0 0 0.5rem', fontSize: '1.1rem' }}>
+          Lock {totalCommitment} {asset} now?
+        </h2>
+        <p
+          style={{
+            margin: '0 0 1rem',
+            color: 'var(--color-text-secondary)',
+            fontSize: '0.88rem',
+            lineHeight: 1.5,
+          }}
+        >
           Stellar has no recurring payments, so the whole commitment leaves your wallet immediately
           and is held in {totalPeriods} claimable balances on the ledger — one per period. CrowdPay
           releases each one to the campaign on its scheduled date.
         </p>
-        <ul style={{ margin: '0 0 1rem', paddingLeft: '1.1rem', color: 'var(--color-text-secondary)', fontSize: '0.85rem', lineHeight: 1.6 }}>
+        <ul
+          style={{
+            margin: '0 0 1rem',
+            paddingLeft: '1.1rem',
+            color: 'var(--color-text-secondary)',
+            fontSize: '0.85rem',
+            lineHeight: 1.6,
+          }}
+        >
           <li>
             {amountPerPeriod} {asset} {periodLabel}, {totalPeriods} times
           </li>
           <li>First payment on {firstPaymentDate(periodMonths)}</li>
-          <li>Cancelling stops any payment more than 7 days away; you reclaim those funds yourself 30 days after their scheduled date</li>
+          <li>
+            Cancelling stops any payment more than 7 days away; you reclaim those funds yourself 30
+            days after their scheduled date
+          </li>
         </ul>
 
-        {error && <p className="alert alert--error" style={{ marginBottom: '0.75rem' }}>{error}</p>}
+        {error && (
+          <p className="alert alert--error" style={{ marginBottom: '0.75rem' }}>
+            {error}
+          </p>
+        )}
 
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
           <button
             type="button"
             className="btn-secondary"
             onClick={onClose}
+            data-modal-close="true"
             style={{ fontSize: '0.85rem', padding: '0.4rem 1rem' }}
           >
             Cancel
@@ -76,7 +168,7 @@ function ConfirmLockModal({ amountPerPeriod, asset, periodMonths, totalPeriods, 
   );
 }
 
-export default function RecurringPledgeForm({ campaignId, asset, onSubscribed }) {
+export default function RecurringPledgeForm({ campaignId, asset, walletType, onSubscribed }) {
   const [open, setOpen] = useState(false);
   const [amountPerPeriod, setAmountPerPeriod] = useState('');
   const [periodMonths, setPeriodMonths] = useState(1);
@@ -85,31 +177,71 @@ export default function RecurringPledgeForm({ campaignId, asset, onSubscribed })
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [created, setCreated] = useState(null);
+  const [signing, setSigning] = useState(false);
 
   const amount = parseFloat(amountPerPeriod);
   const amountValid = Number.isFinite(amount) && amount > 0;
   const totalCommitment = amountValid ? Number((amount * totalPeriods).toFixed(7)) : 0;
 
+  const isFreighter = walletType === 'freighter';
+
   async function confirmPledge() {
     setSubmitting(true);
     setError('');
     try {
-      const subscription = await api.createSubscription(campaignId, {
-        amountPerPeriod: amount,
-        asset,
-        periodMonths,
-        totalPeriods,
-      });
-      setCreated(subscription);
-      setShowConfirm(false);
-      setOpen(false);
-      setAmountPerPeriod('');
-      onSubscribed?.(subscription);
+      if (isFreighter) {
+        await confirmPledgeFreighter();
+      } else {
+        const subscription = await api.createSubscription(campaignId, {
+          amountPerPeriod: amount,
+          asset,
+          periodMonths,
+          totalPeriods,
+        });
+        setCreated(subscription);
+        setShowConfirm(false);
+        setOpen(false);
+        setAmountPerPeriod('');
+        onSubscribed?.(subscription);
+      }
     } catch (err) {
       setError(err.message || 'Could not start this recurring pledge');
     } finally {
       setSubmitting(false);
     }
+  }
+
+  async function confirmPledgeFreighter() {
+    const prepared = await api.prepareSubscription(campaignId, {
+      amountPerPeriod: amount,
+      asset,
+      periodMonths,
+      totalPeriods,
+    });
+
+    const network = await getNetwork();
+    if (network?.error) throw new Error('Could not read Freighter network');
+
+    const signed = await signTransaction(prepared.unsignedXdr, {
+      networkPassphrase: network?.networkPassphrase,
+      address: prepared.walletPublicKey,
+    });
+    if (signed?.error) throw new Error(signed.error?.message || 'Freighter signing failed');
+    if (!signed?.signedTxXdr) throw new Error('Freighter did not return a signed transaction');
+
+    const subscription = await api.submitSubscription(campaignId, {
+      unsignedXdr: prepared.unsignedXdr,
+      signedXdr: signed.signedTxXdr,
+      amountPerPeriod: amount,
+      asset,
+      periodMonths,
+      totalPeriods,
+    });
+    setCreated(subscription);
+    setShowConfirm(false);
+    setOpen(false);
+    setAmountPerPeriod('');
+    onSubscribed?.(subscription);
   }
 
   return (
@@ -201,7 +333,13 @@ export default function RecurringPledgeForm({ campaignId, asset, onSubscribed })
             <strong style={{ fontSize: '1.35rem' }}>
               {totalCommitment} {asset}
             </strong>
-            <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', marginTop: '0.2rem' }}>
+            <div
+              style={{
+                fontSize: '0.8rem',
+                color: 'var(--color-text-secondary)',
+                marginTop: '0.2rem',
+              }}
+            >
               First payment {firstPaymentDate(periodMonths)} · locked on Stellar up front
             </div>
           </div>

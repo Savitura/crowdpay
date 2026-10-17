@@ -1,6 +1,7 @@
 const js = require('@eslint/js');
 const reactPlugin = require('eslint-plugin-react');
 const reactHooksPlugin = require('eslint-plugin-react-hooks');
+const noHardcodedStrings = require('./src/eslint-rules/no-hardcoded-strings.cjs');
 
 module.exports = [
   // Ignore patterns
@@ -27,6 +28,7 @@ module.exports = [
     plugins: {
       react: reactPlugin,
       'react-hooks': reactHooksPlugin,
+      'i18n': { rules: { 'no-hardcoded-strings': noHardcodedStrings } },
     },
     languageOptions: {
       ecmaVersion: 2022,
@@ -58,6 +60,10 @@ module.exports = [
         CustomEvent: 'readonly',
         ResizeObserver: 'readonly',
         confirm: 'readonly',
+        crypto: 'readonly',
+        alert: 'readonly',
+        process: 'readonly',
+        __dirname: 'readonly',
         global: 'writable',
       },
     },
@@ -76,6 +82,10 @@ module.exports = [
       eqeqeq: 'error',
       'no-var': 'error',
       'prefer-const': 'warn',
+      'i18n/no-hardcoded-strings': ['warn', {
+        ignoredStrings: ['...', '–', '—', '×', '✕', '✓', '★', '☆', '⛓️', '📈', '⚡', '✨'],
+        ignoredPatterns: ['^\\s*$', '^[A-Z]{2,}$', '^[0-9.]+$', '^[A-Z][a-z]+\\s[A-Z][a-z]+$']
+      }],
     },
   },
 

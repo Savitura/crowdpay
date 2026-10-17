@@ -13,10 +13,9 @@ const {
 const PREFERENCE_KEYS = ['notify_updates', 'notify_milestones', 'notify_funding'];
 
 async function loadCampaign(req, res, next) {
-  const { rows } = await db.query(
-    'SELECT id FROM campaigns WHERE id = $1 AND deleted_at IS NULL',
-    [req.params.id]
-  );
+  const { rows } = await db.query('SELECT id FROM campaigns WHERE id = $1 AND deleted_at IS NULL', [
+    req.params.id,
+  ]);
   if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
   next();
 }
@@ -52,7 +51,7 @@ router.patch(
   asyncHandler(loadCampaign),
   asyncHandler(async (req, res) => {
     const body = req.body || {};
-    const provided = PREFERENCE_KEYS.filter((key) => typeof body[key] === 'boolean');
+    const provided = PREFERENCE_KEYS.filter(key => typeof body[key] === 'boolean');
     if (!provided.length) {
       return res.status(422).json({
         error: `Provide at least one boolean preference: ${PREFERENCE_KEYS.join(', ')}`,

@@ -42,30 +42,30 @@ test('PUT /channel-settings upserts and echoes stored destinations', async () =>
   const app = buildApp(async (text, params) => {
     calls.push({ text, params });
     return {
-      rows: [{
-        push_token: 'tok-1',
-        slack_webhook_url: 'https://hooks.slack.com/abc',
-        discord_webhook_url: null,
-        sms_phone_number: null,
-        quiet_hours_start: 22,
-        quiet_hours_end: 7,
-      }],
+      rows: [
+        {
+          push_token: 'tok-1',
+          slack_webhook_url: 'https://hooks.slack.com/abc',
+          discord_webhook_url: null,
+          sms_phone_number: null,
+          quiet_hours_start: 22,
+          quiet_hours_end: 7,
+        },
+      ],
     };
   });
 
-  const res = await request(app)
-    .put('/api/notifications/channel-settings')
-    .send({
-      push_token: 'tok-1',
-      slack_webhook_url: 'https://hooks.slack.com/abc',
-      quiet_hours_start: 22,
-      quiet_hours_end: 7,
-    });
+  const res = await request(app).put('/api/notifications/channel-settings').send({
+    push_token: 'tok-1',
+    slack_webhook_url: 'https://hooks.slack.com/abc',
+    quiet_hours_start: 22,
+    quiet_hours_end: 7,
+  });
 
   assert.equal(res.status, 200);
   assert.equal(res.body.push_token, 'tok-1');
   assert.equal(res.body.quiet_hours_start, 22);
-  const upsert = calls.find((c) => c.text.includes('INSERT INTO notification_channel_settings'));
+  const upsert = calls.find(c => c.text.includes('INSERT INTO notification_channel_settings'));
   assert.ok(upsert);
   assert.equal(upsert.params[0], 'user-1');
 });
@@ -94,10 +94,10 @@ test('POST /push-subscriptions stores an FCM token for the authenticated user', 
 
   assert.equal(res.status, 201);
   assert.deepEqual(res.body, { ok: true });
-  const insert = calls.find((call) => call.text.includes('INSERT INTO push_subscriptions'));
+  const insert = calls.find(call => call.text.includes('INSERT INTO push_subscriptions'));
   assert.ok(insert);
   assert.deepEqual(insert.params, ['user-1', 'fcm-token']);
-  assert.ok(calls.some((call) => call.text.includes('INSERT INTO notification_channel_settings')));
+  assert.ok(calls.some(call => call.text.includes('INSERT INTO notification_channel_settings')));
 });
 
 test('POST /push-subscriptions rejects an invalid token', async () => {
@@ -120,7 +120,7 @@ test('PUT /preferences stores a per-event channel override', async () => {
 
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, { ok: true });
-  const insert = calls.find((c) => c.text.includes('INSERT INTO notification_preferences'));
+  const insert = calls.find(c => c.text.includes('INSERT INTO notification_preferences'));
   assert.ok(insert);
   assert.deepEqual(insert.params, ['user-1', 'campaign_update', 'slack', false]);
 });

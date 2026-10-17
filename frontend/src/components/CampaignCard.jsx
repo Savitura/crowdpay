@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useExchangeRate } from '../hooks/useExchangeRate';
 import VerificationBadge from './VerificationBadge';
 import CampaignStatusBadge from './CampaignStatusBadge';
 
@@ -50,6 +51,9 @@ const CATEGORY_LABELS = {
 
 function CampaignCard({ campaign, featured }) {
   const { t } = useTranslation();
+  const { formatNaira } = useExchangeRate(campaign.asset_type || 'USDC');
+  const nairaRaised = formatNaira(campaign.raised_amount);
+  const nairaTarget = formatNaira(campaign.target_amount);
   const pct = Math.min(100, (campaign.raised_amount / campaign.target_amount) * 100).toFixed(1);
   const fillColor = progressColor(parseFloat(pct), campaign.status);
   const deadline = daysLeft(campaign.deadline);
@@ -107,12 +111,15 @@ function CampaignCard({ campaign, featured }) {
         <div style={styles.content}>
           <div style={styles.header}>
             <div style={styles.headerLeft}>
-              {campaign.asset_type && (
-                <span style={styles.assetBadge}>{campaign.asset_type}</span>
-              )}
+              {campaign.asset_type && <span style={styles.assetBadge}>{campaign.asset_type}</span>}
               <CampaignStatusBadge status={campaign.status} />
             </div>
-            <VerificationBadge status={campaign.creator_kyc_status || campaign.creator_verification_status} tier={campaign.creator_verification_tier} compact showTier />
+            <VerificationBadge
+              status={campaign.creator_kyc_status || campaign.creator_verification_status}
+              tier={campaign.creator_verification_tier}
+              compact
+              showTier
+            />
           </div>
 
           <h3 style={styles.title}>{campaign.title}</h3>
@@ -125,9 +132,29 @@ function CampaignCard({ campaign, featured }) {
             <div style={styles.amountRow}>
               <span style={styles.raisedAmount}>
                 <strong>${Number(campaign.raised_amount).toLocaleString()}</strong> raised
+                {nairaRaised && (
+                  <span
+                    style={styles.nairaApprox}
+                    title="Approximate NGN value"
+                    aria-label={`approximate naira value: ₦${nairaRaised}`}
+                  >
+                    {' '}
+                    (≈ ₦{nairaRaised} approx.)
+                  </span>
+                )}
               </span>
               <span style={styles.targetAmount}>
                 of ${Number(campaign.target_amount).toLocaleString()}
+                {nairaTarget && (
+                  <span
+                    style={styles.nairaApprox}
+                    title="Approximate NGN value"
+                    aria-label={`approximate naira goal: ₦${nairaTarget}`}
+                  >
+                    {' '}
+                    (≈ ₦{nairaTarget} approx.)
+                  </span>
+                )}
               </span>
             </div>
             <div className="progress-bar" style={styles.progressBar}>
@@ -139,9 +166,7 @@ function CampaignCard({ campaign, featured }) {
           </div>
 
           <div style={styles.footer}>
-            <span style={styles.footerStat}>
-              {campaign.contributor_count || 0} donors
-            </span>
+            <span style={styles.footerStat}>{campaign.contributor_count || 0} donors</span>
             {deadline && (
               <span style={styles.footerStat}>
                 {deadline.kind === 'ended'
@@ -180,7 +205,8 @@ const styles = {
     display: 'block',
   },
   placeholder: {
-    background: 'linear-gradient(135deg, var(--color-accent-lighter) 0%, var(--color-teal-light) 100%)',
+    background:
+      'linear-gradient(135deg, var(--color-accent-lighter) 0%, var(--color-teal-light) 100%)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -259,6 +285,13 @@ const styles = {
   targetAmount: {
     fontSize: '0.8rem',
     color: 'var(--color-text-hint)',
+  },
+  nairaApprox: {
+    fontSize: '0.72rem',
+    color: 'var(--color-text-secondary)',
+    fontWeight: 500,
+    marginLeft: '0.2rem',
+    whiteSpace: 'nowrap',
   },
   progressBar: {
     height: '6px',

@@ -106,7 +106,9 @@ test('requireValidRenderUrl middleware passes through when field is missing and 
   const req = { body: {} };
   const res = { status: () => res, json: () => res };
   let called = false;
-  middleware(req, res, () => { called = true; });
+  middleware(req, res, () => {
+    called = true;
+  });
   assert.equal(called, true);
 });
 
@@ -116,8 +118,14 @@ test('requireValidRenderUrl middleware returns 400 when field is missing and req
   let statusCode;
   let body;
   const res = {
-    status: (code) => { statusCode = code; return res; },
-    json: (data) => { body = data; return res; },
+    status: code => {
+      statusCode = code;
+      return res;
+    },
+    json: data => {
+      body = data;
+      return res;
+    },
   };
   middleware(req, res, () => {});
   assert.equal(statusCode, 400);
@@ -130,8 +138,14 @@ test('requireValidRenderUrl middleware returns 422 for dangerous URL scheme', ()
   let statusCode;
   let body;
   const res = {
-    status: (code) => { statusCode = code; return res; },
-    json: (data) => { body = data; return res; },
+    status: code => {
+      statusCode = code;
+      return res;
+    },
+    json: data => {
+      body = data;
+      return res;
+    },
   };
   middleware(req, res, () => {});
   assert.equal(statusCode, 422);
@@ -143,7 +157,9 @@ test('requireValidRenderUrl middleware normalizes valid URL on req.body', () => 
   const req = { body: { evidence_url: 'https://Example.COM/Path' } };
   let called = false;
   const res = { status: () => res, json: () => res };
-  middleware(req, res, () => { called = true; });
+  middleware(req, res, () => {
+    called = true;
+  });
   assert.equal(called, true);
   assert.equal(req.body.evidence_url, 'https://example.com/Path');
 });

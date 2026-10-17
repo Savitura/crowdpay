@@ -22,19 +22,44 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          envs: DATABASE_URL,JWT_SECRET,API_KEY_PEPPER,PLATFORM_SECRET_KEY,USDC_ISSUER,STELLAR_NETWORK,STELLAR_HORIZON_URL,FRONTEND_URL,DEPLOY_PATH,SENTRY_RELEASE
+          envs: DATABASE_URL,JWT_SECRET,API_KEY_PEPPER,PLATFORM_SECRET_KEY,ARBITRATOR_SECRET_KEY,WALLET_ENCRYPTION_KEY,WALLET_SECRET_LOCAL_KEK,OPS_API_KEY,UNSUBSCRIBE_SECRET,IMPACT_SIGNING_SECRET,USDC_ISSUER,STELLAR_NETWORK,STELLAR_HORIZON_URL,FRONTEND_URL,DEPLOY_PATH,SENTRY_RELEASE
           script: |
 
             set -euo pipefail
             cd "$DEPLOY_PATH"
+
+            # Record current HEAD before any changes — used by the rollback step.
+            PREVIOUS_DEPLOY_SHA=$(git rev-parse HEAD)
+            echo "Pre-deploy SHA: $PREVIOUS_DEPLOY_SHA"
+            echo "$PREVIOUS_DEPLOY_SHA" > .previous-deploy-sha
+
+            # Preserve any local modifications (no-op on a clean tree).
+            git stash --include-untracked
+
             git fetch origin main
-            git reset --hard origin/main
+
+            # --ff-only refuses to proceed if the local branch has diverged
+            # (e.g. a force-push landed or a local commit exists), failing
+            # explicitly instead of silently overwriting local state.
+            git checkout main
+            git pull --ff-only origin main || {
+              echo "ERROR: Fast-forward failed — local branch has diverged from origin/main."
+              echo "Manual intervention required. Restoring stashed changes."
+              git stash pop || true
+              exit 1
+            }
 
             printf '%s\n' "NODE_ENV=production" \
             "DATABASE_URL=${DATABASE_URL}" \
             "JWT_SECRET=${JWT_SECRET}" \
             "API_KEY_PEPPER=${API_KEY_PEPPER}" \
             "PLATFORM_SECRET_KEY=${PLATFORM_SECRET_KEY}" \
+            "ARBITRATOR_SECRET_KEY=${ARBITRATOR_SECRET_KEY}" \
+            "WALLET_ENCRYPTION_KEY=${WALLET_ENCRYPTION_KEY}" \
+            "WALLET_SECRET_LOCAL_KEK=${WALLET_SECRET_LOCAL_KEK}" \
+            "OPS_API_KEY=${OPS_API_KEY}" \
+            "UNSUBSCRIBE_SECRET=${UNSUBSCRIBE_SECRET}" \
+            "IMPACT_SIGNING_SECRET=${IMPACT_SIGNING_SECRET}" \
             "USDC_ISSUER=${USDC_ISSUER}" \
             "STELLAR_NETWORK=${STELLAR_NETWORK}" \
             "STELLAR_HORIZON_URL=${STELLAR_HORIZON_URL}" \
@@ -51,6 +76,12 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           API_KEY_PEPPER: ${{ secrets.API_KEY_PEPPER }}
           PLATFORM_SECRET_KEY: ${{ secrets.PLATFORM_SECRET_KEY }}
+          ARBITRATOR_SECRET_KEY: ${{ secrets.ARBITRATOR_SECRET_KEY }}
+          WALLET_ENCRYPTION_KEY: ${{ secrets.WALLET_ENCRYPTION_KEY }}
+          WALLET_SECRET_LOCAL_KEK: ${{ secrets.WALLET_SECRET_LOCAL_KEK }}
+          OPS_API_KEY: ${{ secrets.OPS_API_KEY }}
+          UNSUBSCRIBE_SECRET: ${{ secrets.UNSUBSCRIBE_SECRET }}
+          IMPACT_SIGNING_SECRET: ${{ secrets.IMPACT_SIGNING_SECRET }}
           USDC_ISSUER: ${{ secrets.USDC_ISSUER }}
           STELLAR_NETWORK: ${{ secrets.STELLAR_NETWORK }}
           STELLAR_HORIZON_URL: ${{ secrets.STELLAR_HORIZON_URL }}
@@ -61,7 +92,7 @@ jobs:
       - name: Wait for backend to become healthy
         run: |
           for i in $(seq 1 10); do
-            if curl -fsS "${{ secrets.DEPLOY_HEALTH_URL }}/health"; then
+            if curl -fsS "${{ secrets.DEPLOY_HEALTH_URL }}/health" | grep -q '"status":"ok"'; then
               echo "Health check passed"
               exit 0
             fi
@@ -71,6 +102,60 @@ jobs:
           echo "Health check failed after 10 attempts"
           exit 1
 
+      - name: Rollback on health check failure
+        if: failure()
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: DATABASE_URL,JWT_SECRET,API_KEY_PEPPER,PLATFORM_SECRET_KEY,ARBITRATOR_SECRET_KEY,WALLET_ENCRYPTION_KEY,WALLET_SECRET_LOCAL_KEK,OPS_API_KEY,UNSUBSCRIBE_SECRET,IMPACT_SIGNING_SECRET,USDC_ISSUER,STELLAR_NETWORK,STELLAR_HORIZON_URL,FRONTEND_URL,DEPLOY_PATH,SENTRY_RELEASE
+          script: |
+            set -euo pipefail
+            cd "$DEPLOY_PATH"
+            if [ ! -f .previous-deploy-sha ]; then
+              echo "No previous deploy SHA recorded; skipping rollback"
+              exit 0
+            fi
+            PREVIOUS_SHA=$(cat .previous-deploy-sha)
+            CURRENT_SHA=$(git rev-parse HEAD)
+            if [ "$PREVIOUS_SHA" = "$CURRENT_SHA" ]; then
+              echo "ERROR: Rollback SHA is the same as current HEAD — rollback marker was not written correctly"
+              exit 1
+            fi
+            echo "Rolling back to previous deployment SHA: $PREVIOUS_SHA"
+            git reset --hard "$PREVIOUS_SHA"
+            docker compose -f docker-compose.prod.yml up -d --build
+            docker compose -f docker-compose.prod.yml exec -T backend node db/migrate.js
+            echo "Rolled back and redeployed $PREVIOUS_SHA"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          API_KEY_PEPPER: ${{ secrets.API_KEY_PEPPER }}
+          PLATFORM_SECRET_KEY: ${{ secrets.PLATFORM_SECRET_KEY }}
+          ARBITRATOR_SECRET_KEY: ${{ secrets.ARBITRATOR_SECRET_KEY }}
+          WALLET_ENCRYPTION_KEY: ${{ secrets.WALLET_ENCRYPTION_KEY }}
+          WALLET_SECRET_LOCAL_KEK: ${{ secrets.WALLET_SECRET_LOCAL_KEK }}
+          OPS_API_KEY: ${{ secrets.OPS_API_KEY }}
+          UNSUBSCRIBE_SECRET: ${{ secrets.UNSUBSCRIBE_SECRET }}
+          IMPACT_SIGNING_SECRET: ${{ secrets.IMPACT_SIGNING_SECRET }}
+          USDC_ISSUER: ${{ secrets.USDC_ISSUER }}
+          STELLAR_NETWORK: ${{ secrets.STELLAR_NETWORK }}
+          STELLAR_HORIZON_URL: ${{ secrets.STELLAR_HORIZON_URL }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          SENTRY_RELEASE: ${{ github.sha }}
+
+      - name: Notify Slack on rollback
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          fields: repo,commit,author
+          text: Deployment failed health check and was automatically rolled back to the previous release on ${{ secrets.DEPLOY_HOST }}.
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
       - name: Post deploy status to Slack
         uses: 8398a7/action-slack@v3
         with:
@@ -78,4 +163,4 @@ jobs:
           text: Deployment to production completed.
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        if: always()
+        if: success()

@@ -81,9 +81,7 @@ describe('DepositModal', () => {
     await user.type(amountInput, '10');
     await user.click(screen.getByRole('button', { name: 'Continue' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'No deposit anchor is available.'
-    );
+    expect(await screen.findByRole('alert')).toHaveTextContent('No deposit anchor is available.');
   });
 
   it('starts the deposit flow and transitions to the anchor phase on submit', async () => {

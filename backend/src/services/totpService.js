@@ -10,10 +10,7 @@ const BACKUP_CODE_COUNT = 10;
 const DEVICE_TRUST_DAYS = 30;
 
 function generateFingerprint(req) {
-  const raw = [
-    req.headers['user-agent'] || '',
-    req.headers['accept-language'] || '',
-  ].join('|');
+  const raw = [req.headers['user-agent'] || '', req.headers['accept-language'] || ''].join('|');
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
@@ -54,7 +51,7 @@ async function generateBackupCodes() {
   const raw = Array.from({ length: BACKUP_CODE_COUNT }, () =>
     crypto.randomBytes(4).toString('hex')
   );
-  const hashed = await Promise.all(raw.map((code) => bcrypt.hash(code, 10)));
+  const hashed = await Promise.all(raw.map(code => bcrypt.hash(code, 10)));
   return { raw, hashed };
 }
 
@@ -93,35 +90,9 @@ async function consumeBackupCode(userId, code) {
     }
   }
 
-  return { consumed: false };
-}
-
-/**
- * Replace all backup codes for a user.
- * Runs a DELETE then bulk INSERT inside a single transaction so there is never
- * a window where the user has zero codes mid-operation.
- *
- * @param {string}   userId
- * @param {string[]} hashedCodes - bcrypt hashes of the new codes
- */
-async function storeBackupCodes(userId, hashedCodes) {
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query('DELETE FROM user_backup_codes WHERE user_id = $1', [userId]);
-    for (const hash of hashedCodes) {
-      await client.query(
-        'INSERT INTO user_backup_codes (user_id, code_hash) VALUES ($1, $2)',
-        [userId, hash]
-      );
-    }
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+async function removeBackupCode(userId, codes, index) {
+  codes.splice(index, 1);
+  await db.query('UPDATE users SET backup_codes = $1 WHERE id = $2', [codes, userId]);
 }
 
 async function logAuditEvent(userId, eventType, req, metadata = {}) {
@@ -164,10 +135,10 @@ async function trustDevice(userId, fingerprint, req) {
 }
 
 async function revokeDevice(userId, deviceId) {
-  const result = await db.query(
-    'DELETE FROM trusted_devices WHERE id = $1 AND user_id = $2',
-    [deviceId, userId]
-  );
+  const result = await db.query('DELETE FROM trusted_devices WHERE id = $1 AND user_id = $2', [
+    deviceId,
+    userId,
+  ]);
   return result.rowCount > 0;
 }
 
@@ -188,7 +159,10 @@ async function getUserDevices(userId) {
 
 async function enforce2faCheck(user) {
   if (user.enforce_2fa && !user.totp_enabled) {
-    return { enforced: true, message: '2FA is required for your account. Please set up 2FA before continuing.' };
+    return {
+      enforced: true,
+      message: '2FA is required for your account. Please set up 2FA before continuing.',
+    };
   }
   return { enforced: false };
 }

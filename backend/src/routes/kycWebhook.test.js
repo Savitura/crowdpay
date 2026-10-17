@@ -14,13 +14,15 @@ function buildWebhookApp() {
         if (text.includes('UPDATE users')) {
           updatedStatus = params[0];
           return {
-            rows: [{
-              id: 'user-1',
-              email: 'user@test.com',
-              name: 'User',
-              kyc_status: params[0],
-              kyc_completed_at: params[0] === 'verified' ? new Date().toISOString() : null,
-            }],
+            rows: [
+              {
+                id: 'user-1',
+                email: 'user@test.com',
+                name: 'User',
+                kyc_status: params[0],
+                kyc_completed_at: params[0] === 'verified' ? new Date().toISOString() : null,
+              },
+            ],
           };
         }
         return { rows: [] };
@@ -81,7 +83,7 @@ test('POST /api/webhooks/kyc updates user when Persona signature is valid', asyn
     assert.strictEqual(body.kyc_status, 'verified');
     assert.strictEqual(getUpdatedStatus(), 'verified');
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await new Promise(resolve => server.close(resolve));
   }
 });
 
@@ -102,6 +104,6 @@ test('POST /api/webhooks/kyc rejects invalid Persona signature', async () => {
 
     assert.strictEqual(res.status, 401);
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await new Promise(resolve => server.close(resolve));
   }
 });

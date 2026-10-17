@@ -24,7 +24,7 @@ const NO_BADGES = {
 
 function statsQuery(overrides = {}) {
   const stats = { ...NO_BADGES, ...overrides };
-  return async (text) => {
+  return async text => {
     if (text.includes('my_contributions')) {
       return {
         rows: [
@@ -57,7 +57,7 @@ function statsQuery(overrides = {}) {
 }
 
 function earnedIds(badges) {
-  return badges.filter((badge) => badge.earned).map((badge) => badge.id);
+  return badges.filter(badge => badge.earned).map(badge => badge.id);
 }
 
 test('computeBadges awards nothing to a contributor with no history', () => {
@@ -72,10 +72,9 @@ test('computeBadges covers the new achievement types', () => {
   assert.deepEqual(earnedIds(service.computeBadges({ ...NO_BADGES, early_backings: 1 })), [
     'early_backer',
   ]);
-  assert.deepEqual(
-    earnedIds(service.computeBadges({ ...NO_BADGES, largest_contribution: 500 })),
-    ['high_value_backer']
-  );
+  assert.deepEqual(earnedIds(service.computeBadges({ ...NO_BADGES, largest_contribution: 500 })), [
+    'high_value_backer',
+  ]);
   assert.deepEqual(
     earnedIds(service.computeBadges({ ...NO_BADGES, campaigns_with_released_milestone: 2 })),
     ['milestone_witness']
@@ -131,7 +130,7 @@ test('evaluateBadges records and announces each newly earned badge once', async 
   const service = buildService({
     queryImpl: async (text, params) => {
       if (text.includes('FROM contributor_badges')) {
-        return { rows: alreadyEarned.map((id) => ({ badge_id: id, earned_at: 'earlier' })) };
+        return { rows: alreadyEarned.map(id => ({ badge_id: id, earned_at: 'earlier' })) };
       }
       if (text.includes('INSERT INTO contributor_badges')) {
         inserted.push(params[1]);
@@ -178,8 +177,20 @@ test('getLeaderboard ranks contributors and caps the page size', async () => {
       limitParam = params[0];
       return {
         rows: [
-          { id: 'user-1', name: 'Ada', total_contributed: '900', campaigns_backed: 4, badge_count: 3 },
-          { id: 'user-2', name: 'Grace', total_contributed: '400', campaigns_backed: 2, badge_count: 1 },
+          {
+            id: 'user-1',
+            name: 'Ada',
+            total_contributed: '900',
+            campaigns_backed: 4,
+            badge_count: 3,
+          },
+          {
+            id: 'user-2',
+            name: 'Grace',
+            total_contributed: '400',
+            campaigns_backed: 2,
+            badge_count: 1,
+          },
         ],
       };
     },

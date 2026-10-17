@@ -6,7 +6,14 @@ export default function Logo({ size = 28, showWordmark = true, variant = 'defaul
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem' }}>
       <svg width={size} height={size} viewBox="0 0 40 40" fill="none" aria-hidden="true">
         <defs>
-          <linearGradient id={gradientId} x1="4" y1="4" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+          <linearGradient
+            id={gradientId}
+            x1="4"
+            y1="4"
+            x2="36"
+            y2="36"
+            gradientUnits="userSpaceOnUse"
+          >
             <stop offset="0%" stopColor="#4f83f1" />
             <stop offset="100%" stopColor="#1d4ed8" />
           </linearGradient>

@@ -1,14 +1,17 @@
-import React, { lazy, Suspense } from 'react';
+import { lazy, Suspense } from 'react';
+import PropTypes from 'prop-types';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { ToastProvider } from './context/ToastContext';
 import { NetworkStatusProvider } from './context/NetworkStatusContext';
+import { FeatureFlagsProvider } from './context/FeatureFlagsContext';
 import { OfflineBanner } from './components/OfflineBanner';
 import ImpersonationBanner from './components/ImpersonationBanner';
 import AnnouncementBanner from './components/AnnouncementBanner';
 import { useAuth } from './context/AuthContext';
+import ModalAccessibilityManager from './components/ModalAccessibilityManager';
 
 const Landing = lazy(() => import('./pages/Landing'));
 const Home = lazy(() => import('./pages/Home'));
@@ -41,6 +44,7 @@ const Governance = lazy(() => import('./pages/Governance'));
 const CampaignShare = lazy(() => import('./pages/CampaignShare'));
 const ReferralDashboard = lazy(() => import('./pages/ReferralDashboard'));
 const OpsCenter = lazy(() => import('./pages/OpsCenter'));
+const ContributorIdentityPage = lazy(() => import('./pages/ContributorIdentityPage'));
 
 function PrivateRoute({ children }) {
   const { user, ready } = useAuth();
@@ -48,140 +52,149 @@ function PrivateRoute({ children }) {
   return user ? children : <Navigate to="/login" replace />;
 }
 
+PrivateRoute.propTypes = {
+  children: PropTypes.node.isRequired,
+};
+
 export default function App() {
   const location = useLocation();
   const hideNavbar =
     location.pathname.startsWith('/widget/') || location.pathname.startsWith('/embed/');
 
   return (
-    <ThemeProvider>
-      <AuthProvider>
-        <ToastProvider>
-          <NetworkStatusProvider>
-            <OfflineBanner />
-            {!hideNavbar && <ImpersonationBanner />}
-            {!hideNavbar && <AnnouncementBanner />}
-            {!hideNavbar && <Navbar />}
-            <Suspense fallback={<div>Loading...</div>}>
-              <Routes>
-                <Route path="/" element={<Landing />} />
-                <Route path="/discover" element={<Home />} />
-                <Route path="/compare" element={<CampaignCompare />} />
-                <Route path="/how-it-works" element={<HowItWorks />} />
-                <Route path="/pricing" element={<Pricing />} />
-                <Route path="/about" element={<About />} />
-                <Route path="/resources" element={<Resources />} />
-                <Route path="/leaderboard" element={<Leaderboard />} />
-                <Route path="/creators/:id" element={<CreatorProfile />} />
-                <Route
-                  path="/campaigns/new"
-                  element={
-                    <PrivateRoute>
-                      <CreateCampaign />
-                    </PrivateRoute>
-                  }
-                />
-                <Route path="/campaigns/:id" element={<Campaign />} />
-                <Route path="/campaigns/:id/share" element={<CampaignShare />} />
-                {/* Short share link handed out by the referral system (#675) */}
-                <Route path="/c/:id" element={<Campaign />} />
-                <Route path="/campaigns/:id/invite/:token" element={<AcceptInvite />} />
-                <Route path="/embed/campaigns/:id" element={<CampaignEmbed />} />
-                <Route path="/widget/campaigns/:id" element={<Widget />} />
-                <Route path="/login" element={<Login />} />
-                <Route path="/register" element={<Register />} />
-                <Route path="/forgot-password" element={<ForgotPassword />} />
-                <Route path="/reset-password" element={<ResetPassword />} />
-                <Route
-                  path="/admin"
-                  element={
-                    <PrivateRoute>
-                      <AdminDashboard />
-                    </PrivateRoute>
-                  }
-                />
-                <Route
-                  path="/developer"
-                  element={
-                    <PrivateRoute>
-                      <Developer />
-                    </PrivateRoute>
-                  }
-                />
-                <Route
-                  path="/dashboard"
-                  element={
-                    <PrivateRoute>
-                      <Dashboard />
-                    </PrivateRoute>
-                  }
-                />
-                <Route
-                  path="/dashboard/referrals"
-                  element={
-                    <PrivateRoute>
-                      <ReferralDashboard />
-                    </PrivateRoute>
-                  }
-                />
-                <Route
-                  path="/dashboard/analytics"
-                  element={
-                    <PrivateRoute>
-                      <CreatorAnalytics />
-                    </PrivateRoute>
-                  }
-                />
-                <Route
-                  path="/dashboard/analytics/:campaignId"
-                  element={
-                    <PrivateRoute>
-                      <CreatorCampaignAnalytics />
-                    </PrivateRoute>
-                  }
-                />
-                <Route
-                  path="/profile"
-                  element={
-                    <PrivateRoute>
-                      <Profile />
-                    </PrivateRoute>
-                  }
-                />
-                <Route
-                  path="/settings/notifications"
-                  element={
-                    <PrivateRoute>
-                      <NotificationSettings />
-                    </PrivateRoute>
-                  }
-                />
-                <Route
-                  path="/tax-receipts"
-                  element={
-                    <PrivateRoute>
-                      <TaxReceipts />
-                    </PrivateRoute>
-                  }
-                />
-                <Route
-                  path="/governance"
-                  element={<Governance />}
-                />
-                <Route
-                  path="/ops"
-                  element={<OpsCenter />}
-                />
-                <Route
-                  path="/my-contributions"
-                  element={<Navigate to="/dashboard?tab=contributions" replace />}
-                />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Suspense>
-          </NetworkStatusProvider>
-        </ToastProvider>
-      </AuthProvider>
-    </ThemeProvider>
+    <FeatureFlagsProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <ToastProvider>
+            <NetworkStatusProvider>
+              <ModalAccessibilityManager />
+              <OfflineBanner />
+              {!hideNavbar && <ImpersonationBanner />}
+              {!hideNavbar && <AnnouncementBanner />}
+              {!hideNavbar && <Navbar />}
+              <Suspense fallback={<div>Loading...</div>}>
+                <Routes>
+                  <Route path="/" element={<Landing />} />
+                  <Route path="/discover" element={<Home />} />
+                  <Route path="/compare" element={<CampaignCompare />} />
+                  <Route path="/how-it-works" element={<HowItWorks />} />
+                  <Route path="/pricing" element={<Pricing />} />
+                  <Route path="/about" element={<About />} />
+                  <Route path="/resources" element={<Resources />} />
+                  <Route path="/leaderboard" element={<Leaderboard />} />
+                  <Route path="/creators/:id" element={<CreatorProfile />} />
+                  <Route
+                    path="/campaigns/new"
+                    element={
+                      <PrivateRoute>
+                        <CreateCampaign />
+                      </PrivateRoute>
+                    }
+                  />
+                  <Route path="/campaigns/:id" element={<Campaign />} />
+                  <Route path="/campaigns/:id/share" element={<CampaignShare />} />
+                  {/* Short share link handed out by the referral system (#675) */}
+                  <Route path="/c/:id" element={<Campaign />} />
+                  <Route path="/campaigns/:id/invite/:token" element={<AcceptInvite />} />
+                  <Route path="/embed/campaigns/:id" element={<CampaignEmbed />} />
+                  <Route path="/widget/campaigns/:id" element={<Widget />} />
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/register" element={<Register />} />
+                  <Route path="/forgot-password" element={<ForgotPassword />} />
+                  <Route path="/reset-password" element={<ResetPassword />} />
+                  <Route
+                    path="/admin"
+                    element={
+                      <PrivateRoute>
+                        <AdminDashboard />
+                      </PrivateRoute>
+                    }
+                  />
+                  <Route
+                    path="/developer"
+                    element={
+                      <PrivateRoute>
+                        <Developer />
+                      </PrivateRoute>
+                    }
+                  />
+                  <Route
+                    path="/dashboard"
+                    element={
+                      <PrivateRoute>
+                        <Dashboard />
+                      </PrivateRoute>
+                    }
+                  />
+                  <Route
+                    path="/dashboard/referrals"
+                    element={
+                      <PrivateRoute>
+                        <ReferralDashboard />
+                      </PrivateRoute>
+                    }
+                  />
+                  <Route
+                    path="/dashboard/analytics"
+                    element={
+                      <PrivateRoute>
+                        <CreatorAnalytics />
+                      </PrivateRoute>
+                    }
+                  />
+                  <Route
+                    path="/dashboard/analytics/:campaignId"
+                    element={
+                      <PrivateRoute>
+                        <CreatorCampaignAnalytics />
+                      </PrivateRoute>
+                    }
+                  />
+                  <Route
+                    path="/profile"
+                    element={
+                      <PrivateRoute>
+                        <Profile />
+                      </PrivateRoute>
+                    }
+                  />
+                  <Route
+                    path="/profile/identity"
+                    element={
+                      <PrivateRoute>
+                        <ContributorIdentityPage />
+                      </PrivateRoute>
+                    }
+                  />
+                  <Route
+                    path="/settings/notifications"
+                    element={
+                      <PrivateRoute>
+                        <NotificationSettings />
+                      </PrivateRoute>
+                    }
+                  />
+                  <Route
+                    path="/tax-receipts"
+                    element={
+                      <PrivateRoute>
+                        <TaxReceipts />
+                      </PrivateRoute>
+                    }
+                  />
+                  <Route path="/governance" element={<Governance />} />
+                  <Route path="/ops" element={<OpsCenter />} />
+                  <Route
+                    path="/my-contributions"
+                    element={<Navigate to="/dashboard?tab=contributions" replace />}
+                  />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </Suspense>
+            </NetworkStatusProvider>
+          </ToastProvider>
+        </AuthProvider>
+      </ThemeProvider>
+    </FeatureFlagsProvider>
   );
 }

@@ -58,7 +58,7 @@ test('listCreatorCampaigns ignores unknown fields and always includes id', async
   let sql = '';
   const { listCreatorCampaigns } = proxyquire('./userDashboardService', {
     '../config/database': {
-      query: async (text) => {
+      query: async text => {
         if (text.includes('COUNT(*)')) return { rows: [{ total: 0 }] };
         sql = text;
         return { rows: [] };
@@ -77,7 +77,7 @@ test('listUserContributions includes conversion_rate', async () => {
   let contributionSql = '';
   const { listUserContributions } = proxyquire('./userDashboardService', {
     '../config/database': {
-      query: async (text) => {
+      query: async text => {
         if (text.includes('wallet_public_key FROM users')) {
           return { rows: [{ wallet_public_key: 'GUSER' }] };
         }
@@ -115,7 +115,9 @@ test('listUserContributions returns null when user missing', async () => {
 
 // Badge criteria live in badgeService and are covered by badgeService.test.js;
 // the dashboard only has to surface whatever that service returns.
-function badgeServiceStub(badges = [{ id: 'first_contribution', label: 'First contribution', earned: true }]) {
+function badgeServiceStub(
+  badges = [{ id: 'first_contribution', label: 'First contribution', earned: true }]
+) {
   return { evaluateBadges: async () => badges };
 }
 
@@ -155,7 +157,7 @@ function buildDashboardDb(campaignCount) {
         milestoneQueries.push({ text, params });
         // One milestone per campaign, returned in a single result set.
         return {
-          rows: contribs.map((c) => ({
+          rows: contribs.map(c => ({
             id: `ms-${c.campaign_id}`,
             campaign_id: c.campaign_id,
             title: `Milestone ${c.campaign_id}`,
@@ -227,7 +229,7 @@ test('getContributorDashboard maps batched milestones onto the right campaigns',
 test('getContributorDashboard returns empty shape when there are no contributions', async () => {
   const { getContributorDashboard } = proxyquire('./userDashboardService', {
     '../config/database': {
-      query: async (text) => {
+      query: async text => {
         if (text.includes('wallet_public_key FROM users')) {
           return { rows: [{ wallet_public_key: 'GUSER' }] };
         }
@@ -245,10 +247,7 @@ test('getContributorDashboard returns empty shape when there are no contribution
   assert.equal(dashboard.stats.campaigns_backed, 0);
   assert.equal(dashboard.stats.avg_contribution, 0);
   assert.ok(Array.isArray(dashboard.stats.badges));
-  assert.equal(
-    dashboard.stats.badges.find((b) => b.id === 'first_contribution').earned,
-    false
-  );
+  assert.equal(dashboard.stats.badges.find(b => b.id === 'first_contribution').earned, false);
 });
 
 test('getContributorDashboard computes campaigns_backed, avg_contribution, and badges', async () => {
@@ -267,9 +266,9 @@ test('getContributorDashboard computes campaigns_backed, avg_contribution, and b
   assert.equal(dashboard.stats.campaigns_backed, 5);
   assert.equal(dashboard.stats.total_contributed, 50);
   assert.equal(dashboard.stats.avg_contribution, 10);
-  assert.equal(dashboard.stats.badges.find((b) => b.id === 'first_contribution').earned, true);
-  assert.equal(dashboard.stats.badges.find((b) => b.id === 'backed_5_campaigns').earned, true);
-  assert.equal(dashboard.stats.badges.find((b) => b.id === 'backed_10_campaigns').earned, false);
+  assert.equal(dashboard.stats.badges.find(b => b.id === 'first_contribution').earned, true);
+  assert.equal(dashboard.stats.badges.find(b => b.id === 'backed_5_campaigns').earned, true);
+  assert.equal(dashboard.stats.badges.find(b => b.id === 'backed_10_campaigns').earned, false);
 });
 
 test('getContributorDashboardCsv builds a CSV with one row per contribution', async () => {

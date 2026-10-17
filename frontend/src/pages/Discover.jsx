@@ -127,7 +127,11 @@ function PersonalisedFeed() {
 
   if (loading) return <div style={styles.empty}>Finding campaigns for you…</div>;
   if (!campaigns.length) {
-    return <div style={styles.empty}>Fund a few campaigns and we&apos;ll start tailoring this feed to you.</div>;
+    return (
+      <div style={styles.empty}>
+        Fund a few campaigns and we&apos;ll start tailoring this feed to you.
+      </div>
+    );
   }
 
   return (
@@ -193,8 +197,8 @@ function EmbedSnippet() {
     <div style={styles.embedBox}>
       <strong>Embed CrowdPay campaigns on your site</strong>
       <p style={{ fontSize: '0.85rem', color: '#6b7280', margin: '0.5rem 0 0' }}>
-        Generate an embed token from your{' '}
-        <Link to="/developer">developer settings</Link>, then drop this snippet into any page:
+        Generate an embed token from your <Link to="/developer">developer settings</Link>, then drop
+        this snippet into any page:
       </p>
       <code style={styles.code}>{snippet}</code>
       <button
@@ -221,15 +225,17 @@ export default function Discover() {
           All campaigns
         </button>
         {user && (
-          <button type="button" style={styles.tab(tab === 'forYou')} onClick={() => setTab('forYou')}>
+          <button
+            type="button"
+            style={styles.tab(tab === 'forYou')}
+            onClick={() => setTab('forYou')}
+          >
             For You
           </button>
         )}
       </div>
 
-      <section>
-        {tab === 'forYou' ? <PersonalisedFeed /> : <DiscoveryGrid />}
-      </section>
+      <section>{tab === 'forYou' ? <PersonalisedFeed /> : <DiscoveryGrid />}</section>
 
       <EmbedSnippet />
     </div>

@@ -21,7 +21,7 @@ Deliveries are attempted immediately and, on failure, retried **up to 5 times** 
   - `Content-Type: application/json`
   - `X-CrowdPay-Event`: event name (e.g. `contribution.received`)
   - `X-CrowdPay-Delivery-Id`: unique delivery UUID (for idempotency on your side)
-  - `X-CrowdPay-Signature`: `sha256=<hex>` where `<hex>` is **HMAC-SHA256** of the **raw request body bytes** using your endpoint’s **webhook secret** (shown once when the endpoint is created).
+  - `X-CrowdPay-Signature`: `v1=<hex>` or `v1=<hex1>, v2=<hex2>` during a secret rotation overlap. (Legacy endpoints may still receive `sha256=<hex>`). `<hex>` is the **HMAC-SHA256** of the **raw request body bytes** using your endpoint’s **webhook secret**.
 
 ## Verifying the signature (Node.js)
 
@@ -29,10 +29,29 @@ Deliveries are attempted immediately and, on failure, retried **up to 5 times** 
 const crypto = require('crypto');
 
 function verifyCrowdPayWebhook(rawBodyBuffer, signatureHeader, secret) {
-  const match = /^sha256=(.+)$/.exec(signatureHeader || '');
-  if (!match) return false;
+  if (!signatureHeader) return false;
+  
+  // Extract all signature hashes (vX=... or sha256=...)
+  const signatures = signatureHeader.split(',').map(s => {
+    const parts = s.trim().split('=');
+    return parts.length === 2 ? parts[1] : null;
+  }).filter(Boolean);
+
+  if (signatures.length === 0) return false;
+
   const expected = crypto.createHmac('sha256', secret).update(rawBodyBuffer).digest('hex');
-  return crypto.timingSafeEqual(Buffer.from(match[1], 'hex'), Buffer.from(expected, 'hex'));
+  const expectedBuffer = Buffer.from(expected, 'hex');
+
+  // Verify if ANY of the provided signatures match our expected signature
+  return signatures.some(sigHex => {
+    try {
+      const sigBuffer = Buffer.from(sigHex, 'hex');
+      return sigBuffer.length === expectedBuffer.length && 
+             crypto.timingSafeEqual(sigBuffer, expectedBuffer);
+    } catch {
+      return false;
+    }
+  });
 }
 ```
 

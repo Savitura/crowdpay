@@ -1,12 +1,12 @@
-const router = require("express").Router();
-const db = require("../config/database");
-const { requireAuth, requireRole } = require("../middleware/auth");
+const router = require('express').Router();
+const db = require('../config/database');
+const { requireAuth, requireRole } = require('../middleware/auth');
 const {
   announcementIdValidation,
   createAnnouncementValidation,
   validateRequest,
-} = require("../middleware/validation");
-const asyncHandler = require("../utils/asyncHandler");
+} = require('../middleware/validation');
+const asyncHandler = require('../utils/asyncHandler');
 
 /**
  * @openapi
@@ -95,7 +95,7 @@ const asyncHandler = require("../utils/asyncHandler");
  *               items:
  *                 $ref: '#/components/schemas/Announcement'
  */
-router.get("/announcements/active", async (req, res, next) => {
+router.get('/announcements/active', async (req, res, next) => {
   try {
     const { rows } = await db.query(`
       SELECT *
@@ -143,14 +143,13 @@ router.get("/announcements/active", async (req, res, next) => {
  */
 
 router.post(
-  "/announcements/create",
+  '/announcements/create',
   requireAuth,
-  requireRole("admin"),
+  requireRole('admin'),
   createAnnouncementValidation,
   validateRequest,
   asyncHandler(async (req, res) => {
-    const { message, severity, details_url, active_from, active_until } =
-      req.body;
+    const { message, severity, details_url, active_from, active_until } = req.body;
     const createdBy = req.user.userId || req.user.id;
 
     const { rows } = await db.query(
@@ -166,11 +165,11 @@ router.post(
         VALUES ($1, COALESCE($2, 'info'), $3, COALESCE($4, NOW()), $5, $6)
         RETURNING *;
         `,
-      [message, severity, details_url, active_from, active_until, createdBy],
+      [message, severity, details_url, active_from, active_until, createdBy]
     );
 
     res.status(201).json(rows[0]);
-  }),
+  })
 );
 
 /**
@@ -203,9 +202,9 @@ router.post(
  *         description: Announcement not found or already deactivated
  */
 router.patch(
-  "/announcements/:id/deactivate",
+  '/announcements/:id/deactivate',
   requireAuth,
-  requireRole("admin"),
+  requireRole('admin'),
   announcementIdValidation,
   validateRequest,
   asyncHandler(async (req, res) => {
@@ -219,17 +218,17 @@ router.patch(
         AND deactivated_at IS NULL
       RETURNING *;
       `,
-      [req.params.id],
+      [req.params.id]
     );
 
     if (rows.length === 0) {
       return res.status(404).json({
-        error: "Announcement not found or already deactivated",
+        error: 'Announcement not found or already deactivated',
       });
     }
 
     res.json(rows[0]);
-  }),
+  })
 );
 
 module.exports = router;

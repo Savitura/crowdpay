@@ -1,7 +1,10 @@
 export default function AnalyticsSkeletonLoader() {
   return (
     <div style={{ marginBottom: '2rem' }} aria-hidden="true">
-      <div className="skeleton" style={{ height: '20px', width: '120px', marginBottom: '0.75rem' }} />
+      <div
+        className="skeleton"
+        style={{ height: '20px', width: '120px', marginBottom: '0.75rem' }}
+      />
       <div style={{ display: 'grid', gap: '1.5rem' }}>
         {/* Bar chart placeholder */}
         <div
@@ -13,7 +16,10 @@ export default function AnalyticsSkeletonLoader() {
             minHeight: '148px',
           }}
         >
-          <div className="skeleton" style={{ height: '15px', width: '200px', marginBottom: '1rem' }} />
+          <div
+            className="skeleton"
+            style={{ height: '15px', width: '200px', marginBottom: '1rem' }}
+          />
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: '4px', height: '90px' }}>
             {[60, 80, 45, 95, 70, 55, 85, 40, 75, 65].map((h, i) => (
               <div
@@ -35,7 +41,10 @@ export default function AnalyticsSkeletonLoader() {
             minHeight: '148px',
           }}
         >
-          <div className="skeleton" style={{ height: '15px', width: '140px', marginBottom: '1rem' }} />
+          <div
+            className="skeleton"
+            style={{ height: '15px', width: '140px', marginBottom: '1rem' }}
+          />
           {[100, 80].map((w, i) => (
             <div
               key={i}
@@ -57,7 +66,10 @@ export default function AnalyticsSkeletonLoader() {
             minHeight: '148px',
           }}
         >
-          <div className="skeleton" style={{ height: '15px', width: '150px', marginBottom: '1rem' }} />
+          <div
+            className="skeleton"
+            style={{ height: '15px', width: '150px', marginBottom: '1rem' }}
+          />
           {[90, 75, 85].map((w, i) => (
             <div
               key={i}

@@ -26,13 +26,9 @@ function Consumer() {
     <div>
       <span data-testid="ready">{String(ready)}</span>
       <span data-testid="user">{user ? user.email : 'none'}</span>
-      <button onClick={() => login({ id: '1', email: 'new@test.com', role: 'user' })}>
-        Login
-      </button>
+      <button onClick={() => login({ id: '1', email: 'new@test.com', role: 'user' })}>Login</button>
       <button onClick={() => logout()}>Logout</button>
-      <button onClick={() => updateUser({ id: '1', email: 'updated@test.com' })}>
-        Update
-      </button>
+      <button onClick={() => updateUser({ id: '1', email: 'updated@test.com' })}>Update</button>
       <button onClick={() => exitImpersonation()}>Exit impersonation</button>
     </div>
   );

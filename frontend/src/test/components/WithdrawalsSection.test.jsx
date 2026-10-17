@@ -44,6 +44,7 @@ describe('WithdrawalsSection', () => {
     await screen.findByText(/Available on-chain:/i);
     await userEvent.type(screen.getByLabelText(/Destination address/i), 'GDEST12345');
     await userEvent.type(screen.getByLabelText(/Amount \(USDC\)/i), '200');
+    await userEvent.type(screen.getByLabelText(/Evidence/i), 'https://example.com/receipt');
     await userEvent.click(screen.getByRole('button', { name: /Submit request/i }));
 
     await waitFor(() =>
@@ -51,6 +52,7 @@ describe('WithdrawalsSection', () => {
         campaign_id: 'campaign-1',
         destination_key: 'GDEST12345',
         amount: '200',
+        evidence: ['https://example.com/receipt'],
       })
     );
     expect(onReleased).toHaveBeenCalled();

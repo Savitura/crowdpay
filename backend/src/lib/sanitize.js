@@ -20,13 +20,13 @@ const sanitizeHtml = require('sanitize-html');
 function stripHtml(value = '') {
   return sanitizeHtml(String(value), {
     allowedTags: [],
-    allowedAttributes: {}
+    allowedAttributes: {},
   }).trim();
 }
 
 /**
  * Sanitize rich text/markdown input, allowing safe HTML tags.
- * 
+ *
  * @param {*} value - the markdown or HTML string to sanitize
  * @returns {string} safely sanitized string
  */
@@ -35,9 +35,9 @@ function sanitizeRichText(value = '') {
     allowedTags: sanitizeHtml.defaults.allowedTags.concat(['img']),
     allowedAttributes: {
       ...sanitizeHtml.defaults.allowedAttributes,
-      img: ['src', 'alt', 'width', 'height']
+      img: ['src', 'alt', 'width', 'height'],
     },
-    allowedSchemes: ['http', 'https', 'mailto']
+    allowedSchemes: ['http', 'https', 'mailto'],
   }).trim();
 }
 

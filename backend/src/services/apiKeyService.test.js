@@ -2,12 +2,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const bcrypt = require('bcryptjs');
 
+process.env.INTEGRATION_SECRET_LOCAL_KEK =
+  process.env.INTEGRATION_SECRET_LOCAL_KEK || 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+
 const MODULE_PATH = './apiKeyService';
 
 function mockDb(queries) {
   return {
     async query(text, params) {
-      const handler = queries.find((q) => {
+      const handler = queries.find(q => {
         if (typeof q.match === 'function') return q.match(text, params);
         return text.startsWith(q.startsWith);
       });
@@ -50,12 +53,14 @@ test('authenticateCpkApiKey validates bcrypt hash and updates last_used_at', asy
       startsWith: 'SELECT id, user_id, key_hash, scopes',
       run() {
         return {
-          rows: [{
-            id: 'key-1',
-            user_id: 'user-1',
-            key_hash: keyHash,
-            scopes: ['read', 'write'],
-          }],
+          rows: [
+            {
+              id: 'key-1',
+              user_id: 'user-1',
+              key_hash: keyHash,
+              scopes: ['read', 'write'],
+            },
+          ],
         };
       },
     },
@@ -83,7 +88,7 @@ test('authenticateCpkApiKey validates bcrypt hash and updates last_used_at', asy
   assert.equal(auth.userId, 'user-1');
   assert.equal(auth.apiKeyId, 'key-1');
   assert.deepEqual(auth.scopes, ['read', 'write']);
-  assert.deepEqual(updates, [['key-1']]);
+  assert.deepEqual(updates, [['key-1', 5 * 60 * 1000]]);
 
   require.cache[require.resolve('../config/database')].exports = originalDb;
   delete require.cache[require.resolve(MODULE_PATH)];
@@ -98,12 +103,14 @@ test('authenticateCpkApiKey rejects revoked or invalid keys', async () => {
       startsWith: 'SELECT id, user_id, key_hash, scopes',
       run() {
         return {
-          rows: [{
-            id: 'key-2',
-            user_id: 'user-2',
-            key_hash: keyHash,
-            scopes: ['read'],
-          }],
+          rows: [
+            {
+              id: 'key-2',
+              user_id: 'user-2',
+              key_hash: keyHash,
+              scopes: ['read'],
+            },
+          ],
         };
       },
     },
@@ -129,13 +136,15 @@ test('createApiKeyForUser stores bcrypt hash and returns raw key once', async ()
       run(_text, params) {
         inserts.push(params);
         return {
-          rows: [{
-            id: 'new-key',
-            label: params[3],
-            scopes: params[4],
-            key_prefix: params[1],
-            created_at: new Date().toISOString(),
-          }],
+          rows: [
+            {
+              id: 'new-key',
+              label: params[3],
+              scopes: params[4],
+              key_prefix: params[1],
+              created_at: new Date().toISOString(),
+            },
+          ],
         };
       },
     },
@@ -153,9 +162,22 @@ test('createApiKeyForUser stores bcrypt hash and returns raw key once', async ()
   assert.equal(inserts.length, 1);
   assert.equal(inserts[0][0], 'user-9');
   assert.equal(inserts[0][3], 'My bot');
-  assert.match(inserts[0][2], /^\$2[aby]\$/);
 
-  const valid = await bcrypt.compare(created.api_key, inserts[0][2]);
+  // The stored key_hash is now encrypted at rest (defense in depth) rather
+  // than a bare bcrypt string — decrypt it the same way authenticateCpkApiKey
+  // does before verifying it's a valid bcrypt hash of the raw key.
+  const { withDecryptedIntegrationSecret } = require('./integrationSecrets');
+  let decryptedHash;
+  await withDecryptedIntegrationSecret(
+    inserts[0][2],
+    { type: 'api_key', id: 'user-9' },
+    hash => {
+      decryptedHash = hash;
+    }
+  );
+  assert.match(decryptedHash, /^\$2[aby]\$/);
+
+  const valid = await bcrypt.compare(created.api_key, decryptedHash);
   assert.equal(valid, true);
 
   require.cache[require.resolve('../config/database')].exports = originalDb;

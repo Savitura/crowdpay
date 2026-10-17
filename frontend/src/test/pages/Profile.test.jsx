@@ -3,6 +3,8 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import Profile from '../../pages/Profile';
 import { renderWithProviders } from '../renderWithProviders';
 
+const mockUpdateMyProfile = vi.hoisted(() => vi.fn());
+
 const mockUser = {
   id: 'user1',
   name: 'Alice',
@@ -21,26 +23,36 @@ vi.mock('../../context/AuthContext', () => ({
   }),
 }));
 
+vi.mock('../../services/api', () => ({
+  api: {
+    getMyBadges: vi.fn().mockResolvedValue([]),
+    getMyNftRewards: vi.fn().mockResolvedValue({ rewards: [] }),
+    updateMyProfile: mockUpdateMyProfile,
+    setup2FA: vi.fn(),
+    verify2FA: vi.fn(),
+  },
+}));
+
 describe('Profile page', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it('renders profile fields and submits changes', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ id: 'user1', name: 'Alice Updated' }),
-    });
+    mockUpdateMyProfile.mockResolvedValue({ id: 'user1', name: 'Alice Updated' });
 
     renderWithProviders(<Profile />);
 
     expect(await screen.findByRole('heading', { name: /Your Profile/i })).toBeInTheDocument();
 
+    fireEvent.change(screen.getByLabelText(/Display name/i), {
+      target: { value: 'Alice Updated' },
+    });
     const form = screen.getByRole('button', { name: /Save changes/i }).closest('form');
     fireEvent.submit(form);
 
     await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/users/me'), expect.objectContaining({ method: 'PATCH' }));
+      expect(mockUpdateMyProfile).toHaveBeenCalledWith({ name: 'Alice Updated' });
     });
 
     expect(await screen.findByText(/Profile updated successfully/i)).toBeInTheDocument();

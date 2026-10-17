@@ -23,13 +23,14 @@ function buildApp({ queryImpl } = {}) {
 
 test('GET /api/emails/unsubscribe records unsubscribe for a valid signed link', async () => {
   const { app, calls } = buildApp();
-  const url = buildUnsubscribeUrl({ email: 'a@test.com', category: 'campaign_update' });
-  const path = url.split('/api/emails')[1];
+  const frontendUrl = buildUnsubscribeUrl({ email: 'a@test.com', category: 'campaign_update' });
+  const parsed = new URL(frontendUrl);
+  const queryString = parsed.search;
 
-  const res = await request(app).get(`/api/emails${path}`);
+  const res = await request(app).get(`/api/emails/unsubscribe${queryString}`);
 
   assert.equal(res.status, 200);
-  const insertCall = calls.find((c) => c.text.includes('INSERT INTO email_unsubscribes'));
+  const insertCall = calls.find(c => c.text.includes('INSERT INTO email_unsubscribes'));
   assert.ok(insertCall);
   assert.deepEqual(insertCall.params, ['a@test.com', 'campaign_update']);
 });
@@ -56,13 +57,18 @@ test('GET /api/emails/unsubscribe rejects a tampered signature', async () => {
 test('GET /api/emails/unsubscribe records a campaign-scoped unsubscribe for a valid UUID campaign_id', async () => {
   const campaignId = '11111111-1111-1111-1111-111111111111';
   const { app, calls } = buildApp();
-  const url = buildUnsubscribeUrl({ email: 'a@test.com', category: 'campaign_update', campaignId });
-  const path = url.split('/api/emails')[1];
+  const frontendUrl = buildUnsubscribeUrl({
+    email: 'a@test.com',
+    category: 'campaign_update',
+    campaignId,
+  });
+  const parsed = new URL(frontendUrl);
+  const queryString = parsed.search;
 
-  const res = await request(app).get(`/api/emails${path}`);
+  const res = await request(app).get(`/api/emails/unsubscribe${queryString}`);
 
   assert.equal(res.status, 200);
-  const insertCall = calls.find((c) => c.text.includes('INSERT INTO campaign_update_unsubscribes'));
+  const insertCall = calls.find(c => c.text.includes('INSERT INTO campaign_update_unsubscribes'));
   assert.ok(insertCall);
   assert.deepEqual(insertCall.params, ['a@test.com', campaignId]);
 });
@@ -70,14 +76,12 @@ test('GET /api/emails/unsubscribe records a campaign-scoped unsubscribe for a va
 test('GET /api/emails/unsubscribe returns 400 for a malformed campaign_id', async () => {
   const { app } = buildApp();
 
-  const res = await request(app)
-    .get('/api/emails/unsubscribe')
-    .query({
-      email: 'a@test.com',
-      category: 'campaign_update',
-      sig: 'irrelevant-checked-after-campaign_id',
-      campaign_id: 'not-a-uuid',
-    });
+  const res = await request(app).get('/api/emails/unsubscribe').query({
+    email: 'a@test.com',
+    category: 'campaign_update',
+    sig: 'irrelevant-checked-after-campaign_id',
+    campaign_id: 'not-a-uuid',
+  });
 
   assert.equal(res.status, 400);
 });

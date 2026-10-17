@@ -15,11 +15,15 @@ class LaunchDarklyAdapter {
   async isEnabled(flagKey, context = {}) {
     if (!this.client) return false;
     try {
-      return await this.client.variation(flagKey, {
-        key: context.userId || 'anonymous',
-        anonymous: !context.userId,
-        custom: context.custom,
-      }, false);
+      return await this.client.variation(
+        flagKey,
+        {
+          key: context.userId || 'anonymous',
+          anonymous: !context.userId,
+          custom: context.custom,
+        },
+        false
+      );
     } catch {
       return false;
     }
@@ -28,14 +32,18 @@ class LaunchDarklyAdapter {
   async getVariant(flagKey, context = {}) {
     if (!this.client) return { name: 'disabled', enabled: false };
     try {
-      const detail = await this.client.variationDetail(flagKey, {
-        key: context.userId || 'anonymous',
-        anonymous: !context.userId,
-        custom: context.custom,
-      }, null);
+      const detail = await this.client.variationDetail(
+        flagKey,
+        {
+          key: context.userId || 'anonymous',
+          anonymous: !context.userId,
+          custom: context.custom,
+        },
+        null
+      );
       return {
         name: String(detail.variationIndex),
-        enabled: !! detail.value,
+        enabled: !!detail.value,
         payload: detail.value,
       };
     } catch {

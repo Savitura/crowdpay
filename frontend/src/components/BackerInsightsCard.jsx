@@ -1,5 +1,13 @@
 import React, { memo } from 'react';
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+} from 'recharts';
 
 function shortenKey(key) {
   if (!key) return 'Unknown';
@@ -62,7 +70,9 @@ const BackerInsightsCard = memo(function BackerInsightsCard({ data, assetType = 
             </LineChart>
           </ResponsiveContainer>
         ) : (
-          <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>No backer growth data yet.</p>
+          <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
+            No backer growth data yet.
+          </p>
         )}
       </div>
 
@@ -73,20 +83,34 @@ const BackerInsightsCard = memo(function BackerInsightsCard({ data, assetType = 
         {top_backers.length > 0 ? (
           <div style={{ display: 'grid', gap: '0.5rem' }}>
             {top_backers.map((row) => (
-              <div key={row.sender_public_key} className="campaign-card" style={{ minHeight: 'auto', padding: '0.6rem 0.75rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <div
+                key={row.sender_public_key}
+                className="campaign-card"
+                style={{ minHeight: 'auto', padding: '0.6rem 0.75rem' }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: '0.5rem',
+                    flexWrap: 'wrap',
+                  }}
+                >
                   <span style={{ fontSize: '0.85rem', wordBreak: 'break-all' }}>
                     {shortenKey(row.sender_public_key)}
                   </span>
                   <span style={{ color: 'var(--color-text-hint)', fontSize: '0.8rem' }}>
-                    {row.contribution_count} contributions · {Number(row.total_amount).toLocaleString()} {assetType}
+                    {row.contribution_count} contributions ·{' '}
+                    {Number(row.total_amount).toLocaleString()} {assetType}
                   </span>
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>No backer activity yet.</p>
+          <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
+            No backer activity yet.
+          </p>
         )}
       </div>
     </div>

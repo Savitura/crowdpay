@@ -90,7 +90,9 @@ describe('OpsCenter Component', () => {
     await user.click(screen.getByRole('button', { name: /Unlock Operations Centre/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /System Health & Operations Centre/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole('heading', { name: /System Health & Operations Centre/i })
+      ).toBeInTheDocument();
       expect(screen.getByText(/Horizon Node Health/i)).toBeInTheDocument();
       expect(screen.getByText(/Eco Clean Ocean/i)).toBeInTheDocument();
     });

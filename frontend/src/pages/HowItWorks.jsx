@@ -21,8 +21,13 @@ const STEPS = [
 
 export default function HowItWorks() {
   return (
-    <main className="container" style={{ paddingTop: '2.5rem', paddingBottom: '4rem', maxWidth: '760px' }}>
-      <h1 style={{ fontSize: '1.8rem', fontWeight: 700, marginBottom: '0.75rem' }}>How CrowdPay works</h1>
+    <main
+      className="container"
+      style={{ paddingTop: '2.5rem', paddingBottom: '4rem', maxWidth: '760px' }}
+    >
+      <h1 style={{ fontSize: '1.8rem', fontWeight: 700, marginBottom: '0.75rem' }}>
+        How CrowdPay works
+      </h1>
       <p style={{ color: 'var(--color-text-secondary)', marginBottom: '2rem', lineHeight: 1.6 }}>
         A short walkthrough of what happens between deciding to back a cause and seeing it funded.
       </p>
@@ -50,7 +55,14 @@ export default function HowItWorks() {
               <strong style={{ fontSize: '1rem', display: 'block', marginBottom: '0.25rem' }}>
                 {step.title}
               </strong>
-              <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.92rem', lineHeight: 1.6, margin: 0 }}>
+              <p
+                style={{
+                  color: 'var(--color-text-secondary)',
+                  fontSize: '0.92rem',
+                  lineHeight: 1.6,
+                  margin: 0,
+                }}
+              >
                 {step.body}
               </p>
             </div>

@@ -1,8 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const proxyquire = require('proxyquire').noCallThru();
+const { buildUnsubscribeUrl, verifyUnsubscribeToken } = require('../utils/unsubscribeToken');
 
-function buildService({ queryImpl } = {}) {
+function buildService({ queryImpl, logger } = {}) {
   const sent = [];
   const dedupeKeys = new Set();
   const db = {
@@ -17,6 +18,12 @@ function buildService({ queryImpl } = {}) {
         dedupeKeys.add(key);
         return { rows: [{ id: 'sent-1' }] };
       }
+      if (text.includes('SELECT id FROM users WHERE email = $1')) {
+        return { rows: [{ id: 'user-123' }] };
+      }
+      if (text.includes('FROM notification_preferences')) {
+        return { rows: [{ marketing: true }] };
+      }
       if (text.includes('FROM email_unsubscribes')) {
         return { rows: [] };
       }
@@ -26,7 +33,7 @@ function buildService({ queryImpl } = {}) {
 
   const nodemailerStub = {
     createTransport: () => ({
-      sendMail: async (mail) => {
+      sendMail: async mail => {
         sent.push(mail);
       },
     }),
@@ -35,14 +42,22 @@ function buildService({ queryImpl } = {}) {
   const service = proxyquire('./emailService', {
     nodemailer: nodemailerStub,
     '../config/database': db,
+    ...(logger ? { '../config/logger': logger } : {}),
   });
 
-  return { service, sent };
+  return { service, sent, db };
 }
 
 test('sendWelcomeEmail sends html and text and is idempotent per recipient', async () => {
   process.env.SMTP_HOST = 'smtp.test';
-  const { service, sent } = buildService();
+  const { service, sent } = buildService({
+    queryImpl: (text, params) => {
+      if (text.includes('notification_preferences')) {
+        return { rows: [{ marketing: true }] };
+      }
+      return undefined;
+    },
+  });
 
   await service.sendWelcomeEmail({ to: 'a@test.com', name: 'Alice', walletPublicKey: 'GPK' });
   await service.sendWelcomeEmail({ to: 'a@test.com', name: 'Alice', walletPublicKey: 'GPK' });
@@ -51,101 +66,134 @@ test('sendWelcomeEmail sends html and text and is idempotent per recipient', asy
   assert.match(sent[0].subject, /Welcome/);
   assert.ok(sent[0].html.includes('Alice'));
   assert.ok(sent[0].text.includes('Alice'));
+
+  // Contains valid unsubscribe link
+  assert.ok(sent[0].html.includes('/settings/notifications'));
+
   delete process.env.SMTP_HOST;
 });
 
-test('sendCampaignFundedCreatorEmail and contributor email both render html+text', async () => {
-  process.env.SMTP_HOST = 'smtp.test';
-  const { service, sent } = buildService();
-
-  await service.sendCampaignFundedCreatorEmail({
-    to: 'creator@test.com',
-    campaignId: 'camp-1',
-    creatorName: 'Creator',
-    campaignTitle: 'My Campaign',
-    campaignUrl: 'https://app/campaigns/camp-1',
-    targetAmount: '100',
-    raisedAmount: '100',
-  });
-  await service.sendCampaignFundedContributorEmail({
-    to: 'backer@test.com',
-    campaignId: 'camp-1',
-    contributorName: 'Backer',
-    campaignTitle: 'My Campaign',
-    campaignUrl: 'https://app/campaigns/camp-1',
-  });
-
-  assert.equal(sent.length, 2);
-  assert.ok(sent[0].html.includes('My Campaign'));
-  assert.ok(sent[1].html.includes('My Campaign'));
-});
-
-test('sendCampaignUpdatePostedEmail skips recipients who unsubscribed from campaign_update', async () => {
+test('per-category send gating: respects preferences in notification_preferences', async () => {
   process.env.SMTP_HOST = 'smtp.test';
   const { service, sent } = buildService({
     queryImpl: (text, params) => {
-      if (text.includes('FROM email_unsubscribes')) {
-        return { rows: params[0] === 'unsubscribed@test.com' ? [{ x: 1 }] : [] };
+      if (text.includes('notification_preferences')) {
+        return { rows: [{ campaign_updates: false }] }; // Unsubscribed
       }
       return undefined;
     },
   });
 
-  await service.sendCampaignUpdatePostedEmail({
-    to: 'unsubscribed@test.com',
-    updateId: 'upd-1',
-    name: 'Subscriber',
-    campaignTitle: 'My Campaign',
-    campaignUrl: 'https://app/campaigns/camp-1',
-    updateTitle: 'Big news',
-    updateBody: 'Things happened.',
-  });
-  await service.sendCampaignUpdatePostedEmail({
-    to: 'subscribed@test.com',
-    updateId: 'upd-1',
-    name: 'Subscriber',
-    campaignTitle: 'My Campaign',
-    campaignUrl: 'https://app/campaigns/camp-1',
-    updateTitle: 'Big news',
-    updateBody: 'Things happened.',
-  });
-
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].to, 'subscribed@test.com');
-  assert.ok(sent[0].html.includes('Unsubscribe'));
-});
-
-test('sendWeeklyDigestEmail skips recipients who unsubscribed from weekly_digest', async () => {
-  process.env.SMTP_HOST = 'smtp.test';
-  const { service, sent } = buildService({
-    queryImpl: (text, params) => {
-      if (text.includes('FROM email_unsubscribes')) {
-        return { rows: params[1] === 'weekly_digest' ? [{ x: 1 }] : [] };
-      }
-      return undefined;
-    },
-  });
-
-  await service.sendWeeklyDigestEmail({
-    to: 'digest@test.com',
-    userId: 'user-1',
-    windowEnd: new Date('2026-06-29T18:00:00.000Z'),
-    name: 'Digest User',
-    windowLabel: '2026-06-22 to 2026-06-29',
-    campaigns: [
-      {
-        title: 'My Campaign',
-        campaignUrl: 'https://app/campaigns/camp-1',
-        raisedLabel: '75 USDC',
-        targetLabel: '100 USDC',
-        progressPercent: 75,
-        updates: ['New update'],
-        milestones: [],
-        statusChanges: [],
-        upcomingDeadlines: [],
-      },
-    ],
-  });
+  // Since campaign_updates is false, it shouldn't send
+  await service.sendTeamMemberInvitedEmail({ to: 'invited@test.com', memberId: 'm-1' });
 
   assert.equal(sent.length, 0);
+  delete process.env.SMTP_HOST;
+});
+
+test('default values: marketing is off by default when no preferences exist', async () => {
+  process.env.SMTP_HOST = 'smtp.test';
+  const { service, sent } = buildService({
+    queryImpl: (text, params) => {
+      if (text.includes('notification_preferences')) {
+        return { rows: [] }; // No preferences yet
+      }
+      return undefined;
+    },
+  });
+
+  // Welcome email is marketing, should be skipped
+  await service.sendWelcomeEmail({ to: 'new@test.com', name: 'Bob', walletPublicKey: 'GPK' });
+  assert.equal(sent.length, 0);
+
+  // Team invite is campaign_update, should be sent
+  await service.sendTeamMemberInvitedEmail({ to: 'invited@test.com', memberId: 'm-1' });
+  assert.equal(sent.length, 1);
+
+  delete process.env.SMTP_HOST;
+});
+
+test('unsubscribe token validation works', async () => {
+  const url = buildUnsubscribeUrl({ email: 'test@test.com', category: 'refund' });
+  const sig = url.split('sig=')[1].split('&')[0];
+  const isValid = verifyUnsubscribeToken({ email: 'test@test.com', category: 'refund', sig });
+  assert.equal(isValid, true);
+
+  const isInvalid = verifyUnsubscribeToken({
+    email: 'test@test.com',
+    category: 'refund',
+    sig: 'fake',
+  });
+  assert.equal(isInvalid, false);
+});
+
+function unconfiguredEnv() {
+  const saved = {
+    SMTP_HOST: process.env.SMTP_HOST,
+    EMAIL_SERVICE_API_KEY: process.env.EMAIL_SERVICE_API_KEY,
+    DISABLE_EMAILS: process.env.DISABLE_EMAILS,
+  };
+  delete process.env.SMTP_HOST;
+  delete process.env.EMAIL_SERVICE_API_KEY;
+  delete process.env.DISABLE_EMAILS;
+  return () => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  };
+}
+
+test('unconfigured: warns only once per process and reports not configured', async () => {
+  const restore = unconfiguredEnv();
+  try {
+    const warns = [];
+    const { service } = buildService({
+      logger: { info: () => {}, error: () => {}, warn: m => warns.push(m) },
+    });
+    assert.equal(service.isEmailConfigured(), false);
+    await service.sendEmail({ to: 'a@test.com', subject: 's1' });
+    await service.sendEmail({ to: 'a@test.com', subject: 's2' });
+    assert.equal(warns.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('unconfigured: sendIdempotent does not write a sent_emails row', async () => {
+  const restore = unconfiguredEnv();
+  try {
+    const inserts = [];
+    const { service } = buildService({
+      logger: { info: () => {}, error: () => {}, warn: () => {} },
+      queryImpl: text => {
+        if (text.includes('INSERT INTO sent_emails')) inserts.push(text);
+        return undefined;
+      },
+    });
+    await service.sendIdempotent({
+      dedupeKey: 'k1',
+      to: 'a@test.com',
+      subject: 's',
+      text: 't',
+      html: 'h',
+    });
+    assert.equal(inserts.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('configured: isEmailConfigured is true and sendIdempotent still dedupes', async () => {
+  process.env.SMTP_HOST = 'smtp.test';
+  try {
+    const { service, sent } = buildService();
+    assert.equal(service.isEmailConfigured(), true);
+    const mail = { dedupeKey: 'k2', to: 'a@test.com', subject: 's', text: 't', html: 'h' };
+    await service.sendIdempotent(mail);
+    await service.sendIdempotent(mail);
+    assert.equal(sent.length, 1);
+  } finally {
+    delete process.env.SMTP_HOST;
+  }
 });

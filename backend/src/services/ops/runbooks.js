@@ -15,10 +15,7 @@ const {
 const db = require('../../config/database');
 const logger = require('../../config/logger');
 const { server, isTestnet } = require('../../config/stellar');
-const {
-  cleanupStreamForWallet,
-  watchCampaignWallet,
-} = require('../ledgerMonitor');
+const { cleanupStreamForWallet, watchCampaignWallet } = require('../ledgerMonitor');
 const {
   auditPlatformWallet,
   auditCampaignWallets,
@@ -40,7 +37,11 @@ function setWithdrawalCoSigningBlocked(blocked) {
  * Runbook: Refund Platform Wallet
  */
 async function runbookRefundPlatformWallet(incident, logStep) {
-  logStep('1. Diagnose Platform Balance', 'running', 'Inspecting platform account balance and pending operations...');
+  logStep(
+    '1. Diagnose Platform Balance',
+    'running',
+    'Inspecting platform account balance and pending operations...'
+  );
   const platformAudit = await auditPlatformWallet();
   const balance = platformAudit.balance_xlm;
   const pendingCount = platformAudit.pending_transactions_count;
@@ -52,14 +53,26 @@ async function runbookRefundPlatformWallet(incident, logStep) {
     `Current balance: ${balance} XLM. Pending transactions: ${pendingCount}. Estimated XLM needed: ${estimatedXlm} XLM.`
   );
 
-  logStep('2. Enforce Operational Safety', 'running', 'Blocking new withdrawal co-signing to prevent fee exhaustion...');
+  logStep(
+    '2. Enforce Operational Safety',
+    'running',
+    'Blocking new withdrawal co-signing to prevent fee exhaustion...'
+  );
   setWithdrawalCoSigningBlocked(true);
-  logStep('2. Enforce Operational Safety', 'completed', 'Withdrawal co-signing temporarily blocked until wallet is funded.');
+  logStep(
+    '2. Enforce Operational Safety',
+    'completed',
+    'Withdrawal co-signing temporarily blocked until wallet is funded.'
+  );
 
-  logStep('3. Generate Operator Top-up Instruction', 'running', 'Generating manual top-up transfer instructions...');
+  logStep(
+    '3. Generate Operator Top-up Instruction',
+    'running',
+    'Generating manual top-up transfer instructions...'
+  );
   const pubKey = platformAudit.public_key || 'UNKNOWN_PUBLIC_KEY';
   const instructions = `Manual Action Required: Please transfer at least ${(estimatedXlm + 20).toFixed(2)} XLM to platform co-signing address ${pubKey} on ${isTestnet ? 'Testnet' : 'Public'} network. Once funded, acknowledge or rerun health check.`;
-  
+
   logStep('3. Generate Operator Top-up Instruction', 'completed', instructions);
 
   return {
@@ -74,7 +87,11 @@ async function runbookRefundPlatformWallet(incident, logStep) {
  * Runbook: Restart SSE Stream
  */
 async function runbookRestartSseStream(incident, logStep) {
-  logStep('1. Discover Dropped Streams', 'running', 'Querying campaigns with active/funded status...');
+  logStep(
+    '1. Discover Dropped Streams',
+    'running',
+    'Querying campaigns with active/funded status...'
+  );
   const { rows: campaigns } = await db.query(
     `SELECT c.id, c.title, c.wallet_public_key, lc.last_cursor
      FROM campaigns c
@@ -82,7 +99,11 @@ async function runbookRestartSseStream(incident, logStep) {
      WHERE c.status IN ('active', 'funded') AND c.wallet_public_key IS NOT NULL`
   );
 
-  logStep('1. Discover Dropped Streams', 'completed', `Found ${campaigns.length} active campaigns to verify.`);
+  logStep(
+    '1. Discover Dropped Streams',
+    'completed',
+    `Found ${campaigns.length} active campaigns to verify.`
+  );
 
   let reconnectedCount = 0;
   for (const c of campaigns) {
@@ -126,7 +147,11 @@ async function runbookRestartSseStream(incident, logStep) {
  * Runbook: Resubmit Stuck Contributions
  */
 async function runbookResubmitStuckContribution(incident, logStep) {
-  logStep('1. Identify Stuck Pending Contributions', 'running', 'Searching for contributions pending > 5 minutes...');
+  logStep(
+    '1. Identify Stuck Pending Contributions',
+    'running',
+    'Searching for contributions pending > 5 minutes...'
+  );
   const { rows: stuck } = await db.query(
     `SELECT id, campaign_id, tx_hash, amount, asset, created_at
      FROM contributions
@@ -135,7 +160,11 @@ async function runbookResubmitStuckContribution(incident, logStep) {
      LIMIT 25`
   );
 
-  logStep('1. Identify Stuck Pending Contributions', 'completed', `Found ${stuck.length} stuck contribution(s).`);
+  logStep(
+    '1. Identify Stuck Pending Contributions',
+    'completed',
+    `Found ${stuck.length} stuck contribution(s).`
+  );
 
   let resolvedCount = 0;
   let resubmittedCount = 0;
@@ -243,9 +272,13 @@ async function runbookResubmitStuckContribution(incident, logStep) {
  * Runbook: Fund Underfunded Campaign Wallet
  */
 async function runbookFundUnderfundedWallet(incident, logStep) {
-  logStep('1. Audit Campaign Wallet Reserves', 'running', 'Auditing active campaign reserves on Stellar Horizon...');
+  logStep(
+    '1. Audit Campaign Wallet Reserves',
+    'running',
+    'Auditing active campaign reserves on Stellar Horizon...'
+  );
   const audit = await auditCampaignWallets();
-  const underfunded = audit.wallets.filter((w) => w.deficit_xlm > 0);
+  const underfunded = audit.wallets.filter(w => w.deficit_xlm > 0);
 
   logStep(
     '1. Audit Campaign Wallet Reserves',
@@ -260,7 +293,7 @@ async function runbookFundUnderfundedWallet(incident, logStep) {
     };
   }
 
-  const instructions = underfunded.map((w) => ({
+  const instructions = underfunded.map(w => ({
     campaign_id: w.campaign_id,
     campaign_title: w.campaign_title,
     wallet_public_key: w.wallet_public_key,
@@ -349,7 +382,8 @@ async function executeRunbook(incidentId, runbookType) {
     }
   }
 
-  const selectedRunbook = runbookType || (incident ? getSuggestedRunbookForIncident(incident.incident_type) : null);
+  const selectedRunbook =
+    runbookType || (incident ? getSuggestedRunbookForIncident(incident.incident_type) : null);
   if (!selectedRunbook || !RUNBOOK_MAP[selectedRunbook]) {
     throw new Error(`Invalid or unsupported runbook type: ${selectedRunbook || 'none'}`);
   }
@@ -377,7 +411,7 @@ async function executeRunbook(incidentId, runbookType) {
       log,
       executedAt: new Date().toISOString(),
     };
-    const existingIdx = steps.findIndex((s) => s.name === name);
+    const existingIdx = steps.findIndex(s => s.name === name);
     if (existingIdx >= 0) {
       steps[existingIdx] = stepEntry;
     } else {
@@ -411,7 +445,10 @@ async function executeRunbook(incidentId, runbookType) {
         [finalStatus, JSON.stringify(steps), executionId]
       );
     } catch (err) {
-      logger.error('Failed to update runbook execution status', { id: executionId, error: err.message });
+      logger.error('Failed to update runbook execution status', {
+        id: executionId,
+        error: err.message,
+      });
     }
   }
 

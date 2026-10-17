@@ -108,8 +108,12 @@ export default function ReferralProgramSettings({ campaignId }) {
         </>
       )}
 
-      {error && <p style={{ margin: 0, color: 'var(--color-danger)', fontSize: '0.85rem' }}>{error}</p>}
-      {status && <p style={{ margin: 0, color: 'var(--color-success)', fontSize: '0.85rem' }}>{status}</p>}
+      {error && (
+        <p style={{ margin: 0, color: 'var(--color-danger)', fontSize: '0.85rem' }}>{error}</p>
+      )}
+      {status && (
+        <p style={{ margin: 0, color: 'var(--color-success)', fontSize: '0.85rem' }}>{status}</p>
+      )}
     </div>
   );
 }

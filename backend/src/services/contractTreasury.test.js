@@ -11,6 +11,11 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const proxyquire = require('proxyquire').noCallThru();
 
+// These tests exercise the contract's own policy (auditor threshold, caps) with
+// amounts above the default custodial signing limit; that limit has its own
+// test below, so lift it here.
+process.env.CUSTODIAL_WITHDRAWAL_LIMIT = '1000000';
+
 const CAMPAIGN_ID = '11111111-1111-1111-1111-111111111111';
 // Real Stellar keys — Address.fromString validates, so placeholders will not do.
 const DEST = 'GAJZF6DOHVKNA4VYDMGEB4BOBV27VI6O5ERDGJP5TH6JPGIUAUSLNCRS';
@@ -20,11 +25,11 @@ const AUDITOR = 'GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI';
 function build({ queryImpl = async () => ({ rows: [] }), soroban = {} } = {}) {
   const calls = [];
   const sorobanStub = {
-    invokeContract: async (params) => {
+    invokeContract: async params => {
       calls.push(params);
       return soroban.invokeResult !== undefined ? soroban.invokeResult : null;
     },
-    invokeContractReadOnly: async (params) => {
+    invokeContractReadOnly: async params => {
       calls.push(params);
       return soroban.readResults?.[params.method];
     },
@@ -81,9 +86,12 @@ test('converts between decimal amounts and contract stroops without drift', () =
   assert.equal(service.toStroops('1234.5').toString(), '12345000000');
   assert.equal(service.fromStroops(12345000000n), '1234.5000000');
   assert.equal(service.fromStroops(1n), '0.0000001');
-  // A value with more than 7 decimals is truncated rather than rounded up, so a
-  // conversion can never manufacture funds the treasury does not hold.
-  assert.equal(service.toStroops('1.99999999').toString(), '19999999');
+  // A value with more than 7 decimals is rejected (#840's single rule) rather
+  // than rounded or truncated, so a conversion can never create or lose funds.
+  assert.throws(() => service.toStroops('1.99999999'), /more than 7 decimal places/);
+  // Drift-prone values convert exactly.
+  assert.equal(service.toStroops('8.29').toString(), '82900000');
+  assert.equal(service.toStroops('19.99').toString(), '199900000');
 });
 
 // ── policy validation ────────────────────────────────────────────────────────
@@ -115,7 +123,7 @@ test('rejects policy values outside their bounds', () => {
   for (const override of cases) {
     assert.throws(
       () => service.validatePolicy({ maxSingleWithdrawalPct: 50, ...override }),
-      (err) => err.code === 'INVALID_POLICY' && err.statusCode === 400,
+      err => err.code === 'INVALID_POLICY' && err.statusCode === 400,
       `expected ${JSON.stringify(override)} to be rejected`
     );
   }
@@ -155,7 +163,7 @@ test('setPolicy refuses once the treasury is deployed', async () => {
   });
   await assert.rejects(
     () => service.setPolicy(CAMPAIGN_ID, { maxSingleWithdrawalPct: 50 }),
-    (err) => err.code === 'TREASURY_ALREADY_DEPLOYED' && err.statusCode === 409
+    err => err.code === 'TREASURY_ALREADY_DEPLOYED' && err.statusCode === 409
   );
 });
 
@@ -254,10 +262,14 @@ test('a withdrawal above the auditor threshold is parked as pending_auditor', as
 test('the creator and platform accounts are distinct: requesting with only a platform key configured still signs as the creator', async () => {
   const { service, calls } = build({
     soroban: { invokeResult: null },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns')) return { rows: [campaignRow()] };
       if (text.includes('FROM users')) {
-        return { rows: [userRow({ wallet_public_key: CREATOR, wallet_secret_encrypted: 'creator-secret' })] };
+        return {
+          rows: [
+            userRow({ wallet_public_key: CREATOR, wallet_secret_encrypted: 'creator-secret' }),
+          ],
+        };
       }
       if (text.includes('INSERT INTO withdrawal_requests')) {
         return { rows: [{ id: 'w-1', status: 'completed', contract_pending_id: null }] };
@@ -281,7 +293,7 @@ test('the creator and platform accounts are distinct: requesting with only a pla
 
 test('a creator without a custodial wallet cannot request a contract withdrawal from the server', async () => {
   const { service } = build({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns')) return { rows: [campaignRow()] };
       if (text.includes('FROM users')) {
         return { rows: [userRow({ wallet_type: 'freighter', wallet_secret_encrypted: null })] };
@@ -298,7 +310,7 @@ test('a creator without a custodial wallet cannot request a contract withdrawal 
         memo: 'payout',
         requestedBy: 'creator-1',
       }),
-    (err) => err.code === 'FREIGHTER_SIGNING_UNSUPPORTED' && err.statusCode === 501
+    err => err.code === 'FREIGHTER_SIGNING_UNSUPPORTED' && err.statusCode === 501
   );
 });
 
@@ -312,7 +324,7 @@ test('a policy violation surfaces as its contract code and writes no row', async
         },
       },
     },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns')) return { rows: [campaignRow()] };
       if (text.includes('FROM users')) return { rows: [userRow()] };
       if (text.includes('INSERT INTO withdrawal_requests')) insertAttempted = true;
@@ -328,7 +340,7 @@ test('a policy violation surfaces as its contract code and writes no row', async
         memo: 'over',
         requestedBy: 'creator-1',
       }),
-    (err) => err.code === 'EXCEEDS_MAX_WITHDRAWAL_PCT'
+    err => err.code === 'EXCEEDS_MAX_WITHDRAWAL_PCT'
   );
   assert.equal(insertAttempted, false, 'a rejected withdrawal must not be recorded');
 });
@@ -347,7 +359,7 @@ test('a standard-mode campaign cannot use the treasury endpoints', async () => {
         memo: 'x',
         requestedBy: 'creator-1',
       }),
-    (err) => err.code === 'NOT_CONTRACT_WALLET' && err.statusCode === 409
+    err => err.code === 'NOT_CONTRACT_WALLET' && err.statusCode === 409
   );
 });
 
@@ -359,7 +371,11 @@ test('approving a pending withdrawal completes exactly that row', async () => {
         return { rows: [campaignRow({ auditor_public_key: AUDITOR })] };
       }
       if (text.includes('FROM users')) {
-        return { rows: [userRow({ wallet_public_key: AUDITOR, wallet_secret_encrypted: 'auditor-secret' })] };
+        return {
+          rows: [
+            userRow({ wallet_public_key: AUDITOR, wallet_secret_encrypted: 'auditor-secret' }),
+          ],
+        };
       }
       if (text.includes('UPDATE withdrawal_requests')) {
         updateParams = params;
@@ -380,45 +396,53 @@ test('approving a pending withdrawal completes exactly that row', async () => {
 
 test('approving without an authenticated approver is rejected before touching the contract', async () => {
   const { service, calls } = build({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns')) return { rows: [campaignRow()] };
       return { rows: [] };
     },
   });
   await assert.rejects(
     () => service.approvePendingWithdrawal(CAMPAIGN_ID, 7),
-    (err) => err.code === 'VALIDATION_ERROR' && err.statusCode === 400
+    err => err.code === 'VALIDATION_ERROR' && err.statusCode === 400
   );
   assert.equal(calls.length, 0);
 });
 
 test('approving an id the database does not hold is a 404', async () => {
   const { service } = build({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns')) {
         return { rows: [campaignRow({ auditor_public_key: AUDITOR })] };
       }
       if (text.includes('FROM users')) {
-        return { rows: [userRow({ wallet_public_key: AUDITOR, wallet_secret_encrypted: 'auditor-secret' })] };
+        return {
+          rows: [
+            userRow({ wallet_public_key: AUDITOR, wallet_secret_encrypted: 'auditor-secret' }),
+          ],
+        };
       }
       return { rows: [] };
     },
   });
   await assert.rejects(
     () => service.approvePendingWithdrawal(CAMPAIGN_ID, 99, { approverId: 'auditor-1' }),
-    (err) => err.code === 'PENDING_NOT_FOUND' && err.statusCode === 404
+    err => err.code === 'PENDING_NOT_FOUND' && err.statusCode === 404
   );
 });
 
 test('auditor whose wallet does not match the campaign auditor key is rejected', async () => {
   const { service, calls } = build({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns')) {
         // Campaign expects a different auditor than the one calling.
         return { rows: [campaignRow({ auditor_public_key: CREATOR })] };
       }
       if (text.includes('FROM users')) {
-        return { rows: [userRow({ wallet_public_key: AUDITOR, wallet_secret_encrypted: 'auditor-secret' })] };
+        return {
+          rows: [
+            userRow({ wallet_public_key: AUDITOR, wallet_secret_encrypted: 'auditor-secret' }),
+          ],
+        };
       }
       return { rows: [] };
     },
@@ -426,19 +450,27 @@ test('auditor whose wallet does not match the campaign auditor key is rejected',
 
   await assert.rejects(
     () => service.approvePendingWithdrawal(CAMPAIGN_ID, 7, { approverId: 'auditor-1' }),
-    (err) => err.code === 'AUDITOR_MISMATCH' && err.statusCode === 403
+    err => err.code === 'AUDITOR_MISMATCH' && err.statusCode === 403
   );
   assert.equal(calls.length, 0, 'must not reach the contract when the auditor mismatches');
 });
 
 test('a Freighter-only auditor cannot approve from the server', async () => {
   const { service, calls } = build({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns')) {
         return { rows: [campaignRow({ auditor_public_key: AUDITOR })] };
       }
       if (text.includes('FROM users')) {
-        return { rows: [userRow({ wallet_type: 'freighter', wallet_public_key: AUDITOR, wallet_secret_encrypted: null })] };
+        return {
+          rows: [
+            userRow({
+              wallet_type: 'freighter',
+              wallet_public_key: AUDITOR,
+              wallet_secret_encrypted: null,
+            }),
+          ],
+        };
       }
       return { rows: [] };
     },
@@ -446,19 +478,23 @@ test('a Freighter-only auditor cannot approve from the server', async () => {
 
   await assert.rejects(
     () => service.approvePendingWithdrawal(CAMPAIGN_ID, 7, { approverId: 'auditor-1' }),
-    (err) => err.code === 'FREIGHTER_SIGNING_UNSUPPORTED' && err.statusCode === 501
+    err => err.code === 'FREIGHTER_SIGNING_UNSUPPORTED' && err.statusCode === 501
   );
   assert.equal(calls.length, 0);
 });
 
 test('the auditor and platform accounts are distinct: approval signs with the auditor key', async () => {
   const { service, calls } = build({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns')) {
         return { rows: [campaignRow({ auditor_public_key: AUDITOR })] };
       }
       if (text.includes('FROM users')) {
-        return { rows: [userRow({ wallet_public_key: AUDITOR, wallet_secret_encrypted: 'auditor-secret' })] };
+        return {
+          rows: [
+            userRow({ wallet_public_key: AUDITOR, wallet_secret_encrypted: 'auditor-secret' }),
+          ],
+        };
       }
       if (text.includes('UPDATE withdrawal_requests')) {
         return { rows: [{ id: 'w-2', status: 'completed', amount: '9000.0000000' }] };
@@ -469,8 +505,11 @@ test('the auditor and platform accounts are distinct: approval signs with the au
 
   await service.approvePendingWithdrawal(CAMPAIGN_ID, 7, { approverId: 'auditor-1' });
   assert.equal(calls[0].signerSecret, 'auditor-secret');
-  assert.notEqual(calls[0].signerSecret, process.env.PLATFORM_SECRET_KEY,
-    'approval must use the auditor key, not the platform key');
+  assert.notEqual(
+    calls[0].signerSecret,
+    process.env.PLATFORM_SECRET_KEY,
+    'approval must use the auditor key, not the platform key'
+  );
 });
 
 // ── live status ──────────────────────────────────────────────────────────────
@@ -515,7 +554,7 @@ test('status is assembled from live contract reads, not the database', async () 
   assert.equal(status.withdrawalHistory[0].amount, '2500.0000000');
   assert.equal(status.withdrawalHistory[0].approvedBy, null);
   // Every field came from a read-only contract call.
-  const methods = calls.map((c) => c.method);
+  const methods = calls.map(c => c.method);
   assert.ok(methods.includes('get_policy'));
   assert.ok(methods.includes('get_withdrawal_history'));
 });
@@ -548,7 +587,7 @@ test('reconciliation reports in-sync when history and the database agree', async
         is_paused: false,
       },
     },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns')) return { rows: [campaignRow()] };
       if (text.includes('FROM withdrawal_requests')) {
         return { rows: history.map(() => ({ amount: '100.0000000', status: 'completed' })) };
@@ -592,7 +631,7 @@ test('reconciliation flags a discrepancy rather than assuming agreement', async 
         is_paused: false,
       },
     },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns')) return { rows: [campaignRow()] };
       // The database is missing the row the contract recorded.
       if (text.includes('FROM withdrawal_requests')) return { rows: [] };
@@ -642,6 +681,36 @@ test('a refund the contract refuses is surfaced with its condition code', async 
   });
   await assert.rejects(
     () => service.triggerAutoRefund(CAMPAIGN_ID),
-    (err) => err.code === 'REFUND_CONDITIONS_NOT_MET'
+    err => err.code === 'REFUND_CONDITIONS_NOT_MET'
   );
+});
+
+test('a custodial creator is refused above the custodial signing limit and nothing is signed', async () => {
+  const previous = process.env.CUSTODIAL_WITHDRAWAL_LIMIT;
+  process.env.CUSTODIAL_WITHDRAWAL_LIMIT = '500';
+  let insertedRow = false;
+  const { service, calls } = build({
+    queryImpl: async text => {
+      if (text.includes('FROM campaigns')) return { rows: [campaignRow()] };
+      if (text.includes('FROM users')) return { rows: [userRow({ wallet_type: 'custodial' })] };
+      if (text.includes('INSERT INTO withdrawal_requests')) insertedRow = true;
+      return { rows: [] };
+    },
+  });
+
+  try {
+    await assert.rejects(
+      service.buildWithdrawalRequest(CAMPAIGN_ID, {
+        amount: '501',
+        destination: DEST,
+        memo: 'big',
+        requestedBy: 'creator-1',
+      }),
+      err => err.statusCode === 403 && err.code === 'NON_CUSTODIAL_SIGNATURE_REQUIRED'
+    );
+  } finally {
+    process.env.CUSTODIAL_WITHDRAWAL_LIMIT = previous;
+  }
+  assert.equal(calls.length, 0);
+  assert.equal(insertedRow, false);
 });

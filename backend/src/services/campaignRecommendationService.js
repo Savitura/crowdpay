@@ -4,10 +4,7 @@ const logger = require('../config/logger');
 async function upsertRecommendationsForUser(userId) {
   if (!userId) return [];
 
-  const { rows: profileRows } = await db.query(
-    `SELECT id FROM users WHERE id = $1`,
-    [userId]
-  );
+  const { rows: profileRows } = await db.query(`SELECT id FROM users WHERE id = $1`, [userId]);
   if (!profileRows.length) return [];
 
   await db.query('DELETE FROM campaign_recommendations WHERE user_id = $1', [userId]);
@@ -32,13 +29,13 @@ async function upsertRecommendationsForUser(userId) {
      WHERE u.id = $1`,
     [userId]
   );
-  const contributedIds = new Set(contributedRows.map((row) => row.campaign_id));
+  const contributedIds = new Set(contributedRows.map(row => row.campaign_id));
 
   const { rows: followedRows } = await db.query(
     `SELECT campaign_id FROM campaign_followers WHERE user_id = $1`,
     [userId]
   );
-  const followedIds = new Set(followedRows.map((row) => row.campaign_id));
+  const followedIds = new Set(followedRows.map(row => row.campaign_id));
 
   const { rows: similarUserRows } = await db.query(
     `SELECT DISTINCT u.id AS user_id
@@ -54,7 +51,7 @@ async function upsertRecommendationsForUser(userId) {
     [userId]
   );
 
-  const similarUserIds = similarUserRows.map((row) => row.user_id);
+  const similarUserIds = similarUserRows.map(row => row.user_id);
   const recommendations = [];
 
   for (const campaign of campaigns) {
@@ -117,7 +114,12 @@ async function upsertRecommendationsForUser(userId) {
 
   if (!recommendations.length) return [];
 
-  const values = recommendations.map((item, index) => `($${index * 4 + 1}, $${index * 4 + 2}, $${index * 4 + 3}, $${index * 4 + 4})`).join(', ');
+  const values = recommendations
+    .map(
+      (item, index) =>
+        `($${index * 4 + 1}, $${index * 4 + 2}, $${index * 4 + 3}, $${index * 4 + 4})`
+    )
+    .join(', ');
   const params = [];
   for (const item of recommendations) {
     params.push(item.userId, item.campaignId, item.score, JSON.stringify(item.reasons));

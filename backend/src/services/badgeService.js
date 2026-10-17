@@ -18,49 +18,49 @@ const BADGE_DEFINITIONS = [
     id: 'first_contribution',
     label: 'First contribution',
     description: 'Backed your first campaign.',
-    earned: (stats) => stats.campaigns_backed >= 1,
+    earned: stats => stats.campaigns_backed >= 1,
   },
   {
     id: 'backed_5_campaigns',
     label: 'Backed 5 campaigns',
     description: 'Backed five different campaigns.',
-    earned: (stats) => stats.campaigns_backed >= 5,
+    earned: stats => stats.campaigns_backed >= 5,
   },
   {
     id: 'backed_10_campaigns',
     label: 'Backed 10 campaigns',
     description: 'Backed ten different campaigns.',
-    earned: (stats) => stats.campaigns_backed >= 10,
+    earned: stats => stats.campaigns_backed >= 10,
   },
   {
     id: 'contributed_1000',
     label: 'Contributed 1,000+',
     description: 'Contributed 1,000 or more across all campaigns.',
-    earned: (stats) => stats.total_contributed >= 1000,
+    earned: stats => stats.total_contributed >= 1000,
   },
   {
     id: 'backed_completed_campaign',
     label: 'Backed a completed campaign',
     description: 'Backed a campaign that reached its goal.',
-    earned: (stats) => stats.campaigns_completed >= 1,
+    earned: stats => stats.campaigns_completed >= 1,
   },
   {
     id: 'early_backer',
     label: 'Early backer',
     description: `Among the first ${EARLY_BACKER_RANK} backers of a campaign.`,
-    earned: (stats) => stats.early_backings >= 1,
+    earned: stats => stats.early_backings >= 1,
   },
   {
     id: 'high_value_backer',
     label: 'High-value backer',
     description: `Made a single contribution of ${HIGH_VALUE_CONTRIBUTION.toLocaleString()} or more.`,
-    earned: (stats) => stats.largest_contribution >= HIGH_VALUE_CONTRIBUTION,
+    earned: stats => stats.largest_contribution >= HIGH_VALUE_CONTRIBUTION,
   },
   {
     id: 'milestone_witness',
     label: 'Milestone witness',
     description: 'Backed a campaign that has released a milestone.',
-    earned: (stats) => stats.campaigns_with_released_milestone >= 1,
+    earned: stats => stats.campaigns_with_released_milestone >= 1,
   },
 ];
 
@@ -132,7 +132,7 @@ async function getContributorBadgeStats(userId) {
 }
 
 function computeBadges(stats, earnedAtById = {}) {
-  return BADGE_DEFINITIONS.map((definition) => ({
+  return BADGE_DEFINITIONS.map(definition => ({
     id: definition.id,
     label: definition.label,
     description: definition.description,
@@ -158,7 +158,7 @@ async function loadEarnedBadges(userId) {
 async function recordEarnedBadges(userId, badges) {
   const newlyEarned = [];
 
-  for (const badge of badges.filter((entry) => entry.earned && !entry.earned_at)) {
+  for (const badge of badges.filter(entry => entry.earned && !entry.earned_at)) {
     const { rows } = await db.query(
       `INSERT INTO contributor_badges (user_id, badge_id)
        VALUES ($1, $2)

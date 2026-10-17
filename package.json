@@ -4,11 +4,16 @@
   "private": true,
   "scripts": {
     "lint": "npm run lint --prefix backend && npm run lint --prefix frontend",
-    "format": "npm run format --prefix frontend",
+    "format": "npm run format --prefix frontend && npm run format --prefix backend",
+    "format:check": "npm run format:check --prefix frontend && npm run format:check --prefix backend",
+    "test": "npm run test --prefix backend && npm run test --prefix frontend",
     "test:e2e": "npx playwright test",
+    "test:public": "npx playwright test --config playwright.public.config.js",
+    "load-test": "k6 run load-tests/*.js",
     "prepare": "husky"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "husky": "^9.1.7"
   }
 }

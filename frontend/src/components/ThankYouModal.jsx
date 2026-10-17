@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 
@@ -9,9 +9,63 @@ export default function ThankYouModal({ campaignId, contribution, onClose, onSen
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const modalRef = useRef(null);
 
   const isBulk = !contribution;
   const charsLeft = MAX_CHARS - message.length;
+
+  useEffect(() => {
+    const trigger = document.activeElement;
+    return () => {
+      if (trigger && typeof trigger.focus === 'function' && trigger.isConnected) {
+        trigger.focus();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    const modal = modalRef.current;
+    if (!modal) return;
+    const initialFocusable = modal.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    initialFocusable[0]?.focus();
+
+    function trapTab(e) {
+      if (e.key !== 'Tab') return;
+      const focusable = modal.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) {
+        e.preventDefault();
+        if (!modal.hasAttribute('tabindex')) modal.setAttribute('tabindex', '-1');
+        modal.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!modal.contains(document.activeElement)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first)?.focus();
+      } else if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last?.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first?.focus();
+      }
+    }
+    modal.addEventListener('keydown', trapTab);
+    return () => modal.removeEventListener('keydown', trapTab);
+  }, []);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -36,18 +90,34 @@ export default function ThankYouModal({ campaignId, contribution, onClose, onSen
   }
 
   return (
-    <div style={styles.overlay} onClick={onClose}>
-      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-        <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem' }}>
+    <div className="modal-overlay" style={styles.overlay} onClick={onClose} role="presentation">
+      <div
+        className="modal-shell"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="thank-you-title"
+        style={styles.modal}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="thank-you-title" style={{ margin: '0 0 0.5rem', fontSize: '1.1rem' }}>
           {isBulk ? t('thankYou.bulkTitle') : t('thankYou.individualTitle')}
         </h2>
-        <p style={{ margin: '0 0 1rem', color: 'var(--color-text-secondary)', fontSize: '0.88rem' }}>
+        <p
+          style={{ margin: '0 0 1rem', color: 'var(--color-text-secondary)', fontSize: '0.88rem' }}
+        >
           {isBulk
             ? t('thankYou.bulkDescription')
-            : t('thankYou.individualDescription', { name: contribution.display_name || 'contributor' })}
+            : t('thankYou.individualDescription', {
+                name: contribution.display_name || 'contributor',
+              })}
         </p>
 
-        {error && <p className="alert alert--error" style={{ marginBottom: '0.75rem' }}>{error}</p>}
+        {error && (
+          <p className="alert alert--error" style={{ marginBottom: '0.75rem' }}>
+            {error}
+          </p>
+        )}
 
         <form onSubmit={handleSubmit}>
           <textarea
@@ -88,6 +158,7 @@ export default function ThankYouModal({ campaignId, contribution, onClose, onSen
                 type="button"
                 className="btn-secondary"
                 onClick={onClose}
+                data-modal-close="true"
                 style={{ fontSize: '0.85rem', padding: '0.4rem 1rem' }}
               >
                 {t('common.cancel')}

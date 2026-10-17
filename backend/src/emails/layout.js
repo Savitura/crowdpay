@@ -1,10 +1,10 @@
 function escapeHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function button(label, url) {
@@ -25,7 +25,7 @@ function button(label, url) {
  * Renders a branded, table-based HTML email shell. Table layout + inline CSS
  * is required for consistent rendering across Outlook/Gmail/Apple Mail.
  */
-function renderLayout({ previewText = "", bodyHtml, unsubscribeUrl }) {
+function renderLayout({ previewText = '', bodyHtml, unsubscribeUrl }) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -52,7 +52,7 @@ function renderLayout({ previewText = "", bodyHtml, unsubscribeUrl }) {
           <tr>
             <td style="padding:20px 32px;background-color:#f9fafb;color:#8a8f98;font-size:12px;line-height:1.6;border-top:1px solid #eceef1;">
               You're receiving this email because of activity on your CrowdPay account.
-              ${unsubscribeUrl ? `<br><a href="${escapeHtml(unsubscribeUrl)}" style="color:#8a8f98;text-decoration:underline;">Unsubscribe from these emails</a>` : ""}
+              ${unsubscribeUrl ? `<br><a href="${escapeHtml(unsubscribeUrl)}" style="color:#8a8f98;text-decoration:underline;">Unsubscribe from these emails</a>` : ''}
             </td>
           </tr>
         </table>
@@ -84,7 +84,7 @@ function table(rows) {
         <td style="padding:6px 0;color:#1a1a1a;font-weight:bold;">${escapeHtml(value)}</td>
       </tr>`
     )
-    .join("");
+    .join('');
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 16px;">${rowsHtml}</table>`;
 }
 

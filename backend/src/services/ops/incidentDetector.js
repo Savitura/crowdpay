@@ -23,10 +23,7 @@ function evaluateIncidentConditions(snapshot) {
   const raw = snapshot.raw_metrics || {};
 
   // 1. Horizon Latency Critical
-  if (
-    !raw.horizon_testnet_ok ||
-    raw.horizon_testnet_latency > HORIZON_CRIT_LATENCY_MS
-  ) {
+  if (!raw.horizon_testnet_ok || raw.horizon_testnet_latency > HORIZON_CRIT_LATENCY_MS) {
     activeIncidents.push({
       type: 'horizon_latency_critical',
       severity: 'critical',
@@ -83,13 +80,13 @@ function evaluateIncidentConditions(snapshot) {
 
   // 5. Campaign Wallet Underfunded
   if (raw.campaign_wallets_at_risk_count > 0) {
-    const underfunded = snapshot.campaign_wallets?.wallets?.filter((w) => w.deficit_xlm > 0) || [];
+    const underfunded = snapshot.campaign_wallets?.wallets?.filter(w => w.deficit_xlm > 0) || [];
     activeIncidents.push({
       type: 'campaign_wallet_underfunded',
       severity: 'warning',
       metrics: {
         at_risk_count: raw.campaign_wallets_at_risk_count,
-        underfunded_wallets: underfunded.map((w) => ({
+        underfunded_wallets: underfunded.map(w => ({
           campaign_id: w.campaign_id,
           deficit_xlm: w.deficit_xlm,
           balance_xlm: w.balance_xlm,
@@ -160,7 +157,10 @@ async function dispatchIncidentNotification(incident, isResolved = false) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      logger.info('Dispatched ops incident webhook', { incident_id: incident.id, type: incident.incident_type });
+      logger.info('Dispatched ops incident webhook', {
+        incident_id: incident.id,
+        type: incident.incident_type,
+      });
     } catch (err) {
       logger.warn('Failed to dispatch ops incident webhook', { error: err.message, webhookUrl });
     }
@@ -186,7 +186,7 @@ async function dispatchIncidentNotification(incident, isResolved = false) {
  */
 async function runIncidentDetectionCycle(snapshot) {
   const activeConditions = evaluateIncidentConditions(snapshot);
-  const activeTypeMap = new Map(activeConditions.map((c) => [c.type, c]));
+  const activeTypeMap = new Map(activeConditions.map(c => [c.type, c]));
 
   // 1. Fetch currently open or acknowledged incidents from DB
   let existingOpenIncidents = [];
@@ -202,7 +202,7 @@ async function runIncidentDetectionCycle(snapshot) {
     return;
   }
 
-  const existingTypeMap = new Map(existingOpenIncidents.map((inc) => [inc.incident_type, inc]));
+  const existingTypeMap = new Map(existingOpenIncidents.map(inc => [inc.incident_type, inc]));
 
   // 2. Create or update newly detected / ongoing incidents
   for (const condition of activeConditions) {
@@ -228,7 +228,12 @@ async function runIncidentDetectionCycle(snapshot) {
              (incident_type, severity, status, triggered_at, triggering_metric_values, details, notification_sent)
            VALUES ($1, $2, 'open', NOW(), $3::jsonb, $4::jsonb, TRUE)
            RETURNING id, incident_type, severity, status, triggered_at, triggering_metric_values, details`,
-          [condition.type, condition.severity, JSON.stringify(condition.metrics), JSON.stringify(condition.details)]
+          [
+            condition.type,
+            condition.severity,
+            JSON.stringify(condition.metrics),
+            JSON.stringify(condition.details),
+          ]
         );
 
         if (rows.length > 0) {

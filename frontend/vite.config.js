@@ -1,5 +1,3 @@
-/* eslint-disable */
-/* global process, __dirname */
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { sentryVitePlugin } from '@sentry/vite-plugin';
@@ -25,7 +23,7 @@ export default defineConfig(({ mode }) => ({
     setupFiles: './src/test/setup.js',
   },
   build: {
-    sourcemap: true,
+    sourcemap: process.env.SENTRY_UPLOAD_SOURCEMAPS === 'true',
     rollupOptions: {
       input: {
         main: './index.html',

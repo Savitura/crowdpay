@@ -49,8 +49,8 @@ function buildApp({ queryImpl, authUser }) {
         status: 0,
         evidence_hash: null,
       }),
-      nativeToScVal: (v) => v,
-      scvAddressFromString: (s) => s,
+      nativeToScVal: v => v,
+      scvAddressFromString: s => s,
     },
     '../services/emailService': { sendEmail: async () => {} },
     '../services/alerting': { sendAlert: () => {} },
@@ -75,10 +75,13 @@ function buildApp({ queryImpl, authUser }) {
     '../middleware/validation': {
       createCampaignValidation: [],
       createCampaignUpdateValidation: [],
+      updateCampaignValidation: [],
       getCampaignsValidation: [],
       validateRequest: (_req, _res, next) => next(),
+      // campaigns.js calls createValidateRequest(422) at module load.
+      createValidateRequest: () => (_req, _res, next) => next(),
     },
-    '../utils/asyncHandler': (fn) => (req, res, next) => fn(req, res, next).catch(next),
+    '../utils/asyncHandler': fn => (req, res, next) => fn(req, res, next).catch(next),
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
         req.user = authUser || { userId: 'user-1', role: 'creator' };
@@ -113,14 +116,25 @@ const CAMPAIGN_ROW = {
 const MILESTONE_ROWS = [
   { id: 'm-1', title: 'Design', release_percentage: '25', sort_order: 0, status: 'released' },
   { id: 'm-2', title: 'Build', release_percentage: '25', sort_order: 1, status: 'approved' },
-  { id: 'm-3', title: 'Install', release_percentage: '25', sort_order: 2, status: 'pending_review' },
+  {
+    id: 'm-3',
+    title: 'Install',
+    release_percentage: '25',
+    sort_order: 2,
+    status: 'pending_review',
+  },
   { id: 'm-4', title: 'Handover', release_percentage: '25', sort_order: 3, status: 'rejected' },
 ];
 
-function embedQuery({ campaignRows = [CAMPAIGN_ROW], milestoneRows = MILESTONE_ROWS } = {}) {
+function embedQuery({
+  campaignRows = [CAMPAIGN_ROW],
+  milestoneRows = MILESTONE_ROWS,
+  backerRows = [],
+} = {}) {
   const calls = [];
   const queryImpl = async (text, params) => {
     calls.push({ text, params });
+    if (text.includes('FROM contributions ctr')) return { rows: backerRows };
     if (text.includes('FROM milestones')) return { rows: milestoneRows };
     if (text.includes('FROM campaigns WHERE id = $1')) return { rows: campaignRows };
     return { rows: [] };
@@ -136,7 +150,7 @@ test('GET /api/campaigns/:id/embed includes milestones with public statuses', as
 
   assert.equal(res.status, 200);
   assert.deepEqual(
-    res.body.milestones.map((milestone) => milestone.status),
+    res.body.milestones.map(milestone => milestone.status),
     ['released', 'approved', 'submitted', 'pending']
   );
   assert.deepEqual(res.body.milestones[0], {
@@ -147,7 +161,7 @@ test('GET /api/campaigns/:id/embed includes milestones with public statuses', as
     status: 'released',
   });
   // The campaign id must reach the query untouched — it is a UUID, not an int.
-  const campaignLookup = calls.find((call) => call.text.includes('FROM campaigns WHERE id = $1'));
+  const campaignLookup = calls.find(call => call.text.includes('FROM campaigns WHERE id = $1'));
   assert.deepEqual(campaignLookup.params, [CAMPAIGN_ID]);
 });
 
@@ -177,6 +191,75 @@ test('GET /api/campaigns/:id/widget carries the same milestone payload', async (
   assert.equal(res.body.milestones.length, 4);
   assert.equal(res.body.milestone_summary.released, 1);
   assert.equal(res.body.contributor_count, 12);
+});
+
+test('GET /api/campaigns/:id/widget includes the public description and cache header', async () => {
+  const longDescription = 'x'.repeat(260);
+  const { queryImpl } = embedQuery({
+    campaignRows: [{ ...CAMPAIGN_ROW, description: longDescription }],
+  });
+  const app = buildApp({ queryImpl });
+
+  const res = await request(app).get(`/api/campaigns/${CAMPAIGN_ID}/widget`);
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.description.length, 203);
+  assert.ok(res.body.description.endsWith('...'));
+  assert.equal(res.headers['cache-control'], 'public, max-age=30');
+});
+
+test('GET /api/campaigns/:id/widget lists recently named backers', async () => {
+  const { queryImpl } = embedQuery({
+    backerRows: [
+      { display_name: 'Alice', amount: '250', contributor_privacy: 'full' },
+      { display_name: 'Bob', amount: '75', contributor_privacy: 'amount_only' },
+    ],
+  });
+  const app = buildApp({ queryImpl });
+
+  const res = await request(app).get(`/api/campaigns/${CAMPAIGN_ID}/widget`);
+
+  assert.deepEqual(res.body.recent_backers, [
+    { name: 'Alice', amount: 250 },
+    // amount_only contributors keep their amount but never their name
+    { name: 'Anonymous', amount: 75 },
+  ]);
+});
+
+test('GET /api/campaigns/:id/widget never names anonymous backers', async () => {
+  const { queryImpl } = embedQuery({
+    backerRows: [
+      { display_name: 'Carol', amount: '40', contributor_privacy: 'anonymous' },
+      { display_name: 'Dave', amount: '10', contributor_privacy: 'anonymous' },
+    ],
+  });
+  const app = buildApp({ queryImpl });
+
+  const res = await request(app).get(`/api/campaigns/${CAMPAIGN_ID}/widget`);
+
+  // Anonymous backers are neither named nor counted in the public strip.
+  assert.deepEqual(res.body.recent_backers, []);
+});
+
+test('GET /api/campaigns/:id/widget hides amounts when the campaign opted out', async () => {
+  const { queryImpl } = embedQuery({
+    campaignRows: [{ ...CAMPAIGN_ROW, show_backer_amounts: false }],
+    backerRows: [{ display_name: 'Alice', amount: '250', contributor_privacy: 'full' }],
+  });
+  const app = buildApp({ queryImpl });
+
+  const res = await request(app).get(`/api/campaigns/${CAMPAIGN_ID}/widget`);
+
+  assert.deepEqual(res.body.recent_backers, [{ name: 'Alice', amount: null }]);
+});
+
+test('GET /api/campaigns/:id/widget returns no backers when none exist', async () => {
+  const { queryImpl } = embedQuery({ backerRows: [] });
+  const app = buildApp({ queryImpl });
+
+  const res = await request(app).get(`/api/campaigns/${CAMPAIGN_ID}/widget`);
+
+  assert.deepEqual(res.body.recent_backers, []);
 });
 
 test('GET /api/campaigns/:id/embed returns an empty milestone list for campaigns without a plan', async () => {

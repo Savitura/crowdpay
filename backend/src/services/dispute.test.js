@@ -3,9 +3,7 @@ const assert = require('node:assert/strict');
 const { allocateProportionalRefunds } = require('./dispute');
 
 function sumAmounts(refunds) {
-  return refunds
-    .reduce((sum, r) => sum + BigInt(r.amount.replace('.', '')), 0n)
-    .toString();
+  return refunds.reduce((sum, r) => sum + BigInt(r.amount.replace('.', '')), 0n).toString();
 }
 
 test('allocateProportionalRefunds splits evenly for equal contributions', () => {
@@ -16,10 +14,7 @@ test('allocateProportionalRefunds splits evenly for equal contributions', () => 
     ],
     '200'
   );
-  assert.deepEqual(
-    refunds.map((r) => r.amount).sort(),
-    ['100.0000000', '100.0000000']
-  );
+  assert.deepEqual(refunds.map(r => r.amount).sort(), ['100.0000000', '100.0000000']);
 });
 
 test('allocateProportionalRefunds sums to exactly the balance for indivisible splits', () => {
@@ -44,7 +39,7 @@ test('allocateProportionalRefunds is proportional to contribution size, not even
     ],
     '100'
   );
-  const byId = Object.fromEntries(refunds.map((r) => [r.contributorId, r.amount]));
+  const byId = Object.fromEntries(refunds.map(r => [r.contributorId, r.amount]));
   assert.equal(byId.a, '10.0000000');
   assert.equal(byId.b, '90.0000000');
 });

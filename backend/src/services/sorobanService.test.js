@@ -39,10 +39,7 @@ describe('encodeMilestone (manual mock)', () => {
   });
 
   it('throws when milestone argument is falsy', () => {
-    assert.throws(
-      () => sorobanMock.encodeMilestone(null),
-      /title is required/i
-    );
+    assert.throws(() => sorobanMock.encodeMilestone(null), /title is required/i);
   });
 
   it('encodes a 100% single-milestone campaign (10000 bps)', () => {
@@ -87,48 +84,52 @@ describe('invokeContract (manual mock)', () => {
   it('throws when simulateFailure is enabled', async () => {
     __mock.simulateFailure(true);
     await assert.rejects(
-      () => sorobanMock.invokeContract({
-        contractId: 'CCONTRACT123456789012345678901234567890123456789012345',
-        method: 'release_funds',
-        args: [],
-        signerSecret: 'SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR',
-      }),
+      () =>
+        sorobanMock.invokeContract({
+          contractId: 'CCONTRACT123456789012345678901234567890123456789012345',
+          method: 'release_funds',
+          args: [],
+          signerSecret: 'SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR',
+        }),
       /simulated soroban contract failure/i
     );
   });
 
   it('throws when contractId is missing', async () => {
     await assert.rejects(
-      () => sorobanMock.invokeContract({
-        contractId: '',
-        method: 'register_campaign',
-        args: [],
-        signerSecret: 'SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR',
-      }),
+      () =>
+        sorobanMock.invokeContract({
+          contractId: '',
+          method: 'register_campaign',
+          args: [],
+          signerSecret: 'SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR',
+        }),
       /contractId is required/i
     );
   });
 
   it('throws when method is missing', async () => {
     await assert.rejects(
-      () => sorobanMock.invokeContract({
-        contractId: 'CCONTRACT123456789012345678901234567890123456789012345',
-        method: '',
-        args: [],
-        signerSecret: 'SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR',
-      }),
+      () =>
+        sorobanMock.invokeContract({
+          contractId: 'CCONTRACT123456789012345678901234567890123456789012345',
+          method: '',
+          args: [],
+          signerSecret: 'SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR',
+        }),
       /method is required/i
     );
   });
 
   it('throws when signerSecret is missing', async () => {
     await assert.rejects(
-      () => sorobanMock.invokeContract({
-        contractId: 'CCONTRACT123456789012345678901234567890123456789012345',
-        method: 'release_funds',
-        args: [],
-        signerSecret: '',
-      }),
+      () =>
+        sorobanMock.invokeContract({
+          contractId: 'CCONTRACT123456789012345678901234567890123456789012345',
+          method: 'release_funds',
+          args: [],
+          signerSecret: '',
+        }),
       /signerSecret is required/i
     );
   });
@@ -191,9 +192,9 @@ function createMockMetaXdr(returnValue) {
 
 function buildService(serverOverrides = {}) {
   const defaultServer = {
-    loadAccount: async (pk) => new Account(pk || TEST_PUBLIC, '1'),
+    loadAccount: async pk => new Account(pk || TEST_PUBLIC, '1'),
     simulateTransaction: async () => ({ result: null }),
-    prepareTransaction: (tx) => tx,
+    prepareTransaction: tx => tx,
     submitTransaction: async () => ({ status: 'SUCCESS' }),
   };
 
@@ -253,12 +254,13 @@ describe('sorobanService real implementation tests', () => {
       });
 
       await assert.rejects(
-        () => service.invokeContract({
-          contractId: TEST_CONTRACT_ID,
-          method: 'test_method',
-          args: [],
-          signerSecret: TEST_SECRET,
-        }),
+        () =>
+          service.invokeContract({
+            contractId: TEST_CONTRACT_ID,
+            method: 'test_method',
+            args: [],
+            signerSecret: TEST_SECRET,
+          }),
         /Transaction failed: FAILED/
       );
     });
@@ -274,12 +276,13 @@ describe('sorobanService real implementation tests', () => {
       });
 
       await assert.rejects(
-        () => service.invokeContract({
-          contractId: TEST_CONTRACT_ID,
-          method: 'test_method',
-          args: [],
-          signerSecret: TEST_SECRET,
-        }),
+        () =>
+          service.invokeContract({
+            contractId: TEST_CONTRACT_ID,
+            method: 'test_method',
+            args: [],
+            signerSecret: TEST_SECRET,
+          }),
         /Simulation failed/
       );
     });
@@ -314,11 +317,12 @@ describe('sorobanService real implementation tests', () => {
       });
 
       await assert.rejects(
-        () => service.invokeContractReadOnly({
-          contractId: TEST_CONTRACT_ID,
-          method: 'get_something',
-          args: [],
-        }),
+        () =>
+          service.invokeContractReadOnly({
+            contractId: TEST_CONTRACT_ID,
+            method: 'get_something',
+            args: [],
+          }),
         /Simulation failed/
       );
     });
@@ -355,11 +359,12 @@ describe('sorobanService real implementation tests', () => {
       });
 
       await assert.rejects(
-        () => service.invokeContractReadOnly({
-          contractId: TEST_CONTRACT_ID,
-          method: 'get_something',
-          args: [],
-        }),
+        () =>
+          service.invokeContractReadOnly({
+            contractId: TEST_CONTRACT_ID,
+            method: 'get_something',
+            args: [],
+          }),
         /Simulation returned error/
       );
     });
@@ -423,7 +428,7 @@ describe('sorobanService real implementation tests', () => {
 
     test('depositToEscrow surfaces a distinct tx hash per call (derived from the signed envelope)', async () => {
       const service = buildService({
-        loadAccount: async (pk) => new Account(pk || TEST_PUBLIC, '1'),
+        loadAccount: async pk => new Account(pk || TEST_PUBLIC, '1'),
         submitTransaction: async () => ({ status: 'SUCCESS' }),
       });
 
@@ -456,6 +461,159 @@ describe('sorobanService real implementation tests', () => {
       assert.ok(xdrString.length > 0);
     });
 
+    test('buildUnsignedContractCall builds an unsigned XDR for an arbitrary method without a signerSecret', async () => {
+      const service = buildService();
+
+      const xdrString = await service.buildUnsignedContractCall({
+        contractId: TEST_CONTRACT_ID,
+        method: 'propose_change',
+        args: [],
+        sourcePublicKey: TEST_PUBLIC,
+      });
+
+      assert.equal(typeof xdrString, 'string');
+      assert.ok(xdrString.length > 0);
+    });
+
+    test('submitSignedContractCall submits an already-signed transaction and decodes its return value', async () => {
+      const returnScVal = nativeToScVal(7);
+      const metaBase64 = createMockMetaXdr(returnScVal);
+      const service = buildService({
+        submitTransaction: async () => ({
+          status: 'SUCCESS',
+          hash: 'submitted-hash',
+          resultMetaXdr: metaBase64,
+        }),
+      });
+
+      const unsignedXdr = await service.buildUnsignedContractCall({
+        contractId: TEST_CONTRACT_ID,
+        method: 'vote',
+        args: [],
+        sourcePublicKey: TEST_PUBLIC,
+      });
+      const { TransactionBuilder } = require('@stellar/stellar-sdk');
+      const tx = TransactionBuilder.fromXDR(unsignedXdr, 'Test SDF Network ; September 2015');
+      tx.sign(testKeypair);
+
+      const result = await service.submitSignedContractCall(tx.toXDR());
+      assert.equal(result.hash, 'submitted-hash');
+      assert.equal(result.returnValue, BigInt(7));
+    });
+
+    test('submitSignedContractCall throws on a non-SUCCESS submission status', async () => {
+      const service = buildService({ submitTransaction: async () => ({ status: 'FAILED' }) });
+      const unsignedXdr = await service.buildUnsignedContractCall({
+        contractId: TEST_CONTRACT_ID,
+        method: 'vote',
+        args: [],
+        sourcePublicKey: TEST_PUBLIC,
+      });
+      const { TransactionBuilder } = require('@stellar/stellar-sdk');
+      const tx = TransactionBuilder.fromXDR(unsignedXdr, 'Test SDF Network ; September 2015');
+      tx.sign(testKeypair);
+
+      await assert.rejects(
+        () => service.submitSignedContractCall(tx.toXDR()),
+        /Transaction failed: FAILED/
+      );
+    });
+
+    describe('validateSubmittedContractCallXdr (#802 — cross-wallet and tampered-args rejection)', () => {
+      async function buildSignedAndUnsigned(
+        service,
+        { method = 'vote', args = [], signer = testKeypair, sourcePublicKey = TEST_PUBLIC } = {}
+      ) {
+        const unsignedXdr = await service.buildUnsignedContractCall({
+          contractId: TEST_CONTRACT_ID,
+          method,
+          args,
+          sourcePublicKey,
+        });
+        const { TransactionBuilder } = require('@stellar/stellar-sdk');
+        const tx = TransactionBuilder.fromXDR(unsignedXdr, 'Test SDF Network ; September 2015');
+        tx.sign(signer);
+        return { unsignedXdr, signedXdr: tx.toXDR() };
+      }
+
+      test('accepts a signed transaction that matches the unsigned XDR and is signed by the expected wallet', async () => {
+        const service = buildService();
+        const { unsignedXdr, signedXdr } = await buildSignedAndUnsigned(service);
+
+        assert.equal(
+          service.validateSubmittedContractCallXdr({
+            signedXdr,
+            unsignedXdr,
+            expectedSourcePublicKey: TEST_PUBLIC,
+          }),
+          true
+        );
+      });
+
+      test('rejects a transaction signed by a different wallet than expected (cross-wallet signature)', async () => {
+        const service = buildService();
+        const attacker = Keypair.random();
+        // Attacker's own account is the tx source, but we claim the victim's key is expected.
+        const { unsignedXdr, signedXdr } = await buildSignedAndUnsigned(service, {
+          signer: attacker,
+          sourcePublicKey: attacker.publicKey(),
+        });
+
+        assert.throws(
+          () =>
+            service.validateSubmittedContractCallXdr({
+              signedXdr,
+              unsignedXdr,
+              expectedSourcePublicKey: TEST_PUBLIC,
+            }),
+          /does not match the expected wallet/
+        );
+      });
+
+      test('rejects a signed transaction whose operation args were tampered with after preparing', async () => {
+        const service = buildService();
+        const { unsignedXdr } = await buildSignedAndUnsigned(service, {
+          args: [nativeToScVal(false, { type: 'bool' })],
+        });
+        // Build a DIFFERENT transaction (different args) but present it as satisfying the same prepare token.
+        const { signedXdr: tamperedSignedXdr } = await buildSignedAndUnsigned(service, {
+          args: [nativeToScVal(true, { type: 'bool' })],
+        });
+
+        assert.throws(
+          () =>
+            service.validateSubmittedContractCallXdr({
+              signedXdr: tamperedSignedXdr,
+              unsignedXdr,
+              expectedSourcePublicKey: TEST_PUBLIC,
+            }),
+          /does not match the server-generated transaction/
+        );
+      });
+
+      test('rejects when signed_xdr or unsigned_xdr is missing', () => {
+        const service = buildService();
+        assert.throws(
+          () =>
+            service.validateSubmittedContractCallXdr({
+              signedXdr: null,
+              unsignedXdr: 'x',
+              expectedSourcePublicKey: TEST_PUBLIC,
+            }),
+          /signed_xdr is required/
+        );
+        assert.throws(
+          () =>
+            service.validateSubmittedContractCallXdr({
+              signedXdr: 'x',
+              unsignedXdr: null,
+              expectedSourcePublicKey: TEST_PUBLIC,
+            }),
+          /unsigned_xdr is required/
+        );
+      });
+    });
+
     test('isContractDepositEligible requires SOROBAN_ENABLED=true and an escrow_contract_id', () => {
       const service = buildService();
       const prevEnabled = process.env.SOROBAN_ENABLED;
@@ -463,14 +621,14 @@ describe('sorobanService real implementation tests', () => {
       process.env.SOROBAN_ENABLED = 'true';
       assert.equal(
         service.isContractDepositEligible({ escrow_contract_id: TEST_CONTRACT_ID }),
-        true,
+        true
       );
       assert.equal(service.isContractDepositEligible({ escrow_contract_id: null }), false);
 
       process.env.SOROBAN_ENABLED = 'false';
       assert.equal(
         service.isContractDepositEligible({ escrow_contract_id: TEST_CONTRACT_ID }),
-        false,
+        false
       );
 
       if (prevEnabled === undefined) delete process.env.SOROBAN_ENABLED;
@@ -538,8 +696,7 @@ describe('sorobanService real implementation tests', () => {
     });
   });
 
-
-const proxyquire = require('proxyquire').noCallThru();
+  const proxyquire = require('proxyquire').noCallThru();
 
   // WASM upload & contract creation tests
   describe('createContractFromWasmHash & uploadContractWasm', () => {
@@ -549,16 +706,40 @@ const proxyquire = require('proxyquire').noCallThru();
       });
 
       await assert.rejects(
-        () => service.createContractFromWasmHash({
-          wasmHash: TEST_WASM_HASH,
-          signerSecret: TEST_SECRET,
-        }),
+        () =>
+          service.createContractFromWasmHash({
+            wasmHash: TEST_WASM_HASH,
+            signerSecret: TEST_SECRET,
+          }),
         /Contract creation failed: FAILED/
       );
     });
 
-    test('createContractFromWasmHash parses created contract ID on success', async () => {
+    test('createContractFromWasmHash throws when created contract ID cannot be parsed (#809)', async () => {
       const metaBase64 = createMockMetaXdr(xdr.ScVal.scvVoid());
+
+      const service = buildService({
+        submitTransaction: async () => ({
+          status: 'SUCCESS',
+          hash: 'txhash123',
+          resultMetaXdr: metaBase64,
+        }),
+      });
+
+      await assert.rejects(
+        () =>
+          service.createContractFromWasmHash({
+            wasmHash: TEST_WASM_HASH,
+            signerSecret: TEST_SECRET,
+          }),
+        /could not be parsed from metadata/
+      );
+    });
+
+    test('createContractFromWasmHash parses created contract ID from return Address (#809)', async () => {
+      const { Address } = require('@stellar/stellar-sdk');
+      const returnScVal = Address.fromString(TEST_CONTRACT_ID).toScVal();
+      const metaBase64 = createMockMetaXdr(returnScVal);
 
       const service = buildService({
         submitTransaction: async () => ({
@@ -573,7 +754,7 @@ const proxyquire = require('proxyquire').noCallThru();
         signerSecret: TEST_SECRET,
       });
 
-      assert.ok(res.contractId);
+      assert.equal(res.contractId, TEST_CONTRACT_ID);
       assert.equal(res.txHash, 'txhash123');
     });
 
@@ -599,7 +780,10 @@ const proxyquire = require('proxyquire').noCallThru();
         }),
       });
 
-      const res = await service.uploadContractWasm(Buffer.from('0061736d01000000', 'hex'), TEST_SECRET);
+      const res = await service.uploadContractWasm(
+        Buffer.from('0061736d01000000', 'hex'),
+        TEST_SECRET
+      );
       assert.equal(res, 'wasm_hash_result');
     });
   });
@@ -633,7 +817,7 @@ const proxyquire = require('proxyquire').noCallThru();
       delete process.env.MILESTONES_CONTRACT_ID;
     });
 
-    test('deployCampaignContracts returns mock contract IDs if SOROBAN_ENABLED is false', async () => {
+    test('deployCampaignContracts returns null contract IDs if SOROBAN_ENABLED is false', async () => {
       delete process.env.ESCROW_CONTRACT_ID;
       delete process.env.MILESTONES_CONTRACT_ID;
       process.env.SOROBAN_ENABLED = 'false';
@@ -651,8 +835,8 @@ const proxyquire = require('proxyquire').noCallThru();
         signerSecret: TEST_SECRET,
       });
 
-      assert.ok(result.escrowContractId.startsWith('C'));
-      assert.ok(result.milestonesContractId.startsWith('C'));
+      assert.equal(result.escrowContractId, null);
+      assert.equal(result.milestonesContractId, null);
     });
 
     test('deployCampaignContracts throws wrapped error on deployment failure', async () => {
@@ -668,17 +852,18 @@ const proxyquire = require('proxyquire').noCallThru();
       });
 
       await assert.rejects(
-        () => service.deployCampaignContracts({
-          creatorPublicKey: TEST_PUBLIC,
-          platformPublicKey: TEST_PUBLIC,
-          campaignId: '1001',
-          targetAmount: 1000,
-          deadlineUnix: 1800000000,
-          assetContractAddress: TEST_CONTRACT_ID,
-          platformFeeBps: 200,
-          milestones: [],
-          signerSecret: TEST_SECRET,
-        }),
+        () =>
+          service.deployCampaignContracts({
+            creatorPublicKey: TEST_PUBLIC,
+            platformPublicKey: TEST_PUBLIC,
+            campaignId: '1001',
+            targetAmount: 1000,
+            deadlineUnix: 1800000000,
+            assetContractAddress: TEST_CONTRACT_ID,
+            platformFeeBps: 200,
+            milestones: [],
+            signerSecret: TEST_SECRET,
+          }),
         /Soroban contract deployment failed/
       );
 
@@ -688,8 +873,10 @@ const proxyquire = require('proxyquire').noCallThru();
       delete process.env.MILESTONES_WASM_HASH;
     });
 
-    test('initializeCampaignContract returns escrow & milestone contract addresses', async () => {
+    test('initializeCampaignContract returns null contract addresses when Soroban is disabled', async () => {
       process.env.SOROBAN_ENABLED = 'false';
+      delete process.env.ESCROW_CONTRACT_ID;
+      delete process.env.MILESTONES_CONTRACT_ID;
       const service = buildService();
 
       const res = await service.initializeCampaignContract({
@@ -704,9 +891,9 @@ const proxyquire = require('proxyquire').noCallThru();
         signerSecret: TEST_SECRET,
       });
 
-      assert.ok(res.contractAddress);
-      assert.ok(res.escrowContractId);
-      assert.ok(res.milestonesContractId);
+      assert.equal(res.contractAddress, null);
+      assert.equal(res.escrowContractId, null);
+      assert.equal(res.milestonesContractId, null);
     });
 
     test('releaseMilestone & triggerRefund handle success and errors', async () => {
@@ -733,20 +920,22 @@ const proxyquire = require('proxyquire').noCallThru();
       });
 
       await assert.rejects(
-        () => failingService.releaseMilestone({
-          milestonesContractId: TEST_CONTRACT_ID,
-          milestoneIndex: 0,
-          signerSecret: TEST_SECRET,
-        }),
+        () =>
+          failingService.releaseMilestone({
+            milestonesContractId: TEST_CONTRACT_ID,
+            milestoneIndex: 0,
+            signerSecret: TEST_SECRET,
+          }),
         /On-chain milestone release failed/
       );
 
       await assert.rejects(
-        () => failingService.triggerRefund({
-          escrowContractId: TEST_CONTRACT_ID,
-          contributorAddress: TEST_PUBLIC,
-          signerSecret: TEST_SECRET,
-        }),
+        () =>
+          failingService.triggerRefund({
+            escrowContractId: TEST_CONTRACT_ID,
+            contributorAddress: TEST_PUBLIC,
+            signerSecret: TEST_SECRET,
+          }),
         /On-chain refund failed/
       );
     });
@@ -837,10 +1026,7 @@ const proxyquire = require('proxyquire').noCallThru();
     test('parses and maps milestones status array when milestonesContractId provided', async () => {
       process.env.PLATFORM_SECRET_KEY = TEST_SECRET;
 
-      const milestonesScVal = nativeToScVal([
-        { status: 0 },
-        { status: 2 },
-      ]);
+      const milestonesScVal = nativeToScVal([{ status: 0 }, { status: 2 }]);
       const metaBase64 = createMockMetaXdr(milestonesScVal);
 
       const service = buildService({

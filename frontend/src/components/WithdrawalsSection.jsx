@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 import { getNetwork, signTransaction } from '@stellar/freighter-api';
 import { stellarExpertTxUrl } from '../config/stellar';
@@ -19,14 +20,27 @@ function statusLabel(row, isExpired) {
   return row.status;
 }
 
+function withdrawalsStatusLabel(row, isExpired, t) {
+  if (isExpired) return t('withdrawals.statusExpired');
+  if (row.status === 'pending') {
+    if (!row.creator_signed) return t('withdrawals.awaitingCreator');
+    if (!row.platform_signed) return t('withdrawals.awaitingPlatform');
+  }
+  if (row.status === 'submitted') return t('withdrawals.releasedOnChain');
+  if (row.status === 'denied') return t('withdrawals.deniedCancelled');
+  if (row.status === 'failed') return t('withdrawals.failedSeeAudit');
+  return row.status;
+}
+
 export default function WithdrawalsSection({ campaign, milestones = [], user, token, onReleased }) {
+  const { t } = useTranslation();
   const toast = useToast();
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [cap, setCap] = useState({ can_approve_platform: false });
   const [rows, setRows] = useState([]);
-  const [form, setForm] = useState({ destination_key: '', amount: '' });
+  const [form, setForm] = useState({ destination_key: '', amount: '', evidence: '' });
   const [busyId, setBusyId] = useState(null);
   const [eventsById, setEventsById] = useState({});
   const [openAudit, setOpenAudit] = useState(null);
@@ -138,8 +152,9 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
         campaign_id: campaign.id,
         destination_key: form.destination_key.trim(),
         amount: form.amount.trim(),
+        evidence: form.evidence.trim() ? [form.evidence.trim()] : [],
       });
-      setForm({ destination_key: '', amount: '' });
+      setForm({ destination_key: '', amount: '', evidence: '' });
       await refresh();
       onReleased?.();
     } catch (err) {
@@ -472,6 +487,17 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
             required
             style={{ marginBottom: '0.75rem' }}
           />
+          <label className="label-strong" htmlFor="wd-evidence">
+            Evidence (receipt, invoice, or link)
+          </label>
+          <input
+            id="wd-evidence"
+            value={form.evidence}
+            onChange={(e) => setForm((f) => ({ ...f, evidence: e.target.value }))}
+            placeholder="https://..."
+            required
+            style={{ marginBottom: '0.75rem' }}
+          />
           {liveBalance !== null && Number(form.amount) > liveBalance && (
             <p
               className="alert alert--error"
@@ -521,15 +547,34 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                     {row.destination_key.slice(0, 6)}…{row.destination_key.slice(-4)}
                   </code>
                 </div>
-                <div style={styles.meta}>{statusLabel(row, expiredIds.has(row.id))}</div>
+                <div style={styles.meta}>
+                  {withdrawalsStatusLabel(row, expiredIds.has(row.id), t)}
+                </div>
+                {row.evidence && row.evidence.length > 0 && (
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                    <strong>{t('withdrawals.evidenceLabel')}</strong>{' '}
+                    {row.evidence.map((ev, i) => (
+                      <span key={i}>
+                        <a
+                          href={ev}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: 'var(--color-accent)' }}
+                        >
+                          {t('withdrawals.link', { num: i + 1 })}
+                        </a>
+                        {i < row.evidence.length - 1 ? ', ' : ''}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {expiredIds.has(row.id) && (
                   <div
                     className="alert alert--warning"
                     style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}
                     role="alert"
                   >
-                    This withdrawal XDR has expired. Please cancel this request and submit a new
-                    one.
+                    {t('withdrawals.expiredNotice')}
                   </div>
                 )}
                 {row.denial_reason && (
@@ -603,7 +648,9 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                           </strong>{' '}
                           to:
                         </p>
-                        <code style={{ fontSize: '0.75rem', wordBreak: 'break-all', color: '#555' }}>
+                        <code
+                          style={{ fontSize: '0.75rem', wordBreak: 'break-all', color: '#555' }}
+                        >
                           {row.destination_key}
                         </code>
                         <p style={{ fontSize: '0.78rem', color: '#b45309', marginTop: '0.4rem' }}>
@@ -623,7 +670,7 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                                 runAction(
                                   row.id,
                                   () => api.approveWithdrawalCreator(row.id),
-                                  'Withdrawal signed',
+                                  'Withdrawal signed'
                                 );
                               }
                             }}
@@ -649,7 +696,9 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
                         style={{ fontSize: '0.8rem' }}
                         onClick={() => setConfirmingSignId(row.id)}
                       >
-                        {user?.wallet_type === 'freighter' ? 'Sign in Freighter' : 'Sign as creator'}
+                        {user?.wallet_type === 'freighter'
+                          ? 'Sign in Freighter'
+                          : 'Sign as creator'}
                       </button>
                     )}
                   </>

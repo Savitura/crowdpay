@@ -1,4 +1,4 @@
-const router = require('express').Router();
+const express = require('express');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const { requireAuth } = require('../middleware/auth');
@@ -9,8 +9,43 @@ const {
   getCampaignMatchProgress,
   completeMatchingPledge,
   getSponsorMatchingPledges,
+  DuplicateMatchingPledgeError,
 } = require('../services/sponsorMatchingService');
+const { logAuditEvent } = require('../services/auditService');
 const { emitWebhookEventForCampaign, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
+const { toStroops, fromStroops } = require('../utils/stroops');
+
+/**
+ * Campaign-scoped sponsor matching routes.
+ * Mounted at `/api/campaigns` so pledges live next to the campaign they fund.
+ */
+const campaignRouter = express.Router();
+
+/**
+ * User-scoped sponsor matching routes.
+ * Mounted at `/api` and resolves to `/api/user/sponsor-matches`.
+ */
+const userRouter = express.Router();
+
+const MAX_MATCH_RATIO = 100;
+// campaign_matches.pledge_amount is NUMERIC(20, 7); cap the request well below
+// the column limit so an out-of-range value fails validation, not the insert.
+const MAX_PLEDGE_AMOUNT = 1e13;
+
+function respondValidationErrors(req, res) {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    res.status(400).json({ errors: errors.array() });
+    return true;
+  }
+  return false;
+}
+
+function runAudit(payload) {
+  return logAuditEvent(payload).catch(err =>
+    logger.warn('Sponsor matching audit log failed', { error: err.message })
+  );
+}
 
 /**
  * @openapi
@@ -22,13 +57,15 @@ const { emitWebhookEventForCampaign, WEBHOOK_EVENTS } = require('../services/web
 /**
  * POST /api/campaigns/:id/matches
  * Create a new sponsor matching pledge for a campaign.
- * 
+ *
  * @openapi
  * /api/campaigns/{id}/matches:
  *   post:
  *     summary: Create sponsor matching pledge
  *     tags:
  *       - Sponsor Matching
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - name: id
  *         in: path
@@ -41,73 +78,104 @@ const { emitWebhookEventForCampaign, WEBHOOK_EVENTS } = require('../services/web
  *         application/json:
  *           schema:
  *             type: object
+ *             required: [match_ratio, pledge_amount]
  *             properties:
  *               match_ratio:
  *                 type: number
- *                 example: 1.0
+ *                 description: Match multiplier, e.g. 1 for 1:1, 2 for 2:1
+ *                 example: 1
  *               pledge_amount:
  *                 type: string
+ *                 description: Total matching pool in the campaign asset
  *                 example: "1000"
  *     responses:
  *       201:
  *         description: Matching pledge created
  *       400:
  *         description: Invalid input
+ *       401:
+ *         description: Unauthorized
  *       404:
  *         description: Campaign not found
+ *       409:
+ *         description: Sponsor already has an active pledge for this campaign
  */
-router.post(
+campaignRouter.post(
   '/:id/matches',
   requireAuth,
   param('id').isUUID(),
-  body('match_ratio').isFloat({ gt: 0 }).toFloat(),
-  body('pledge_amount').isString().isInt({ min: 1 }),
+  body('match_ratio').isFloat({ gt: 0, max: MAX_MATCH_RATIO }).toFloat(),
+  body('pledge_amount').isFloat({ gt: 0, lt: MAX_PLEDGE_AMOUNT }).toFloat(),
   asyncHandler(async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
+    if (respondValidationErrors(req, res)) return;
 
     const campaignId = req.params.id;
     const { match_ratio: matchRatio, pledge_amount: pledgeAmount } = req.body;
 
-    // Verify campaign exists
+    // Verify campaign exists and is still open to sponsorship
     const { rows: campaigns } = await db.query(
-      `SELECT id FROM campaigns WHERE id = $1 AND deleted_at IS NULL`,
+      `SELECT id, status FROM campaigns WHERE id = $1 AND deleted_at IS NULL`,
       [campaignId]
     );
     if (!campaigns.length) {
       return res.status(404).json({ error: 'Campaign not found' });
     }
+    if (['completed', 'withdrawn', 'failed', 'refunded'].includes(campaigns[0].status)) {
+      return res.status(409).json({
+        error: 'Campaign is not accepting sponsor matching pledges',
+        code: 'CAMPAIGN_NOT_MATCHABLE',
+      });
+    }
 
+    let pledge;
     try {
-      const pledge = await createMatchingPledge({
+      pledge = await createMatchingPledge({
         campaignId,
         sponsorUserId: req.user.userId,
         matchRatio,
         pledgeAmount,
       });
+    } catch (err) {
+      if (err instanceof DuplicateMatchingPledgeError || err.code === 'DUPLICATE_MATCHING_PLEDGE') {
+        return res.status(409).json({
+          error: err.message,
+          code: 'DUPLICATE_MATCHING_PLEDGE',
+        });
+      }
+      logger.error('Failed to create matching pledge', { error: err.message, campaignId });
+      return res.status(400).json({ error: err.message });
+    }
 
-      // Emit webhook
-      emitWebhookEventForCampaign(campaignId, WEBHOOK_EVENTS.SPONSOR_MATCH_CREATED, {
-        match_id: pledge.id,
-        sponsor_user_id: pledge.sponsor_user_id,
+    await runAudit({
+      actorId: req.user.userId,
+      action: 'sponsor_match.created',
+      resourceType: 'campaign_match',
+      resourceId: pledge.id,
+      metadata: {
+        campaign_id: campaignId,
         match_ratio: pledge.match_ratio,
         pledge_amount: pledge.pledge_amount,
-      }).catch((err) => logger.error('Webhook emit failed', { err }));
+      },
+      req,
+    });
 
-      res.status(201).json(pledge);
-    } catch (err) {
-      logger.error('Failed to create matching pledge', { error: err.message, campaignId });
-      res.status(400).json({ error: err.message });
-    }
+    // Emit webhook
+    emitWebhookEventForCampaign(campaignId, WEBHOOK_EVENTS.SPONSOR_MATCH_CREATED, {
+      match_id: pledge.id,
+      sponsor_user_id: pledge.sponsor_user_id,
+      match_ratio: pledge.match_ratio,
+      pledge_amount: pledge.pledge_amount,
+    }).catch(err => logger.error('Webhook emit failed', { err }));
+
+    res.status(201).json(pledge);
   })
 );
 
 /**
  * GET /api/campaigns/:id/matches
- * Get sponsor matching progress for a campaign.
- * 
+ * Get sponsor matching progress for a campaign. Public: returns only aggregated
+ * pool data, never sponsor identifiers.
+ *
  * @openapi
  * /api/campaigns/{id}/matches:
  *   get:
@@ -126,14 +194,11 @@ router.post(
  *       404:
  *         description: Campaign not found
  */
-router.get(
+campaignRouter.get(
   '/:id/matches',
   param('id').isUUID(),
   asyncHandler(async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
+    if (respondValidationErrors(req, res)) return;
 
     const campaignId = req.params.id;
 
@@ -156,48 +221,18 @@ router.get(
   })
 );
 
-
-
-/**
- * GET /api/user/sponsor-matches
- * Get sponsor's matching pledges across all campaigns.
- * 
- * @openapi
- * /api/user/sponsor-matches:
- *   get:
- *     summary: Get user's sponsor matching pledges
- *     tags:
- *       - Sponsor Matching
- *     responses:
- *       200:
- *         description: Array of matching pledges
- *       401:
- *         description: Unauthorized
- */
-router.get(
-  '/user/sponsor-matches',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    try {
-      const pledges = await getSponsorMatchingPledges(req.user.userId);
-      res.json({ pledges });
-    } catch (err) {
-      logger.error('Failed to get sponsor pledges', { error: err.message, userId: req.user.userId });
-      res.status(500).json({ error: 'Failed to retrieve pledges' });
-    }
-  })
-);
-
 /**
  * PATCH /api/campaigns/:id/matches/:matchId/complete
  * Mark a matching pledge as completed (campaign ended).
- * 
+ *
  * @openapi
  * /api/campaigns/{id}/matches/{matchId}/complete:
  *   patch:
  *     summary: Complete a matching pledge
  *     tags:
  *       - Sponsor Matching
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - name: id
  *         in: path
@@ -212,19 +247,20 @@ router.get(
  *     responses:
  *       200:
  *         description: Matching pledge completed
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Not the sponsor or campaign creator
  *       404:
  *         description: Match not found
  */
-router.patch(
+campaignRouter.patch(
   '/:id/matches/:matchId/complete',
   requireAuth,
   param('id').isUUID(),
   param('matchId').isUUID(),
   asyncHandler(async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
+    if (respondValidationErrors(req, res)) return;
 
     const { id: campaignId, matchId } = req.params;
 
@@ -233,7 +269,7 @@ router.patch(
       `SELECT cm.*, c.creator_id 
        FROM campaign_matches cm
        JOIN campaigns c ON cm.campaign_id = c.id
-       WHERE cm.id = $1 AND cm.campaign_id = $2`,
+       WHERE cm.id = $1 AND cm.campaign_id = $2 AND c.deleted_at IS NULL`,
       [matchId, campaignId]
     );
 
@@ -249,22 +285,74 @@ router.patch(
       return res.status(403).json({ error: 'You do not have permission to complete this pledge' });
     }
 
+    let completed;
     try {
-      const completed = await completeMatchingPledge(matchId);
-
-      // Emit webhook
-      emitWebhookEventForCampaign(campaignId, WEBHOOK_EVENTS.SPONSOR_MATCH_COMPLETED, {
-        match_id: completed.id,
-        sponsor_user_id: completed.sponsor_user_id,
-        unclaimed_amount: parseFloat(completed.pledge_amount) - parseFloat(completed.matched_amount),
-      }).catch((err) => logger.error('Webhook emit failed', { err }));
-
-      res.json(completed);
+      completed = await completeMatchingPledge(matchId);
     } catch (err) {
       logger.error('Failed to complete matching pledge', { error: err.message, matchId });
-      res.status(400).json({ error: err.message });
+      return res.status(409).json({ error: err.message });
+    }
+
+    await runAudit({
+      actorId: req.user.userId,
+      action: 'sponsor_match.completed',
+      resourceType: 'campaign_match',
+      resourceId: completed.id,
+      metadata: {
+        campaign_id: campaignId,
+        pledged_amount: completed.pledge_amount,
+        matched_amount: completed.matched_amount,
+      },
+      req,
+    });
+
+    // Emit webhook
+    emitWebhookEventForCampaign(campaignId, WEBHOOK_EVENTS.SPONSOR_MATCH_COMPLETED, {
+      match_id: completed.id,
+      sponsor_user_id: completed.sponsor_user_id,
+      unclaimed_amount: fromStroops(
+        toStroops(completed.pledge_amount, { allowZero: true }) -
+          toStroops(completed.matched_amount, { allowZero: true })
+      ),
+    }).catch(err => logger.error('Webhook emit failed', { err }));
+
+    res.json(completed);
+  })
+);
+
+/**
+ * GET /api/user/sponsor-matches
+ * Get the authenticated sponsor's matching pledges across all campaigns.
+ *
+ * @openapi
+ * /api/user/sponsor-matches:
+ *   get:
+ *     summary: Get user's sponsor matching pledges
+ *     tags:
+ *       - Sponsor Matching
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Array of matching pledges
+ *       401:
+ *         description: Unauthorized
+ */
+userRouter.get(
+  '/user/sponsor-matches',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    try {
+      const pledges = await getSponsorMatchingPledges(req.user.userId);
+      res.json({ pledges });
+    } catch (err) {
+      logger.error('Failed to get sponsor pledges', {
+        error: err.message,
+        userId: req.user.userId,
+      });
+      res.status(500).json({ error: 'Failed to retrieve pledges' });
     }
   })
 );
 
-module.exports = router;
+module.exports = { campaignRouter, userRouter };

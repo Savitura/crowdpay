@@ -53,7 +53,9 @@ export default function TranslationManager({ campaignId }) {
       >
         <option value="">Select a language...</option>
         {LANGUAGES.map((l) => (
-          <option key={l.code} value={l.code}>{l.label} ({l.code})</option>
+          <option key={l.code} value={l.code}>
+            {l.label} ({l.code})
+          </option>
         ))}
       </select>
 

@@ -63,9 +63,7 @@ describe('FollowCampaignButton', () => {
 
     renderWithProviders(<FollowCampaignButton campaignId="campaign-1" />);
 
-    await userEvent.click(
-      await screen.findByRole('button', { name: /Notification preferences/i })
-    );
+    await userEvent.click(await screen.findByRole('button', { name: /Notification preferences/i }));
     await userEvent.click(screen.getByLabelText('Funding milestones'));
 
     await waitFor(() =>
@@ -82,9 +80,7 @@ describe('FollowCampaignButton', () => {
 
     renderWithProviders(<FollowCampaignButton campaignId="campaign-1" />);
 
-    await userEvent.click(
-      await screen.findByRole('button', { name: /Notification preferences/i })
-    );
+    await userEvent.click(await screen.findByRole('button', { name: /Notification preferences/i }));
     await userEvent.click(screen.getByLabelText('Campaign updates'));
 
     expect(await screen.findByText('Network error')).toBeInTheDocument();

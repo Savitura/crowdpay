@@ -5,7 +5,8 @@ const request = require('supertest');
 const proxyquire = require('proxyquire').noCallThru();
 const { Networks } = require('@stellar/stellar-sdk');
 
-process.env.USDC_ISSUER = process.env.USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+process.env.USDC_ISSUER =
+  process.env.USDC_ISSUER || 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'unit-test-jwt-secret-for-contributions-32';
 
 const CAMPAIGN = {
@@ -19,13 +20,18 @@ const CAMPAIGN = {
 };
 
 function buildApp({ resolveReferralLink, onSubmit }) {
-  const queryImpl = async (text) => {
-    if (text.includes('FROM campaigns c')) return { rows: [CAMPAIGN] };
+  const queryImpl = async text => {
+    if (text.includes('FROM campaigns') && text.includes('WHERE id = $1'))
+      return { rows: [CAMPAIGN] };
     if (text.includes('wallet_secret_encrypted')) {
       return { rows: [{ wallet_secret_encrypted: 'enc', wallet_public_key: 'GCONTRIB' }] };
     }
     if (text.includes('wallet_type')) {
-      return { rows: [{ wallet_type: 'custodial', wallet_public_key: 'GCONTRIB', wallet_funded_at: new Date() }] };
+      return {
+        rows: [
+          { wallet_type: 'custodial', wallet_public_key: 'GCONTRIB', wallet_funded_at: new Date() },
+        ],
+      };
     }
     return { rows: [] };
   };
@@ -45,20 +51,31 @@ function buildApp({ resolveReferralLink, onSubmit }) {
       isBadSequenceError: () => false,
       accountExistsOnLedger: async () => true,
     },
-    '../services/stellarTransactionService': { insertContributionSubmitted: async () => 'stellar-row' },
+    '../services/stellarTransactionService': {
+      insertContributionSubmitted: async () => 'stellar-row',
+    },
     '../services/contributionService': {
       buildAttributionMemo: (campaignId, code) => (code ? `ref:${code}` : `cp-${campaignId}`),
-      buildContributionIntent: async () => ({ kind: 'payment', conversionQuote: null, flowMetadata: {} }),
-      submitCustodialContribution: async (params) => {
+      buildContributionIntent: async () => ({
+        kind: 'payment',
+        conversionQuote: null,
+        flowMetadata: {},
+      }),
+      submitCustodialContribution: async params => {
         onSubmit?.(params);
         return { txHash: 'tx-hash', stellarTransactionId: 'stellar-row', conversionQuote: null };
       },
     },
     '../services/referral': { resolveReferralLink },
-    '../services/referralService': { getReferralCodeFromRequest: () => null },
+    '../services/referralService': {
+      getReferralCodeFromRequest: req => req.query?.ref || req.body?.ref || null,
+    },
     '../services/rewardTierService': { reserveTierSlot: async () => null },
     '../services/sorobanService': { triggerRefund: async () => null },
     '../services/kycService': { assertUserKycVerified: async () => {} },
+    '../services/contributorIdentityService': {
+      assertContributorMeetsRequirements: async () => {},
+    },
     '../services/emailService': { sendEmail: async () => {} },
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
@@ -76,6 +93,15 @@ function buildApp({ resolveReferralLink, onSubmit }) {
   const app = express();
   app.use(express.json());
   app.use('/api/contributions', router);
+  app.use((err, _req, res, _next) => {
+    const status = err.statusCode || err.status || 500;
+    res.status(status).json({
+      error: {
+        code: err.code || 'INTERNAL_ERROR',
+        message: err.message,
+      },
+    });
+  });
   return app;
 }
 
@@ -87,7 +113,7 @@ test('POST /api/contributions?ref=CODE attributes the contribution to the referr
       assert.equal(code, 'a1b2c3d4');
       return { id: 'link-1', campaign_id: 'camp-1', user_id: 'user-2', code: 'a1b2c3d4' };
     },
-    onSubmit: (params) => {
+    onSubmit: params => {
       submitted = params;
     },
   });
@@ -102,7 +128,7 @@ test('POST /api/contributions?ref=CODE attributes the contribution to the referr
   assert.equal(submitted.referralLinkCode, 'a1b2c3d4');
 });
 
-test('POST /api/contributions?ref=CODE returns 404 INVALID_REFERRAL_CODE for another campaign\'s code', async () => {
+test("POST /api/contributions?ref=CODE returns 404 INVALID_REFERRAL_CODE for another campaign's code", async () => {
   const app = buildApp({
     resolveReferralLink: async () => {
       const err = new Error('Referral code is not valid for this campaign');
@@ -118,7 +144,7 @@ test('POST /api/contributions?ref=CODE returns 404 INVALID_REFERRAL_CODE for ano
     .send({ campaign_id: 'camp-1', amount: '100', send_asset: 'XLM' });
 
   assert.equal(response.status, 404);
-  assert.equal(response.body.code, 'INVALID_REFERRAL_CODE');
+  assert.equal(response.body.error.code, 'INVALID_REFERRAL_CODE');
 });
 
 test('POST /api/contributions without ?ref stays unattributed', async () => {
@@ -129,7 +155,7 @@ test('POST /api/contributions without ?ref stays unattributed', async () => {
       resolveCalled = true;
       return null;
     },
-    onSubmit: (params) => {
+    onSubmit: params => {
       submitted = params;
     },
   });
@@ -141,6 +167,6 @@ test('POST /api/contributions without ?ref stays unattributed', async () => {
 
   assert.equal(response.status, 202);
   assert.equal(resolveCalled, false);
-  assert.equal(submitted.referralLinkId, null);
-  assert.equal(submitted.referralLinkCode, null);
+  assert.equal(submitted.referralLinkId, undefined);
+  assert.equal(submitted.referralLinkCode, undefined);
 });

@@ -17,7 +17,8 @@ export default function CreatorProfile() {
 
   useEffect(() => {
     setLoading(true);
-    api.getCreatorProfile(id)
+    api
+      .getCreatorProfile(id)
       .then(setProfile)
       .catch((err) => setError(err.message || 'Could not load profile'))
       .finally(() => setLoading(false));
@@ -68,7 +69,13 @@ export default function CreatorProfile() {
             <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700 }}>
               {profile.name || profile.wallet_public_key?.slice(0, 12) + '…'}
             </h1>
-            <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'var(--color-text-hint)' }}>
+            <p
+              style={{
+                margin: '0.25rem 0 0',
+                fontSize: '0.85rem',
+                color: 'var(--color-text-hint)',
+              }}
+            >
               Member since {memberYear}
             </p>
           </div>
@@ -108,9 +115,13 @@ export default function CreatorProfile() {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {profile.campaigns.map((c) => {
-            const pct = c.target_amount > 0
-              ? Math.min(100, Math.round((Number(c.raised_amount) / Number(c.target_amount)) * 100))
-              : 0;
+            const pct =
+              c.target_amount > 0
+                ? Math.min(
+                    100,
+                    Math.round((Number(c.raised_amount) / Number(c.target_amount)) * 100)
+                  )
+                : 0;
             return (
               <Link
                 key={c.id}
@@ -123,15 +134,29 @@ export default function CreatorProfile() {
                   display: 'block',
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'flex-start',
+                    gap: '0.5rem',
+                    flexWrap: 'wrap',
+                  }}
+                >
                   <strong style={{ fontSize: '0.95rem' }}>{c.title}</strong>
                   <span
                     style={{
                       fontSize: '0.75rem',
                       padding: '0.15rem 0.55rem',
                       borderRadius: 99,
-                      background: c.status === 'active' ? 'var(--color-success-bg, #d1fae5)' : 'var(--color-hint-bg, #f4f4f5)',
-                      color: c.status === 'active' ? 'var(--color-success, #065f46)' : 'var(--color-text-hint)',
+                      background:
+                        c.status === 'active'
+                          ? 'var(--color-success-bg, #d1fae5)'
+                          : 'var(--color-hint-bg, #f4f4f5)',
+                      color:
+                        c.status === 'active'
+                          ? 'var(--color-success, #065f46)'
+                          : 'var(--color-text-hint)',
                       fontWeight: 600,
                       textTransform: 'capitalize',
                     }}
@@ -158,8 +183,18 @@ export default function CreatorProfile() {
                     }}
                   />
                 </div>
-                <div style={{ marginTop: '0.35rem', fontSize: '0.8rem', color: 'var(--color-text-hint)', display: 'flex', justifyContent: 'space-between' }}>
-                  <span>{Number(c.raised_amount).toLocaleString()} {c.asset_type} raised</span>
+                <div
+                  style={{
+                    marginTop: '0.35rem',
+                    fontSize: '0.8rem',
+                    color: 'var(--color-text-hint)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <span>
+                    {Number(c.raised_amount).toLocaleString()} {c.asset_type} raised
+                  </span>
                   <span>{pct}% of goal</span>
                 </div>
               </Link>

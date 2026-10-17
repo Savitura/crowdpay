@@ -12,7 +12,7 @@ function freshWalletService(keyHex) {
   return require(MODULE_PATH);
 }
 
-test('encryptSecret produces an iv:authTag:ciphertext envelope that decryptSecret reverses', (t) => {
+test('encryptSecret produces an iv:authTag:ciphertext envelope that decryptSecret reverses', t => {
   const walletService = freshWalletService(FAKE_KEY_HEX);
 
   const encrypted = walletService.encryptSecret(FAKE_SECRET);
@@ -31,7 +31,7 @@ test('encryptSecret produces an iv:authTag:ciphertext envelope that decryptSecre
   });
 });
 
-test('decryptSecret throws when the ciphertext or auth tag has been tampered with', (t) => {
+test('decryptSecret throws when the ciphertext or auth tag has been tampered with', t => {
   const walletService = freshWalletService(FAKE_KEY_HEX);
 
   const encrypted = walletService.encryptSecret(FAKE_SECRET);
@@ -56,7 +56,7 @@ test('decryptSecret throws when the ciphertext or auth tag has been tampered wit
   });
 });
 
-test('decryptSecret throws on malformed input missing the expected iv:authTag:ciphertext parts', (t) => {
+test('decryptSecret throws on malformed input missing the expected iv:authTag:ciphertext parts', t => {
   const walletService = freshWalletService(FAKE_KEY_HEX);
 
   assert.throws(() => walletService.decryptSecret('not-encrypted-data'));
@@ -67,7 +67,7 @@ test('decryptSecret throws on malformed input missing the expected iv:authTag:ci
   });
 });
 
-test('validateWalletEncryptionKey throws when WALLET_ENCRYPTION_KEY is missing or invalid', (t) => {
+test('validateWalletEncryptionKey throws when WALLET_ENCRYPTION_KEY is missing or invalid', t => {
   delete process.env.WALLET_ENCRYPTION_KEY;
   delete require.cache[require.resolve(MODULE_PATH)];
   const walletService = require(MODULE_PATH);

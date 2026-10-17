@@ -9,6 +9,9 @@ In development, browse the interactive API docs at `GET /api/docs`.
 ### Timestamps
 All timestamps (like campaign deadlines) **must be in ISO 8601 format with a UTC timezone indicator (Z suffix)**, e.g., `2026-12-31T23:59:59.999Z`. The server will treat all timestamps as UTC for validation and storage.
 
+### Public API lifecycle
+`GET /api/v1/changelog` returns the v1 changelog without authentication. To announce a sunset, configure both `PUBLIC_API_DEPRECATION_DATE` and `PUBLIC_API_SUNSET_DATE` as ISO 8601 timestamps, with the sunset later than the deprecation date. The v1 API will then include the RFC 9745 `Deprecation` header, the HTTP-date `Sunset` header, and a `Link` to the changelog on every response. Leave either variable unset to avoid announcing a deprecation.
+
 ## Contribution conversion model
 
 - Campaigns define a default settlement asset via `campaigns.asset_type` (`USDC` or `XLM`).
@@ -58,6 +61,15 @@ Get a DEX quote before submitting a conversion contribution.
 Query params:
 
 - `send_asset` (required): `XLM` or `USDC`
+- `gift` (optional): `{ recipient_name, recipient_email, message? }`. The
+  recipient is notified only after the Stellar payment is confirmed and
+  indexed. `recipient_name` is limited to 100 characters, `recipient_email`
+  must be valid, and `message` is limited to 280 characters.
+
+Gift notifications are written to a database-backed outbox in the same
+transaction that records the confirmed contribution. Email delivery retries
+with exponential backoff; registered recipients also receive an in-app
+notification. Gift data is not added to the public contribution response.
 - `dest_asset` (required): `XLM` or `USDC`
 - `dest_amount` (required): amount the campaign should receive
 
@@ -373,6 +385,98 @@ Body:
 
 - `reason` (required)
 
+## Sponsor matching
+
+Sponsor matching lets a sponsor pledge a pool of funds that is released contribution by contribution. Full behaviour, limits and operational notes live in [`docs/sponsor-matching.md`](../docs/sponsor-matching.md).
+
+### `POST /api/campaigns/:id/matches`
+
+Authenticated. Creates a matching pledge for the campaign.
+
+```json
+{ "match_ratio": 1, "pledge_amount": "1000" }
+```
+
+- `match_ratio` — match multiplier in `(0, 100]` (`1` is 1:1, `2` is 2:1).
+- `pledge_amount` — positive amount in the campaign asset, below `1e13`.
+
+Returns `201` with the created pledge row. `400` on validation failure, `404` when the campaign does not exist, and `409` with `code: "DUPLICATE_MATCHING_PLEDGE"` when the caller already holds an active pledge for this campaign (enforced by a partial unique index, so concurrent duplicate requests are deterministic) or `code: "CAMPAIGN_NOT_MATCHABLE"` when the campaign is closed.
+
+### `GET /api/campaigns/:id/matches`
+
+Public. Aggregated pool progress for the campaign widget and the campaign page:
+
+```json
+{
+  "campaignId": "…",
+  "matches": [
+    {
+      "id": "…",
+      "sponsorName": "Alice",
+      "matchRatio": 1,
+      "pledgeAmount": 1000,
+      "matchedAmount": 250,
+      "remainingAmount": 750,
+      "status": "active",
+      "contributionCount": 2,
+      "totalContributed": 250,
+      "createdAt": "…"
+    }
+  ],
+  "totalPledged": 1000,
+  "totalMatched": 250,
+  "remainingPoolAmount": 750,
+  "activePoolCount": 1,
+  "exhaustedPoolCount": 0,
+  "percentageUsed": 25
+}
+```
+
+Sponsor user IDs are deliberately omitted — this endpoint is unauthenticated.
+
+### `PATCH /api/campaigns/:id/matches/:matchId/complete`
+
+Authenticated. Closes a pledge so unspent funds become reclaimable. Only the sponsor or the campaign creator may call it (`403` otherwise, `404` for an unknown pledge, `409` when it is already completed).
+
+### `GET /api/user/sponsor-matches`
+
+Authenticated. Every pledge held by the caller across all campaigns.
+
+## Embeddable campaign progress widget
+
+### `GET /api/campaigns/:id/widget`
+
+Public, permissive CORS, `Cache-Control: public, max-age=30`. This is the single payload rendered by the iframe embed at `/embed/campaigns/:id` and by the script at `/embed-widget.js`.
+
+```json
+{
+  "id": "…",
+  "title": "Solar grid",
+  "description": "Community owned solar",
+  "raised_amount": 5000,
+  "target_amount": 10000,
+  "asset_type": "USDC",
+  "status": "active",
+  "contributor_count": 25,
+  "days_remaining": 10,
+  "progress_percentage": 50,
+  "contribution_url": "https://…/campaigns/…",
+  "milestones": [
+    { "id": "m-1", "title": "Design", "release_percentage": 50, "sort_order": 0, "status": "released" }
+  ],
+  "milestone_summary": { "total": 2, "released": 1, "approved": 0, "submitted": 0, "pending": 1 },
+  "recent_backers": [{ "name": "Alice", "amount": 250 }],
+  "impact": { }
+}
+```
+
+Privacy and safety notes:
+
+- Only public summary fields are returned — no creator or contributor identifiers, wallet addresses, emails, or transaction hashes.
+- Hidden and soft-deleted campaigns return `404`.
+- `recent_backers` honours the campaign's `show_backer_amounts` flag and each contributor's `contributor_privacy` preference (`anonymous` contributors are never listed, `amount_only` contributors never leak a display name, and hidden amounts are returned as `null`).
+- `GET /api/embed/:campaignId/stats` remains available for backwards compatibility but is not used by the widget.
+
 ## Auditability and traceability
 
 - Every indexed contribution stores:
@@ -411,3 +515,57 @@ The backend also logs a **warning** every 5 minutes if any wallet is in that sta
 - withdrawal request creation with multisig validation
 - withdrawal creator/platform approval flow
 - withdrawal denial paths (missing creator approval, insufficient signatures)
+
+
+## Creator payout forecast and reserve breakdown
+
+Both endpoints require authentication and are scoped to the campaign's creator
+(or a platform admin). They read live data from `campaigns`,
+`contributions`, `withdrawal_requests`, `recurring_payout_schedules`, and
+`treasury_policies`. No write side effects.
+
+### GET /api/creator/campaigns/:campaignId/payout-forecast
+
+Query parameters:
+
+| name    | type    | default | bounds  |
+| ------- | ------- | ------- | ------- |
+| horizon | integer | 6       | 1 .. 24 |
+
+Response fields:
+
+- campaign_id, asset_type, horizon_months
+- opening_balance, reserve_today, available_today
+- projected_total_payout
+- months[]: { month, projected_payout, projected_balance_after, payouts[] }
+- reserve_breakdown: { platform_fees, pending_withdrawals, scheduled_payouts, unallocated_reserve }
+- constraints: { min_hold_days, max_single_withdrawal_pct, withdrawal_cooldown_hours, require_auditor_for_above, wallet_mode, contract_id }
+- generated_at
+
+Errors: 401 unauthenticated, 403 not creator/admin, 404 unknown campaign,
+422 horizon out of range.
+
+### GET /api/creator/campaigns/:campaignId/reserve
+
+Returns the reserve breakdown without walking the horizon. Same reserve_breakdown
+and constraints shape as the forecast, plus campaign_id, asset_type, balance,
+reserve, available, scheduled_payouts[], generated_at.
+
+### Reserve semantics
+
+reserve is capped at balance and equals:
+
+- platform_fees        - unsettled platform fee on non-refunded contributions
+- pending_withdrawals  - withdrawals in any pending state
+- scheduled_payouts    - one run per active recurring schedule
+                         (fixed amount, or percentage * balance when amount is null)
+
+unallocated_reserve = reserve - (fees + pending + scheduled), always >= 0; it is
+only non-zero when the balance cap kicked in.
+
+### Forecast semantics
+
+Deterministic projection, not a guarantee. Each month consumes the next run of
+each active schedule, capping a payout at the remaining projected balance.
+projected_total_payout is the sum across the horizon. No new funds, fees, or
+refunds are assumed.

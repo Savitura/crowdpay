@@ -13,7 +13,7 @@ function generateDeviceFingerprint(req) {
   const userAgent = req.headers['user-agent'] || '';
   const acceptLanguage = req.headers['accept-language'] || '';
   const acceptEncoding = req.headers['accept-encoding'] || '';
-  
+
   const fingerprintData = `${userAgent}|${acceptLanguage}|${acceptEncoding}`;
   return crypto.createHash('sha256').update(fingerprintData, 'utf8').digest('hex').substring(0, 32);
 }
@@ -86,7 +86,9 @@ async function listUserSessions(userId) {
 
   return rows.map(session => ({
     id: session.id,
-    device: session.device_fingerprint ? `Device ${session.device_fingerprint.substring(0, 8)}` : 'Unknown Device',
+    device: session.device_fingerprint
+      ? `Device ${session.device_fingerprint.substring(0, 8)}`
+      : 'Unknown Device',
     location: formatLocation(session) || session.ip_address || 'Unknown Location',
     lastSeen: session.last_seen_at,
     userAgent: session.user_agent,
@@ -144,7 +146,11 @@ async function recordLoginAttempt(options) {
   const location =
     locationCountry === undefined && locationRegion === undefined && locationCity === undefined
       ? await lookupIp(ip)
-      : { country: locationCountry ?? null, region: locationRegion ?? null, city: locationCity ?? null };
+      : {
+          country: locationCountry ?? null,
+          region: locationRegion ?? null,
+          city: locationCity ?? null,
+        };
 
   await db.query(
     `INSERT INTO login_attempts
@@ -191,7 +197,16 @@ async function checkLoginAnomalies(userId, email, req) {
       `INSERT INTO login_alerts
        (user_id, alert_type, ip_address, device_fingerprint, location_country, location_region, location_city, details)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [userId, 'new_device', ip, deviceFingerprint, country, region, city, JSON.stringify({ userAgent })]
+      [
+        userId,
+        'new_device',
+        ip,
+        deviceFingerprint,
+        country,
+        region,
+        city,
+        JSON.stringify({ userAgent }),
+      ]
     );
     alerts.push('new_device');
   }
@@ -208,7 +223,16 @@ async function checkLoginAnomalies(userId, email, req) {
         `INSERT INTO login_alerts
          (user_id, alert_type, ip_address, device_fingerprint, location_country, location_region, location_city, details)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [userId, 'new_location', ip, deviceFingerprint, country, region, city, JSON.stringify({ userAgent })]
+        [
+          userId,
+          'new_location',
+          ip,
+          deviceFingerprint,
+          country,
+          region,
+          city,
+          JSON.stringify({ userAgent }),
+        ]
       );
       alerts.push('new_location');
     }

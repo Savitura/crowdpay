@@ -111,7 +111,9 @@ function BackedCampaignCard({ campaign, onRefundClaimed }) {
         </div>
       </div>
 
-      <div style={{ marginTop: '0.6rem', fontSize: '0.88rem', color: 'var(--color-text-secondary)' }}>
+      <div
+        style={{ marginTop: '0.6rem', fontSize: '0.88rem', color: 'var(--color-text-secondary)' }}
+      >
         Your contribution:{' '}
         <strong>
           {campaign.contributed_amount.toLocaleString()} {campaign.asset_type}
@@ -120,7 +122,9 @@ function BackedCampaignCard({ campaign, onRefundClaimed }) {
 
       {campaign.milestones?.length > 0 && (
         <div style={{ marginTop: '0.85rem' }}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.4rem' }}>Milestones</div>
+          <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.4rem' }}>
+            Milestones
+          </div>
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: '0.35rem' }}>
             {campaign.milestones.map((milestone) => (
               <li
@@ -158,17 +162,13 @@ function BackedCampaignCard({ campaign, onRefundClaimed }) {
           </div>
           {processedRefunds.length > 0 && (
             <div style={{ fontSize: '0.82rem', marginBottom: '0.25rem' }}>
-              Processed:{' '}
-              {processedRefunds
-                .reduce((sum, c) => sum + c.amount, 0)
-                .toLocaleString()}{' '}
+              Processed: {processedRefunds.reduce((sum, c) => sum + c.amount, 0).toLocaleString()}{' '}
               {campaign.asset_type}
             </div>
           )}
           {pendingRefunds.length > 0 && (
             <div style={{ fontSize: '0.82rem', color: 'var(--color-warning-text)' }}>
-              Pending:{' '}
-              {pendingRefunds.reduce((sum, c) => sum + c.amount, 0).toLocaleString()}{' '}
+              Pending: {pendingRefunds.reduce((sum, c) => sum + c.amount, 0).toLocaleString()}{' '}
               {campaign.asset_type}
             </div>
           )}
@@ -209,7 +209,15 @@ function BackedCampaignCard({ campaign, onRefundClaimed }) {
           View {campaign.contributions.length} contribution
           {campaign.contributions.length !== 1 ? 's' : ''}
         </summary>
-        <ul style={{ listStyle: 'none', margin: '0.5rem 0 0', padding: 0, display: 'grid', gap: '0.35rem' }}>
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: '0.5rem 0 0',
+            padding: 0,
+            display: 'grid',
+            gap: '0.35rem',
+          }}
+        >
           {campaign.contributions.map((contribution) => (
             <li key={contribution.id} style={{ fontSize: '0.82rem' }}>
               {contribution.amount.toLocaleString()} {contribution.asset} ·{' '}
@@ -254,7 +262,13 @@ function FavoritesSection() {
       <div style={{ fontSize: '0.9rem', fontWeight: 700, marginBottom: '0.5rem' }}>
         Favorites ({favorites.length})
       </div>
-      <div style={{ display: 'grid', gap: '0.5rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+      <div
+        style={{
+          display: 'grid',
+          gap: '0.5rem',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+        }}
+      >
         {favorites.map((campaign) => (
           <Link
             key={campaign.id}
@@ -280,7 +294,12 @@ function BadgesRow({ badges }) {
       ))}
       <Link
         to="/leaderboard"
-        style={{ alignSelf: 'center', color: 'var(--color-accent)', fontWeight: 600, fontSize: '0.78rem' }}
+        style={{
+          alignSelf: 'center',
+          color: 'var(--color-accent)',
+          fontWeight: 600,
+          fontSize: '0.78rem',
+        }}
       >
         Leaderboard
       </Link>
@@ -367,10 +386,18 @@ export default function ContributorDashboard() {
       >
         <div style={{ fontSize: '0.85rem', color: 'var(--color-text-hint)' }}>Your portfolio</div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <Link to="/tax-receipts" style={{ fontSize: '0.8rem', color: 'var(--color-accent)', fontWeight: 700 }}>
+          <Link
+            to="/tax-receipts"
+            style={{ fontSize: '0.8rem', color: 'var(--color-accent)', fontWeight: 700 }}
+          >
             Tax receipts
           </Link>
-          <button type="button" onClick={exportCsv} disabled={exporting} style={{ fontSize: '0.8rem' }}>
+          <button
+            type="button"
+            onClick={exportCsv}
+            disabled={exporting}
+            style={{ fontSize: '0.8rem' }}
+          >
             {exporting ? 'Exporting…' : 'Export CSV'}
           </button>
         </div>
@@ -389,12 +416,21 @@ export default function ContributorDashboard() {
           ['Campaigns backed', stats.campaigns_backed],
           ['Active campaigns', stats.active_campaigns_backed],
           ['Campaigns completed', stats.campaigns_completed],
-          ['Avg. contribution', stats.avg_contribution.toLocaleString(undefined, { maximumFractionDigits: 2 })],
+          [
+            'Avg. contribution',
+            stats.avg_contribution.toLocaleString(undefined, { maximumFractionDigits: 2 }),
+          ],
           ['Total refunded', stats.total_refunded.toLocaleString()],
         ].map(([label, value]) => (
-          <div key={label} className="campaign-card" style={{ minHeight: 'auto', padding: '0.75rem' }}>
+          <div
+            key={label}
+            className="campaign-card"
+            style={{ minHeight: 'auto', padding: '0.75rem' }}
+          >
             <strong style={{ fontSize: '1.1rem' }}>{value}</strong>
-            <div style={{ fontSize: '0.78rem', color: 'var(--color-text-hint)', marginTop: '0.15rem' }}>
+            <div
+              style={{ fontSize: '0.78rem', color: 'var(--color-text-hint)', marginTop: '0.15rem' }}
+            >
               {label}
             </div>
           </div>
@@ -406,7 +442,11 @@ export default function ContributorDashboard() {
 
       <div style={{ display: 'grid', gap: '0.85rem' }}>
         {campaigns.map((campaign) => (
-          <BackedCampaignCard key={campaign.campaign_id} campaign={campaign} onRefundClaimed={load} />
+          <BackedCampaignCard
+            key={campaign.campaign_id}
+            campaign={campaign}
+            onRefundClaimed={load}
+          />
         ))}
       </div>
     </div>

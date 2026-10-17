@@ -74,9 +74,22 @@ A campaign is modelled on-chain as two paired contract instances:
    `approve_withdrawal` and `execute_withdrawal`; funds are released to the
    creator with the platform fee deducted.
 4. **Refund phase (campaign failed)** — after the deadline passes, if the
-   target was not met, any contributor can call `escrow.refund(contributor)`
-   to reclaim their deposit. The escrow enforces `total_raised < target` and
-   `now > deadline`.
+   target was not met (or once the admin has called `mark_campaign_failed`),
+   any contributor can call `escrow.refund(contributor)` to reclaim their
+   deposit. Because milestone releases may already have paid out part of the
+   pot, refunds are **pro-rata**: the first refund snapshots the funds still
+   held and the total contributed, and every contributor receives
+   `balance * remaining / total_raised`, whatever order they refund in.
+
+### 2.1a Storage TTL
+
+Every contract extends its instance storage and the persistent entries it
+writes on each state change (`deposit`/`contribute`, approvals, releases,
+refunds, votes). `escrow` and `crowdpay` extend to "time until the deadline +
+`REFUND_WINDOW_LEDGERS` (60 days)", capped at the network's max TTL, so
+contributor balances can't be archived before refunds are possible.
+`milestones` and `fee_registry` have no deadline and extend to
+`STORAGE_TTL_LEDGERS` (180 days) on every write.
 
 ### 2.2 Events emitted
 
@@ -87,7 +100,7 @@ subscribes to these events to update off-chain state and trigger notifications.
 |------------|-----------------|---------------------|----------------------------|--------------------------------------------------|
 | `escrow`     | `deposit`       | `Symbol::new("deposit")`     | `deposit`               | `i128` amount                                     |
 | `escrow`     | `withdrawal`    | `Symbol::new("withdrawal")`  | `execute_withdrawal`    | `(release_amount, net_amount, fee_amount)`        |
-| `escrow`     | `refund`        | `Symbol::new("refund")`       | `refund`                | `i128` amount                                     |
+| `escrow`     | `refund`        | `Symbol::new("refund")`       | `refund`                | `i128` amount paid (pro-rata share)               |
 | `escrow`     | `fee_proposed`  | `Symbol::new("fee_proposed")` | `propose_fee_change`    | `u32` new_fee_bps                                  |
 | `escrow`     | `fee_changed`   | `Symbol::new("fee_changed")`  | `confirm_fee_change`    | `u32` new_fee_bps                                  |
 | `escrow`     | `fee_cancelled` | `Symbol::new("fee_cancelled")`| `cancel_fee_change`     | `()`                                               |
@@ -260,9 +273,17 @@ The canonical deployment path used by CrowdPay is the backend script
 `backend/src/scripts/deployContracts.js`, which:
 
 1. Loads `backend/.env` (`PLATFORM_SECRET_KEY` and `STELLAR_NETWORK`).
-2. Validates both WASMs exist under `contracts/soroban/target/wasm32v1-none/release/`.
+2. Picks the wasm to deploy, preferring `target/wasm32v1-none/release/` and the
+   `.optimized.wasm` sibling of a plain `cargo build` output.
 3. Deploys `escrow.wasm` and `milestones.wasm` with `stellar contract deploy` using the platform keypair as `--source`.
-4. Prints the resulting contract IDs to stdout.
+4. Prints the resulting contract IDs to stdout and appends them, with the deploy
+   transaction hash, the wasm file name, its SHA-256 and a timestamp, to
+   `contracts/soroban/deployments/<network>.json`.
+
+`deployments/<network>.json` is the record the published contract IDs come from —
+`deployments/testnet.json` currently holds the live testnet escrow and milestones
+instances. Re-running the script for a contract that is already listed replaces
+that entry, so the file always describes the most recent deploy per contract.
 
 ### 5.1 Canonical deploy (recommended)
 
@@ -282,16 +303,34 @@ node src/scripts/deployContracts.js
 Record the printed contract IDs into `backend/.env`:
 
 ```
-ESCROW_WASM_HASH=<hash from `stellar contract deploy` output / inspect via CLI>
+ESCROW_WASM_HASH=<sha256 of the deployed escrow wasm, recorded in deployments/<network>.json>
 MILESTONES_WASM_HASH=<same for milestones>
 ESCROW_CONTRACT_ID=<optional pre-deployed instance>
 MILESTONES_CONTRACT_ID=<optional pre-deployed instance>
 ```
 
-At campaign-create time, `deployCampaignContracts` reuses these hashes if
-present, or deploys fresh per-campaign instances otherwise.
+`deployCampaignContracts` checks the two IDs first: when both are set it runs in
+**env mode** and re-uses those instances for every campaign, so the second
+campaign fails at `escrow::initialize` with `Contract is already initialized`.
+Without them, `SOROBAN_ENABLED=true` plus both hashes puts it in **deploy mode**,
+which creates a fresh escrow and milestones instance per campaign. The live
+testnet IDs and wasm hashes are in `deployments/testnet.json` and in the root
+README's deployed-contracts section.
 
-### 5.2 Manual per-contract deploy (advanced)
+### 5.2 A plain cargo build is not deployable
+
+`cargo build --target wasm32-unknown-unknown --release` produces a wasm the
+network rejects (`reference-types not enabled: zero byte expected`). Either build
+with `stellar contract build` (which targets `wasm32v1-none`) or optimize first:
+
+```bash
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/escrow.wasm
+```
+
+which writes `escrow.optimized.wasm` next to it — the file `deployContracts.js`
+prefers when both exist.
+
+### 5.3 Manual per-contract deploy (advanced)
 
 If you need to deploy a contract directly with `stellar` CLI:
 
@@ -371,16 +410,17 @@ the backend in any form:
 
 - The backend deploys only `escrow` and `milestones` (`deployContracts.js` lists just those two).
 - No backend route, service, or test references a `crowdpayContractId`.
-- `deploy_crowdpay.sh` at the workspace root references a `deployer` key and
-  `target/wasm32-unknown-unknown/release/crowdpay.wasm`; neither is consumed
-  anywhere else in the repo.
+- There is no deploy path for it. The `deploy_crowdpay.sh` helper that pointed at
+  a `deployer` identity and `target/wasm32-unknown-unknown/release/crowdpay.wasm`
+  was removed; nothing in the repo consumed either.
 
 ### 6.1 Public entry points (for reference)
 
-- `initialize(campaign_id, creator, token, goal, deadline, milestones)`
+- `initialize(campaign_id, creator, platform, token, goal, deadline, milestones)`
 - `contribute(contributor, amount)`
-- `release_milestone(index)` — direct release within the same contract
-- `refund(contributor)` — refund a single contributor if status is `Failed`
+- `approve_milestone(index)` — platform sign-off; requires the `platform` address's auth
+- `release_milestone(index)` — creator release; panics with `Milestone not approved` until the platform has approved that index, and is blocked once the campaign has `Failed`
+- `refund(contributor)` — pro-rata refund of a single contributor if status is `Failed`
 - `set_failed()` — mark campaign failed after deadline if goal not met
 - `get_status()`, `get_total_raised()`
 
@@ -591,7 +631,7 @@ contracts/soroban/
 ├── Cargo.toml                       # workspace, members = contracts/*
 ├── Cargo.lock
 ├── README.md                        # this file
-├── deploy_crowdpay.sh               # legacy helper; not wired into the backend
+├── deployments/                     # one JSON per network recording deployed contract IDs
 └── contracts/
     ├── crowdpay/                    # legacy bundle contract (deprecated; see §6)
     │   ├── Cargo.toml

@@ -94,14 +94,8 @@ export default function Login() {
 
   return (
     <main className="container" style={styles.container}>
-      <h1 style={styles.heading}>
-        {t('login.title')}
-      </h1>
-      <form
-        noValidate
-        onSubmit={handleSubmit}
-        style={styles.form}
-      >
+      <h1 style={styles.heading}>{t('login.title')}</h1>
+      <form noValidate onSubmit={handleSubmit} style={styles.form}>
         {step === 1 ? (
           <>
             <input
@@ -142,22 +136,12 @@ export default function Login() {
             autoComplete="one-time-code"
           />
         )}
-        {error && (
-          <p style={styles.error}>{error}</p>
-        )}
-        <button
-          type="submit"
-          className="btn-primary"
-          disabled={loading}
-          style={styles.submitBtn}
-        >
+        {error && <p style={styles.error}>{error}</p>}
+        <button type="submit" className="btn-primary" disabled={loading} style={styles.submitBtn}>
           {loading ? t('login.loading') : t('login.submit')}
         </button>
         <div style={styles.center}>
-          <Link
-            to="/forgot-password"
-            style={styles.forgotLink}
-          >
+          <Link to="/forgot-password" style={styles.forgotLink}>
             {t('login.forgotPassword')}
           </Link>
         </div>

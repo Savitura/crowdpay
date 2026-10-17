@@ -22,18 +22,23 @@ test('revokeAndCloseCampaignWallet sweeps funds, revokes platform signer, and me
   const pubKey = campaignKeypair.publicKey();
 
   const mockServer = {
-    loadAccount: async (key) => ({
+    loadAccount: async key => ({
       accountId: () => key,
       sequenceNumber: () => '100',
       incrementSequenceNumber: () => {},
       balances: [
         { asset_type: 'native', balance: '10.0000000' },
-        { asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5', balance: '25.5000000' },
+        {
+          asset_type: 'credit_alphanum4',
+          asset_code: 'USDC',
+          asset_issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+          balance: '25.5000000',
+        },
       ],
       thresholds: { low_threshold: 1, med_threshold: 2, high_threshold: 2 },
       signers: [{ key, weight: 1 }],
     }),
-    submitTransaction: async (tx) => {
+    submitTransaction: async tx => {
       submittedTx = tx;
       return { hash: 'mock_tx_hash_123' };
     },
@@ -45,7 +50,9 @@ test('revokeAndCloseCampaignWallet sweeps funds, revokes platform signer, and me
       networkPassphrase: 'Test SDF Network ; July 2015',
       USDC: { code: 'USDC', issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' },
       isTestnet: true,
-      configuredAssets: { USDC: { issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' } },
+      configuredAssets: {
+        USDC: { issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' },
+      },
     },
     '../config/database': {
       query: async () => ({ rows: [] }),

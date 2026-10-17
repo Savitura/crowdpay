@@ -96,6 +96,18 @@ describe('ContributeModal', () => {
     expect(screen.getByText(/payment method/i)).toBeInTheDocument();
   });
 
+  it('pre-populates amount when initialAmount is provided', () => {
+    render(
+      <ContributeModal
+        campaign={campaign}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+        initialAmount="50"
+      />
+    );
+    expect(screen.getByLabelText(/amount campaign receives/i)).toHaveValue(50);
+  });
+
   it('validates that amount must be a positive number', async () => {
     const user = userEvent.setup();
     renderModal();
@@ -280,9 +292,7 @@ describe('ContributeModal', () => {
     it('shows a Cancel signing button while waiting for the signature', async () => {
       await startSigning();
 
-      expect(
-        await screen.findByRole('button', { name: /cancel signing/i })
-      ).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: /cancel signing/i })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^cancel$/i })).not.toBeInTheDocument();
     });
 
@@ -352,5 +362,13 @@ describe('ContributeModal', () => {
         expect(link).toHaveAttribute('href', 'https://www.freighter.app/');
       });
     });
+  });
+
+  it('displays approximate naira amount when amount is entered', async () => {
+    const user = userEvent.setup();
+    renderModal({ min_contribution: '5' });
+    const input = screen.getByLabelText(/Amount campaign receives/i);
+    await user.type(input, '10');
+    expect(screen.getByText(/≈ ₦.*\(approx\.\)/i)).toBeInTheDocument();
   });
 });

@@ -91,7 +91,9 @@ describe('TreasuryPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: /request withdrawal/i }));
 
     await waitFor(() =>
-      expect(screen.getByText(/larger share of the balance than the policy allows/i)).toBeInTheDocument()
+      expect(
+        screen.getByText(/larger share of the balance than the policy allows/i)
+      ).toBeInTheDocument()
     );
   });
 
@@ -99,15 +101,18 @@ describe('TreasuryPanel', () => {
     getTreasuryStatus.mockResolvedValue(
       status({
         pendingWithdrawals: [
-          { id: 7, amount: '6000.0000000', destination: 'GDEST', createdAt: '2026-08-01T00:00:00Z' },
+          {
+            id: 7,
+            amount: '6000.0000000',
+            destination: 'GDEST',
+            createdAt: '2026-08-01T00:00:00Z',
+          },
         ],
       })
     );
 
     const { unmount } = render(<TreasuryPanel campaignId="c-1" isAuditor={false} />);
-    await waitFor(() =>
-      expect(screen.getByText(/Awaiting auditor approval/i)).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText(/Awaiting auditor approval/i)).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument();
     unmount();
 
@@ -121,14 +126,21 @@ describe('TreasuryPanel', () => {
     getTreasuryStatus.mockResolvedValue(
       status({
         pendingWithdrawals: [
-          { id: 7, amount: '6000.0000000', destination: 'GDEST', createdAt: '2026-08-01T00:00:00Z' },
+          {
+            id: 7,
+            amount: '6000.0000000',
+            destination: 'GDEST',
+            createdAt: '2026-08-01T00:00:00Z',
+          },
         ],
       })
     );
     approveTreasuryWithdrawal.mockResolvedValue({ status: 'completed' });
 
     render(<TreasuryPanel campaignId="c-1" isAuditor />);
-    await waitFor(() => expect(screen.getByRole('button', { name: /approve/i })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /approve/i })).toBeInTheDocument()
+    );
     await userEvent.click(screen.getByRole('button', { name: /approve/i }));
 
     await waitFor(() => expect(approveTreasuryWithdrawal).toHaveBeenCalledWith('c-1', 7));
@@ -137,9 +149,7 @@ describe('TreasuryPanel', () => {
   it('falls back to a plain message for a standard multisig campaign', async () => {
     getTreasuryStatus.mockRejectedValue(rejection('NOT_CONTRACT_WALLET'));
     render(<TreasuryPanel campaignId="c-1" />);
-    await waitFor(() =>
-      expect(screen.getByText(/standard multisig wallet/i)).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText(/standard multisig wallet/i)).toBeInTheDocument());
   });
 
   it('lists executed withdrawals with who approved them', async () => {

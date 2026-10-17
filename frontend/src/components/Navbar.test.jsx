@@ -23,6 +23,14 @@ vi.mock('../context/ThemeContext', () => ({
   useTheme: () => ({ dark: false, toggleTheme: vi.fn() }),
 }));
 
+vi.mock('../services/api', () => ({
+  api: {
+    getNotifications: vi.fn().mockResolvedValue([]),
+    markNotificationRead: vi.fn().mockResolvedValue({}),
+    markAllNotificationsRead: vi.fn().mockResolvedValue({}),
+  },
+}));
+
 import { useAuth } from '../context/AuthContext';
 
 function renderNavbar() {
@@ -53,7 +61,7 @@ describe('Navbar', () => {
       logout: mockLogout,
     });
     renderNavbar();
-    expect(screen.getByRole('button', { name: /create support space/i })).toBeInTheDocument();
+    expect(screen.getByText(/create support space/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /logout/i })).toBeInTheDocument();
     expect(screen.getByText('Bola')).toBeInTheDocument();
   });

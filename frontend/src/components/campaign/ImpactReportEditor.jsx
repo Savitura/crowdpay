@@ -186,7 +186,10 @@ export function ImpactReportEditor({ campaignId, existingReport, onPublished }) 
       {tab === 'write' && (
         <div style={{ marginTop: '1.5rem' }}>
           <div style={{ marginBottom: '1.5rem' }}>
-            <label htmlFor="report-title" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+            <label
+              htmlFor="report-title"
+              style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}
+            >
               Report Title
             </label>
             <input
@@ -207,7 +210,10 @@ export function ImpactReportEditor({ campaignId, existingReport, onPublished }) 
           </div>
 
           <div style={{ marginBottom: '1.5rem' }}>
-            <label htmlFor="report-summary" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+            <label
+              htmlFor="report-summary"
+              style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}
+            >
               Summary (Optional)
             </label>
             <textarea
@@ -229,7 +235,10 @@ export function ImpactReportEditor({ campaignId, existingReport, onPublished }) 
           </div>
 
           <div style={{ marginBottom: '1.5rem' }}>
-            <label htmlFor="report-content" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+            <label
+              htmlFor="report-content"
+              style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}
+            >
               Report Content
             </label>
             <SimpleMDEEditor
@@ -238,24 +247,48 @@ export function ImpactReportEditor({ campaignId, existingReport, onPublished }) 
               options={{
                 spellChecker: false,
                 toolbar: [
-                  'bold', 'italic', 'heading', '|',
-                  'quote', 'unordered-list', 'ordered-list', '|',
-                  'link', '|',
-                  'preview', 'side-by-side', 'fullscreen', '|',
-                  'guide'
+                  'bold',
+                  'italic',
+                  'heading',
+                  '|',
+                  'quote',
+                  'unordered-list',
+                  'ordered-list',
+                  '|',
+                  'link',
+                  '|',
+                  'preview',
+                  'side-by-side',
+                  'fullscreen',
+                  '|',
+                  'guide',
                 ],
               }}
             />
           </div>
 
           {/* Milestones Section */}
-          <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: 'var(--color-bg-alt)', borderRadius: '0.5rem' }}>
+          <div
+            style={{
+              marginBottom: '1.5rem',
+              padding: '1rem',
+              backgroundColor: 'var(--color-bg-alt)',
+              borderRadius: '0.5rem',
+            }}
+          >
             <h3>Milestones Achieved</h3>
             <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
               Track key achievements and milestones reached during the campaign.
             </p>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr 1fr',
+                gap: '1rem',
+                marginBottom: '1rem',
+              }}
+            >
               <input
                 type="text"
                 placeholder="Milestone title"
@@ -313,7 +346,9 @@ export function ImpactReportEditor({ campaignId, existingReport, onPublished }) 
                   >
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 'bold' }}>{m.title}</div>
-                      <div style={{ fontSize: '0.9rem', color: 'var(--color-text-hint)' }}>{m.description}</div>
+                      <div style={{ fontSize: '0.9rem', color: 'var(--color-text-hint)' }}>
+                        {m.description}
+                      </div>
                     </div>
                     <button
                       type="button"
@@ -388,7 +423,13 @@ export function ImpactReportEditor({ campaignId, existingReport, onPublished }) 
           <div style={{ marginBottom: '2rem' }}>
             <h2>{title || '(No title)'}</h2>
             {summary && (
-              <p style={{ fontSize: '0.95rem', color: 'var(--color-text-hint)', marginBottom: '1rem' }}>
+              <p
+                style={{
+                  fontSize: '0.95rem',
+                  color: 'var(--color-text-hint)',
+                  marginBottom: '1rem',
+                }}
+              >
                 <em>{summary}</em>
               </p>
             )}
@@ -420,11 +461,18 @@ export function ImpactReportEditor({ campaignId, existingReport, onPublished }) 
                     key={idx}
                     style={{
                       padding: '0.75rem 0',
-                      borderBottom: idx < milestones.length - 1 ? '1px solid var(--color-border)' : 'none',
+                      borderBottom:
+                        idx < milestones.length - 1 ? '1px solid var(--color-border)' : 'none',
                     }}
                   >
                     <strong>{m.title}</strong>
-                    <p style={{ margin: '0.25rem 0 0 0', color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
+                    <p
+                      style={{
+                        margin: '0.25rem 0 0 0',
+                        color: 'var(--color-text-hint)',
+                        fontSize: '0.9rem',
+                      }}
+                    >
                       {m.description}
                     </p>
                   </li>
@@ -497,15 +545,22 @@ export function ImpactReportEditor({ campaignId, existingReport, onPublished }) 
           >
             <h3>Publish Impact Report?</h3>
             <p>
-              Once published, all contributors to this campaign will be notified about your impact report.
-              You can still update the draft before publishing.
+              Once published, all contributors to this campaign will be notified about your impact
+              report. You can still update the draft before publishing.
             </p>
 
             <p style={{ fontSize: '0.9rem', color: 'var(--color-text-hint)' }}>
               <strong>Title:</strong> {title}
             </p>
 
-            <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem', justifyContent: 'flex-end' }}>
+            <div
+              style={{
+                display: 'flex',
+                gap: '1rem',
+                marginTop: '1.5rem',
+                justifyContent: 'flex-end',
+              }}
+            >
               <button
                 type="button"
                 onClick={() => setShowPublishConfirm(false)}

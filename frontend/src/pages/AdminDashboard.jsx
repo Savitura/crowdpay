@@ -1,5 +1,6 @@
-/* eslint-disable */
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+import PropTypes from 'prop-types';
 import * as Sentry from '@sentry/react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -7,14 +8,6 @@ import { useNavigate } from 'react-router-dom';
 import RelativeTime from '../components/RelativeTime';
 import DisputeResolveModal from '../components/DisputeResolveModal';
 import { useToast } from '../context/ToastContext';
-
-const DISPUTE_STATUSES = [
-  'open',
-  'under_review',
-  'resolved_creator',
-  'resolved_contributor',
-  'closed',
-];
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -24,6 +17,7 @@ const TABS = [
   { id: 'campaigns', label: 'Campaigns' },
   { id: 'milestones', label: 'Milestones' },
   { id: 'fraud', label: 'Fraud Detection' },
+  { id: 'audit', label: 'Audit Log' },
 ];
 
 const cardStyle = {
@@ -46,7 +40,9 @@ function Drawer({ title, onClose, children }) {
 
   useEffect(() => {
     if (!onClose) return;
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
@@ -54,14 +50,25 @@ function Drawer({ title, onClose, children }) {
   useEffect(() => {
     const panel = panelRef.current;
     if (!panel) return;
-    const focusable = panel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    const focusable = panel.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     first?.focus();
     function trapTab(e) {
       if (e.key !== 'Tab') return;
-      if (e.shiftKey) { if (document.activeElement === first) { e.preventDefault(); last?.focus(); } }
-      else { if (document.activeElement === last) { e.preventDefault(); first?.focus(); } }
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
     }
     panel.addEventListener('keydown', trapTab);
     return () => panel.removeEventListener('keydown', trapTab);
@@ -122,10 +129,17 @@ function Drawer({ title, onClose, children }) {
   );
 }
 
+Drawer.propTypes = {
+  title: PropTypes.string.isRequired,
+  onClose: PropTypes.func,
+  children: PropTypes.node.isRequired,
+};
+
 function PlatformHealthPanel() {
   const [health, setHealth] = useState(null);
   const [webhooks, setWebhooks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [retryingId, setRetryingId] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -272,6 +286,81 @@ function PlatformHealthPanel() {
 }
 
 function WithdrawalQueue() {
+  const { t } = useTranslation();
+  const [rows, setRows] = useState([]);
+  const [review, setReview] = useState(null);
+  const [error, setError] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [contributions, setContributions] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [canApprove, setCanApprove] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const openReview = useCallback((row) => {
+    setReview(row);
+    setError(null);
+    setDetail(null);
+    setContributions([]);
+    setEvents([]);
+    setCanApprove(false);
+    // Fetch review details
+    api
+      .getAdminWithdrawal(row.id)
+      .then((data) => {
+        setDetail(data.withdrawal);
+        setContributions(data.contributions || []);
+        setEvents(data.events || []);
+        setCanApprove(data.canApprove || false);
+      })
+      .catch((err) => setError(err.message || 'Failed to load review'));
+  }, []);
+
+  const closeReview = useCallback(() => {
+    setReview(null);
+    setDetail(null);
+    setError(null);
+    setContributions([]);
+    setEvents([]);
+  }, []);
+
+  const approve = useCallback(async () => {
+    if (!review) return;
+    setBusy(true);
+    try {
+      await api.adminApproveWithdrawal(review.id);
+      setReview(null);
+      setDetail(null);
+    } catch (err) {
+      setError(err.message || 'Approval failed');
+    } finally {
+      setBusy(false);
+    }
+  }, [review]);
+
+  const reject = useCallback(async () => {
+    if (!review || !rejectReason.trim()) return;
+    setBusy(true);
+    try {
+      await api.adminRejectWithdrawal(review.id, { reason: rejectReason });
+      setReview(null);
+      setDetail(null);
+      setRejectReason('');
+    } catch (err) {
+      setError(err.message || 'Rejection failed');
+    } finally {
+      setBusy(false);
+    }
+  }, [review, rejectReason]);
+
+  // Load initial data
+  useEffect(() => {
+    api
+      .getAdminWithdrawals()
+      .then((data) => setRows(data.withdrawals || []))
+      .catch((err) => setError(err.message || 'Failed to load withdrawals'));
+  }, []);
+
   return (
     <>
       {rows.length === 0 ? (
@@ -416,7 +505,7 @@ function WithdrawalQueue() {
                   value={rejectReason}
                   onChange={(e) => setRejectReason(e.target.value)}
                   rows={3}
-                  placeholder="Explain why this withdrawal is rejected…"
+                  placeholder={t('admin.withdrawalRejectionPlaceholder')}
                 />
                 <button type="button" className="btn-secondary" disabled={busy} onClick={reject}>
                   Reject withdrawal
@@ -488,9 +577,7 @@ function DisputeManagement() {
   async function escalate() {
     try {
       const updated = await api.updateDispute(selected.id, { status: 'under_review' });
-      setDisputes((prev) =>
-        prev.map((d) => (d.id === updated.id ? { ...d, ...updated } : d))
-      );
+      setDisputes((prev) => prev.map((d) => (d.id === updated.id ? { ...d, ...updated } : d)));
       closeDispute();
     } catch (err) {
       alert(err.message || 'Could not escalate dispute');
@@ -582,14 +669,27 @@ function DisputeManagement() {
                 <strong>Submitted evidence ({detail.evidence.length})</strong>
                 <div style={{ ...cardStyle, marginTop: '0.5rem', display: 'grid', gap: '0.6rem' }}>
                   {detail.evidence.map((ev) => (
-                    <div key={ev.id} style={{ borderBottom: '1px solid var(--color-border-light)', paddingBottom: '0.5rem' }}>
-                      <div style={{ fontWeight: 600, fontSize: '0.8rem', textTransform: 'capitalize' }}>
+                    <div
+                      key={ev.id}
+                      style={{
+                        borderBottom: '1px solid var(--color-border-light)',
+                        paddingBottom: '0.5rem',
+                      }}
+                    >
+                      <div
+                        style={{ fontWeight: 600, fontSize: '0.8rem', textTransform: 'capitalize' }}
+                      >
                         {ev.submitted_by_name || 'Unknown'} ({ev.role})
                       </div>
                       <div>{ev.text}</div>
                       {(ev.attachment_urls || []).map((url) => (
                         <div key={url}>
-                          <a href={url} target="_blank" rel="noopener noreferrer" style={{ wordBreak: 'break-all' }}>
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ wordBreak: 'break-all' }}
+                          >
                             {url}
                           </a>
                         </div>
@@ -974,7 +1074,9 @@ function MilestonesQueue() {
                 gap: '0.45rem',
               }}
             >
-              <label htmlFor={`milestone-reject-${m.id}`} className="sr-only">Rejection reason</label>
+              <label htmlFor={`milestone-reject-${m.id}`} className="sr-only">
+                Rejection reason
+              </label>
               <textarea
                 id={`milestone-reject-${m.id}`}
                 value={rejectReason}
@@ -1121,10 +1223,10 @@ function ContractUpgradeModal({ campaign, onClose, onUpgraded }) {
           Contributions and milestone submissions will be paused for this campaign until migration
           completes.
         </p>
-        {error && (
-          <p style={{ fontSize: '0.85rem', color: 'var(--color-error-text)' }}>{error}</p>
-        )}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>
+        {error && <p style={{ fontSize: '0.85rem', color: 'var(--color-error-text)' }}>{error}</p>}
+        <div
+          style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}
+        >
           <button type="button" onClick={onClose} disabled={upgrading}>
             Cancel
           </button>
@@ -1132,7 +1234,13 @@ function ContractUpgradeModal({ campaign, onClose, onUpgraded }) {
             type="button"
             onClick={confirmUpgrade}
             disabled={upgrading}
-            style={{ background: 'var(--color-teal)', color: '#fff', border: 'none', borderRadius: '6px', padding: '0.4rem 0.8rem' }}
+            style={{
+              background: 'var(--color-teal)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '6px',
+              padding: '0.4rem 0.8rem',
+            }}
           >
             {upgrading ? 'Upgrading…' : 'Confirm Upgrade'}
           </button>
@@ -1141,6 +1249,16 @@ function ContractUpgradeModal({ campaign, onClose, onUpgraded }) {
     </div>
   );
 }
+
+ContractUpgradeModal.propTypes = {
+  campaign: PropTypes.shape({
+    id: PropTypes.string.isRequired,
+    title: PropTypes.string.isRequired,
+    escrow_contract_id: PropTypes.string.isRequired,
+  }).isRequired,
+  onClose: PropTypes.func.isRequired,
+  onUpgraded: PropTypes.func.isRequired,
+};
 
 function CampaignsQueue() {
   const [campaigns, setCampaigns] = useState([]);
@@ -1201,133 +1319,145 @@ function CampaignsQueue() {
   return (
     <div>
       <div style={{ marginBottom: '1rem' }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 }}>
-          <input 
-            type="checkbox" 
-            checked={flaggedOnly} 
-            onChange={(e) => setFlaggedOnly(e.target.checked)} 
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            cursor: 'pointer',
+            fontSize: '0.9rem',
+            fontWeight: 600,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={flaggedOnly}
+            onChange={(e) => setFlaggedOnly(e.target.checked)}
           />
           Show flagged potential duplicates only
         </label>
       </div>
       <div style={{ display: 'grid', gap: '0.9rem', marginBottom: '2.5rem' }}>
-      {campaigns.map((c) => (
-        <div key={c.id} style={cardStyle}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: '0.5rem',
-            }}
-          >
-            <div>
-              <strong>{c.title}</strong>
-              {c.escrow_contract_id && (
+        {campaigns.map((c) => (
+          <div key={c.id} style={cardStyle}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '0.5rem',
+              }}
+            >
+              <div>
+                <strong>{c.title}</strong>
+                {c.escrow_contract_id && (
+                  <span
+                    title="Milestone escrow contract version"
+                    style={{
+                      marginLeft: '0.5rem',
+                      fontSize: '0.7rem',
+                      fontWeight: 700,
+                      padding: '0.1rem 0.4rem',
+                      borderRadius: '4px',
+                      background:
+                        c.escrow_contract_version >= 2
+                          ? 'var(--color-teal)'
+                          : 'var(--color-text-hint)',
+                      color: '#fff',
+                    }}
+                  >
+                    {c.escrow_contract_version >= 2 ? 'V2' : 'V1'}
+                  </span>
+                )}
+                {c.is_flagged_duplicate && (
+                  <span
+                    style={{
+                      marginLeft: '0.5rem',
+                      fontSize: '0.75rem',
+                      padding: '0.1rem 0.4rem',
+                      borderRadius: '4px',
+                      background: 'var(--color-error-bg)',
+                      color: 'var(--color-error-text)',
+                    }}
+                  >
+                    Flagged Duplicate
+                  </span>
+                )}
                 <span
-                  title="Milestone escrow contract version"
                   style={{
                     marginLeft: '0.5rem',
-                    fontSize: '0.7rem',
-                    fontWeight: 700,
-                    padding: '0.1rem 0.4rem',
-                    borderRadius: '4px',
-                    background: c.escrow_contract_version >= 2 ? 'var(--color-teal)' : 'var(--color-text-hint)',
-                    color: '#fff',
+                    fontSize: '0.8rem',
+                    color: 'var(--color-text-hint)',
                   }}
                 >
-                  {c.escrow_contract_version >= 2 ? 'V2' : 'V1'}
+                  {c.status} · #{c.id.slice(0, 8)}
                 </span>
-              )}
-              {c.is_flagged_duplicate && (
-                <span
-                  style={{
-                    marginLeft: '0.5rem',
-                    fontSize: '0.75rem',
-                    padding: '0.1rem 0.4rem',
-                    borderRadius: '4px',
-                    background: 'var(--color-error-bg)',
-                    color: 'var(--color-error-text)',
-                  }}
-                >
-                  Flagged Duplicate
-                </span>
-              )}
-              <span
-                style={{
-                  marginLeft: '0.5rem',
-                  fontSize: '0.8rem',
-                  color: 'var(--color-text-hint)',
-                }}
-              >
-                {c.status} · #{c.id.slice(0, 8)}
-              </span>
-            </div>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              {c.is_flagged_duplicate ? (
-                <button
-                  type="button"
-                  onClick={() => unflag(c.id)}
-                  style={{
-                    fontSize: '0.75rem',
-                    padding: '0.25rem 0.7rem',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    background: 'var(--color-teal)',
-                    color: '#fff',
-                    border: 'none',
-                  }}
-                >
-                  Unflag
-                </button>
-              ) : (
-                <>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                {c.is_flagged_duplicate ? (
                   <button
                     type="button"
-                    onClick={() => feature(c.id)}
+                    onClick={() => unflag(c.id)}
                     style={{
                       fontSize: '0.75rem',
                       padding: '0.25rem 0.7rem',
                       borderRadius: '6px',
                       cursor: 'pointer',
+                      background: 'var(--color-teal)',
+                      color: '#fff',
+                      border: 'none',
                     }}
                   >
-                    Feature
+                    Unflag
                   </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => feature(c.id)}
+                      style={{
+                        fontSize: '0.75rem',
+                        padding: '0.25rem 0.7rem',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Feature
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => unfeature(c.id)}
+                      style={{
+                        fontSize: '0.75rem',
+                        padding: '0.25rem 0.7rem',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Unfeature
+                    </button>
+                  </>
+                )}
+                {c.escrow_contract_id && c.escrow_contract_version < 2 && !c.has_active_review && (
                   <button
                     type="button"
-                    onClick={() => unfeature(c.id)}
+                    onClick={() => setUpgradeTarget(c)}
+                    disabled={c.migration_in_progress}
                     style={{
                       fontSize: '0.75rem',
                       padding: '0.25rem 0.7rem',
                       borderRadius: '6px',
-                      cursor: 'pointer',
+                      cursor: c.migration_in_progress ? 'not-allowed' : 'pointer',
                     }}
                   >
-                    Unfeature
+                    {c.migration_in_progress ? 'Migrating…' : 'Upgrade Contract'}
                   </button>
-                </>
-              )}
-              {c.escrow_contract_id && c.escrow_contract_version < 2 && !c.has_active_review && (
-                <button
-                  type="button"
-                  onClick={() => setUpgradeTarget(c)}
-                  disabled={c.migration_in_progress}
-                  style={{
-                    fontSize: '0.75rem',
-                    padding: '0.25rem 0.7rem',
-                    borderRadius: '6px',
-                    cursor: c.migration_in_progress ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {c.migration_in_progress ? 'Migrating…' : 'Upgrade Contract'}
-                </button>
-              )}
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        ))}
       </div>
       {upgradeTarget && (
         <ContractUpgradeModal
@@ -1342,7 +1472,11 @@ function CampaignsQueue() {
 
 function FraudQueue() {
   const [campaigns, setCampaigns] = useState([]);
-  const [stats, setStats] = useState({ false_positives: 0, true_positives: 0, false_positive_rate: 0 });
+  const [stats, setStats] = useState({
+    false_positives: 0,
+    true_positives: 0,
+    false_positive_rate: 0,
+  });
   const [loading, setLoading] = useState(true);
   const toast = useToast();
 
@@ -1401,20 +1535,41 @@ function FraudQueue() {
         }}
       >
         <div style={{ ...cardStyle, textAlign: 'center' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>Flagged Campaigns</div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 700, marginTop: '0.25rem' }}>{campaigns.length}</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>
+            Flagged Campaigns
+          </div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 700, marginTop: '0.25rem' }}>
+            {campaigns.length}
+          </div>
         </div>
         <div style={{ ...cardStyle, textAlign: 'center' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>True Positives (Frozen)</div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 700, marginTop: '0.25rem' }}>{stats.true_positives}</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>
+            True Positives (Frozen)
+          </div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 700, marginTop: '0.25rem' }}>
+            {stats.true_positives}
+          </div>
         </div>
         <div style={{ ...cardStyle, textAlign: 'center' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>False Positives (Cleared)</div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 700, marginTop: '0.25rem' }}>{stats.false_positives}</div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>
+            False Positives (Cleared)
+          </div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 700, marginTop: '0.25rem' }}>
+            {stats.false_positives}
+          </div>
         </div>
         <div style={{ ...cardStyle, textAlign: 'center' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>False Positive Rate</div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 700, marginTop: '0.25rem', color: 'var(--color-accent)' }}>
+          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>
+            False Positive Rate
+          </div>
+          <div
+            style={{
+              fontSize: '1.5rem',
+              fontWeight: 700,
+              marginTop: '0.25rem',
+              color: 'var(--color-accent)',
+            }}
+          >
             {(stats.false_positive_rate * 100).toFixed(1)}%
           </div>
         </div>
@@ -1428,32 +1583,82 @@ function FraudQueue() {
             const signals = c.fraud_signals || {};
             return (
               <div key={c.id} style={{ ...cardStyle, borderLeft: '4px solid var(--color-danger)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '0.5rem',
+                    marginBottom: '0.5rem',
+                  }}
+                >
                   <div>
                     <h3 style={{ margin: 0, fontSize: '1.1rem' }}>{c.title}</h3>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)', marginTop: '0.25rem' }}>
-                      Creator: {c.creator_name} ({c.creator_email}) · ID: <code>{c.id.slice(0, 8)}</code>
+                    <div
+                      style={{
+                        fontSize: '0.8rem',
+                        color: 'var(--color-text-hint)',
+                        marginTop: '0.25rem',
+                      }}
+                    >
+                      Creator: {c.creator_name} ({c.creator_email}) · ID:{' '}
+                      <code>{c.id.slice(0, 8)}</code>
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--color-danger)' }}>
+                    <div
+                      style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--color-danger)' }}
+                    >
                       Score: {c.fraud_score}
                     </div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--color-text-hint)' }}>
-                      Status: <strong style={{ color: c.status === 'suspended' ? 'var(--color-danger)' : 'var(--color-success)' }}>{c.status}</strong>
+                      Status:{' '}
+                      <strong
+                        style={{
+                          color:
+                            c.status === 'suspended'
+                              ? 'var(--color-danger)'
+                              : 'var(--color-success)',
+                        }}
+                      >
+                        {c.status}
+                      </strong>
                     </div>
                   </div>
                 </div>
 
-                <div style={{ borderTop: '1px solid var(--color-border-light)', paddingTop: '0.5rem', margin: '0.5rem 0' }}>
-                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.25rem' }}>Fraud Signals Breakdown:</div>
+                <div
+                  style={{
+                    borderTop: '1px solid var(--color-border-light)',
+                    paddingTop: '0.5rem',
+                    margin: '0.5rem 0',
+                  }}
+                >
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.25rem' }}>
+                    Fraud Signals Breakdown:
+                  </div>
                   <div style={{ display: 'grid', gap: '0.35rem', fontSize: '0.85rem' }}>
                     {Object.entries(signals).map(([key, value]) => (
-                      <div key={key} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0.4rem', background: 'var(--color-bg-secondary)', borderRadius: '4px' }}>
+                      <div
+                        key={key}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          padding: '0.2rem 0.4rem',
+                          background: 'var(--color-bg-secondary)',
+                          borderRadius: '4px',
+                        }}
+                      >
                         <span style={{ textTransform: 'capitalize' }}>
                           <strong>{key.replace('_', ' ')}:</strong> {value.detail}
                         </span>
-                        <span style={{ fontWeight: 600, color: value.score > 0 ? 'var(--color-danger)' : 'var(--color-text-hint)' }}>
+                        <span
+                          style={{
+                            fontWeight: 600,
+                            color:
+                              value.score > 0 ? 'var(--color-danger)' : 'var(--color-text-hint)',
+                          }}
+                        >
                           +{value.score}
                         </span>
                       </div>
@@ -1504,6 +1709,336 @@ function FraudQueue() {
   );
 }
 
+function AuditLogViewer() {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [filters, setFilters] = useState({
+    actor: '',
+    action: '',
+    resource_type: '',
+    start_date: '',
+    end_date: '',
+  });
+  const PAGE_SIZE = 50;
+
+  const load = useCallback(() => {
+    setLoading(true);
+    const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };
+    if (filters.actor) params.actor = filters.actor;
+    if (filters.action) params.action = filters.action;
+    if (filters.resource_type) params.resource_type = filters.resource_type;
+    if (filters.start_date) params.start_date = filters.start_date;
+    if (filters.end_date) params.end_date = filters.end_date;
+
+    api
+      .getAdminAuditLogs(params)
+      .then((res) => {
+        setLogs(res.data);
+        setTotal(res.total);
+      })
+      .catch(() => {
+        setLogs([]);
+        setTotal(0);
+      })
+      .finally(() => setLoading(false));
+  }, [page, filters]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function applyFilter(key, value) {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+    setPage(0);
+  }
+
+  function resetFilters() {
+    setFilters({ actor: '', action: '', resource_type: '', start_date: '', end_date: '' });
+    setPage(0);
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  async function exportCsv() {
+    try {
+      const res = await api.exportAdminAuditLogsCsv(filters);
+      downloadBlob(res.blob, res.filename);
+    } catch (err) {
+      alert(err.message || 'CSV export failed');
+    }
+  }
+
+  async function exportJson() {
+    try {
+      const res = await api.exportAdminAuditLogsJson(filters);
+      downloadBlob(res.blob, res.filename);
+    } catch (err) {
+      alert(err.message || 'JSON export failed');
+    }
+  }
+
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+
+  return (
+    <div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+          gap: '0.6rem',
+          marginBottom: '1rem',
+          fontSize: '0.85rem',
+        }}
+      >
+        <input
+          type="text"
+          placeholder="Actor (email or id)"
+          value={filters.actor}
+          onChange={(e) => applyFilter('actor', e.target.value)}
+          style={{
+            padding: '0.4rem 0.5rem',
+            borderRadius: '6px',
+            border: '1px solid var(--color-border-light)',
+            background: 'var(--color-bg)',
+            color: 'var(--color-text)',
+          }}
+        />
+        <input
+          type="text"
+          placeholder="Action (exact match)"
+          value={filters.action}
+          onChange={(e) => applyFilter('action', e.target.value)}
+          style={{
+            padding: '0.4rem 0.5rem',
+            borderRadius: '6px',
+            border: '1px solid var(--color-border-light)',
+            background: 'var(--color-bg)',
+            color: 'var(--color-text)',
+          }}
+        />
+        <input
+          type="text"
+          placeholder="Resource type"
+          value={filters.resource_type}
+          onChange={(e) => applyFilter('resource_type', e.target.value)}
+          style={{
+            padding: '0.4rem 0.5rem',
+            borderRadius: '6px',
+            border: '1px solid var(--color-border-light)',
+            background: 'var(--color-bg)',
+            color: 'var(--color-text)',
+          }}
+        />
+        <input
+          type="date"
+          placeholder="Start date"
+          value={filters.start_date}
+          onChange={(e) => applyFilter('start_date', e.target.value)}
+          style={{
+            padding: '0.4rem 0.5rem',
+            borderRadius: '6px',
+            border: '1px solid var(--color-border-light)',
+            background: 'var(--color-bg)',
+            color: 'var(--color-text)',
+          }}
+        />
+        <input
+          type="date"
+          placeholder="End date"
+          value={filters.end_date}
+          onChange={(e) => applyFilter('end_date', e.target.value)}
+          style={{
+            padding: '0.4rem 0.5rem',
+            borderRadius: '6px',
+            border: '1px solid var(--color-border-light)',
+            background: 'var(--color-bg)',
+            color: 'var(--color-text)',
+          }}
+        />
+        <button
+          type="button"
+          onClick={resetFilters}
+          style={{
+            padding: '0.4rem 0.6rem',
+            borderRadius: '6px',
+            border: '1px solid var(--color-border-light)',
+            background: 'var(--color-bg-secondary)',
+            cursor: 'pointer',
+            fontSize: '0.85rem',
+          }}
+        >
+          Reset
+        </button>
+      </div>
+
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          onClick={exportCsv}
+          style={{
+            padding: '0.4rem 0.7rem',
+            borderRadius: '6px',
+            border: '1px solid var(--color-accent)',
+            background: 'var(--color-accent-soft)',
+            color: 'var(--color-accent)',
+            cursor: 'pointer',
+            fontSize: '0.8rem',
+          }}
+        >
+          Export CSV
+        </button>
+        <button
+          type="button"
+          onClick={exportJson}
+          style={{
+            padding: '0.4rem 0.7rem',
+            borderRadius: '6px',
+            border: '1px solid var(--color-accent)',
+            background: 'var(--color-accent-soft)',
+            color: 'var(--color-accent)',
+            cursor: 'pointer',
+            fontSize: '0.8rem',
+          }}
+        >
+          Export JSON
+        </button>
+        <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: 'var(--color-text-hint)' }}>
+          {total.toLocaleString()} result{total !== 1 ? 's' : ''}
+        </span>
+      </div>
+
+      {loading ? (
+        <p style={{ color: 'var(--color-text-hint)' }}>Loading audit logs…</p>
+      ) : logs.length === 0 ? (
+        <p style={{ color: 'var(--color-text-hint)' }}>No audit log entries match your filters.</p>
+      ) : (
+        <>
+          <div style={{ overflowX: 'auto', marginBottom: '1rem' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+              <thead>
+                <tr
+                  style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border-light)' }}
+                >
+                  <th style={{ padding: '0.45rem 0.5rem' }}>Timestamp</th>
+                  <th style={{ padding: '0.45rem 0.5rem' }}>Actor</th>
+                  <th style={{ padding: '0.45rem 0.5rem' }}>Action</th>
+                  <th style={{ padding: '0.45rem 0.5rem' }}>Resource</th>
+                  <th style={{ padding: '0.45rem 0.5rem' }}>IP</th>
+                  <th style={{ padding: '0.45rem 0.5rem' }}>Metadata</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((row) => (
+                  <tr key={row.id} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
+                    <td style={{ padding: '0.45rem 0.5rem', whiteSpace: 'nowrap' }}>
+                      {new Date(row.created_at).toLocaleString()}
+                    </td>
+                    <td style={{ padding: '0.45rem 0.5rem' }}>
+                      {row.actor_email || row.actor_id || '—'}
+                    </td>
+                    <td style={{ padding: '0.45rem 0.5rem' }}>
+                      <span style={badgeStyle}>{row.action}</span>
+                    </td>
+                    <td style={{ padding: '0.45rem 0.5rem' }}>
+                      {row.resource_type}
+                      {row.resource_id && (
+                        <code style={{ marginLeft: '0.3rem', fontSize: '0.75rem' }}>
+                          {String(row.resource_id).slice(0, 8)}
+                        </code>
+                      )}
+                    </td>
+                    <td style={{ padding: '0.45rem 0.5rem', fontSize: '0.78rem' }}>
+                      {row.ip_address || '—'}
+                    </td>
+                    <td style={{ padding: '0.45rem 0.5rem' }}>
+                      {row.metadata && Object.keys(row.metadata).length > 0 ? (
+                        <details>
+                          <summary style={{ cursor: 'pointer', fontSize: '0.78rem' }}>view</summary>
+                          <pre
+                            style={{
+                              fontSize: '0.7rem',
+                              background: 'var(--color-bg-secondary)',
+                              padding: '0.4rem',
+                              borderRadius: '4px',
+                              maxHeight: '120px',
+                              overflow: 'auto',
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-all',
+                            }}
+                          >
+                            {JSON.stringify(row.metadata, null, 2)}
+                          </pre>
+                        </details>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {totalPages > 1 && (
+            <div
+              style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap' }}
+            >
+              <button
+                type="button"
+                disabled={page === 0}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                style={{
+                  padding: '0.35rem 0.8rem',
+                  borderRadius: '6px',
+                  border: '1px solid var(--color-border-light)',
+                  background: 'var(--color-bg)',
+                  cursor: page === 0 ? 'not-allowed' : 'pointer',
+                  fontSize: '0.8rem',
+                  opacity: page === 0 ? 0.5 : 1,
+                }}
+              >
+                ← Previous
+              </button>
+              <span
+                style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)', alignSelf: 'center' }}
+              >
+                Page {page + 1} of {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={page >= totalPages - 1}
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                style={{
+                  padding: '0.35rem 0.8rem',
+                  borderRadius: '6px',
+                  border: '1px solid var(--color-border-light)',
+                  background: 'var(--color-bg)',
+                  cursor: page >= totalPages - 1 ? 'not-allowed' : 'pointer',
+                  fontSize: '0.8rem',
+                  opacity: page >= totalPages - 1 ? 0.5 : 1,
+                }}
+              >
+                Next →
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -1522,7 +2057,10 @@ export default function AdminDashboard() {
         Withdrawal approvals, dispute management, KYC oversight, and platform health.
       </p>
 
-      <nav role="tablist" style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
+      <nav
+        role="tablist"
+        style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}
+      >
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -1549,6 +2087,7 @@ export default function AdminDashboard() {
       {tab === 'campaigns' && <CampaignsQueue />}
       {tab === 'milestones' && <MilestonesQueue />}
       {tab === 'fraud' && <FraudQueue />}
+      {tab === 'audit' && <AuditLogViewer />}
     </div>
   );
 }

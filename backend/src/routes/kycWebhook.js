@@ -2,13 +2,19 @@ const db = require('../config/database');
 const logger = require('../config/logger');
 const { extractWebhookResult, verifyPersonaWebhookSignature } = require('../services/kycProvider');
 const { sendKycApprovedEmail, sendKycRejectedEmail } = require('../services/emailService');
-const { issueKycAttestation, attestationTypeForTier } = require('../services/contributorIdentityService');
+const {
+  issueKycAttestation,
+  attestationTypeForTier,
+} = require('../services/contributorIdentityService');
 
 function frontendBaseUrl() {
   return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
 }
 
 async function handleKycWebhook(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).set('Allow', 'POST').json({ error: 'Method not allowed' });
+  }
   try {
     const rawBody = req.body;
     const signatureHeader = req.headers['persona-signature'] || req.headers['Persona-Signature'];
@@ -47,6 +53,20 @@ async function handleKycWebhook(req, res) {
 
     if (!['verified', 'rejected', 'pending'].includes(result.kycStatus)) {
       return res.status(400).json({ error: 'Unsupported KYC status' });
+    }
+
+    const eventType =
+      result.kycStatus === 'verified'
+        ? 'inquiry.approved'
+        : result.kycStatus === 'rejected'
+          ? 'inquiry.declined'
+          : 'inquiry.pending';
+    const prior = await db.query(
+      'SELECT 1 FROM kyc_events WHERE persona_inquiry_id = $1 AND event_type = $2 LIMIT 1',
+      [result.providerReference, eventType]
+    );
+    if (prior.rows.length) {
+      return res.json({ received: true, duplicate: true });
     }
 
     const params = [result.kycStatus, result.providerReference || null];
@@ -89,7 +109,7 @@ async function handleKycWebhook(req, res) {
         [
           rows[0].id,
           result.providerReference,
-          result.kycStatus === 'verified' ? 'inquiry.approved' : result.kycStatus === 'rejected' ? 'inquiry.declined' : 'inquiry.pending',
+          eventType,
           result.tier || null,
           result.reason || null,
         ]
@@ -106,7 +126,7 @@ async function handleKycWebhook(req, res) {
         rows[0].id,
         result.tier || 'basic',
         result.providerReference
-      ).catch((err) =>
+      ).catch(err =>
         logger.warn('KYC on-chain attestation failed', {
           user_id: rows[0].id,
           error: err.message,
@@ -121,7 +141,7 @@ async function handleKycWebhook(req, res) {
           userId: rows[0].id,
           name: rows[0].name,
           dashboardUrl: `${frontendBaseUrl()}/dashboard`,
-        }).catch((err) => logger.error('KYC approved email failed', { error: err.message }));
+        }).catch(err => logger.error('KYC approved email failed', { error: err.message }));
       } else if (rows[0].kyc_status === 'rejected') {
         sendKycRejectedEmail({
           to: rows[0].email,
@@ -129,7 +149,7 @@ async function handleKycWebhook(req, res) {
           name: rows[0].name,
           reason: result.reason,
           retryUrl: `${frontendBaseUrl()}/dashboard?kyc=retry`,
-        }).catch((err) => logger.error('KYC rejected email failed', { error: err.message }));
+        }).catch(err => logger.error('KYC rejected email failed', { error: err.message }));
       }
     }
 

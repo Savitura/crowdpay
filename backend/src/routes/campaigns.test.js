@@ -26,7 +26,14 @@ function buildApp({
   sorobanInvokeImpl,
   listCreatorCampaignsImpl,
   getRecommendedCampaignsImpl,
+  reportImpl,
+  signedTokenValid,
 }) {
+  const queryCalls = [];
+  const wrappedQueryImpl = async (text, params) => {
+    queryCalls.push({ text, params });
+    return queryImpl(text, params);
+  };
   const router = proxyquire('./campaigns', {
     '../services/campaignStatusService': campaignStatusImpl || {
       refreshCampaignStatus: async () => ({ failed: null, funded: null }),
@@ -34,12 +41,11 @@ function buildApp({
     },
     '../services/campaignStatusActions': {
       queueFailedCampaignRefunds:
-        queueFailedCampaignRefundsImpl ||
-        (async () => ({ refundsCreated: 0, refunds: [] })),
+        queueFailedCampaignRefundsImpl || (async () => ({ refundsCreated: 0, refunds: [] })),
     },
     '../config/database': {
-      query: queryImpl,
-      connect: async () => ({ query: queryImpl, release: async () => {} }),
+      query: wrappedQueryImpl,
+      connect: async () => ({ query: wrappedQueryImpl, release: async () => {} }),
     },
     '../services/stellarService': {
       createCampaignWallet: async () => ({ publicKey: 'GPK', secret: 'S' }),
@@ -73,8 +79,8 @@ function buildApp({
         status: 0,
         evidence_hash: null,
       }),
-      nativeToScVal: (v) => v,
-      scvAddressFromString: (s) => s,
+      nativeToScVal: v => v,
+      scvAddressFromString: s => s,
     },
     '../services/emailService': {
       sendEmail: async () => {},
@@ -98,7 +104,7 @@ function buildApp({
     },
     '../services/kycProvider': {
       isKycRequiredForCampaigns: () => process.env.KYC_REQUIRED_FOR_CAMPAIGNS !== 'false',
-      getTierLimit: (tier) => {
+      getTierLimit: tier => {
         const limits = { none: 0, basic: 5000, standard: 50000, enhanced: Infinity };
         return limits[tier] ?? 0;
       },
@@ -113,15 +119,60 @@ function buildApp({
     '../middleware/validation': {
       createCampaignValidation: [],
       createCampaignUpdateValidation: [],
+      updateCampaignValidation: [],
       getCampaignsValidation: [],
       validateRequest: (_req, _res, next) => next(),
+      createValidateRequest: () => (_req, _res, next) => next(),
     },
     '../services/analyticsService': {
       getCampaignAnalytics: async () => ({ overview: {}, chart: [] }),
-      getCampaignContributors: async () => ([]),
-      getCampaignBackers: async () => ([]),
+      getCampaignContributors: async () => [],
+      getCampaignBackers: async () => [],
     },
-    '../utils/asyncHandler': (fn) => (req, res, next) => fn(req, res, next).catch(next),
+    '../utils/asyncHandler': fn => (req, res, next) => fn(req, res, next).catch(next),
+    '../services/campaignReportService': {
+      assembleReport: async () =>
+        reportImpl || {
+          campaign: {
+            id: 'campaign-1',
+            title: 'Test',
+            asset_type: 'USDC',
+            status: 'active',
+            created_at: new Date(),
+            deadline: null,
+            category: 'technology',
+            description: null,
+            target_amount: 100,
+            raised_amount: 0,
+            share_count: 0,
+          },
+          financials: {
+            goal_pct: 0,
+            total_received: 0,
+            target_amount: 100,
+            total_platform_fees: 0,
+            net_received: 0,
+            average_contribution: 0,
+            largest_contribution: 0,
+          },
+          engagement: { total_contributions: 0, unique_contributors: 0, asset_breakdown: [] },
+          top_contributors: [],
+          milestones: [],
+          daily_series: [],
+          timeline: [],
+          generated_at: new Date().toISOString(),
+        },
+      generateSignedUrl: () => 'https://crowdpay.io/api/campaigns/campaign-1/report/share/tok',
+      verifySignedToken: token => signedTokenValid !== false,
+    },
+    '../services/campaignReportPdf': {
+      streamCampaignReportPdf: (report, res) => {
+        res.setHeader('Content-Type', 'application/pdf');
+        res.write('%PDF-1.4 test pdf');
+        res.end();
+      },
+      reportFilename: () => 'campaign-1-report.pdf',
+    },
     '../middleware/auth': {
       requireAuth: (req, res, next) => {
         if (authUser === null) {
@@ -137,6 +188,18 @@ function buildApp({
         if (authUser) req.user = authUser;
         next();
       },
+    },
+    '../services/campaignInviteService': {
+      resolveUserCampaignRole: async () => 'owner',
+    },
+    '../lib/campaignPermissions': {
+      isValidRole: () => true,
+      canEditCampaignContent: () => true,
+      canViewAnalytics: () => true,
+      canInviteMembers: () => true,
+      canManageMembers: () => true,
+      canChangeRoles: () => true,
+      canAssignRole: () => true,
     },
   });
 
@@ -170,14 +233,16 @@ test('POST /api/campaigns/cron/fail-expired returns failed and funded campaigns'
     insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
     campaignStatusImpl: {
       refreshActiveCampaignStatuses: async () => ({
-        failed: [{
-          id: 'c-1',
-          title: 'Campaign 1',
-          target_amount: '100',
-          raised_amount: '50',
-          deadline: '2026-04-23',
-          status: 'failed',
-        }],
+        failed: [
+          {
+            id: 'c-1',
+            title: 'Campaign 1',
+            target_amount: '100',
+            raised_amount: '50',
+            deadline: '2026-04-23',
+            status: 'failed',
+          },
+        ],
         funded: [{ id: 'c-2', title: 'Funded', status: 'funded' }],
       }),
     },
@@ -192,7 +257,7 @@ test('POST /api/campaigns/cron/fail-expired returns failed and funded campaigns'
   assert.equal(response.body.fundedCampaigns.length, 1);
 });
 
-test('POST /api/campaigns blocks unverified creators when KYC gate is enabled', async (t) => {
+test('POST /api/campaigns blocks unverified creators when KYC gate is enabled', async t => {
   const previous = process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
   t.after(() => {
     if (previous === undefined) delete process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
@@ -202,9 +267,18 @@ test('POST /api/campaigns blocks unverified creators when KYC gate is enabled', 
 
   const app = buildApp({
     authUser: { userId: 'creator-1', role: 'creator' },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('wallet_public_key, kyc_status')) {
-        return { rows: [{ wallet_public_key: 'GCREATOR', kyc_status: 'pending', verification_status: 'pending', verification_tier: 'none' }] };
+        return {
+          rows: [
+            {
+              wallet_public_key: 'GCREATOR',
+              kyc_status: 'pending',
+              verification_status: 'pending',
+              verification_tier: 'none',
+            },
+          ],
+        };
       }
       return { rows: [] };
     },
@@ -221,7 +295,7 @@ test('POST /api/campaigns blocks unverified creators when KYC gate is enabled', 
   assert.equal(response.body.code, 'KYC_REQUIRED');
 });
 
-test('POST /api/campaigns returns 403 TIER_LIMIT_EXCEEDED when goal exceeds tier limit', async (t) => {
+test('POST /api/campaigns returns 403 TIER_LIMIT_EXCEEDED when goal exceeds tier limit', async t => {
   const previous = process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
   t.after(() => {
     if (previous === undefined) delete process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
@@ -231,15 +305,17 @@ test('POST /api/campaigns returns 403 TIER_LIMIT_EXCEEDED when goal exceeds tier
 
   const app = buildApp({
     authUser: { userId: 'creator-1', role: 'creator' },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('wallet_public_key, kyc_status')) {
         return {
-          rows: [{
-            wallet_public_key: 'GCREATOR',
-            kyc_status: 'verified',
-            verification_status: 'approved',
-            verification_tier: 'standard',
-          }],
+          rows: [
+            {
+              wallet_public_key: 'GCREATOR',
+              kyc_status: 'verified',
+              verification_status: 'approved',
+              verification_tier: 'standard',
+            },
+          ],
         };
       }
       return { rows: [] };
@@ -313,10 +389,7 @@ test('GET /api/campaigns/:id/contributions/export streams owner CSV and hides an
 
   assert.equal(response.status, 200);
   assert.match(response.headers['content-type'], /text\/csv/);
-  assert.match(
-    response.headers['content-disposition'],
-    /campaign-campaign-1-contributors\.csv/
-  );
+  assert.match(response.headers['content-disposition'], /campaign-campaign-1-contributors\.csv/);
   assert.equal(
     response.text,
     [
@@ -356,10 +429,13 @@ test('GET /api/campaigns/:id/contributions/export rejects non-owners', async () 
 
   assert.equal(response.status, 403);
   assert.equal(response.body.error, 'Insufficient permissions for this campaign');
-  assert.equal(queries.some(({ text }) => text.includes('FROM contributions ctr')), false);
+  assert.equal(
+    queries.some(({ text }) => text.includes('FROM contributions ctr')),
+    false
+  );
 });
 
-test('POST /api/campaigns allows creation when KYC gate is disabled', async (t) => {
+test('POST /api/campaigns allows creation when KYC gate is disabled', async t => {
   const previous = process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
   t.after(() => {
     if (previous === undefined) delete process.env.KYC_REQUIRED_FOR_CAMPAIGNS;
@@ -369,9 +445,18 @@ test('POST /api/campaigns allows creation when KYC gate is disabled', async (t) 
 
   const app = buildApp({
     authUser: { userId: 'creator-1', role: 'creator' },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('wallet_public_key, kyc_status')) {
-        return { rows: [{ wallet_public_key: 'GCREATOR', kyc_status: 'unverified', verification_status: 'unverified', verification_tier: 'none' }] };
+        return {
+          rows: [
+            {
+              wallet_public_key: 'GCREATOR',
+              kyc_status: 'unverified',
+              verification_status: 'unverified',
+              verification_tier: 'none',
+            },
+          ],
+        };
       }
       if (text.includes('INSERT INTO campaigns')) {
         return {
@@ -404,9 +489,19 @@ test('POST /api/campaigns returns 500 and logs orphaned wallet when DB insert fa
   process.env.KYC_REQUIRED_FOR_CAMPAIGNS = 'false';
   const app = buildApp({
     authUser: { userId: 'creator-1', role: 'creator' },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('wallet_public_key, kyc_status')) {
-        return { rows: [{ email: 'creator@test.com', wallet_public_key: 'GCREATOR', kyc_status: 'verified', verification_status: 'approved', verification_tier: 'basic' }] };
+        return {
+          rows: [
+            {
+              email: 'creator@test.com',
+              wallet_public_key: 'GCREATOR',
+              kyc_status: 'verified',
+              verification_status: 'approved',
+              verification_tier: 'basic',
+            },
+          ],
+        };
       }
       if (text === 'BEGIN' || text === 'ROLLBACK') return { rows: [] };
       if (text.includes('INSERT INTO campaigns')) {
@@ -431,13 +526,33 @@ test('POST /api/campaigns returns 400 with validation errors for invalid payload
   process.env.KYC_REQUIRED_FOR_CAMPAIGNS = 'false';
   const app = buildApp({
     authUser: { userId: 'creator-1', role: 'creator' },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('wallet_public_key, kyc_status')) {
-        return { rows: [{ email: 'creator@test.com', wallet_public_key: 'GCREATOR', kyc_status: 'verified', verification_status: 'approved', verification_tier: 'basic' }] };
+        return {
+          rows: [
+            {
+              email: 'creator@test.com',
+              wallet_public_key: 'GCREATOR',
+              kyc_status: 'verified',
+              verification_status: 'approved',
+              verification_tier: 'basic',
+            },
+          ],
+        };
       }
       if (text === 'BEGIN' || text === 'ROLLBACK') return { rows: [] };
       if (text.includes('INSERT INTO campaigns')) {
-        return { rows: [{ id: 'camp-1', title: '', target_amount: '-5', asset_type: 'INVALID', creator_id: 'creator-1' }] };
+        return {
+          rows: [
+            {
+              id: 'camp-1',
+              title: '',
+              target_amount: '-5',
+              asset_type: 'INVALID',
+              creator_id: 'creator-1',
+            },
+          ],
+        };
       }
       return { rows: [] };
     },
@@ -456,7 +571,7 @@ test('POST /api/campaigns returns 400 with validation errors for invalid payload
 
 test('POST /api/campaigns/:id/trigger-refunds creates refund requests for contributions', async () => {
   const app = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT id, wallet_public_key, status FROM campaigns')) {
         return { rows: [{ id: 'c-1', wallet_public_key: 'GPK', status: 'failed' }] };
       }
@@ -511,7 +626,7 @@ test('GET /api/campaigns supports search, asset filter, and sort', async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body.total, 1);
   assert.equal(response.body.campaigns.length, 1);
-  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  const listQuery = queries.find(q => q.text.includes('ORDER BY'));
   assert.ok(listQuery);
   assert.match(listQuery.text, /websearch_to_tsquery/i);
   assert.match(listQuery.text, /raised_amount \/ NULLIF/i);
@@ -536,7 +651,7 @@ test('GET /api/campaigns applies faceted filters (funding range, deadline, verif
   );
 
   assert.equal(response.status, 200);
-  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  const listQuery = queries.find(q => q.text.includes('ORDER BY'));
   assert.ok(listQuery);
   // Funding range is parameterized against raised_amount.
   assert.match(listQuery.text, /c\.raised_amount >= \$/);
@@ -552,13 +667,13 @@ test('GET /api/campaigns applies faceted filters (funding range, deadline, verif
   assert.match(listQuery.text, /c\.country = \$/);
   assert.ok(listQuery.params.includes('US'));
   // Count query must also join users so the verified filter resolves.
-  const countQuery = queries.find((q) => q.text.includes('COUNT(*)'));
+  const countQuery = queries.find(q => q.text.includes('COUNT(*)'));
   assert.match(countQuery.text, /JOIN users u/);
 });
 
 test('GET /api/campaigns/facets returns facet counts and funding bounds', async () => {
   const app = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('GROUP BY category')) {
         return { rows: [{ category: 'technology', count: 3 }] };
       }
@@ -645,6 +760,110 @@ function buildListingApp(queries) {
   });
 }
 
+// #899: the listing and detail endpoints are unauthenticated, so their payloads
+// must never carry the fraud detector's output, the duplicate fingerprint or
+// the column reserved for the encrypted campaign wallet key.
+const INTERNAL_CAMPAIGN_KEYS = [
+  'content_fingerprint',
+  'is_flagged_duplicate',
+  'is_flagged_fraud',
+  'fraud_score',
+  'fraud_signals',
+  'wallet_secret_encrypted',
+  'search_vector',
+  'refund_xdr',
+];
+
+function internalCampaignFields() {
+  return {
+    content_fingerprint: 'fingerprint-internal',
+    is_flagged_duplicate: true,
+    is_flagged_fraud: true,
+    fraud_score: 88,
+    fraud_signals: { velocity: 'high' },
+    wallet_secret_encrypted: 'encrypted-wallet-secret',
+    search_vector: 'solar:1',
+    refund_xdr: 'AAAA-internal',
+  };
+}
+
+test('GET /api/campaigns never serialises fraud/duplicate internals or the wallet key', async () => {
+  const queries = [];
+  const app = buildApp({
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('COUNT(*)')) return { rows: [{ total: 1 }] };
+      return {
+        rows: [
+          { id: 'camp-1', title: 'Solar panels', status: 'active', ...internalCampaignFields() },
+        ],
+      };
+    },
+  });
+
+  const response = await request(app).get('/api/campaigns');
+  assert.equal(response.status, 200);
+
+  const campaign = response.body.campaigns[0];
+  assert.equal(campaign.title, 'Solar panels');
+  for (const key of INTERNAL_CAMPAIGN_KEYS) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(campaign, key),
+      false,
+      `${key} must not be serialised by GET /api/campaigns`
+    );
+  }
+
+  const listQuery = queries.find(query => query.text.includes('FROM campaigns c'));
+  assert.ok(listQuery, 'the listing query should have been issued');
+  assert.doesNotMatch(listQuery.text, /SELECT\s+c\.\*/);
+  assert.match(listQuery.text, /SELECT\s+c\.id,/);
+});
+
+test('GET /api/campaigns/:id never serialises fraud/duplicate internals or the wallet key', async () => {
+  const queries = [];
+  const app = buildApp({
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT is_admin FROM users')) return { rows: [{ is_admin: false }] };
+      if (text.includes('FROM campaigns c')) {
+        return {
+          rows: [
+            {
+              id: 'camp-1',
+              creator_id: 'creator-1',
+              title: 'Solar panels',
+              status: 'active',
+              is_hidden: false,
+              deleted_at: null,
+              contributor_count: 3,
+              ...internalCampaignFields(),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app).get('/api/campaigns/camp-1');
+  assert.equal(response.status, 200);
+
+  assert.equal(response.body.title, 'Solar panels');
+  assert.equal(response.body.contributor_count, 3);
+  for (const key of INTERNAL_CAMPAIGN_KEYS) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(response.body, key),
+      false,
+      `${key} must not be serialised by GET /api/campaigns/:id`
+    );
+  }
+
+  const detailQuery = queries.find(query => query.text.includes('FROM campaigns c'));
+  assert.ok(detailQuery, 'the detail query should have been issued');
+  assert.doesNotMatch(detailQuery.text, /SELECT\s+c\.\*/);
+});
+
 test('GET /api/campaigns search without sort ranks by relevance', async () => {
   const queries = [];
   const app = buildListingApp(queries);
@@ -652,7 +871,7 @@ test('GET /api/campaigns search without sort ranks by relevance', async () => {
   const response = await request(app).get('/api/campaigns?search=solar');
   assert.equal(response.status, 200);
 
-  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  const listQuery = queries.find(q => q.text.includes('ORDER BY'));
   assert.ok(listQuery);
   assert.match(listQuery.text, /ORDER BY ts_rank\(c\.search_vector/);
 });
@@ -664,7 +883,7 @@ test('GET /api/campaigns explicit sort wins over relevance when searching', asyn
   const response = await request(app).get('/api/campaigns?search=solar&sort=newest');
   assert.equal(response.status, 200);
 
-  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  const listQuery = queries.find(q => q.text.includes('ORDER BY'));
   assert.match(listQuery.text, /ORDER BY c\.created_at DESC/);
   assert.doesNotMatch(listQuery.text, /ts_rank/);
 });
@@ -676,7 +895,7 @@ test('GET /api/campaigns sort=relevance without search falls back to newest', as
   const response = await request(app).get('/api/campaigns?sort=relevance');
   assert.equal(response.status, 200);
 
-  const listQuery = queries.find((q) => q.text.includes('ORDER BY'));
+  const listQuery = queries.find(q => q.text.includes('ORDER BY'));
   assert.match(listQuery.text, /ORDER BY c\.created_at DESC/);
   assert.doesNotMatch(listQuery.text, /ts_rank/);
 });
@@ -696,7 +915,7 @@ test('Analytics routes enforce requireAuth and requireCampaignMember', async () 
   // 2. Non-member non-owner user returns 403
   const nonMemberApp = buildApp({
     authUser: { userId: 'stranger-1', role: 'user' },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns')) {
         return { rows: [{ creator_id: 'creator-1' }] };
       }
@@ -710,7 +929,9 @@ test('Analytics routes enforce requireAuth and requireCampaignMember', async () 
   const res2 = await request(nonMemberApp).get('/api/campaigns/c-123/analytics');
   assert.equal(res2.status, 403);
 
-  const res2Contrib = await request(nonMemberApp).get('/api/campaigns/c-123/analytics/contributors');
+  const res2Contrib = await request(nonMemberApp).get(
+    '/api/campaigns/c-123/analytics/contributors'
+  );
   assert.equal(res2Contrib.status, 403);
 
   const res2Backers = await request(nonMemberApp).get('/api/campaigns/c-123/analytics/backers');
@@ -719,7 +940,7 @@ test('Analytics routes enforce requireAuth and requireCampaignMember', async () 
   // 3. Campaign creator returns 200
   const creatorApp = buildApp({
     authUser: { userId: 'creator-1', role: 'user' },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns')) {
         return { rows: [{ creator_id: 'creator-1' }] };
       }
@@ -742,7 +963,7 @@ test('Analytics routes enforce requireAuth and requireCampaignMember', async () 
   // 4. Accepted campaign member returns 200
   const memberApp = buildApp({
     authUser: { userId: 'member-1', role: 'user' },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns')) {
         return { rows: [{ creator_id: 'creator-1' }] };
       }
@@ -784,7 +1005,7 @@ function buildShareApp({ campaignExists = true, initialShareCount = 5, authUser 
       dedup.set(key, now);
       return { rows: [{ campaign_id: campaignId }] };
     }
-    if (text.includes('UPDATE campaigns SET share_count')) {
+    if (text.includes('UPDATE campaigns') && text.includes('share_count')) {
       shareCount += 1;
       return { rows: [{ share_count: shareCount }] };
     }
@@ -799,7 +1020,9 @@ function buildShareApp({ campaignExists = true, initialShareCount = 5, authUser 
 test('POST /api/campaigns/:id/share increments share_count on first share', async () => {
   const app = buildShareApp({ initialShareCount: 5 });
 
-  const response = await request(app).post('/api/campaigns/c-1/share').set('X-Forwarded-For', '1.2.3.4');
+  const response = await request(app)
+    .post('/api/campaigns/c-1/share')
+    .set('X-Forwarded-For', '1.2.3.4');
 
   assert.equal(response.status, 200);
   assert.equal(response.body.share_count, 6);
@@ -808,8 +1031,12 @@ test('POST /api/campaigns/:id/share increments share_count on first share', asyn
 test('POST /api/campaigns/:id/share does not recount a repeated share from the same actor within the window', async () => {
   const app = buildShareApp({ initialShareCount: 5 });
 
-  const first = await request(app).post('/api/campaigns/c-1/share').set('X-Forwarded-For', '1.2.3.4');
-  const second = await request(app).post('/api/campaigns/c-1/share').set('X-Forwarded-For', '1.2.3.4');
+  const first = await request(app)
+    .post('/api/campaigns/c-1/share')
+    .set('X-Forwarded-For', '1.2.3.4');
+  const second = await request(app)
+    .post('/api/campaigns/c-1/share')
+    .set('X-Forwarded-For', '1.2.3.4');
 
   assert.equal(first.body.share_count, 6);
   assert.equal(second.status, 200);
@@ -819,8 +1046,12 @@ test('POST /api/campaigns/:id/share does not recount a repeated share from the s
 test('POST /api/campaigns/:id/share counts shares from different actors independently', async () => {
   const app = buildShareApp({ initialShareCount: 5 });
 
-  const first = await request(app).post('/api/campaigns/c-1/share').set('X-Forwarded-For', '1.2.3.4');
-  const second = await request(app).post('/api/campaigns/c-1/share').set('X-Forwarded-For', '5.6.7.8');
+  const first = await request(app)
+    .post('/api/campaigns/c-1/share')
+    .set('X-Forwarded-For', '1.2.3.4');
+  const second = await request(app)
+    .post('/api/campaigns/c-1/share')
+    .set('X-Forwarded-For', '5.6.7.8');
 
   assert.equal(first.body.share_count, 6);
   assert.equal(second.body.share_count, 7);
@@ -829,8 +1060,12 @@ test('POST /api/campaigns/:id/share counts shares from different actors independ
 test('POST /api/campaigns/:id/share dedups an authenticated user by user id, not IP', async () => {
   const app = buildShareApp({ initialShareCount: 5, authUser: { userId: 'user-42' } });
 
-  const first = await request(app).post('/api/campaigns/c-1/share').set('X-Forwarded-For', '1.2.3.4');
-  const second = await request(app).post('/api/campaigns/c-1/share').set('X-Forwarded-For', '9.9.9.9');
+  const first = await request(app)
+    .post('/api/campaigns/c-1/share')
+    .set('X-Forwarded-For', '1.2.3.4');
+  const second = await request(app)
+    .post('/api/campaigns/c-1/share')
+    .set('X-Forwarded-For', '9.9.9.9');
 
   assert.equal(first.body.share_count, 6);
   assert.equal(second.body.share_count, 6);
@@ -848,11 +1083,16 @@ test('POST /api/campaigns/:id/share only counts one increment out of a concurren
   const app = buildShareApp({ initialShareCount: 0 });
 
   const responses = await Promise.all(
-    Array.from({ length: 5 }, () => request(app).post('/api/campaigns/c-1/share').set('X-Forwarded-For', '1.2.3.4'))
+    Array.from({ length: 5 }, () =>
+      request(app).post('/api/campaigns/c-1/share').set('X-Forwarded-For', '1.2.3.4')
+    )
   );
 
-  const counts = responses.map((r) => r.body.share_count);
-  assert.ok(counts.every((c) => c === 1), `expected all responses to report share_count 1, got ${counts}`);
+  const counts = responses.map(r => r.body.share_count);
+  assert.ok(
+    counts.every(c => c === 1),
+    `expected all responses to report share_count 1, got ${counts}`
+  );
 });
 
 test('GET /api/campaigns/:id denies hidden campaign to demoted admin with stale JWT', async () => {
@@ -877,15 +1117,17 @@ test('GET /api/campaigns/:id denies hidden campaign to demoted admin with stale 
     }
     if (text.includes('FROM campaigns WHERE id')) {
       return {
-        rows: [{
-          id: 'c-hidden',
-          title: 'Hidden Campaign',
-          is_hidden: true,
-          status: 'active',
-          deleted_at: null,
-          creator_id: 'creator-other',
-          contributor_count: 0,
-        }],
+        rows: [
+          {
+            id: 'c-hidden',
+            title: 'Hidden Campaign',
+            is_hidden: true,
+            status: 'active',
+            deleted_at: null,
+            creator_id: 'creator-other',
+            contributor_count: 0,
+          },
+        ],
       };
     }
     return { rows: [] };
@@ -905,4 +1147,524 @@ test('GET /api/campaigns/:id denies hidden campaign to demoted admin with stale 
     .set('Authorization', `Bearer ${token}`);
 
   assert.equal(res.status, 404);
+});
+
+test('GET /api/campaigns/:id/report/export streams a PDF for the owner', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id = $1')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .get('/api/campaigns/campaign-1/report/export')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers['content-type'], /application\/pdf/);
+  assert.match(response.headers['content-disposition'], /campaign-1-report\.pdf/);
+  const bodyText = Buffer.isBuffer(response.body) ? response.body.toString('utf8') : response.text;
+  assert.ok(bodyText.includes('%PDF'));
+});
+
+test('GET /api/campaigns/:id/report/export rejects non-owners', async () => {
+  const app = buildApp({
+    authUser: { userId: 'user-2', role: 'creator' },
+    queryImpl: async text => {
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id = $1')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .get('/api/campaigns/campaign-1/report/export')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 403);
+});
+
+test('GET /api/campaigns/:id/report/export requires authentication', async () => {
+  const app = buildApp({
+    authUser: null,
+    queryImpl: async () => ({ rows: [] }),
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app).get('/api/campaigns/campaign-1/report/export');
+
+  assert.equal(response.status, 401);
+});
+
+test('GET /api/campaigns/:id/report/share returns a signed URL for the owner', async () => {
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async text => {
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id = $1')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app)
+    .get('/api/campaigns/campaign-1/report/share')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.match(response.body.url, /\/api\/campaigns\/campaign-1\/report\/share\//);
+  assert.equal(response.body.expires_in_seconds, 24 * 60 * 60);
+});
+
+test('GET /api/campaigns/:id/report/share/TOKEN serves the PDF for a valid signed token', async () => {
+  const app = buildApp({
+    authUser: null,
+    signedTokenValid: true,
+    queryImpl: async text => {
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id = $1')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app).get('/api/campaigns/campaign-1/report/share/sometoken');
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers['content-type'], /application\/pdf/);
+});
+
+test('GET /api/campaigns/:id/report/share/TOKEN rejects an invalid/expired signed token', async () => {
+  const app = buildApp({
+    authUser: null,
+    signedTokenValid: false,
+    queryImpl: async text => {
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id = $1')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const response = await request(app).get('/api/campaigns/campaign-1/report/share/invalidtoken');
+
+  assert.equal(response.status, 403);
+  assert.match(response.body.error, /Invalid or expired share link/);
+});
+
+test('PATCH /api/campaigns/:id accepts valid fields and returns 422 for validation errors', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+        return {
+          rows: [
+            {
+              id: 'campaign-1',
+              title: 'Original Title',
+              description: 'Original description',
+              target_amount: '100',
+              deadline: '2026-12-31T23:59:59Z',
+              country: 'US',
+              creator_id: 'creator-1',
+              status: 'active',
+            },
+          ],
+        };
+      }
+      if (text.includes('SELECT status FROM campaigns WHERE id = $1')) {
+        return { rows: [{ status: 'active' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('SELECT SUM(amount) as total_budget FROM campaign_budget_categories')) {
+        return { rows: [{ total_budget: '0' }] };
+      }
+      if (text.includes('UPDATE campaigns') && text.includes('SET') && text.includes('WHERE id')) {
+        return { rows: [] };
+      }
+      if (text.includes('BEGIN') || text.includes('COMMIT')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  // Test valid update with multiple fields
+  const response = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({
+      title: 'Updated Title',
+      description: 'Updated description',
+      target_amount: 200,
+      deadline: '2027-01-15T23:59:59Z',
+      country: 'CA',
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.title, 'Updated Title');
+  assert.equal(response.body.target_amount, '200');
+
+  // Test validation error for deadline too soon (less than 24 hours)
+  const tooSoon = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(); // 12 hours from now
+  const response2 = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({ deadline: tooSoon });
+
+  assert.equal(response2.status, 422);
+  assert.match(response2.body.error?.message || response2.body.error, /at least 24 hours/);
+});
+
+test('PATCH /api/campaigns/:id accepts max_per_user, min_contribution, max_contribution fields', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+        return {
+          rows: [
+            {
+              id: 'campaign-1',
+              title: 'Original Title',
+              description: 'Original description',
+              target_amount: '100',
+              deadline: '2026-12-31T23:59:59Z',
+              country: 'US',
+              min_contribution: '10',
+              max_contribution: '1000',
+              max_per_user: '500',
+              creator_id: 'creator-1',
+              status: 'active',
+            },
+          ],
+        };
+      }
+      if (text.includes('SELECT status FROM campaigns WHERE id = $1')) {
+        return { rows: [{ status: 'active' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('SELECT SUM(amount) as total_budget FROM campaign_budget_categories')) {
+        return { rows: [{ total_budget: '0' }] };
+      }
+      if (text.includes('UPDATE campaigns') && text.includes('SET') && text.includes('WHERE id')) {
+        return {
+          rows: [
+            {
+              id: 'campaign-1',
+              title: 'Original Title',
+              description: 'Original description',
+              target_amount: '100',
+              deadline: '2026-12-31T23:59:59Z',
+              country: 'US',
+              min_contribution: '20',
+              max_contribution: '2000',
+              max_per_user: '1000',
+              creator_id: 'creator-1',
+              status: 'active',
+            },
+          ],
+        };
+      }
+      if (text.includes('INSERT INTO campaign_revisions')) {
+        return { rows: [] };
+      }
+      if (text.includes('BEGIN') || text.includes('COMMIT')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  // Test updating max_per_user, min_contribution, max_contribution
+  const response = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({
+      min_contribution: 20,
+      max_contribution: 2000,
+      max_per_user: 1000,
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.min_contribution, '20');
+  assert.equal(response.body.max_contribution, '2000');
+  assert.equal(response.body.max_per_user, '1000');
+});
+
+test('PATCH /api/campaigns/:id rejects invalid fields with 422', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+        return {
+          rows: [
+            {
+              id: 'campaign-1',
+              title: 'Original Title',
+              creator_id: 'creator-1',
+              status: 'active',
+            },
+          ],
+        };
+      }
+      if (text.includes('SELECT status FROM campaigns WHERE id = $1')) {
+        return { rows: [{ status: 'active' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('SELECT SUM(amount) as total_budget FROM campaign_budget_categories')) {
+        return { rows: [{ total_budget: '0' }] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  // Test invalid field
+  const response = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({ invalid_field: 'should fail' });
+
+  assert.equal(response.status, 422);
+  assert.match(
+    response.body.error?.message || response.body.error,
+    /Cannot update field: invalid_field/
+  );
+});
+
+test('PATCH /api/campaigns/:id returns 422 for deadline in the past', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+        return {
+          rows: [
+            {
+              id: 'campaign-1',
+              title: 'Original Title',
+              creator_id: 'creator-1',
+              status: 'active',
+            },
+          ],
+        };
+      }
+      if (text.includes('SELECT status FROM campaigns WHERE id = $1')) {
+        return { rows: [{ status: 'active' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('SELECT SUM(amount) as total_budget FROM campaign_budget_categories')) {
+        return { rows: [{ total_budget: '0' }] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  const pastDeadline = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(); // 24 hours ago
+  const response = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({ deadline: pastDeadline });
+
+  assert.equal(response.status, 422);
+  assert.match(
+    response.body.error?.message || response.body.error,
+    /Deadline must be at least 24 hours in the future/
+  );
+});
+
+test('PATCH /api/campaigns/:id validates max_per_user > min_contribution', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+        return {
+          rows: [
+            {
+              id: 'campaign-1',
+              title: 'Original Title',
+              creator_id: 'creator-1',
+              status: 'active',
+              min_contribution: '100',
+            },
+          ],
+        };
+      }
+      if (text.includes('SELECT status FROM campaigns WHERE id = $1')) {
+        return { rows: [{ status: 'active' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('SELECT SUM(amount) as total_budget FROM campaign_budget_categories')) {
+        return { rows: [{ total_budget: '0' }] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  // max_per_user (50) <= min_contribution (100) should fail
+  const response = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({ max_per_user: 50 });
+
+  assert.equal(response.status, 422);
+  assert.match(
+    response.body.error?.message || response.body.error,
+    /Per-contributor cap must be greater than minimum contribution/
+  );
+});
+
+test('PATCH /api/campaigns/:id full object round-trip works', async () => {
+  const queries = [];
+  const app = buildApp({
+    authUser: { userId: 'creator-1', role: 'creator' },
+    queryImpl: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+        return {
+          rows: [
+            {
+              id: 'campaign-1',
+              title: 'Original Title',
+              description: 'Original description',
+              category: 'technology',
+              target_amount: '100',
+              asset_type: 'USDC',
+              deadline: '2026-12-31T23:59:59Z',
+              country: 'US',
+              min_contribution: '10',
+              max_contribution: '1000',
+              max_per_user: '500',
+              creator_id: 'creator-1',
+              status: 'active',
+            },
+          ],
+        };
+      }
+      if (text.includes('SELECT status FROM campaigns WHERE id = $1')) {
+        return { rows: [{ status: 'active' }] };
+      }
+      if (text.includes('SELECT role, accepted_at FROM campaign_members')) {
+        return { rows: [] };
+      }
+      if (text.includes('SELECT SUM(amount) as total_budget FROM campaign_budget_categories')) {
+        return { rows: [{ total_budget: '0' }] };
+      }
+      if (text.includes('UPDATE campaigns') && text.includes('SET') && text.includes('WHERE id')) {
+        return {
+          rows: [
+            {
+              id: 'campaign-1',
+              title: 'Updated Title',
+              description: 'Updated description',
+              category: 'education',
+              target_amount: '200',
+              asset_type: 'USDC',
+              deadline: '2027-01-15T23:59:59Z',
+              country: 'CA',
+              min_contribution: '20',
+              max_contribution: '2000',
+              max_per_user: '1000',
+              creator_id: 'creator-1',
+              status: 'active',
+            },
+          ],
+        };
+      }
+      if (text.includes('INSERT INTO campaign_revisions')) {
+        return { rows: [] };
+      }
+      if (text.includes('BEGIN') || text.includes('COMMIT')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    buildWithdrawalTransactionImpl: async () => '',
+    insertWithdrawalPendingSignaturesImpl: async () => 'tx-row',
+  });
+
+  // Full object round-trip PATCH
+  const response = await request(app)
+    .patch('/api/campaigns/campaign-1')
+    .set('Authorization', 'Bearer token')
+    .send({
+      title: 'Updated Title',
+      description: 'Updated description',
+      category: 'education',
+      target_amount: 200,
+      deadline: '2027-01-15T23:59:59Z',
+      country: 'CA',
+      min_contribution: 20,
+      max_contribution: 2000,
+      max_per_user: 1000,
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.title, 'Updated Title');
+  assert.equal(response.body.category, 'education');
+  assert.equal(response.body.target_amount, '200');
+  assert.equal(response.body.min_contribution, '20');
+  assert.equal(response.body.max_contribution, '2000');
+  assert.equal(response.body.max_per_user, '1000');
 });

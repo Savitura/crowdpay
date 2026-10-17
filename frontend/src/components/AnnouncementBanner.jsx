@@ -73,10 +73,7 @@ export default function AnnouncementBanner() {
   const severity = visibleAnnouncement.severity || 'info';
 
   return (
-    <div
-      role="status"
-      className={`announcement-banner announcement-banner--${severity}`}
-    >
+    <div role="status" className={`announcement-banner announcement-banner--${severity}`}>
       <div className="announcement-banner__content">
         <span className="announcement-banner__message">{visibleAnnouncement.message}</span>
         {visibleAnnouncement.details_url && (

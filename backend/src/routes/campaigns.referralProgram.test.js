@@ -48,8 +48,8 @@ function buildApp({ queryImpl = async () => ({ rows: [] }), referralStub = {}, a
       deployCampaignContracts: async () => ({ escrowContractId: 'C', milestonesContractId: 'C' }),
       invokeContract: async () => null,
       encodeMilestone: () => ({}),
-      nativeToScVal: (v) => v,
-      scvAddressFromString: (s) => s,
+      nativeToScVal: v => v,
+      scvAddressFromString: s => s,
     },
     '../services/emailService': { sendEmail: async () => {} },
     '../services/alerting': { sendAlert: () => {} },
@@ -68,10 +68,12 @@ function buildApp({ queryImpl = async () => ({ rows: [] }), referralStub = {}, a
     '../middleware/validation': {
       createCampaignValidation: [],
       createCampaignUpdateValidation: [],
+      updateCampaignValidation: [],
       getCampaignsValidation: [],
       validateRequest: (_req, _res, next) => next(),
+      createValidateRequest: () => (_req, _res, next) => next(),
     },
-    '../utils/asyncHandler': (fn) => (req, res, next) => fn(req, res, next).catch(next),
+    '../utils/asyncHandler': fn => (req, res, next) => fn(req, res, next).catch(next),
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
         req.user = authUser || { userId: 'creator-1', role: 'creator' };
@@ -89,7 +91,7 @@ function buildApp({ queryImpl = async () => ({ rows: [] }), referralStub = {}, a
   return app;
 }
 
-const ownerQuery = async (text) => {
+const ownerQuery = async text => {
   if (text.includes('SELECT creator_id FROM campaigns')) {
     return { rows: [{ creator_id: 'creator-1' }] };
   }

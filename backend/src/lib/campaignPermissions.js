@@ -1,9 +1,10 @@
-const VALID_ROLES = ['owner', 'manager', 'editor', 'viewer'];
+const VALID_ROLES = ['owner', 'manager', 'editor', 'finance', 'viewer'];
 
 const ROLE_RANK = {
-  owner: 4,
-  manager: 3,
-  editor: 2,
+  owner: 5,
+  manager: 4,
+  editor: 3,
+  finance: 2,
   viewer: 1,
 };
 
@@ -20,7 +21,7 @@ function canEditCampaignContent(role) {
 }
 
 function canViewAnalytics(role) {
-  return role === 'owner' || role === 'manager' || role === 'viewer';
+  return role === 'owner' || role === 'manager' || role === 'finance' || role === 'viewer';
 }
 
 function canManageMembers(role) {
@@ -55,6 +56,22 @@ function canDeleteCampaign(role) {
   return role === 'owner';
 }
 
+/**
+ * Finance collaborators (and managers/owners) may initiate and review payouts,
+ * but they cannot redirect where funds go.
+ */
+function canManagePayouts(role) {
+  return role === 'owner' || role === 'manager' || role === 'finance';
+}
+
+/**
+ * Changing the payout destination is owner-only and requires explicit owner
+ * confirmation, so a compromised finance/manager session cannot redirect funds.
+ */
+function canChangePayoutDestination(role) {
+  return role === 'owner';
+}
+
 module.exports = {
   VALID_ROLES,
   ROLE_RANK,
@@ -68,4 +85,6 @@ module.exports = {
   canAssignRole,
   canSubmitMilestones,
   canDeleteCampaign,
+  canManagePayouts,
+  canChangePayoutDestination,
 };

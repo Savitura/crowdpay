@@ -46,7 +46,7 @@ function allocateProportionalRefunds(contributions, balance) {
   const balanceUnits = toUnits(balance);
   if (balanceUnits <= 0n || !contributions.length) return [];
 
-  const contributedUnits = contributions.map((c) => toUnits(c.contributed));
+  const contributedUnits = contributions.map(c => toUnits(c.contributed));
   const totalContributedUnits = contributedUnits.reduce((sum, u) => sum + u, 0n);
   if (totalContributedUnits <= 0n) return [];
 
@@ -75,8 +75,8 @@ function allocateProportionalRefunds(contributions, balance) {
   }
 
   return shares
-    .filter((s) => s.floorShare > 0n)
-    .map((s) => ({
+    .filter(s => s.floorShare > 0n)
+    .map(s => ({
       contributorId: s.contributorId,
       walletPublicKey: s.walletPublicKey,
       amount: fromUnits(s.floorShare),

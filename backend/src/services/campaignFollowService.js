@@ -6,8 +6,19 @@ const { createNotificationsBulk } = require('./notifications');
 // campaign without necessarily contributing to it. Each follow row carries its
 // own notification preferences so a follower can, for example, hear about
 // milestone releases but not every funding threshold.
-
+//
+// #961 adds a third, campaign-scoped layer: a contributor can mute a channel
+// for a campaign they are not even following (see communicationPreferenceService).
+// The per-campaign mute is the strongest signal and is applied here so every
+// follower fan-out route respects it.
 const PREFERENCE_COLUMNS = ['notify_updates', 'notify_milestones', 'notify_funding'];
+
+/** Maps a follower preference column onto a per-campaign communication channel. */
+const CHANNEL_FOR_PREFERENCE = {
+  notify_updates: 'updates',
+  notify_milestones: 'milestones',
+  notify_funding: 'funding_updates',
+};
 
 // Percentages of the funding goal that are worth telling followers about.
 const FUNDING_THRESHOLDS = [25, 50, 75, 100];
@@ -30,7 +41,7 @@ async function followCampaign(userId, campaignId, input = {}) {
   // bare follow never clobbers choices the user made earlier.
   const conflictAction = Object.keys(prefs).length
     ? `DO UPDATE SET ${Object.keys(prefs)
-        .map((column) => `${column} = EXCLUDED.${column}`)
+        .map(column => `${column} = EXCLUDED.${column}`)
         .join(', ')}`
     : 'DO UPDATE SET user_id = campaign_followers.user_id';
 
@@ -126,13 +137,20 @@ async function notifyFollowers(campaignId, preference, message, exclude) {
 
   const excluded = (Array.isArray(exclude) ? exclude : [exclude]).filter(Boolean);
   const { rows: followers } = await db.query(
-    `SELECT user_id
-     FROM campaign_followers
-     WHERE campaign_id = $1 AND ${preference} = TRUE AND NOT (user_id = ANY($2::uuid[]))`,
+    `SELECT f.user_id
+     FROM campaign_followers f
+     WHERE f.campaign_id = $1 AND f.${preference} = TRUE
+       AND NOT (f.user_id = ANY($2::uuid[]))
+       AND NOT EXISTS (
+         SELECT 1 FROM campaign_communication_preferences p
+         WHERE p.campaign_id = f.campaign_id
+           AND p.user_id = f.user_id
+           AND p.${CHANNEL_FOR_PREFERENCE[preference]} = FALSE
+       )`,
     [campaignId, excluded]
   );
 
-  const userIds = followers.map((f) => f.user_id);
+  const userIds = followers.map(f => f.user_id);
   try {
     await createNotificationsBulk(userIds, message);
   } catch (err) {
@@ -203,4 +221,5 @@ module.exports = {
   announceFundingProgress,
   highestThresholdReached,
   FUNDING_THRESHOLDS,
+  CHANNEL_FOR_PREFERENCE,
 };

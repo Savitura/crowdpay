@@ -36,19 +36,23 @@ export default function CampaignCompare() {
   const [sortBy, setSortBy] = useState('progress');
 
   useEffect(() => {
-    api.getCampaigns({ limit: 50 })
+    api
+      .getCampaigns({ limit: 50 })
       .then((res) => setAllCampaigns(res.data || []))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
-  const handleAddCampaign = useCallback((camp) => {
-    if (selected.length >= MAX_COMPARE) return;
-    if (selected.some((s) => s.id === camp.id)) return;
-    setSelected((prev) => [...prev, camp]);
-    setShowSelector(false);
-    setSearch('');
-  }, [selected]);
+  const handleAddCampaign = useCallback(
+    (camp) => {
+      if (selected.length >= MAX_COMPARE) return;
+      if (selected.some((s) => s.id === camp.id)) return;
+      setSelected((prev) => [...prev, camp]);
+      setShowSelector(false);
+      setSearch('');
+    },
+    [selected]
+  );
 
   const handleRemove = useCallback((id) => {
     setSelected((prev) => prev.filter((s) => s.id !== id));
@@ -64,7 +68,7 @@ export default function CampaignCompare() {
   const sorted = [...selected].sort((a, b) => {
     switch (sortBy) {
       case 'progress':
-        return (b.raised_amount / b.target_amount) - (a.raised_amount / a.target_amount);
+        return b.raised_amount / b.target_amount - a.raised_amount / a.target_amount;
       case 'raised':
         return b.raised_amount - a.raised_amount;
       case 'target':
@@ -120,14 +124,18 @@ export default function CampaignCompare() {
                 >
                   <span className="font-medium text-gray-900 truncate mr-2">{camp.title}</span>
                   <span className="text-xs text-gray-400 shrink-0">
-                    {Number(camp.raised_amount).toLocaleString()} / {Number(camp.target_amount).toLocaleString()}
+                    {Number(camp.raised_amount).toLocaleString()} /{' '}
+                    {Number(camp.target_amount).toLocaleString()}
                   </span>
                 </button>
               ))
             )}
           </div>
           <button
-            onClick={() => { setShowSelector(false); setSearch(''); }}
+            onClick={() => {
+              setShowSelector(false);
+              setSearch('');
+            }}
             className="mt-2 text-sm text-gray-500 hover:text-gray-700"
           >
             Cancel
@@ -161,10 +169,15 @@ export default function CampaignCompare() {
             <table className="w-full border-collapse">
               <thead>
                 <tr>
-                  <th className="w-40 text-left text-sm font-medium text-gray-500 pb-3 pr-4">Metric</th>
+                  <th className="w-40 text-left text-sm font-medium text-gray-500 pb-3 pr-4">
+                    Metric
+                  </th>
                   {sorted.map((camp) => (
                     <th key={camp.id} style={{ width: colWidth }} className="text-left pb-3 px-2">
-                      <Link to={`/campaigns/${camp.id}`} className="text-indigo-600 hover:text-indigo-800 font-semibold text-sm">
+                      <Link
+                        to={`/campaigns/${camp.id}`}
+                        className="text-indigo-600 hover:text-indigo-800 font-semibold text-sm"
+                      >
                         {camp.title}
                       </Link>
                     </th>
@@ -214,10 +227,15 @@ export default function CampaignCompare() {
                           <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
                             <div
                               className="h-full rounded-full transition-all"
-                              style={{ width: `${pct}%`, backgroundColor: pct >= 100 ? '#10b981' : '#2563eb' }}
+                              style={{
+                                width: `${pct}%`,
+                                backgroundColor: pct >= 100 ? '#10b981' : '#2563eb',
+                              }}
                             />
                           </div>
-                          <span className="text-xs font-medium text-gray-600">{pct.toFixed(1)}%</span>
+                          <span className="text-xs font-medium text-gray-600">
+                            {pct.toFixed(1)}%
+                          </span>
                         </div>
                       </td>
                     );
@@ -227,7 +245,9 @@ export default function CampaignCompare() {
                 <tr>
                   <td className="text-sm text-gray-500 py-3 pr-4 font-medium">Days Left</td>
                   {sorted.map((camp) => (
-                    <td key={camp.id} className="py-3 px-2 text-sm">{daysLeft(camp.deadline)}</td>
+                    <td key={camp.id} className="py-3 px-2 text-sm">
+                      {daysLeft(camp.deadline)}
+                    </td>
                   ))}
                 </tr>
 
@@ -235,12 +255,17 @@ export default function CampaignCompare() {
                   <td className="text-sm text-gray-500 py-3 pr-4 font-medium">Status</td>
                   {sorted.map((camp) => (
                     <td key={camp.id} className="py-3 px-2">
-                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
-                        camp.status === 'active' ? 'bg-green-100 text-green-800' :
-                        camp.status === 'funded' ? 'bg-blue-100 text-blue-800' :
-                        camp.status === 'closed' ? 'bg-gray-100 text-gray-600' :
-                        'bg-red-100 text-red-800'
-                      }`}>
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                          camp.status === 'active'
+                            ? 'bg-green-100 text-green-800'
+                            : camp.status === 'funded'
+                              ? 'bg-blue-100 text-blue-800'
+                              : camp.status === 'closed'
+                                ? 'bg-gray-100 text-gray-600'
+                                : 'bg-red-100 text-red-800'
+                        }`}
+                      >
                         {camp.status}
                       </span>
                     </td>

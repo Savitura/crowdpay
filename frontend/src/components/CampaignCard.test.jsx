@@ -34,6 +34,11 @@ describe('CampaignCard', () => {
     expect(screen.getByText(/of \$1,000/)).toBeInTheDocument();
   });
 
+  it('displays approximate naira amount clearly marked as approx', () => {
+    renderCard();
+    expect(screen.getAllByText(/₦.*approx/i).length).toBeGreaterThan(0);
+  });
+
   it('shows the asset type badge', () => {
     renderCard();
     expect(screen.getByText('USDC')).toBeInTheDocument();

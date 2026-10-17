@@ -51,11 +51,15 @@ export default function ReferralDashboard() {
       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', margin: '1rem 0 1.5rem' }}>
         <div className="campaign-card" style={{ minHeight: 'auto', padding: '0.6rem 0.9rem' }}>
           <strong style={{ fontSize: '1.1rem' }}>{totalEarned.toFixed(7)}</strong>
-          <div style={{ fontSize: '0.78rem', color: 'var(--color-text-hint)' }}>Commission earned</div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--color-text-hint)' }}>
+            Commission earned
+          </div>
         </div>
         <div className="campaign-card" style={{ minHeight: 'auto', padding: '0.6rem 0.9rem' }}>
           <strong style={{ fontSize: '1.1rem' }}>{totalPending.toFixed(7)}</strong>
-          <div style={{ fontSize: '0.78rem', color: 'var(--color-text-hint)' }}>Awaiting payout</div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--color-text-hint)' }}>
+            Awaiting payout
+          </div>
         </div>
       </div>
 
@@ -82,7 +86,10 @@ export default function ReferralDashboard() {
             </thead>
             <tbody>
               {links.map((link) => (
-                <tr key={link.referral_link_id} style={{ borderBottom: '1px solid var(--color-border-lighter)' }}>
+                <tr
+                  key={link.referral_link_id}
+                  style={{ borderBottom: '1px solid var(--color-border-lighter)' }}
+                >
                   <td style={{ padding: '0.5rem 0.75rem', fontWeight: 600 }}>
                     <Link to={`/campaigns/${link.campaign_id}`}>{link.campaign_title}</Link>
                   </td>

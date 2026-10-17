@@ -3,101 +3,105 @@ const router = express.Router();
 const fs = require('fs');
 const path = require('path');
 
-// Strictly gate all routes in this file
+const EMAILS_DIR = path.resolve(__dirname, '../emails');
+const SAFE_TEMPLATE_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
+
+// Strict gate: never allow outside development
 router.use((req, res, next) => {
-  if (process.env.NODE_ENV === 'production') {
-    return res.status(403).send('Not allowed in production');
+  if (process.env.NODE_ENV !== 'development') {
+    return res.status(404).json({ error: 'Not found' });
   }
   next();
 });
 
 function getEmailTemplates() {
-  const emailsDir = path.join(__dirname, '../emails');
-  const files = fs.readdirSync(emailsDir);
+  if (!fs.existsSync(EMAILS_DIR)) return [];
+
+  const files = fs.readdirSync(EMAILS_DIR);
   const templates = [];
 
   for (const file of files) {
     if (file === 'layout.js' || !file.endsWith('.js')) continue;
-    const templateName = file.replace('.js', '');
-    const templatePath = path.join(emailsDir, file);
-    const templateModule = require(templatePath);
-    
-    const methods = Object.keys(templateModule).filter(
-      (key) => typeof templateModule[key] === 'function' && key.startsWith('build')
-    );
-    
-    if (methods.length > 0) {
-      templates.push({
-        name: templateName,
-        methods: methods
-      });
+    const templateName = file.replace(/\.js$/, '');
+    if (!SAFE_TEMPLATE_NAME_REGEX.test(templateName)) continue;
+
+    const templatePath = path.resolve(EMAILS_DIR, file);
+    // Defense-in-depth: ensure resolved path is strictly within EMAILS_DIR
+    if (!templatePath.startsWith(EMAILS_DIR)) continue;
+
+    try {
+      const templateModule = require(templatePath);
+      const methods = Object.keys(templateModule).filter(
+        key => typeof templateModule[key] === 'function' && key.startsWith('build')
+      );
+
+      if (methods.length > 0) {
+        templates.push({
+          name: templateName,
+          methods,
+        });
+      }
+    } catch {
+      // Ignore invalid modules in dev listing
     }
   }
 
   return templates;
 }
 
-router.get('/email-preview', (req, res) => {
+// GET /api/dev/emails - list available templates
+router.get('/emails', (req, res) => {
   const templates = getEmailTemplates();
-  
-  let html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Email Template Preview</title>
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; line-height: 1.5; }
-        h1 { border-bottom: 1px solid #eaeaea; padding-bottom: 0.5rem; }
-        .template { margin-bottom: 1.5rem; border: 1px solid #eaeaea; padding: 1rem; border-radius: 8px; }
-        .template h3 { margin-top: 0; }
-        .methods { display: flex; flex-direction: column; gap: 0.5rem; }
-        a { color: #0066cc; text-decoration: none; }
-        a:hover { text-decoration: underline; }
-        .form-group { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
-        input[type="text"] { padding: 0.25rem 0.5rem; border: 1px solid #ccc; border-radius: 4px; flex-grow: 1; }
-        button { padding: 0.25rem 0.75rem; background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        button:hover { background: #0052a3; }
-      </style>
-    </head>
-    <body>
-      <h1>Email Templates</h1>
-      <p>Select a template and method to preview. You can add query parameters (e.g. <code>&name=John</code>) in the URL.</p>
-  `;
 
-  for (const t of templates) {
-    html += `<div class="template">
-      <h3>${t.name}</h3>
-      <div class="methods">
-    `;
-    
-    for (const method of t.methods) {
-      // Create a small form that navigates to the URL
-      html += `
-        <form action="/api/v1/dev/email-preview/${t.name}" method="GET" target="_blank" class="form-group">
-          <input type="hidden" name="_method" value="${method}">
-          <strong>${method}</strong>
-          <input type="text" name="queryString" placeholder="name=Test&amount=100 (optional query string without ?)">
-          <button type="submit" onclick="if(this.form.queryString.value) { this.form.action = '/api/v1/dev/email-preview/${t.name}?' + this.form.queryString.value; this.form.queryString.disabled = true; }">Preview</button>
-        </form>
-      `;
+  if (req.headers.accept && req.headers.accept.includes('text/html')) {
+    let html = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Email Template Preview (Development)</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; line-height: 1.5; color: #1f2937; }
+    h1 { border-bottom: 2px solid #e5e7eb; padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
+    .badge { display: inline-block; background: #e0f2fe; color: #0369a1; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.875rem; font-weight: 600; margin-bottom: 1rem; }
+    .template-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1rem; background: #ffffff; }
+    .template-title { font-size: 1.125rem; font-weight: 600; margin-bottom: 0.5rem; }
+    .methods-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .method-link { display: inline-block; padding: 0.35rem 0.75rem; background: #2563eb; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 0.875rem; }
+    .method-link:hover { background: #1d4ed8; }
+  </style>
+</head>
+<body>
+  <span class="badge">DEVELOPMENT ONLY</span>
+  <h1>Email Templates Preview</h1>
+  <p>Select a template method below to preview its rendered HTML output.</p>
+`;
+    for (const t of templates) {
+      html += `  <div class="template-card">
+    <div class="template-title">${t.name}</div>
+    <div class="methods-list">
+`;
+      for (const method of t.methods) {
+        html += `      <a class="method-link" href="/api/dev/emails/${encodeURIComponent(t.name)}?_method=${encodeURIComponent(method)}" target="_blank">${method}()</a>\n`;
+      }
+      html += `    </div>\n  </div>\n`;
     }
-    html += `</div></div>`;
+    html += `</body>\n</html>`;
+    return res.type('html').send(html);
   }
 
-  html += `</body></html>`;
-  res.send(html);
+  res.json({ templates });
 });
 
-router.get('/email-preview/:templateName', (req, res) => {
-  const rawName = path.basename(req.params.templateName);
-  if (!/^[a-zA-Z0-9_-]+$/.test(rawName)) {
-    return res.status(400).send('Invalid template name.');
-  }
-  const emailsDir = path.join(__dirname, '../emails');
-  const templatePath = path.join(emailsDir, `${rawName}.js`);
+// GET /api/dev/emails/:templateName - preview specific rendered template
+router.get('/emails/:templateName', (req, res) => {
+  const { templateName } = req.params;
 
-  if (!fs.existsSync(templatePath)) {
-    return res.status(404).send(`Template "${rawName}" not found.`);
+  if (!SAFE_TEMPLATE_NAME_REGEX.test(templateName)) {
+    return res.status(400).json({ error: 'Invalid template name' });
+  }
+
+  const templatePath = path.resolve(EMAILS_DIR, `${templateName}.js`);
+  if (!templatePath.startsWith(EMAILS_DIR) || !fs.existsSync(templatePath)) {
+    return res.status(404).json({ error: `Template "${templateName}" not found` });
   }
 
   try {
@@ -105,44 +109,53 @@ router.get('/email-preview/:templateName', (req, res) => {
     const method = req.query._method || 'build';
 
     if (typeof templateModule[method] !== 'function') {
-      return res.status(400).send(`Method "${method}" not found on template "${rawName}".`);
+      return res.status(400).json({
+        error: `Method "${method}" not found on template "${templateName}"`,
+      });
     }
 
-    // Pass all query params (except _method and queryString) to the build method
-    const params = { ...req.query };
-    delete params._method;
-    delete params.queryString;
-
-    // Provide some default dummy values if not provided
     const defaultParams = {
-      name: 'John Doe',
-      creatorName: 'Creator Alice',
-      contributorName: 'Contributor Bob',
-      campaignTitle: 'Save the Ocean',
-      campaignUrl: 'http://localhost:5173/campaigns/test',
+      name: 'Alex Johnson',
+      recipientName: 'Alex Johnson',
+      creatorName: 'Amara Okafor',
+      contributorName: 'Chioma Adebayo',
+      campaignTitle: 'Lagos Clean Energy Hub',
+      campaignUrl: 'http://localhost:5173/campaigns/11111111-1111-1111-1111-111111111111',
       targetAmount: '10,000 USDC',
       raisedAmount: '10,000 USDC',
-      walletPublicKey: 'GABCDEFGHIJKLMNOPQRSTUVWXYZ',
-      txHash: '0x1234567890abcdef',
-      amount: '50 USDC',
+      walletPublicKey: 'GBZXN7PIRZGNMHGA728RGRUPKZXA6Y4WXA6Y4WXA6Y4WXA6Y4WXA6Y4W',
+      txHash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+      amount: '100 USDC',
       asset: 'USDC',
       outcome: 'resolved in favor of contributor',
-      unsubscribeUrl: 'http://localhost:5173/unsubscribe?token=123',
+      unsubscribeUrl: 'http://localhost:5173/unsubscribe?token=sample-token',
+      deadline: new Date(Date.now() + 86400000 * 7).toISOString(),
+      reason: 'Verification completed',
+      notes: 'Evidence reviewed by auditor',
     };
 
-    const finalParams = { ...defaultParams, ...params };
+    const queryParams = { ...req.query };
+    delete queryParams._method;
 
-    const result = templateModule[method](finalParams);
-    
-    // Send the generated HTML string directly to the browser
-    if (result && result.html) {
-      res.send(result.html);
-    } else {
-      res.status(500).send('Template did not return an html property.');
+    const result = templateModule[method]({ ...defaultParams, ...queryParams });
+
+    if (req.query.format === 'json') {
+      return res.json({
+        subject: result?.subject,
+        text: result?.text,
+        html: result?.html,
+      });
     }
+
+    if (result && result.html) {
+      return res.type('html').send(result.html);
+    }
+
+    return res.status(500).json({ error: 'Template did not return an html property' });
   } catch (err) {
-    res.status(500).send(`<pre>Error rendering template: ${err.stack}</pre>`);
+    return res.status(500).json({ error: 'Failed to render template', details: err.message });
   }
 });
 
 module.exports = router;
+module.exports.getEmailTemplates = getEmailTemplates;

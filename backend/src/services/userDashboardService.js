@@ -45,8 +45,7 @@ const CREATOR_CAMPAIGN_FIELDS = {
   deadline: 'c.deadline',
   created_at: 'c.created_at',
   is_hidden: 'c.is_hidden',
-  contributor_count:
-    'COALESCE(stats.contributor_count, 0) AS contributor_count',
+  contributor_count: 'COALESCE(stats.contributor_count, 0) AS contributor_count',
   has_milestones: `EXISTS (
               SELECT 1 FROM milestones m WHERE m.campaign_id = c.id LIMIT 1
             ) AS has_milestones`,
@@ -72,7 +71,7 @@ function parseCreatorCampaignFields(fieldsParam) {
   }
   const requested = String(fieldsParam)
     .split(',')
-    .map((f) => f.trim())
+    .map(f => f.trim())
     .filter(Boolean);
   const selected = [];
   for (const name of requested) {
@@ -92,7 +91,9 @@ async function listCreatorCampaigns(userId, options = {}) {
   const offset = (page - 1) * limit;
   const selectedFields = parseCreatorCampaignFields(options.fields);
   const needsContributorCount = selectedFields.includes('contributor_count');
-  const selectSql = selectedFields.map((name) => CREATOR_CAMPAIGN_FIELDS[name]).join(',\n            ');
+  const selectSql = selectedFields
+    .map(name => CREATOR_CAMPAIGN_FIELDS[name])
+    .join(',\n            ');
   const joinSql = needsContributorCount
     ? `LEFT JOIN LATERAL (
        SELECT COUNT(DISTINCT sender_public_key)::int AS contributor_count
@@ -127,10 +128,9 @@ async function listCreatorCampaigns(userId, options = {}) {
 async function listUserContributions(userId) {
   const key = `contributions:${userId}`;
   return dashboardCache.wrap(key, async () => {
-    const { rows: userRows } = await db.query(
-      'SELECT wallet_public_key FROM users WHERE id = $1',
-      [userId]
-    );
+    const { rows: userRows } = await db.query('SELECT wallet_public_key FROM users WHERE id = $1', [
+      userId,
+    ]);
     if (!userRows.length) return null;
 
     const senderPublicKey = userRows[0].wallet_public_key;
@@ -164,10 +164,9 @@ const ACTIVE_CAMPAIGN_STATUSES = new Set(['active', 'funded']);
 const COMPLETED_CAMPAIGN_STATUSES = new Set(['completed', 'funded', 'withdrawn']);
 
 async function getContributorDashboard(userId) {
-  const { rows: userRows } = await db.query(
-    'SELECT wallet_public_key FROM users WHERE id = $1',
-    [userId]
-  );
+  const { rows: userRows } = await db.query('SELECT wallet_public_key FROM users WHERE id = $1', [
+    userId,
+  ]);
   if (!userRows.length) return null;
 
   const senderPublicKey = userRows[0].wallet_public_key;
@@ -199,7 +198,7 @@ async function getContributorDashboard(userId) {
     };
   }
 
-  const campaignIds = [...new Set(contribs.map((row) => row.campaign_id))];
+  const campaignIds = [...new Set(contribs.map(row => row.campaign_id))];
 
   const { rows: milestones } = await db.query(
     `SELECT id, campaign_id, title, release_percentage, sort_order, status
@@ -265,10 +264,10 @@ async function getContributorDashboard(userId) {
   }
 
   const allCampaigns = [...campaignsMap.values()];
-  const activeCampaignsBacked = allCampaigns.filter((campaign) =>
+  const activeCampaignsBacked = allCampaigns.filter(campaign =>
     ACTIVE_CAMPAIGN_STATUSES.has(campaign.status)
   ).length;
-  const campaignsCompleted = allCampaigns.filter((campaign) =>
+  const campaignsCompleted = allCampaigns.filter(campaign =>
     COMPLETED_CAMPAIGN_STATUSES.has(campaign.status)
   ).length;
 
@@ -288,7 +287,7 @@ async function getContributorDashboard(userId) {
 }
 
 function csvEscape(value) {
-  const str = (value === null || value === undefined) ? '' : String(value);
+  const str = value === null || value === undefined ? '' : String(value);
   if (/[",\n]/.test(str)) {
     return `"${str.replace(/"/g, '""')}"`;
   }

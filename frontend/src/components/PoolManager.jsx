@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { useToast } from '../context/ToastContext';
@@ -9,6 +10,7 @@ import { useToast } from '../context/ToastContext';
  * Can be embedded in the Campaign page or displayed as a standalone section.
  */
 export default function PoolManager({ campaignId, campaignTitle }) {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -108,7 +110,7 @@ export default function PoolManager({ campaignId, campaignTitle }) {
   if (!user) {
     return (
       <div className="bg-white rounded-lg shadow p-6 text-center text-gray-500">
-        Sign in to create or join a contribution pool.
+        {t('poolManager.signInToPool')}
       </div>
     );
   }
@@ -116,12 +118,14 @@ export default function PoolManager({ campaignId, campaignTitle }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-900">Contribution Pools</h3>
+        <h3 className="text-lg font-semibold text-gray-900">
+          {t('poolManager.contributionPools')}
+        </h3>
         <button
           onClick={() => setShowCreateForm(!showCreateForm)}
           className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
         >
-          {showCreateForm ? 'Cancel' : '+ New Pool'}
+          {showCreateForm ? t('common.cancel') : t('poolManager.newPool')}
         </button>
       </div>
 
@@ -130,7 +134,7 @@ export default function PoolManager({ campaignId, campaignTitle }) {
         <form onSubmit={handleCreatePool} className="bg-gray-50 rounded-lg p-4 space-y-3">
           <input
             type="text"
-            placeholder="Pool name (e.g. Team Alpha)"
+            placeholder={t('poolManager.poolNamePlaceholder')}
             value={poolTitle}
             onChange={(e) => setPoolTitle(e.target.value)}
             className="w-full px-3 py-2 border rounded-lg text-sm"
@@ -138,7 +142,7 @@ export default function PoolManager({ campaignId, campaignTitle }) {
             maxLength={200}
           />
           <textarea
-            placeholder="Optional description..."
+            placeholder={t('poolManager.descriptionPlaceholder')}
             value={poolDesc}
             onChange={(e) => setPoolDesc(e.target.value)}
             className="w-full px-3 py-2 border rounded-lg text-sm"
@@ -147,12 +151,14 @@ export default function PoolManager({ campaignId, campaignTitle }) {
           />
           <div className="flex gap-3 items-end">
             <div className="flex-1">
-              <label className="block text-xs text-gray-500 mb-1">Target amount</label>
+              <label className="block text-xs text-gray-500 mb-1">
+                {t('poolManager.targetAmount')}
+              </label>
               <input
                 type="number"
                 step="0.01"
                 min="0.01"
-                placeholder="100.00"
+                placeholder={t('poolManager.targetAmountPlaceholder')}
                 value={poolTarget}
                 onChange={(e) => setPoolTarget(e.target.value)}
                 className="w-full px-3 py-2 border rounded-lg text-sm"
@@ -164,7 +170,7 @@ export default function PoolManager({ campaignId, campaignTitle }) {
               disabled={creating}
               className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium disabled:opacity-50"
             >
-              {creating ? 'Creating...' : 'Create Pool'}
+              {creating ? t('poolManager.creating') : t('poolManager.createPool')}
             </button>
           </div>
         </form>
@@ -172,17 +178,14 @@ export default function PoolManager({ campaignId, campaignTitle }) {
 
       {/* Pool List */}
       {loading ? (
-        <div className="text-center text-gray-400 py-4 text-sm">Loading pools...</div>
+        <div className="text-center text-gray-400 py-4 text-sm">{t('poolManager.loading')}</div>
       ) : pools.length === 0 ? (
-        <div className="text-center text-gray-400 py-8 text-sm">
-          No pools yet. Be the first to create one!
-        </div>
+        <div className="text-center text-gray-400 py-8 text-sm">{t('poolManager.noPools')}</div>
       ) : (
         <div className="space-y-3">
           {pools.map((pool) => {
             const isLeader = pool.leader_id === user.id;
             const canSubmit = isLeader && pool.status === 'open';
-            const isMember = pool.member_count > 0 && (isLeader || false); // simplified check
 
             return (
               <div key={pool.id} className="bg-white border rounded-lg p-4">
@@ -193,46 +196,62 @@ export default function PoolManager({ campaignId, campaignTitle }) {
                       <p className="text-sm text-gray-500 mt-1">{pool.description}</p>
                     )}
                   </div>
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    pool.status === 'open' ? 'bg-green-100 text-green-800' :
-                    pool.status === 'submitted' ? 'bg-blue-100 text-blue-800' :
-                    pool.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {pool.status}
+                  <span
+                    className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      pool.status === 'open'
+                        ? 'bg-green-100 text-green-800'
+                        : pool.status === 'submitted'
+                          ? 'bg-blue-100 text-blue-800'
+                          : pool.status === 'cancelled'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-gray-100 text-gray-800'
+                    }`}
+                  >
+                    {t('poolManager.status.' + pool.status) || pool.status}
                   </span>
                 </div>
 
                 <div className="mt-3 flex items-center gap-4 text-sm text-gray-600">
-                  <span>{pool.member_count} member{pool.member_count !== 1 ? 's' : ''}</span>
-                  <span>Target: {parseFloat(pool.target_amount).toFixed(2)}</span>
+                  <span>
+                    {pool.member_count} {t('poolManager.member', { count: pool.member_count })}
+                  </span>
+                  <span>
+                    {t('poolManager.target')}: {parseFloat(pool.target_amount).toFixed(2)}
+                  </span>
                   {parseFloat(pool.raised_amount) > 0 && (
-                    <span>Raised: {parseFloat(pool.raised_amount).toFixed(2)}</span>
+                    <span>
+                      {t('poolManager.raised')}: {parseFloat(pool.raised_amount).toFixed(2)}
+                    </span>
                   )}
                 </div>
 
                 {/* Actions */}
                 <div className="mt-3 flex gap-2">
-                  {pool.status === 'open' && !isLeader && (
-                    joinPoolId === pool.id ? (
+                  {pool.status === 'open' &&
+                    !isLeader &&
+                    (joinPoolId === pool.id ? (
                       <div className="flex gap-2 items-end flex-wrap">
                         <div>
-                          <label className="block text-xs text-gray-500">Your share</label>
+                          <label className="block text-xs text-gray-500">
+                            {t('poolManager.yourShare')}
+                          </label>
                           <input
                             type="number"
                             step="0.01"
                             min="0.01"
-                            placeholder="10.00"
+                            placeholder={t('poolManager.sharePlaceholder')}
                             value={joinAmount}
                             onChange={(e) => setJoinAmount(e.target.value)}
                             className="w-28 px-2 py-1 border rounded text-sm"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-500">Name (optional)</label>
+                          <label className="block text-xs text-gray-500">
+                            {t('poolManager.displayName')}
+                          </label>
                           <input
                             type="text"
-                            placeholder="Display name"
+                            placeholder={t('poolManager.displayNamePlaceholder')}
                             value={joinName}
                             onChange={(e) => setJoinName(e.target.value)}
                             className="w-28 px-2 py-1 border rounded text-sm"
@@ -244,13 +263,16 @@ export default function PoolManager({ campaignId, campaignTitle }) {
                           disabled={joining}
                           className="px-3 py-1.5 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 disabled:opacity-50"
                         >
-                          {joining ? 'Joining...' : 'Confirm'}
+                          {joining ? t('poolManager.joining') : t('poolManager.confirm')}
                         </button>
                         <button
-                          onClick={() => { setJoinPoolId(null); setJoinAmount(''); }}
+                          onClick={() => {
+                            setJoinPoolId(null);
+                            setJoinAmount('');
+                          }}
                           className="px-3 py-1.5 text-gray-500 text-sm"
                         >
-                          Cancel
+                          {t('common.cancel')}
                         </button>
                       </div>
                     ) : (
@@ -258,16 +280,15 @@ export default function PoolManager({ campaignId, campaignTitle }) {
                         onClick={() => setJoinPoolId(pool.id)}
                         className="px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200"
                       >
-                        Join Pool
+                        {t('poolManager.joinPool')}
                       </button>
-                    )
-                  )}
+                    ))}
                   {canSubmit && (
                     <button
                       onClick={() => handleSubmitPool(pool)}
                       className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700"
                     >
-                      Submit Pool
+                      {t('poolManager.submitPool')}
                     </button>
                   )}
                   {isLeader && pool.status === 'open' && (
@@ -275,7 +296,7 @@ export default function PoolManager({ campaignId, campaignTitle }) {
                       onClick={() => handleLeavePool(pool.id)}
                       className="px-3 py-1.5 text-red-600 text-sm hover:bg-red-50 rounded"
                     >
-                      Cancel Pool
+                      {t('poolManager.cancelPool')}
                     </button>
                   )}
                 </div>

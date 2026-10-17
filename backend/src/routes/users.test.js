@@ -28,9 +28,13 @@ function buildApp({ queryImpl, stellarImpl, sendEmailImpl, bcryptImpl } = {}) {
     '../config/database': { query: queryImpl },
     '../services/stellarService': stellarStub,
     '../services/walletSecrets': {
-      encryptWalletSecret: async (secret) => `cpws:v1:${secret.slice(0, 8)}`,
+      encryptWalletSecret: async secret => `cpws:v1:${secret.slice(0, 8)}`,
     },
-    '../services/emailService': { sendEmail, sendWelcomeEmail: async () => {}, sendWalletFundingFailedEmail: async () => {} },
+    '../services/emailService': {
+      sendEmail,
+      sendWelcomeEmail: async () => {},
+      sendWalletFundingFailedEmail: async () => {},
+    },
     '../middleware/auth': {
       requireAuth: (_req, _res, next) => next(),
     },
@@ -120,8 +124,8 @@ test('POST /api/auth/register encrypts wallet secret before insert and schedules
   assert.notEqual(insertedSecret, 'SA3D5Z7Z7PLQANRPW6VYJEXAMPLE7WBZIY2ORP2X5Z5D4GS6Q27Q2H');
   assert.match(insertedSecret, /^cpws:v1:/);
 
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(ensureCalled, true);
 });
 
@@ -145,9 +149,7 @@ test('POST /api/auth/login returns 400 with validation errors for invalid email'
     queryImpl: async () => ({ rows: [] }),
   });
 
-  const res = await request(app)
-    .post('/api/auth/login')
-    .send({ email: 'bad-email', password: '' });
+  const res = await request(app).post('/api/auth/login').send({ email: 'bad-email', password: '' });
 
   assert.equal(res.status, 400);
   assert.equal(res.body.error.code, 'VALIDATION_ERROR');
@@ -158,7 +160,7 @@ test('POST /api/auth/forgot-password returns generic message for unknown email',
   let insertResetToken = false;
   let emailSent = false;
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM users WHERE LOWER(email)')) {
         return { rows: [] };
       }
@@ -177,10 +179,7 @@ test('POST /api/auth/forgot-password returns generic message for unknown email',
     .send({ email: 'missing@example.com' });
 
   assert.equal(res.status, 200);
-  assert.equal(
-    res.body.message,
-    'If that email exists, a password reset link has been sent.'
-  );
+  assert.equal(res.body.message, 'If that email exists, a password reset link has been sent.');
   assert.equal(insertResetToken, false);
   assert.equal(emailSent, false);
 });
@@ -189,7 +188,7 @@ test('POST /api/auth/forgot-password creates token and sends email for known use
   let insertResetToken = false;
   let emailPayload = null;
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM users WHERE LOWER(email)')) {
         return { rows: [{ id: 'user-1', email: 'user@example.com' }] };
       }
@@ -198,7 +197,7 @@ test('POST /api/auth/forgot-password creates token and sends email for known use
       }
       return { rows: [] };
     },
-    sendEmailImpl: (payload) => {
+    sendEmailImpl: payload => {
       emailPayload = payload;
     },
   });
@@ -218,7 +217,7 @@ test('POST /api/auth/reset-password updates password and revokes refresh tokens'
   let markedUsed = false;
   let revokedRefresh = false;
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM password_reset_tokens prt')) {
         return { rows: [{ id: 'prt-1', user_id: 'user-1' }] };
       }
@@ -248,7 +247,7 @@ test('POST /api/auth/reset-password updates password and revokes refresh tokens'
 
 test('POST /api/auth/reset-password returns 400 for invalid or expired token', async () => {
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM password_reset_tokens prt')) {
         return { rows: [] };
       }
@@ -261,15 +260,12 @@ test('POST /api/auth/reset-password returns 400 for invalid or expired token', a
     .send({ token: 'bad-token', password: 'Newpassword1' });
 
   assert.equal(res.status, 400);
-  assert.equal(
-    res.body.error,
-    'Invalid or expired reset link. Please request a new one.'
-  );
+  assert.equal(res.body.error, 'Invalid or expired reset link. Please request a new one.');
 });
 
 test('POST /api/auth/login rejects old password after reset', async () => {
   const { app } = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT * FROM users WHERE LOWER(email)')) {
         return {
           rows: [

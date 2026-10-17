@@ -25,11 +25,17 @@ async function fetchPlatformFeeFromContract() {
       method: 'get_fee',
       args: [],
     });
-    
-    logger.info('Fetched platform fee from contract', { feeBps, contractId: FEE_REGISTRY_CONTRACT_ID });
+
+    logger.info('Fetched platform fee from contract', {
+      feeBps,
+      contractId: FEE_REGISTRY_CONTRACT_ID,
+    });
     return Number(feeBps) || DEFAULT_PLATFORM_FEE_BPS;
   } catch (error) {
-    logger.error('Failed to fetch platform fee from contract', { error: error.message, contractId: FEE_REGISTRY_CONTRACT_ID });
+    logger.error('Failed to fetch platform fee from contract', {
+      error: error.message,
+      contractId: FEE_REGISTRY_CONTRACT_ID,
+    });
     return DEFAULT_PLATFORM_FEE_BPS;
   }
 }
@@ -50,11 +56,17 @@ async function fetchCreatorShareFromContract() {
       method: 'get_creator_share',
       args: [],
     });
-    
-    logger.info('Fetched creator share from contract', { shareBps, contractId: FEE_REGISTRY_CONTRACT_ID });
+
+    logger.info('Fetched creator share from contract', {
+      shareBps,
+      contractId: FEE_REGISTRY_CONTRACT_ID,
+    });
     return Number(shareBps) || DEFAULT_CREATOR_SHARE_BPS;
   } catch (error) {
-    logger.error('Failed to fetch creator share from contract', { error: error.message, contractId: FEE_REGISTRY_CONTRACT_ID });
+    logger.error('Failed to fetch creator share from contract', {
+      error: error.message,
+      contractId: FEE_REGISTRY_CONTRACT_ID,
+    });
     return DEFAULT_CREATOR_SHARE_BPS;
   }
 }
@@ -67,10 +79,10 @@ async function refreshFeeCache() {
   try {
     const platformFeeBps = await fetchPlatformFeeFromContract();
     const creatorShareBps = await fetchCreatorShareFromContract();
-    
+
     cache.set(CACHE_KEY, platformFeeBps, CACHE_TTL_MS);
     cache.set(CREATOR_SHARE_CACHE_KEY, creatorShareBps, CACHE_TTL_MS);
-    
+
     logger.info('Fee cache refreshed', { platformFeeBps, creatorShareBps });
   } catch (error) {
     logger.error('Failed to refresh fee cache', { error: error.message });
@@ -84,12 +96,12 @@ async function refreshFeeCache() {
  */
 async function getPlatformFee() {
   let feeBps = cache.get(CACHE_KEY);
-  
+
   if (feeBps === undefined) {
     feeBps = await fetchPlatformFeeFromContract();
     cache.set(CACHE_KEY, feeBps, CACHE_TTL_MS);
   }
-  
+
   return feeBps;
 }
 
@@ -100,12 +112,12 @@ async function getPlatformFee() {
  */
 async function getCreatorShare() {
   let shareBps = cache.get(CREATOR_SHARE_CACHE_KEY);
-  
+
   if (shareBps === undefined) {
     shareBps = await fetchCreatorShareFromContract();
     cache.set(CREATOR_SHARE_CACHE_KEY, shareBps, CACHE_TTL_MS);
   }
-  
+
   return shareBps;
 }
 
@@ -145,7 +157,7 @@ function invalidateFeeCache() {
 async function getFeeRegistryInfo() {
   const platformFeeBps = await getPlatformFee();
   const creatorShareBps = await getCreatorShare();
-  
+
   return {
     platform_fee_bps: platformFeeBps,
     platform_fee_percent: (platformFeeBps / 100).toFixed(2),

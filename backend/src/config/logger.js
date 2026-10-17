@@ -16,7 +16,7 @@ function sanitizeValue(value, seen = new WeakSet()) {
   seen.add(value);
 
   if (Array.isArray(value)) {
-    return value.map((entry) => sanitizeValue(entry, seen));
+    return value.map(entry => sanitizeValue(entry, seen));
   }
 
   return Object.fromEntries(
@@ -36,13 +36,13 @@ function sanitizeInfoObject(info) {
   return info;
 }
 
-const addRequestId = winston.format((info) => {
+const addRequestId = winston.format(info => {
   const { requestId } = getRequestContext();
   if (requestId) info.request_id = requestId;
   return sanitizeInfoObject(info);
 });
 
-const redactSensitiveValues = winston.format((info) => {
+const redactSensitiveValues = winston.format(info => {
   return info;
 });
 

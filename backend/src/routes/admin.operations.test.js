@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const express = require('express');
 const proxyquire = require('proxyquire').noCallThru();
 
-const mockQuery = async (text) => {
+const mockQuery = async text => {
   if (text.includes('FROM campaigns WHERE status IN')) {
     return { rows: [{ count: 3 }] };
   }
@@ -30,17 +30,19 @@ const mockQuery = async (text) => {
   }
   if (text.includes('FROM withdrawal_requests wr')) {
     return {
-      rows: [{
-        id: 'w-1',
-        campaign_title: 'Test',
-        creator_name: 'Alice',
-        amount: '100',
-        asset_type: 'XLM',
-        status: 'pending',
-        creator_signed: true,
-        platform_signed: false,
-        created_at: new Date().toISOString(),
-      }],
+      rows: [
+        {
+          id: 'w-1',
+          campaign_title: 'Test',
+          creator_name: 'Alice',
+          amount: '100',
+          asset_type: 'XLM',
+          status: 'pending',
+          creator_signed: true,
+          platform_signed: false,
+          created_at: new Date().toISOString(),
+        },
+      ],
     };
   }
   if (text.includes('FROM disputes d')) {
@@ -50,7 +52,17 @@ const mockQuery = async (text) => {
     return { rows: [] };
   }
   if (text.includes('UPDATE users') && text.includes('kyc_status')) {
-    return { rows: [{ id: 'u-1', email: 'a@test.com', name: 'A', kyc_status: 'verified', kyc_completed_at: new Date().toISOString() }] };
+    return {
+      rows: [
+        {
+          id: 'u-1',
+          email: 'a@test.com',
+          name: 'A',
+          kyc_status: 'verified',
+          kyc_completed_at: new Date().toISOString(),
+        },
+      ],
+    };
   }
   if (text.includes('SELECT id, email, kyc_status FROM users WHERE id')) {
     return { rows: [{ id: 'u-1', email: 'a@test.com', kyc_status: 'pending' }] };
@@ -75,7 +87,15 @@ function buildApp() {
     },
     '../services/reconciliation': {
       reconcileSingleCampaign: async () => ({ updated: false }),
-      getRecentReconciliationRuns: () => [{ started_at: new Date().toISOString(), campaigns_checked: 1, updated: 0, skipped: 0, errors: 0 }],
+      getRecentReconciliationRuns: () => [
+        {
+          started_at: new Date().toISOString(),
+          campaigns_checked: 1,
+          updated: 0,
+          skipped: 0,
+          errors: 0,
+        },
+      ],
     },
     '../services/webhookDispatcher': {
       processDelivery: async () => {},
@@ -109,7 +129,7 @@ test('GET /api/admin/health returns aggregated platform health', async () => {
     assert.ok(body.stellar.current_ledger);
     assert.ok(body.load_time_ms >= 0);
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await new Promise(resolve => server.close(resolve));
   }
 });
 
@@ -126,7 +146,7 @@ test('GET /api/admin/withdrawals returns pending queue', async () => {
     assert.strictEqual(body.data[0].id, 'w-1');
     assert.ok(typeof body.total === 'number');
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await new Promise(resolve => server.close(resolve));
   }
 });
 
@@ -144,6 +164,6 @@ test('PATCH /api/admin/users/:id/kyc updates user status', async () => {
     const body = await res.json();
     assert.strictEqual(body.kyc_status, 'verified');
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await new Promise(resolve => server.close(resolve));
   }
 });

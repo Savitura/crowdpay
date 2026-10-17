@@ -1,9 +1,42 @@
 const db = require('../config/database');
 const logger = require('../config/logger');
 
+const AMOUNT_PRECISION = 7;
+
+function roundAmount(value) {
+  return parseFloat(Number(value).toFixed(AMOUNT_PRECISION));
+}
+
+function roundPercent(value) {
+  return parseFloat(Number(value).toFixed(2));
+}
+
+/**
+ * Thrown when a sponsor already holds an active matching pledge for a campaign.
+ * The unique index added in 20260930_sponsor_matching_hardening.sql makes this
+ * deterministic even under concurrent requests, so the API can answer with a
+ * stable 409 instead of racing on a read-then-insert check.
+ */
+class DuplicateMatchingPledgeError extends Error {
+  constructor() {
+    super('Sponsor already has an active matching pledge for this campaign');
+    this.name = 'DuplicateMatchingPledgeError';
+    this.code = 'DUPLICATE_MATCHING_PLEDGE';
+  }
+}
+
+function isDuplicatePledgeViolation(err) {
+  return (
+    err &&
+    err.code === '23505' &&
+    typeof err.constraint === 'string' &&
+    err.constraint.includes('campaign_matches_active_sponsor')
+  );
+}
+
 /**
  * Create a sponsor matching pledge for a campaign.
- * 
+ *
  * @param {Object} params - Parameters
  * @param {string} params.campaignId - Campaign UUID
  * @param {string} params.sponsorUserId - Sponsor user UUID
@@ -31,26 +64,36 @@ async function createMatchingPledge({
   }
 
   const runner = client || db;
-  
-  // Check if sponsor already has an active pledge for this campaign
+
+  // Fast path: reject an obvious duplicate before touching the unique index so
+  // callers without a transaction still get a clean error.
   const { rows: existing } = await runner.query(
     `SELECT id FROM campaign_matches 
      WHERE campaign_id = $1 AND sponsor_user_id = $2 AND status = 'active'`,
     [campaignId, sponsorUserId]
   );
-  
+
   if (existing.length > 0) {
-    throw new Error('Sponsor already has an active matching pledge for this campaign');
+    throw new DuplicateMatchingPledgeError();
   }
 
-  const { rows } = await runner.query(
-    `INSERT INTO campaign_matches 
-       (campaign_id, sponsor_user_id, match_ratio, pledge_amount, matched_amount, status)
-     VALUES ($1, $2, $3, $4, 0, 'active')
-     RETURNING id, campaign_id, sponsor_user_id, match_ratio, pledge_amount, 
-               matched_amount, status, created_at`,
-    [campaignId, sponsorUserId, matchRatio, pledgeAmount]
-  );
+  let rows;
+  try {
+    ({ rows } = await runner.query(
+      `INSERT INTO campaign_matches 
+         (campaign_id, sponsor_user_id, match_ratio, pledge_amount, matched_amount, status)
+       VALUES ($1, $2, $3, $4, 0, 'active')
+       RETURNING id, campaign_id, sponsor_user_id, match_ratio, pledge_amount, 
+                 matched_amount, status, created_at`,
+      [campaignId, sponsorUserId, matchRatio, pledgeAmount]
+    ));
+  } catch (err) {
+    // Lost the race against a concurrent pledge from the same sponsor.
+    if (isDuplicatePledgeViolation(err)) {
+      throw new DuplicateMatchingPledgeError();
+    }
+    throw err;
+  }
 
   logger.info('Created sponsor matching pledge', {
     campaignId,
@@ -66,7 +109,12 @@ async function createMatchingPledge({
 /**
  * Process a contribution and apply matching funds if applicable.
  * Returns the amount matched (0 if no matching available).
- * 
+ *
+ * The active pool row is locked with `FOR UPDATE` so two contributions landing
+ * at the same time cannot both spend the same pool capacity, and the
+ * contribution is claimed exactly once (guarded by `match_amount = 0`) so a
+ * replayed/duplicated indexing pass cannot double-match or double-credit it.
+ *
  * @param {Object} params - Parameters
  * @param {string} params.campaignId - Campaign UUID
  * @param {string} params.contributionId - Contribution UUID
@@ -81,7 +129,7 @@ async function processContributionMatch({
   client,
 }) {
   const runner = client || db;
-  
+
   if (!campaignId || !contributionId || !contributionAmount) {
     throw new Error('campaignId, contributionId, and contributionAmount are required');
   }
@@ -91,13 +139,18 @@ async function processContributionMatch({
     throw new Error('contributionAmount must be a positive number');
   }
 
-  // Find active matching pools for this campaign and select first available
+  // Lock the oldest pool that still has capacity. Pools that are already
+  // exhausted are skipped here as well as at write time so stale `active`
+  // status rows cannot silently absorb a contribution.
   const { rows: matches } = await runner.query(
     `SELECT id, match_ratio, pledge_amount, matched_amount 
      FROM campaign_matches 
-     WHERE campaign_id = $1 AND status = 'active'
-     ORDER BY created_at ASC
-     LIMIT 1`,
+     WHERE campaign_id = $1 
+       AND status = 'active' 
+       AND matched_amount < pledge_amount
+     ORDER BY created_at ASC, id ASC
+     LIMIT 1
+     FOR UPDATE`,
     [campaignId]
   );
 
@@ -107,18 +160,42 @@ async function processContributionMatch({
   }
 
   const match = matches[0];
-  
-  // Calculate matched amount based on ratio
-  const calculatedMatch = parseFloat((amount * parseFloat(match.match_ratio)).toFixed(7));
-  
-  // Cap at remaining pool amount
-  const remainingPool = parseFloat((match.pledge_amount - match.matched_amount).toFixed(7));
-  const actualMatch = Math.min(calculatedMatch, remainingPool);
-  
+
+  // Calculate matched amount based on ratio, capped at the remaining pool.
+  const calculatedMatch = roundAmount(amount * parseFloat(match.match_ratio));
+  const remainingPool = roundAmount(
+    parseFloat(match.pledge_amount) - parseFloat(match.matched_amount)
+  );
+  const actualMatch = roundAmount(Math.min(calculatedMatch, remainingPool));
+
+  if (actualMatch <= 0) {
+    return 0;
+  }
+
+  // Claim this contribution for matching exactly once. A second call for the
+  // same contribution (retry, replayed transaction, concurrent indexer) is a
+  // no-op rather than a second spend.
+  const { rows: claimed } = await runner.query(
+    `UPDATE contributions 
+     SET match_amount = $1, campaign_match_id = $2
+     WHERE id = $3 AND COALESCE(match_amount, 0) = 0
+     RETURNING id`,
+    [actualMatch, match.id, contributionId]
+  );
+
+  if (!claimed.length) {
+    logger.info('Contribution already consumed matching funds; skipping', {
+      campaignId,
+      contributionId,
+      matchId: match.id,
+    });
+    return 0;
+  }
+
   // Determine if pool becomes exhausted
-  const newMatchedAmount = parseFloat((match.matched_amount + actualMatch).toFixed(7));
-  const isExhausted = newMatchedAmount >= match.pledge_amount;
-  
+  const newMatchedAmount = roundAmount(parseFloat(match.matched_amount) + actualMatch);
+  const isExhausted = newMatchedAmount >= parseFloat(match.pledge_amount);
+
   // Update matching pool
   await runner.query(
     `UPDATE campaign_matches 
@@ -129,12 +206,18 @@ async function processContributionMatch({
     [newMatchedAmount, isExhausted ? 'exhausted' : 'active', match.id]
   );
 
-  // Link contribution to matching pool
+  // Sponsor funds are part of the campaign ledger: credit them in the same
+  // transaction as the contribution so the campaign total and the exhaustion
+  // threshold agree with the matching pool.
   await runner.query(
-    `UPDATE contributions 
-     SET match_amount = $1, campaign_match_id = $2
-     WHERE id = $3`,
-    [actualMatch, match.id, contributionId]
+    `UPDATE campaigns
+     SET raised_amount = raised_amount + $1,
+         status = CASE
+           WHEN raised_amount + $1 >= target_amount THEN 'funded'
+           ELSE status
+         END
+     WHERE id = $2 AND deleted_at IS NULL`,
+    [actualMatch, campaignId]
   );
 
   logger.info('Processed contribution matching', {
@@ -152,7 +235,10 @@ async function processContributionMatch({
 
 /**
  * Get all matching pledges and aggregated progress for a campaign.
- * 
+ *
+ * The response is served by a public endpoint, so it deliberately omits sponsor
+ * user IDs and any other internal identifiers.
+ *
  * @param {string} campaignId - Campaign UUID
  * @param {Object} [params] - Options
  * @param {Object} [params.client] - Optional transaction client
@@ -160,7 +246,7 @@ async function processContributionMatch({
  */
 async function getCampaignMatchProgress(campaignId, { client } = {}) {
   const runner = client || db;
-  
+
   const { rows } = await runner.query(
     `SELECT 
        cm.id,
@@ -192,7 +278,6 @@ async function getCampaignMatchProgress(campaignId, { client } = {}) {
     campaignId,
     matches: rows.map(r => ({
       id: r.id,
-      sponsorUserId: r.sponsor_user_id,
       sponsorName: r.sponsor_name,
       matchRatio: parseFloat(r.match_ratio),
       pledgeAmount: parseFloat(r.pledge_amount),
@@ -203,21 +288,19 @@ async function getCampaignMatchProgress(campaignId, { client } = {}) {
       totalContributed: parseFloat(r.total_contributed),
       createdAt: r.created_at,
     })),
-    totalPledged: parseFloat(totalPledged.toFixed(7)),
-    totalMatched: parseFloat(totalMatched.toFixed(7)),
-    remainingPoolAmount: Math.max(0, parseFloat((totalPledged - totalMatched).toFixed(7))),
+    totalPledged: roundAmount(totalPledged),
+    totalMatched: roundAmount(totalMatched),
+    remainingPoolAmount: Math.max(0, roundAmount(totalPledged - totalMatched)),
     activePoolCount: activeMatches.length,
     exhaustedPoolCount: exhaustedMatches.length,
-    percentageUsed: totalPledged > 0 
-      ? parseFloat(((totalMatched / totalPledged) * 100).toFixed(2))
-      : 0,
+    percentageUsed: totalPledged > 0 ? roundPercent((totalMatched / totalPledged) * 100) : 0,
   };
 }
 
 /**
  * Mark a matching pool as completed (campaign ended).
  * Sponsor can reclaim unmatched funds.
- * 
+ *
  * @param {string} matchId - Match UUID
  * @param {Object} [params] - Options
  * @param {Object} [params.client] - Optional transaction client
@@ -225,7 +308,7 @@ async function getCampaignMatchProgress(campaignId, { client } = {}) {
  */
 async function completeMatchingPledge(matchId, { client } = {}) {
   const runner = client || db;
-  
+
   const { rows } = await runner.query(
     `UPDATE campaign_matches 
      SET status = 'completed', updated_at = NOW()
@@ -253,7 +336,7 @@ async function completeMatchingPledge(matchId, { client } = {}) {
 
 /**
  * Get matching pledges for a specific sponsor (across all campaigns).
- * 
+ *
  * @param {string} sponsorUserId - User UUID
  * @param {Object} [params] - Options
  * @param {Object} [params.client] - Optional transaction client
@@ -261,7 +344,7 @@ async function completeMatchingPledge(matchId, { client } = {}) {
  */
 async function getSponsorMatchingPledges(sponsorUserId, { client } = {}) {
   const runner = client || db;
-  
+
   const { rows } = await runner.query(
     `SELECT 
        cm.*,
@@ -299,4 +382,5 @@ module.exports = {
   getCampaignMatchProgress,
   completeMatchingPledge,
   getSponsorMatchingPledges,
+  DuplicateMatchingPledgeError,
 };

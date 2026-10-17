@@ -41,7 +41,9 @@ class WebhookError extends Error {
 function verifyWebhookSignature(secret, rawBody, headerSig) {
   if (!secret || !headerSig) return false;
 
-  const provided = String(headerSig).replace(/^sha256=/i, '').trim();
+  const provided = String(headerSig)
+    .replace(/^sha256=/i, '')
+    .trim();
   const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
 
   // timingSafeEqual throws on length mismatch, so guard first. Both sides are
@@ -106,7 +108,7 @@ async function handleContributionConfirmed(ownerUserId, payload) {
     title: 'Contribution confirmed',
     body: `A contribution of ${contribution.amount} ${contribution.asset} to "${contribution.title}" was confirmed on-chain.`,
     link: `/campaigns/${contribution.campaign_id}`,
-  }).catch((err) => logger.error('contribution.confirmed notify failed', { error: err.message }));
+  }).catch(err => logger.error('contribution.confirmed notify failed', { error: err.message }));
 
   return { status: 200, body: { received: true, linked: true, contribution_id: contribution.id } };
 }
@@ -143,15 +145,15 @@ async function handleWithdrawalCompleted(ownerUserId, payload) {
   if (txHash) {
     let stellarTx;
     try {
-      stellarTx = await horizonServer
-        .transactions()
-        .transaction(txHash)
-        .call();
+      stellarTx = await horizonServer.transactions().transaction(txHash).call();
     } catch (stellarErr) {
       if (stellarErr.name === 'NotFoundError' || stellarErr.status === 404) {
         throw new WebhookError('Transaction not found on Stellar network', 400);
       }
-      logger.error('Stellar transaction verification failed', { tx_hash: txHash, error: stellarErr.message });
+      logger.error('Stellar transaction verification failed', {
+        tx_hash: txHash,
+        error: stellarErr.message,
+      });
       throw new WebhookError('Stellar network unavailable for verification', 503);
     }
 
@@ -168,12 +170,9 @@ async function handleWithdrawalCompleted(ownerUserId, payload) {
     }
 
     // Verify payment operations match the stored withdrawal details
-    const operations = await horizonServer
-      .operations()
-      .forTransaction(txHash)
-      .call();
+    const operations = await horizonServer.operations().forTransaction(txHash).call();
 
-    const matched = (operations.records || []).some((op) => {
+    const matched = (operations.records || []).some(op => {
       if (op.type !== 'payment' && op.type !== 'path_payment_strict_receive') return false;
 
       const opDest = op.to || op.destination;
@@ -236,7 +235,7 @@ async function handleWithdrawalCompleted(ownerUserId, payload) {
     title: 'Withdrawal completed',
     body: `Your withdrawal of ${wr.amount} was submitted on-chain.`,
     link: `/campaigns/${wr.campaign_id}`,
-  }).catch((err) => logger.error('withdrawal.completed notify failed', { error: err.message }));
+  }).catch(err => logger.error('withdrawal.completed notify failed', { error: err.message }));
 
   return { status: 200, body: { received: true, withdrawal_id: wr.id, status: wr.status } };
 }
@@ -359,9 +358,12 @@ async function handleMilestoneDecision(ownerUserId, payload, approved) {
       ? `Milestone "${milestone.title}" was approved.`
       : `Milestone "${milestone.title}" was rejected: ${reason}`,
     link: `/campaigns/${milestone.campaign_id}`,
-  }).catch((err) => logger.error('milestone decision notify failed', { error: err.message }));
+  }).catch(err => logger.error('milestone decision notify failed', { error: err.message }));
 
-  return { status: 200, body: { received: true, milestone_id: milestone.id, status: milestone.status } };
+  return {
+    status: 200,
+    body: { received: true, milestone_id: milestone.id, status: milestone.status },
+  };
 }
 
 /**

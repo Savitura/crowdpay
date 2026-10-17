@@ -178,7 +178,9 @@ function getAwsCredentials() {
   const sessionToken = process.env.AWS_SESSION_TOKEN;
 
   if (!accessKeyId || !secretAccessKey) {
-    throw new Error('AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required for WALLET_SECRET_PROVIDER=aws-kms');
+    throw new Error(
+      'AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required for WALLET_SECRET_PROVIDER=aws-kms'
+    );
   }
 
   return { accessKeyId, secretAccessKey, sessionToken };
@@ -204,7 +206,9 @@ function toAmzDate(now = new Date()) {
 }
 
 function getAwsKmsHost() {
-  return process.env.WALLET_SECRET_KMS_ENDPOINT_HOST || `kms.${process.env.AWS_REGION}.amazonaws.com`;
+  return (
+    process.env.WALLET_SECRET_KMS_ENDPOINT_HOST || `kms.${process.env.AWS_REGION}.amazonaws.com`
+  );
 }
 
 function getAwsKmsPath() {
@@ -215,7 +219,9 @@ function buildAwsHeaders(target, body) {
   const region = process.env.AWS_REGION;
   const keyId = process.env.WALLET_SECRET_KMS_KEY_ID;
   if (!region || !keyId) {
-    throw new Error('AWS_REGION and WALLET_SECRET_KMS_KEY_ID are required for WALLET_SECRET_PROVIDER=aws-kms');
+    throw new Error(
+      'AWS_REGION and WALLET_SECRET_KMS_KEY_ID are required for WALLET_SECRET_PROVIDER=aws-kms'
+    );
   }
 
   const host = getAwsKmsHost();
@@ -236,18 +242,13 @@ function buildAwsHeaders(target, body) {
 
   const sortedHeaderNames = Object.keys(headers).sort();
   const canonicalHeaders = sortedHeaderNames
-    .map((name) => `${name}:${String(headers[name]).trim()}\n`)
+    .map(name => `${name}:${String(headers[name]).trim()}\n`)
     .join('');
   const signedHeaders = sortedHeaderNames.join(';');
   const payloadHash = sha256Hex(body);
-  const canonicalRequest = [
-    'POST',
-    path,
-    '',
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash,
-  ].join('\n');
+  const canonicalRequest = ['POST', path, '', canonicalHeaders, signedHeaders, payloadHash].join(
+    '\n'
+  );
 
   const credentialScope = `${dateStamp}/${region}/kms/aws4_request`;
   const stringToSign = [
@@ -283,9 +284,9 @@ function kmsRequest(target, payload) {
           'content-length': Buffer.byteLength(body),
         },
       },
-      (res) => {
+      res => {
         const chunks = [];
-        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('data', chunk => chunks.push(chunk));
         res.on('end', () => {
           const responseBody = Buffer.concat(chunks).toString('utf8');
           let parsed;
@@ -299,7 +300,8 @@ function kmsRequest(target, payload) {
             return resolve(parsed);
           }
 
-          const errorMessage = parsed.message || parsed.Message || parsed.__type || `status ${res.statusCode}`;
+          const errorMessage =
+            parsed.message || parsed.Message || parsed.__type || `status ${res.statusCode}`;
           return reject(new Error(`KMS request failed: ${errorMessage}`));
         });
       }
@@ -380,7 +382,9 @@ function validateWalletSecretConfig() {
 
   if (provider === AWS_KMS_PROVIDER) {
     if (!process.env.AWS_REGION || !process.env.WALLET_SECRET_KMS_KEY_ID) {
-      throw new Error('AWS_REGION and WALLET_SECRET_KMS_KEY_ID are required for WALLET_SECRET_PROVIDER=aws-kms');
+      throw new Error(
+        'AWS_REGION and WALLET_SECRET_KMS_KEY_ID are required for WALLET_SECRET_PROVIDER=aws-kms'
+      );
     }
     getAwsCredentials();
     return;
@@ -436,7 +440,11 @@ async function decryptWalletSecretToBuffer(secret, contextInput = {}) {
     throw new Error('Wallet secret context mismatch');
   }
 
-  if (expectedContext.user_id && envelopeContext.user_id && envelopeContext.user_id !== expectedContext.user_id) {
+  if (
+    expectedContext.user_id &&
+    envelopeContext.user_id &&
+    envelopeContext.user_id !== expectedContext.user_id
+  ) {
     throw new Error('Wallet secret owner mismatch');
   }
 
@@ -480,10 +488,10 @@ async function rotateLegacyUserWalletSecrets({ runner = db, dryRun = false } = {
     });
 
     if (!dryRun) {
-      await runner.query(
-        'UPDATE users SET wallet_secret_encrypted = $1 WHERE id = $2',
-        [encryptedSecret, row.id]
-      );
+      await runner.query('UPDATE users SET wallet_secret_encrypted = $1 WHERE id = $2', [
+        encryptedSecret,
+        row.id,
+      ]);
     }
     rotated += 1;
   }

@@ -8,3 +8,10 @@ coverage
 .git
 .gitignore
 README.md
+docs/
+e2e/
+fix*.js
+patch_*.js
+eslint.json
+*.patch
+coverage/

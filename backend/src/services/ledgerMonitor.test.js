@@ -8,15 +8,17 @@ function buildLedgerMonitor(mockQuery, treasuryStub) {
     if (text.includes('UPDATE campaigns') && text.includes('raised_amount = raised_amount +')) {
       updates.push({ text, params });
       return {
-        rows: [{
-          id: 'camp-1',
-          creator_id: 'user-creator',
-          title: 'Test Campaign',
-          raised_amount: '100',
-          target_amount: '100',
-          asset_type: 'XLM',
-          newly_funded: true,
-        }],
+        rows: [
+          {
+            id: 'camp-1',
+            creator_id: 'user-creator',
+            title: 'Test Campaign',
+            raised_amount: '100',
+            target_amount: '100',
+            asset_type: 'XLM',
+            newly_funded: true,
+          },
+        ],
       };
     }
     return mockQuery(text, params);
@@ -63,7 +65,11 @@ function buildLedgerMonitor(mockQuery, treasuryStub) {
     './webhookDispatcher': {
       emitWebhookEventForUser: async () => {},
       emitWebhookEventForCampaign: async () => {},
-      WEBHOOK_EVENTS: { CAMPAIGN_FUNDED: 'campaign.funded', CONTRIBUTION_RECEIVED: 'contribution.received', CONTRIBUTION_INDEXED: 'contribution.indexed' },
+      WEBHOOK_EVENTS: {
+        CAMPAIGN_FUNDED: 'campaign.funded',
+        CONTRIBUTION_RECEIVED: 'contribution.received',
+        CONTRIBUTION_INDEXED: 'contribution.indexed',
+      },
     },
     './campaignStatusActions': {
       triggerCampaignStatusActions: async () => {},
@@ -74,6 +80,9 @@ function buildLedgerMonitor(mockQuery, treasuryStub) {
     './contractTreasury': {
       indexContribution: treasuryStub || (async () => ({ indexed: true })),
     },
+    './fraudService': { evaluateCampaign: async () => ({}) },
+    './badgeService': { syncBadgesForWallet: async () => {} },
+    './campaignFollowService': { announceFundingProgress: async () => {} },
     '../utils/cache': {
       invalidate: () => {},
       invalidatePrefix: () => {},
@@ -143,7 +152,7 @@ test('handlePayment updates stellar_transactions when a contribution row is crea
 
 test('handlePayment accepts contributions on funded campaigns', async () => {
   let insertCalled = false;
-  const mockQuery = async (text) => {
+  const mockQuery = async text => {
     if (text.includes('SELECT status, asset_type, wallet_mode FROM campaigns')) {
       return { rows: [{ status: 'funded', asset_type: 'XLM', wallet_mode: 'standard' }] };
     }
@@ -260,7 +269,7 @@ test('handlePayment quarantines a payment with a matching asset code but an untr
 
 test('handlePayment credits a matching-issuer USDC payment against a USDC campaign', async () => {
   let contributionInsertCalled = false;
-  const mockQuery = async (text) => {
+  const mockQuery = async text => {
     if (text.includes('SELECT status, asset_type, wallet_mode FROM campaigns')) {
       return { rows: [{ status: 'active', asset_type: 'USDC', wallet_mode: 'standard' }] };
     }
@@ -301,7 +310,7 @@ test('handlePayment credits a matching-issuer USDC payment against a USDC campai
 
 test('recordConfirmedContribution can be invoked directly (used by contract-mode deposits)', async () => {
   let contributionInsertCalled = false;
-  const mockQuery = async (text) => {
+  const mockQuery = async text => {
     if (text.includes('SELECT id FROM contributions')) return { rows: [] };
     if (text.includes('SELECT creator_id FROM campaigns')) {
       return { rows: [{ creator_id: 'user-creator' }] };
@@ -338,7 +347,7 @@ test('recordConfirmedContribution can be invoked directly (used by contract-mode
 
 /** Query stub for a contract-mode campaign that reaches the end of handlePayment. */
 function contractModeQuery(seen = {}) {
-  return async (text) => {
+  return async text => {
     if (text.includes('SELECT status, asset_type, wallet_mode FROM campaigns')) {
       return { rows: [{ status: 'active', asset_type: 'XLM', wallet_mode: 'contract' }] };
     }
@@ -522,7 +531,19 @@ test('onPaymentRecord advances cursor only after successful processing', async (
     if (text.includes('INSERT INTO contributions')) return { rows: [{ id: 'contrib-id' }] };
     if (text.includes('UPDATE stellar_transactions')) return { rows: [] };
     if (text.includes('UPDATE campaigns') && text.includes('raised_amount')) {
-      return { rows: [{ id: 'camp-1', creator_id: 'user-creator', title: 'Test', raised_amount: '100', target_amount: '100', asset_type: 'XLM', newly_funded: false }] };
+      return {
+        rows: [
+          {
+            id: 'camp-1',
+            creator_id: 'user-creator',
+            title: 'Test',
+            raised_amount: '100',
+            target_amount: '100',
+            asset_type: 'XLM',
+            newly_funded: false,
+          },
+        ],
+      };
     }
     if (text.includes('ledger_stream_cursors')) {
       cursorSaved = true;

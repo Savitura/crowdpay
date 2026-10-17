@@ -56,7 +56,7 @@ test('POST /:id/follow records the follow and returns the follower count', async
   assert.equal(res.status, 201);
   assert.equal(res.body.following, true);
   assert.equal(res.body.follower_count, 3);
-  const insert = calls.find((call) => call.text.includes('INSERT INTO campaign_followers'));
+  const insert = calls.find(call => call.text.includes('INSERT INTO campaign_followers'));
   assert.deepEqual(insert.params, ['user-1', CAMPAIGN_ID]);
 });
 
@@ -78,7 +78,7 @@ test('POST /:id/follow stores the notification preferences it is given', async (
 
   assert.equal(res.status, 201);
   assert.equal(res.body.notify_funding, false);
-  const insert = calls.find((call) => call.text.includes('INSERT INTO campaign_followers'));
+  const insert = calls.find(call => call.text.includes('INSERT INTO campaign_followers'));
   assert.deepEqual(insert.params, ['user-1', CAMPAIGN_ID, false]);
   assert.match(insert.text, /notify_funding = EXCLUDED\.notify_funding/);
   assert.doesNotMatch(insert.text, /notify_updates = EXCLUDED/);
@@ -93,7 +93,7 @@ test('POST /:id/follow 404s for an unknown campaign', async () => {
 });
 
 test('GET /:id/follow reports the default preferences when not following', async () => {
-  const app = buildApp(async (text) => {
+  const app = buildApp(async text => {
     if (text.includes('SELECT id FROM campaigns')) return { rows: [{ id: CAMPAIGN_ID }] };
     if (text.includes('COUNT(*)::int AS total')) return { rows: [{ total: 0 }] };
     return { rows: [] };
@@ -128,12 +128,12 @@ test('PATCH /:id/follow updates only the preferences supplied', async () => {
 
   assert.equal(res.status, 200);
   assert.equal(res.body.notify_updates, false);
-  const update = calls.find((call) => call.text.includes('UPDATE campaign_followers'));
+  const update = calls.find(call => call.text.includes('UPDATE campaign_followers'));
   assert.deepEqual(update.params, ['user-1', CAMPAIGN_ID, false]);
 });
 
 test('PATCH /:id/follow rejects a body with no boolean preference', async () => {
-  const app = buildApp(async (text) => {
+  const app = buildApp(async text => {
     if (text.includes('SELECT id FROM campaigns')) return { rows: [{ id: CAMPAIGN_ID }] };
     return { rows: [] };
   });
@@ -146,7 +146,7 @@ test('PATCH /:id/follow rejects a body with no boolean preference', async () => 
 });
 
 test('PATCH /:id/follow 404s when the user does not follow the campaign', async () => {
-  const app = buildApp(async (text) => {
+  const app = buildApp(async text => {
     if (text.includes('SELECT id FROM campaigns')) return { rows: [{ id: CAMPAIGN_ID }] };
     return { rows: [] };
   });
@@ -168,6 +168,6 @@ test('DELETE /:id/follow removes the follow', async () => {
   const res = await request(app).delete(`/api/campaigns/${CAMPAIGN_ID}/follow`);
 
   assert.equal(res.status, 204);
-  const del = calls.find((call) => call.text.includes('DELETE FROM campaign_followers'));
+  const del = calls.find(call => call.text.includes('DELETE FROM campaign_followers'));
   assert.deepEqual(del.params, ['user-1', CAMPAIGN_ID]);
 });

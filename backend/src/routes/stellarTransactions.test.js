@@ -27,16 +27,14 @@ test('GET /api/stellar/transactions requires campaign_id for non-platform users'
     userId: 'creator-1',
   });
 
-  const res = await request(app)
-    .get('/api/stellar/transactions')
-    .set('Authorization', 'Bearer t');
+  const res = await request(app).get('/api/stellar/transactions').set('Authorization', 'Bearer t');
 
   assert.equal(res.status, 400);
 });
 
 test('GET /api/stellar/transactions lists rows for campaign creator', async () => {
   const app = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT creator_id FROM campaigns')) {
         return { rows: [{ creator_id: 'creator-1' }] };
       }
@@ -76,7 +74,7 @@ test('GET /api/stellar/transactions lists rows for campaign creator', async () =
 
 test('GET /api/stellar/transactions rejects invalid status filter', async () => {
   const app = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT creator_id FROM campaigns')) {
         return { rows: [{ creator_id: 'creator-1' }] };
       }

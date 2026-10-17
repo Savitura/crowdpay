@@ -78,7 +78,12 @@ export default function EvidenceForm({ disputeId, onSubmitted, onClose }) {
             )}
           </div>
         ))}
-        <button type="button" className="btn-secondary" onClick={addUrlField} style={{ fontSize: '0.85rem' }}>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={addUrlField}
+          style={{ fontSize: '0.85rem' }}
+        >
           + Add URL
         </button>
       </div>

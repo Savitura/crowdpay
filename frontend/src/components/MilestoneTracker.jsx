@@ -19,7 +19,7 @@ export default function MilestoneTracker({ milestones, assetType, contractMilest
 
   function onChainStatusFor(milestone, index) {
     const fromContract = contractMilestones?.find(
-      (item) => item.index === milestone.sort_order || item.index === index,
+      (item) => item.index === milestone.sort_order || item.index === index
     );
     return fromContract?.on_chain_status || null;
   }
@@ -94,8 +94,14 @@ export default function MilestoneTracker({ milestones, assetType, contractMilest
                     <div
                       title="On-chain release status from Soroban contract"
                       style={{
-                        background: chainStatus === 'released' ? 'var(--color-success-bg)' : 'var(--color-info-bg)',
-                        color: chainStatus === 'released' ? 'var(--color-success-text)' : 'var(--color-info-text)',
+                        background:
+                          chainStatus === 'released'
+                            ? 'var(--color-success-bg)'
+                            : 'var(--color-info-bg)',
+                        color:
+                          chainStatus === 'released'
+                            ? 'var(--color-success-text)'
+                            : 'var(--color-info-text)',
                         borderRadius: '999px',
                         fontSize: '0.72rem',
                         fontWeight: 700,

@@ -1,23 +1,24 @@
-const crypto = require("crypto");
+const crypto = require('crypto');
 
 function secret() {
-  return process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET || "dev-unsubscribe-secret";
+  const s = process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET;
+  if (!s) {
+    throw new Error('UNSUBSCRIBE_SECRET (or JWT_SECRET fallback) is not configured');
+  }
+  return s;
 }
 
 function sign(email, category, campaignId) {
   const base = `${email.toLowerCase()}:${category}`;
   const payload = campaignId ? `${base}:${campaignId}` : base;
-  return crypto
-    .createHmac("sha256", secret())
-    .update(payload)
-    .digest("hex");
+  return crypto.createHmac('sha256', secret()).update(payload).digest('hex');
 }
 
 function buildUnsubscribeUrl({ email, category, campaignId }) {
-  const base = (process.env.BACKEND_URL || process.env.APP_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+  const base = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
   const params = new URLSearchParams({ email, category, sig: sign(email, category, campaignId) });
-  if (campaignId) params.set("campaign_id", String(campaignId));
-  return `${base}/api/emails/unsubscribe?${params.toString()}`;
+  if (campaignId) params.set('campaign_id', String(campaignId));
+  return `${base}/settings/notifications?${params.toString()}`;
 }
 
 function verifyUnsubscribeToken({ email, category, sig, campaign_id: campaignId }) {

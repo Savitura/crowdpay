@@ -37,7 +37,9 @@
     topic && 'topic=' + encodeURIComponent(topic),
     asset && 'asset=' + encodeURIComponent(asset),
     'limit=' + encodeURIComponent(limit),
-  ].filter(Boolean).join('&');
+  ]
+    .filter(Boolean)
+    .join('&');
 
   const iframe = document.createElement('iframe');
   iframe.src = CDN_ORIGIN + '/embed/discover-widget.html?' + qs;

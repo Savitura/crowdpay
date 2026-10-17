@@ -176,9 +176,7 @@ test('ip-api failure status resolves to nulls without tripping the breaker', asy
 test('ipinfo sends its token as a bearer header, never in the URL', async () => {
   process.env.GEOIP_PROVIDER = 'ipinfo';
   process.env.GEOIP_IPINFO_TOKEN = 'secret-token';
-  const calls = stubFetch(() =>
-    jsonResponse({ country: 'DE', region: 'Berlin', city: 'Berlin' })
-  );
+  const calls = stubFetch(() => jsonResponse({ country: 'DE', region: 'Berlin', city: 'Berlin' }));
 
   assert.deepEqual(await lookupIp(PUBLIC_IP), {
     country: 'DE',
@@ -272,7 +270,11 @@ test('the circuit breaker stops calling a provider that keeps failing', async ()
   assert.equal(calls.length, FAILURE_THRESHOLD);
 
   await lookupIp('198.51.100.7');
-  assert.equal(calls.length, FAILURE_THRESHOLD, 'further lookups should be skipped during cooldown');
+  assert.equal(
+    calls.length,
+    FAILURE_THRESHOLD,
+    'further lookups should be skipped during cooldown'
+  );
 });
 
 test('a success resets the failure count before the breaker trips', async () => {
@@ -333,7 +335,7 @@ test('maxmind with an unreadable database fails open', async () => {
 test('concurrent lookups of one IP collapse into a single provider call', async () => {
   process.env.GEOIP_PROVIDER = 'ip-api';
   const calls = stubFetch(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise(resolve => setTimeout(resolve, 20));
     return jsonResponse({ status: 'success', countryCode: 'US', city: 'Denver' });
   });
 
@@ -347,9 +349,12 @@ test('concurrent lookups of one IP collapse into a single provider call', async 
 
 test('concurrent lookups of different IPs are not collapsed', async () => {
   process.env.GEOIP_PROVIDER = 'ip-api';
-  const calls = stubFetch(async (url) => {
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    return jsonResponse({ status: 'success', countryCode: url.includes('198.51.100') ? 'FR' : 'US' });
+  const calls = stubFetch(async url => {
+    await new Promise(resolve => setTimeout(resolve, 5));
+    return jsonResponse({
+      status: 'success',
+      countryCode: url.includes('198.51.100') ? 'FR' : 'US',
+    });
   });
 
   const [a, b] = await Promise.all([lookupIp(PUBLIC_IP), lookupIp('198.51.100.7')]);
@@ -382,9 +387,7 @@ test('a shared in-flight lookup is released so later lookups still work', async 
 test('the cache is bounded, evicting the least recently used IP', async () => {
   process.env.GEOIP_PROVIDER = 'ip-api';
   process.env.GEOIP_CACHE_MAX_ENTRIES = '3';
-  const calls = stubFetch((url) =>
-    jsonResponse({ status: 'success', countryCode: 'US', city: url })
-  );
+  const calls = stubFetch(url => jsonResponse({ status: 'success', countryCode: 'US', city: url }));
 
   // Fill the cache to its limit.
   await lookupIp('198.51.100.1');

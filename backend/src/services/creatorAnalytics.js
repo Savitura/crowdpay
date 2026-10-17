@@ -169,8 +169,8 @@ async function getCampaignDeepDive(creatorId, campaignId) {
     const c = campaign.rows[0];
 
     const contributorRows = retention.rows;
-    const returning = contributorRows.filter((r) => r.times > 1).length;
-    const newCount = contributorRows.filter((r) => r.times === 1).length;
+    const returning = contributorRows.filter(r => r.times > 1).length;
+    const newCount = contributorRows.filter(r => r.times === 1).length;
 
     const firstContribTime = firstContrib.rows[0]?.first_contribution_at;
     const launchTime = c.created_at;
@@ -182,13 +182,13 @@ async function getCampaignDeepDive(creatorId, campaignId) {
 
     const target = Number(c.target_amount) || 0;
     const raised = Number(c.raised_amount) || 0;
-    const milestoneThresholds = milestones.rows.map((m) => ({
+    const milestoneThresholds = milestones.rows.map(m => ({
       title: m.title,
       percentage: Number(m.release_percentage),
       status: m.status,
     }));
 
-    const milestonesWithProgress = milestoneThresholds.map((m) => {
+    const milestonesWithProgress = milestoneThresholds.map(m => {
       const threshold = (m.percentage / 100) * target;
       const pct = target > 0 ? Math.min(100, (raised / threshold) * 100) : 0;
       return { ...m, progress_pct: Math.round(pct * 10) / 10 };
@@ -210,9 +210,10 @@ async function getCampaignDeepDive(creatorId, campaignId) {
         returning: returning,
         new: newCount,
         total: returning + newCount,
-        retention_rate: contributorRows.length > 0
-          ? Math.round((returning / contributorRows.length) * 10000) / 100
-          : 0,
+        retention_rate:
+          contributorRows.length > 0
+            ? Math.round((returning / contributorRows.length) * 10000) / 100
+            : 0,
       },
       asset_mix: assetMix.rows,
       median_time_to_first_contribution_hours: medianTimeToFirstContribHours,
@@ -255,7 +256,7 @@ async function getBenchmarks(creatorId) {
       benchmarksByBracket[key] = b;
     }
 
-    const comparisons = creatorCampaigns.map((campaign) => {
+    const comparisons = creatorCampaigns.map(campaign => {
       const bracket = classifyBracket(Number(campaign.target_amount));
       const key = `${bracket}_${campaign.asset_type}`;
       const platform = benchmarksByBracket[key] || null;
@@ -264,13 +265,16 @@ async function getBenchmarks(creatorId) {
       const firstContribTs = campaign.first_contribution_at
         ? new Date(campaign.first_contribution_at).getTime()
         : null;
-      const timeToFirstHours = firstContribTs !== null
-        ? Math.round(((firstContribTs - launchTs) / (1000 * 60 * 60)) * 100) / 100
-        : null;
+      const timeToFirstHours =
+        firstContribTs !== null
+          ? Math.round(((firstContribTs - launchTs) / (1000 * 60 * 60)) * 100) / 100
+          : null;
 
-      const goalPct = Number(campaign.target_amount) > 0
-        ? Math.round((Number(campaign.total_raised) / Number(campaign.target_amount)) * 10000) / 100
-        : 0;
+      const goalPct =
+        Number(campaign.target_amount) > 0
+          ? Math.round((Number(campaign.total_raised) / Number(campaign.target_amount)) * 10000) /
+            100
+          : 0;
 
       return {
         campaign_id: campaign.id,
@@ -344,7 +348,7 @@ async function getExportData(creatorId, campaignId) {
     [campaignId]
   );
 
-  return rows.map((r) => ({
+  return rows.map(r => ({
     contribution_date: r.contribution_date,
     contributor_public_key: truncatePublicKey(r.sender_public_key),
     amount: r.amount,
@@ -380,9 +384,10 @@ async function refreshPlatformBenchmarks() {
     );
 
     for (const { asset_type } of assets) {
-      const targetFilter = max === Infinity
-        ? `c.target_amount >= ${min} AND c.asset_type = $1`
-        : `c.target_amount >= ${min} AND c.target_amount < ${max} AND c.asset_type = $1`;
+      const targetFilter =
+        max === Infinity
+          ? `c.target_amount >= ${min} AND c.asset_type = $1`
+          : `c.target_amount >= ${min} AND c.target_amount < ${max} AND c.asset_type = $1`;
 
       const { rows: stats } = await db.query(
         `SELECT
@@ -422,7 +427,14 @@ async function refreshPlatformBenchmarks() {
              avg_contributor_count = EXCLUDED.avg_contributor_count,
              sample_size = EXCLUDED.sample_size,
              computed_at = NOW()`,
-          [bracket, asset_type, s.avg_goal_pct, s.avg_time_to_first_contribution_hours, s.avg_contributor_count, s.sample_size]
+          [
+            bracket,
+            asset_type,
+            s.avg_goal_pct,
+            s.avg_time_to_first_contribution_hours,
+            s.avg_contributor_count,
+            s.sample_size,
+          ]
         );
       }
     }

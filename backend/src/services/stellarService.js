@@ -26,27 +26,72 @@ const {
   isTestnet,
   configuredAssets,
 } = require('../config/stellar');
-const Sentry = require("@sentry/node");
+const Sentry = require('@sentry/node');
 const {
   TX_TIMEOUT_CONTRIBUTION_S,
   TX_TIMEOUT_WITHDRAWAL_S,
   CUSTODIAL_ACCOUNT_BASE_RESERVE_XLM,
   CUSTODIAL_ACCOUNT_PER_TRUSTLINE_XLM,
-} = require("../config/constants");
+} = require('../config/constants');
+const {
+  buildCampaignMultisigOperations,
+  buildFreezeEscrowOperations,
+  buildReleaseEscrowFreezeOperations,
+  buildRemoveSignerOperation,
+  buildCloseWalletMultisigOperations,
+} = require('./campaignMultisig');
 
 const logger = require('../config/logger');
 const db = require('../config/database');
 const { withDecryptedWalletSecret } = require('./walletSecrets');
 const { getPlatformFee } = require('./feeRegistry');
+const { toStroops, fromStroops, splitFee, mulBpsCeil } = require('../utils/stroops');
 
-const PLATFORM_KEYPAIR = Keypair.fromSecret(process.env.PLATFORM_SECRET_KEY);
-const ARBITRATOR_KEYPAIR = Keypair.fromSecret(process.env.ARBITRATOR_SECRET_KEY);
+function loadKeypair(envVar) {
+  const secret = process.env[envVar];
+  if (!secret) {
+    throw new Error(`${envVar} is not configured`);
+  }
+  return Keypair.fromSecret(secret);
+}
 
+function getPlatformKeypair() {
+  return loadKeypair('PLATFORM_SECRET_KEY');
+}
+
+function getArbitratorKeypair() {
+  return loadKeypair('ARBITRATOR_SECRET_KEY');
+}
+
+function getPlatformPublicKey() {
+  return getPlatformKeypair().publicKey();
+}
+
+function getArbitratorPublicKey() {
+  return getArbitratorKeypair().publicKey();
+}
+
+// Lazily resolved at use-sites via getPlatformKeypair()/getArbitratorKeypair()
+// (previously eager Keypair.fromSecret at import time crashed boot/tests).
+
+/**
+ * Split a contribution into campaign share and platform fee in exact stroops
+ * (#840). Amounts are returned as canonical 7-decimal strings (safe to hand
+ * to Horizon operations and to persist) plus their BigInt stroop values;
+ * feeStroops + campaignStroops always equals amountStroops.
+ */
 async function calcFee(amount) {
-  const bps = await getPlatformFee();
-  const fee = parseFloat((parseFloat(amount) * bps / 10000).toFixed(7));
-  const net = parseFloat((parseFloat(amount) - fee).toFixed(7));
-  return { feeAmount: fee, campaignAmount: net, bps };
+  const bps = Number(await getPlatformFee()) || 0;
+  const amountStroops = toStroops(amount);
+  const { feeStroops, campaignStroops } = splitFee(amountStroops, bps);
+  return {
+    feeAmount: fromStroops(feeStroops),
+    campaignAmount: fromStroops(campaignStroops),
+    amountStroops,
+    feeStroops,
+    campaignStroops,
+    bps,
+  };
 }
 
 function toStellarAsset(assetCode) {
@@ -64,17 +109,14 @@ function getSupportedAssetCodes() {
 
 /** Issued assets CrowdPay may move on-chain (requires trustlines on custodial accounts). */
 function listCreditAssetCodes() {
-  return getSupportedAssetCodes().filter((code) => code !== 'XLM');
+  return getSupportedAssetCodes().filter(code => code !== 'XLM');
 }
 
 function accountHasCreditTrustline(account, assetCode) {
   if (assetCode === 'XLM') return true;
   const asset = toStellarAsset(assetCode);
   return account.balances.some(
-    (b) =>
-      b.asset_type !== 'native' &&
-      b.asset_code === asset.code &&
-      b.asset_issuer === asset.issuer
+    b => b.asset_type !== 'native' && b.asset_code === asset.code && b.asset_issuer === asset.issuer
   );
 }
 
@@ -106,7 +148,7 @@ async function fundCustodialAccountFromPlatformIfNeeded(publicKey) {
   if (await accountExistsOnLedger(publicKey)) return false;
   const trustlineCount = listCreditAssetCodes().length;
   const startingBalance = suggestedFundingXlmForCustodialAccount(trustlineCount);
-  const platformAccount = await server.loadAccount(PLATFORM_KEYPAIR.publicKey());
+  const platformAccount = await server.loadAccount(getPlatformKeypair().publicKey());
   const tx = new TransactionBuilder(platformAccount, {
     fee: BASE_FEE,
     networkPassphrase,
@@ -120,9 +162,34 @@ async function fundCustodialAccountFromPlatformIfNeeded(publicKey) {
     .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
     .build();
 
-  tx.sign(PLATFORM_KEYPAIR);
+  tx.sign(getPlatformKeypair());
   await server.submitTransaction(tx);
   return true;
+}
+
+/**
+ * Top up an existing campaign wallet's native XLM reserve from the platform
+ * account. Used by ops wallet-audit approve-funding (#811).
+ */
+async function submitWalletTopUpPayment({ destinationPublicKey, amountXlm }) {
+  const platformAccount = await server.loadAccount(getPlatformKeypair().publicKey());
+  const tx = new TransactionBuilder(platformAccount, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(
+      Operation.payment({
+        destination: destinationPublicKey,
+        asset: Asset.native(),
+        amount: String(amountXlm),
+      })
+    )
+    .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
+    .build();
+
+  tx.sign(getPlatformKeypair());
+  const result = await server.submitTransaction(tx);
+  return result.hash;
 }
 
 /**
@@ -176,7 +243,7 @@ function normalizeAsset(record) {
  */
 async function createCampaignWallet(creatorPublicKey, campaignKeypair) {
   if (!campaignKeypair) campaignKeypair = Keypair.random();
-  const platformAccount = await server.loadAccount(PLATFORM_KEYPAIR.publicKey());
+  const platformAccount = await server.loadAccount(getPlatformKeypair().publicKey());
 
   const creditCodes = listCreditAssetCodes();
   const campaignStartingBalance = suggestedFundingXlmForCustodialAccount(creditCodes.length + 1);
@@ -194,7 +261,7 @@ async function createCampaignWallet(creatorPublicKey, campaignKeypair) {
     .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
     .build();
 
-  tx.sign(PLATFORM_KEYPAIR);
+  tx.sign(getPlatformKeypair());
   await server.submitTransaction(tx);
 
   // Now configure the campaign account: trustline + multisig
@@ -207,29 +274,13 @@ async function createCampaignWallet(creatorPublicKey, campaignKeypair) {
   for (const code of creditCodes) {
     setupBuilder.addOperation(Operation.changeTrust({ asset: toStellarAsset(code) }));
   }
-  const setupTx = setupBuilder
-    .addOperation(
-      Operation.setOptions({
-        signer: { ed25519PublicKey: creatorPublicKey, weight: 1 },
-      })
-    )
-    // Add platform as signer (weight 1)
-    .addOperation(
-      Operation.setOptions({
-        signer: { ed25519PublicKey: PLATFORM_KEYPAIR.publicKey(), weight: 1 },
-      })
-    )
-    // Set thresholds: medium ops (payments) require weight 2 (both signers)
-    .addOperation(
-      Operation.setOptions({
-        masterWeight: 0,     // disable the campaign keypair itself
-        lowThreshold: 1,
-        medThreshold: 2,
-        highThreshold: 2,
-      })
-    )
-    .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
-    .build();
+  for (const op of buildCampaignMultisigOperations({
+    creatorPublicKey,
+    platformPublicKey: getPlatformKeypair().publicKey(),
+  })) {
+    setupBuilder.addOperation(op);
+  }
+  const setupTx = setupBuilder.setTimeout(TX_TIMEOUT_CONTRIBUTION_S).build();
 
   setupTx.sign(campaignKeypair);
   await server.submitTransaction(setupTx);
@@ -253,7 +304,7 @@ async function loadDecryptedCreatorSecret(creatorId) {
   await withDecryptedWalletSecret(
     userRow.wallet_secret_encrypted,
     { userId: userRow.id, walletPublicKey: userRow.wallet_public_key },
-    async (secret) => {
+    async secret => {
       creatorSecret = secret;
     }
   );
@@ -274,26 +325,19 @@ async function freezeCampaignEscrow({ campaignWalletPublicKey, creatorId }) {
   const campaignAccount = await server.loadAccount(campaignWalletPublicKey);
   const creatorSecret = await loadDecryptedCreatorSecret(creatorId);
 
-  const tx = new TransactionBuilder(campaignAccount, {
+  const txBuilder = new TransactionBuilder(campaignAccount, {
     fee: BASE_FEE,
     networkPassphrase,
-  })
-    .addOperation(
-      Operation.setOptions({
-        signer: { ed25519PublicKey: ARBITRATOR_KEYPAIR.publicKey(), weight: 1 },
-      })
-    )
-    .addOperation(
-      Operation.setOptions({
-        medThreshold: 3,
-        highThreshold: 3,
-      })
-    )
-    .setTimeout(TX_TIMEOUT_WITHDRAWAL_S)
-    .build();
+  });
+  for (const op of buildFreezeEscrowOperations({
+    arbitratorPublicKey: getArbitratorKeypair().publicKey(),
+  })) {
+    txBuilder.addOperation(op);
+  }
+  const tx = txBuilder.setTimeout(TX_TIMEOUT_WITHDRAWAL_S).build();
 
   tx.sign(Keypair.fromSecret(creatorSecret));
-  tx.sign(PLATFORM_KEYPAIR);
+  tx.sign(getPlatformKeypair());
 
   const result = await server.submitTransaction(tx);
   return { hash: result.hash };
@@ -309,27 +353,20 @@ async function releaseEscrowFreeze({ campaignWalletPublicKey, creatorId }) {
   const campaignAccount = await server.loadAccount(campaignWalletPublicKey);
   const creatorSecret = await loadDecryptedCreatorSecret(creatorId);
 
-  const tx = new TransactionBuilder(campaignAccount, {
+  const txBuilder = new TransactionBuilder(campaignAccount, {
     fee: BASE_FEE,
     networkPassphrase,
-  })
-    .addOperation(
-      Operation.setOptions({
-        signer: { ed25519PublicKey: ARBITRATOR_KEYPAIR.publicKey(), weight: 0 },
-      })
-    )
-    .addOperation(
-      Operation.setOptions({
-        medThreshold: 2,
-        highThreshold: 2,
-      })
-    )
-    .setTimeout(TX_TIMEOUT_WITHDRAWAL_S)
-    .build();
+  });
+  for (const op of buildReleaseEscrowFreezeOperations({
+    arbitratorPublicKey: getArbitratorKeypair().publicKey(),
+  })) {
+    txBuilder.addOperation(op);
+  }
+  const tx = txBuilder.setTimeout(TX_TIMEOUT_WITHDRAWAL_S).build();
 
   tx.sign(Keypair.fromSecret(creatorSecret));
-  tx.sign(PLATFORM_KEYPAIR);
-  tx.sign(ARBITRATOR_KEYPAIR);
+  tx.sign(getPlatformKeypair());
+  tx.sign(getArbitratorKeypair());
 
   const result = await server.submitTransaction(tx);
   return { hash: result.hash };
@@ -345,8 +382,8 @@ async function submitDisputeRefund({ campaignWalletPublicKey, creatorId, refunds
 
   const tx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
   tx.sign(Keypair.fromSecret(creatorSecret));
-  tx.sign(PLATFORM_KEYPAIR);
-  tx.sign(ARBITRATOR_KEYPAIR);
+  tx.sign(getPlatformKeypair());
+  tx.sign(getArbitratorKeypair());
 
   const result = await server.submitTransaction(tx);
   return { hash: result.hash, xdr: tx.toXDR() };
@@ -361,26 +398,31 @@ async function buildUnsignedContributionPayment({
   asset,
   amount,
   memo,
+  feeSplit,
 }) {
   const senderAccount = await server.loadAccount(senderPublicKey);
   const stellarAsset = toStellarAsset(asset);
-  const { feeAmount, campaignAmount } = await calcFee(amount);
+  // A caller that already persisted the split passes it in so the signed
+  // operations are exactly the amounts it recorded (#840).
+  const { feeAmount, campaignAmount, feeStroops } = feeSplit || (await calcFee(amount));
 
-  const builder = new TransactionBuilder(senderAccount, { fee: BASE_FEE, networkPassphrase })
-    .addOperation(
-      Operation.payment({
-        destination: destinationPublicKey,
-        asset: stellarAsset,
-        amount: String(campaignAmount),
-      })
-    );
+  const builder = new TransactionBuilder(senderAccount, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  }).addOperation(
+    Operation.payment({
+      destination: destinationPublicKey,
+      asset: stellarAsset,
+      amount: campaignAmount,
+    })
+  );
 
-  if (feeAmount > 0) {
+  if (feeStroops > 0n) {
     builder.addOperation(
       Operation.payment({
-        destination: PLATFORM_KEYPAIR.publicKey(),
+        destination: getPlatformKeypair().publicKey(),
         asset: stellarAsset,
-        amount: String(feeAmount),
+        amount: feeAmount,
       })
     );
   }
@@ -402,15 +444,18 @@ async function prepareSignedContributionPayment({
   asset,
   amount,
   memo,
+  feeSplit,
 }) {
   const senderKeypair = Keypair.fromSecret(senderSecret);
-  const { feeAmount } = await calcFee(amount);
+  const split = feeSplit || (await calcFee(amount));
+  const { feeAmount } = split;
   const unsignedXdr = await buildUnsignedContributionPayment({
     senderPublicKey: senderKeypair.publicKey(),
     destinationPublicKey,
     asset,
     amount,
     memo,
+    feeSplit: split,
   });
   const tx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
   tx.sign(senderKeypair);
@@ -438,40 +483,43 @@ async function buildUnsignedContributionPathPayment({
   destAmount,
   destAssetCode,
   memo,
+  feeSplit,
 }) {
   const senderAccount = await server.loadAccount(senderPublicKey);
   const sourceStellarAsset = toStellarAsset(sendAsset);
   const destStellarAsset = toStellarAsset(destAssetCode);
-  const { feeAmount, campaignAmount, bps } = await calcFee(destAmount);
+  const { feeAmount, campaignAmount, feeStroops, bps } = feeSplit || (await calcFee(destAmount));
 
-  const sendMaxFloat = parseFloat(sendMax);
-  const campaignSendMax = feeAmount > 0
-    ? ((sendMaxFloat * (1 - bps / 10000)).toFixed(7))
-    : sendMax;
-  const feeSendMax = feeAmount > 0
-    ? ((sendMaxFloat * (bps / 10000)).toFixed(7))
-    : '0';
+  // Split the send maximum across the two operations in exact stroops: the
+  // fee share is rounded up and the campaign share is the remainder, so the
+  // two never exceed the sendMax the contributor approved.
+  const sendMaxStroops = toStroops(sendMax);
+  const feeSendMaxStroops = feeStroops > 0n ? mulBpsCeil(sendMaxStroops, bps) : 0n;
+  const campaignSendMax = fromStroops(sendMaxStroops - feeSendMaxStroops);
+  const feeSendMax = fromStroops(feeSendMaxStroops);
 
-  const builder = new TransactionBuilder(senderAccount, { fee: BASE_FEE, networkPassphrase })
-    .addOperation(
-      Operation.pathPaymentStrictReceive({
-        sendAsset: sourceStellarAsset,
-        sendMax: String(campaignSendMax),
-        destination: destinationPublicKey,
-        destAsset: destStellarAsset,
-        destAmount: String(campaignAmount),
-        path: [],
-      })
-    );
+  const builder = new TransactionBuilder(senderAccount, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  }).addOperation(
+    Operation.pathPaymentStrictReceive({
+      sendAsset: sourceStellarAsset,
+      sendMax: campaignSendMax,
+      destination: destinationPublicKey,
+      destAsset: destStellarAsset,
+      destAmount: campaignAmount,
+      path: [],
+    })
+  );
 
-  if (feeAmount > 0) {
+  if (feeStroops > 0n) {
     builder.addOperation(
       Operation.pathPaymentStrictReceive({
         sendAsset: sourceStellarAsset,
-        sendMax: String(feeSendMax),
-        destination: PLATFORM_KEYPAIR.publicKey(),
+        sendMax: feeSendMax,
+        destination: getPlatformKeypair().publicKey(),
         destAsset: destStellarAsset,
-        destAmount: String(feeAmount),
+        destAmount: feeAmount,
         path: [],
       })
     );
@@ -496,9 +544,11 @@ async function prepareSignedContributionPathPayment({
   destAmount,
   destAssetCode,
   memo,
+  feeSplit,
 }) {
   const senderKeypair = Keypair.fromSecret(senderSecret);
-  const { feeAmount } = await calcFee(destAmount);
+  const split = feeSplit || (await calcFee(destAmount));
+  const { feeAmount } = split;
   const unsignedXdr = await buildUnsignedContributionPathPayment({
     senderPublicKey: senderKeypair.publicKey(),
     destinationPublicKey,
@@ -507,6 +557,7 @@ async function prepareSignedContributionPathPayment({
     destAmount,
     destAssetCode,
     memo,
+    feeSplit: split,
   });
   const tx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
   tx.sign(senderKeypair);
@@ -539,7 +590,7 @@ async function getPathPaymentQuote({ sendAsset, destAsset, destAmount }) {
     .strictReceivePaths(sourceStellarAsset, destinationStellarAsset, String(destAmount))
     .call();
 
-  return (response.records || []).map((record) => ({
+  return (response.records || []).map(record => ({
     source_asset: normalizeAsset({
       asset_type: record.source_asset_type,
       asset_code: record.source_asset_code,
@@ -550,14 +601,14 @@ async function getPathPaymentQuote({ sendAsset, destAsset, destAmount }) {
     }),
     destination_amount: record.destination_amount,
     source_amount: record.source_amount,
-    path: (record.path || []).map((pathAsset) => normalizeAsset(pathAsset)),
+    path: (record.path || []).map(pathAsset => normalizeAsset(pathAsset)),
   }));
 }
 
 /**
  * Build a withdrawal transaction for a campaign wallet.
  * Returns the unsigned XDR — both the creator and platform must sign it.
- * 
+ *
  * @param {object} params - Transaction parameters
  * @param {string} params.campaignWalletPublicKey - Campaign wallet public key
  * @param {string} params.destinationPublicKey - Destination public key (creator's withdrawal destination)
@@ -574,12 +625,13 @@ async function buildWithdrawalTransaction({
   commissions = [],
   collectedFees = 0,
   creatorPublicKey = null,
+  timeoutSeconds = TX_TIMEOUT_WITHDRAWAL_S,
 }) {
   const campaignAccount = await server.loadAccount(campaignWalletPublicKey);
   const stellarAsset = toStellarAsset(asset);
 
   const payableCommissions = commissions.filter(
-    (commission) => commission.destinationPublicKey && parseFloat(commission.amount) > 0
+    commission => commission.destinationPublicKey && parseFloat(commission.amount) > 0
   );
 
   const builder = new TransactionBuilder(campaignAccount, {
@@ -610,24 +662,20 @@ async function buildWithdrawalTransaction({
   if (collectedFees > 0 && creatorPublicKey) {
     const { calculateCreatorShare } = require('./feeRegistry');
     const creatorShare = await calculateCreatorShare(collectedFees);
-    
+
     if (creatorShare > 0) {
       builder.addOperation(
         Operation.payment({
-          destination: PLATFORM_KEYPAIR.publicKey(),
+          destination: creatorPublicKey,
           asset: stellarAsset,
           amount: String(creatorShare),
         })
       );
-      
-      // Note: In production, this would need to be sent from the platform fee wallet
-      // to the creator's wallet. For now, we're including it in the transaction
-      // for audit purposes. The actual transfer would be handled separately.
     }
   }
 
   const tx = builder
-    .setTimeout(TX_TIMEOUT_WITHDRAWAL_S) // platform approver may not be available immediately (see issue #128)
+    .setTimeout(timeoutSeconds) // defaults to 7 days: platform approver may not be available immediately (see issue #128)
     .build();
 
   return tx.toXDR();
@@ -637,10 +685,7 @@ async function buildWithdrawalTransaction({
  * Build a batch refund transaction for a campaign wallet returning funds to multiple contributors.
  * Returns the unsigned XDR.
  */
-async function buildBatchRefundTransaction({
-  campaignWalletPublicKey,
-  refunds,
-}) {
+async function buildBatchRefundTransaction({ campaignWalletPublicKey, refunds }) {
   const campaignAccount = await server.loadAccount(campaignWalletPublicKey);
   const builder = new TransactionBuilder(campaignAccount, {
     fee: BASE_FEE,
@@ -689,14 +734,263 @@ function signatureCountFromXdr(xdr) {
  * Returns true if the XDR transaction's maxTime has already passed.
  * Returns false if the XDR cannot be parsed or has no time bounds set.
  */
-function isXdrExpired(xdr) {
+function isXdrExpired(xdr, graceSeconds = 0) {
   try {
     const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
     const { timeBounds } = tx;
-    return !!(timeBounds && Math.floor(Date.now() / 1000) > Number(timeBounds.maxTime));
+    return !!(
+      timeBounds && Math.floor(Date.now() / 1000) > Number(timeBounds.maxTime) + graceSeconds
+    );
   } catch {
     return false;
   }
+}
+
+class WithdrawalValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'WithdrawalValidationError';
+    this.statusCode = 422;
+    this.isValidationError = true;
+  }
+}
+
+function assetMatches(asset, expectedAssetCode) {
+  if (!asset || !expectedAssetCode) return true;
+  if (expectedAssetCode === 'XLM') {
+    return typeof asset.isNative === 'function'
+      ? asset.isNative()
+      : asset.code === 'XLM' || asset.type === 'native';
+  }
+  const code = typeof asset.getCode === 'function' ? asset.getCode() : asset.code;
+  return code === expectedAssetCode;
+}
+
+/**
+ * Validates that submitted signed XDR matches the server-generated unsigned XDR
+ * and complies with all expected parameters (source, destination, asset, amount, sequence, network, operations, creator signature).
+ */
+function validateSubmittedWithdrawalXdr({
+  signedXdr,
+  unsignedXdr,
+  creatorPublicKey,
+  campaignWalletPublicKey,
+  expectedDestination,
+  expectedAsset,
+  expectedAmount,
+}) {
+  if (!signedXdr) {
+    throw new WithdrawalValidationError('signed_xdr is required for freighter users');
+  }
+  if (!unsignedXdr) {
+    throw new WithdrawalValidationError(
+      'Server-generated unsigned_xdr is required to verify withdrawal'
+    );
+  }
+
+  let signedTx;
+  try {
+    signedTx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
+  } catch (err) {
+    throw new WithdrawalValidationError('Invalid signed_xdr');
+  }
+
+  let unsignedTx;
+  try {
+    unsignedTx = TransactionBuilder.fromXDR(unsignedXdr, networkPassphrase);
+  } catch (err) {
+    throw new WithdrawalValidationError('Invalid server-generated unsigned_xdr');
+  }
+
+  // 1. Compare the signed transaction body/hash to the server-generated unsigned XDR
+  if (signedTx.hash().toString('hex') !== unsignedTx.hash().toString('hex')) {
+    throw new WithdrawalValidationError(
+      'Signed transaction does not match the server-generated withdrawal transaction'
+    );
+  }
+
+  // 2. Validate source
+  if (signedTx.source !== unsignedTx.source) {
+    throw new WithdrawalValidationError(
+      'Signed transaction source does not match unsigned transaction'
+    );
+  }
+  if (campaignWalletPublicKey && signedTx.source !== campaignWalletPublicKey) {
+    throw new WithdrawalValidationError(
+      'Transaction source account does not match campaign wallet'
+    );
+  }
+
+  // 3. Validate sequence
+  if (String(signedTx.sequence) !== String(unsignedTx.sequence)) {
+    throw new WithdrawalValidationError(
+      'Signed transaction sequence does not match unsigned transaction'
+    );
+  }
+
+  // 4. Validate operations
+  if (!signedTx.operations || signedTx.operations.length === 0) {
+    throw new WithdrawalValidationError('Transaction contains no operations');
+  }
+
+  for (const op of signedTx.operations) {
+    if (op.type !== 'payment') {
+      throw new WithdrawalValidationError(
+        `Invalid operation type "${op.type}": only payment operations are allowed`
+      );
+    }
+    if (expectedAsset && !assetMatches(op.asset, expectedAsset)) {
+      throw new WithdrawalValidationError(
+        'Transaction operation asset does not match campaign asset'
+      );
+    }
+  }
+
+  // Validate destination of primary payout
+  if (expectedDestination && signedTx.operations[0].destination !== expectedDestination) {
+    throw new WithdrawalValidationError(
+      'Transaction destination does not match approved withdrawal destination'
+    );
+  }
+
+  // Validate amounts
+  const firstAmount = parseFloat(signedTx.operations[0].amount);
+  if (isNaN(firstAmount) || firstAmount <= 0) {
+    throw new WithdrawalValidationError('Transaction payment amount must be greater than 0');
+  }
+
+  const totalAmount = signedTx.operations.reduce((sum, op) => sum + parseFloat(op.amount), 0);
+  if (expectedAmount && parseFloat(totalAmount.toFixed(7)) > parseFloat(expectedAmount)) {
+    throw new WithdrawalValidationError(
+      'Transaction total amount exceeds approved withdrawal amount'
+    );
+  }
+
+  // 5. Validate creator signature
+  if (!signedTx.signatures || signedTx.signatures.length === 0) {
+    throw new WithdrawalValidationError('Signed transaction does not include any signatures');
+  }
+
+  if (creatorPublicKey) {
+    let signer;
+    try {
+      signer = Keypair.fromPublicKey(creatorPublicKey);
+    } catch (err) {
+      throw new WithdrawalValidationError('Invalid creator public key');
+    }
+    const signatureValid = signedTx.signatures.some(decorated => {
+      try {
+        return signer.verify(signedTx.hash(), decorated.signature());
+      } catch (_err) {
+        return false;
+      }
+    });
+    if (!signatureValid) {
+      throw new WithdrawalValidationError(
+        'Signed transaction does not include a valid signature by the creator'
+      );
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Validates a withdrawal transaction before platform signs it.
+ * Validates source, destination, asset, amount, sequence, network, operation set, and creator signature.
+ */
+function validateWithdrawalForPlatformSigning({
+  xdr,
+  creatorPublicKey,
+  campaignWalletPublicKey,
+  expectedDestination,
+  expectedAsset,
+  expectedAmount,
+}) {
+  if (!xdr) {
+    throw new WithdrawalValidationError('Withdrawal transaction XDR is required');
+  }
+
+  let tx;
+  try {
+    tx = TransactionBuilder.fromXDR(xdr, networkPassphrase);
+  } catch (err) {
+    throw new WithdrawalValidationError('Invalid withdrawal transaction XDR');
+  }
+
+  // Validate source
+  if (campaignWalletPublicKey && tx.source !== campaignWalletPublicKey) {
+    throw new WithdrawalValidationError(
+      'Transaction source account does not match campaign wallet'
+    );
+  }
+
+  // Validate sequence
+  if (!tx.sequence) {
+    throw new WithdrawalValidationError('Transaction sequence number is missing');
+  }
+
+  // Validate operations
+  if (!tx.operations || tx.operations.length === 0) {
+    throw new WithdrawalValidationError('Transaction contains no operations');
+  }
+
+  for (const op of tx.operations) {
+    if (op.type !== 'payment') {
+      throw new WithdrawalValidationError(
+        `Invalid operation type "${op.type}": only payment operations are allowed`
+      );
+    }
+    if (expectedAsset && !assetMatches(op.asset, expectedAsset)) {
+      throw new WithdrawalValidationError(
+        'Transaction operation asset does not match campaign asset'
+      );
+    }
+  }
+
+  // Validate primary destination
+  if (expectedDestination && tx.operations[0].destination !== expectedDestination) {
+    throw new WithdrawalValidationError(
+      'Transaction destination does not match approved withdrawal destination'
+    );
+  }
+
+  // Validate amounts
+  const firstAmount = parseFloat(tx.operations[0].amount);
+  if (isNaN(firstAmount) || firstAmount <= 0) {
+    throw new WithdrawalValidationError('Transaction payment amount must be greater than 0');
+  }
+
+  const totalAmount = tx.operations.reduce((sum, op) => sum + parseFloat(op.amount), 0);
+  if (expectedAmount && parseFloat(totalAmount.toFixed(7)) > parseFloat(expectedAmount)) {
+    throw new WithdrawalValidationError(
+      'Transaction total amount exceeds approved withdrawal amount'
+    );
+  }
+
+  // Validate creator signature
+  if (creatorPublicKey) {
+    let signer;
+    try {
+      signer = Keypair.fromPublicKey(creatorPublicKey);
+    } catch (err) {
+      throw new WithdrawalValidationError('Invalid creator public key');
+    }
+    const signatureValid =
+      tx.signatures &&
+      tx.signatures.some(decorated => {
+        try {
+          return signer.verify(tx.hash(), decorated.signature());
+        } catch (_err) {
+          return false;
+        }
+      });
+    if (!signatureValid) {
+      throw new WithdrawalValidationError('Transaction is missing a valid creator signature');
+    }
+  }
+
+  return true;
 }
 
 async function submitPreparedTransaction(xdr) {
@@ -707,6 +1001,34 @@ async function submitPreparedTransaction(xdr) {
 
 async function submitSignedWithdrawal({ xdr }) {
   return submitPreparedTransaction(xdr);
+}
+
+/** Hex hash of a transaction envelope; known before submission, so it can be persisted first. */
+function transactionHashFromXdr(xdr) {
+  return TransactionBuilder.fromXDR(xdr, networkPassphrase).hash().toString('hex');
+}
+
+/**
+ * Look a transaction up on Horizon by hash.
+ * @returns {Promise<'success'|'failed'|'not_found'>}
+ */
+async function getTransactionOutcome(txHash) {
+  try {
+    const tx = await server.transactions().transaction(txHash).call();
+    return tx.successful === false ? 'failed' : 'success';
+  } catch (err) {
+    if (err?.response?.status === 404 || err?.name === 'NotFoundError') return 'not_found';
+    throw err;
+  }
+}
+
+/**
+ * True when Horizon definitively rejected a submission (HTTP 400 with result
+ * codes), as opposed to a timeout or network error where the transaction may
+ * still land.
+ */
+function isDefinitiveSubmissionFailure(err) {
+  return err?.response?.status === 400 && !!err?.response?.data?.extras?.result_codes;
 }
 
 /**
@@ -740,12 +1062,8 @@ function recoverWalletFromSecret(secret) {
  * Get transaction history for a campaign wallet.
  */
 async function getWalletTransactionHistory(publicKey, limit = 50) {
-  const txs = await server.transactions()
-    .forAccount(publicKey)
-    .order('desc')
-    .limit(limit)
-    .call();
-  
+  const txs = await server.transactions().forAccount(publicKey).order('desc').limit(limit).call();
+
   return txs.records.map(tx => ({
     hash: tx.hash,
     created_at: tx.created_at,
@@ -760,12 +1078,8 @@ async function getWalletTransactionHistory(publicKey, limit = 50) {
  * Get payment operations for a campaign wallet (audit trail).
  */
 async function getWalletPayments(publicKey, limit = 100) {
-  const payments = await server.payments()
-    .forAccount(publicKey)
-    .order('desc')
-    .limit(limit)
-    .call();
-  
+  const payments = await server.payments().forAccount(publicKey).order('desc').limit(limit).call();
+
   return payments.records.map(p => ({
     id: p.id,
     type: p.type,
@@ -792,6 +1106,58 @@ function parseCreatedClaimableBalanceIds(resultXdrBase64) {
 }
 
 /**
+ * Build an unsigned transaction for creating subscription claimable balances.
+ * Returns unsigned XDR without signing or submitting.
+ */
+async function buildUnsignedSubscriptionTransaction({ sourcePublicKey, asset, entries }) {
+  const stellarAsset = toStellarAsset(asset);
+  const fakeKeypair = Keypair.fromPublicKey(sourcePublicKey);
+  const sourceAccount = await server.loadAccount(sourcePublicKey);
+  const builder = new TransactionBuilder(sourceAccount, { fee: '100', networkPassphrase });
+
+  for (const entry of entries) {
+    builder.addOperation(
+      Operation.createClaimableBalance({
+        asset: stellarAsset,
+        amount: String(entry.amount),
+        claimants: [
+          new Claimant(getPlatformKeypair().publicKey(), Claimant.predicateUnconditional()),
+          new Claimant(
+            fakeKeypair.publicKey(),
+            Claimant.predicateNot(
+              Claimant.predicateBeforeAbsoluteTime(String(entry.reclaimAfterUnix))
+            )
+          ),
+        ],
+      })
+    );
+  }
+
+  const tx = builder.setTimeout(30).build();
+  return { unsignedXdr: tx.toXDR(), balanceEntries: entries };
+}
+
+/**
+ * Submit a pre-signed subscription transaction and extract balance IDs.
+ */
+async function submitPreparedSubscriptionTransaction({
+  signedXdr,
+  sourcePublicKey,
+  asset,
+  entries,
+}) {
+  const tx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
+  const result = await server.submitTransaction(tx);
+  const balanceIds = parseCreatedClaimableBalanceIds(result.result_xdr);
+  if (balanceIds.length !== entries.length) {
+    throw new Error(
+      `Expected ${entries.length} claimable balances, ledger reported ${balanceIds.length}`
+    );
+  }
+  return { txHash: result.hash, balanceIds };
+}
+
+/**
  * Lock one claimable balance per subscription period, all in a single transaction.
  *
  * Every balance names the platform as an unconditional claimant so the claim worker can
@@ -801,11 +1167,7 @@ function parseCreatedClaimableBalanceIds(resultXdrBase64) {
  *
  * @param {Object[]} entries - One per period: { amount, reclaimAfterUnix }.
  */
-async function createSubscriptionClaimableBalances({
-  sourceSecret,
-  asset,
-  entries,
-}) {
+async function createSubscriptionClaimableBalances({ sourceSecret, asset, entries }) {
   const sourceKeypair = Keypair.fromSecret(sourceSecret);
   const sourceAccount = await server.loadAccount(sourceKeypair.publicKey());
   const stellarAsset = toStellarAsset(asset);
@@ -817,7 +1179,7 @@ async function createSubscriptionClaimableBalances({
         asset: stellarAsset,
         amount: String(entry.amount),
         claimants: [
-          new Claimant(PLATFORM_KEYPAIR.publicKey(), Claimant.predicateUnconditional()),
+          new Claimant(getPlatformKeypair().publicKey(), Claimant.predicateUnconditional()),
           new Claimant(
             sourceKeypair.publicKey(),
             Claimant.predicateNot(
@@ -863,7 +1225,7 @@ async function claimSubscriptionBalanceToCampaign({
   destinationPublicKey,
   memo,
 }) {
-  const platformAccount = await server.loadAccount(PLATFORM_KEYPAIR.publicKey());
+  const platformAccount = await server.loadAccount(getPlatformKeypair().publicKey());
   const stellarAsset = toStellarAsset(asset);
 
   const builder = new TransactionBuilder(platformAccount, { fee: BASE_FEE, networkPassphrase })
@@ -879,7 +1241,7 @@ async function claimSubscriptionBalanceToCampaign({
   if (memo) builder.addMemo(Memo.text(memo));
 
   const tx = builder.setTimeout(TX_TIMEOUT_CONTRIBUTION_S).build();
-  tx.sign(PLATFORM_KEYPAIR);
+  tx.sign(getPlatformKeypair());
   const result = await server.submitTransaction(tx);
   return result.hash;
 }
@@ -930,7 +1292,7 @@ async function revokeAndCloseCampaignWallet(campaign) {
         await withDecryptedWalletSecret(
           userRow.wallet_secret_encrypted,
           { userId: userRow.id, walletPublicKey: userRow.wallet_public_key },
-          async (secret) => {
+          async secret => {
             creatorSecret = secret;
           }
         );
@@ -949,7 +1311,7 @@ async function revokeAndCloseCampaignWallet(campaign) {
       await withDecryptedWalletSecret(
         campaign.wallet_secret_encrypted,
         { walletPublicKey: campaign.wallet_public_key },
-        async (secret) => {
+        async secret => {
           campaignSecret = secret;
         }
       );
@@ -971,7 +1333,7 @@ async function revokeAndCloseCampaignWallet(campaign) {
       if (balanceVal > 0) {
         builder.addOperation(
           Operation.payment({
-            destination: PLATFORM_KEYPAIR.publicKey(),
+            destination: getPlatformKeypair().publicKey(),
             asset,
             amount: b.balance,
           })
@@ -987,25 +1349,18 @@ async function revokeAndCloseCampaignWallet(campaign) {
   }
 
   // 2. Remove Platform Signer
-  builder.addOperation(
-    Operation.setOptions({
-      signer: {
-        ed25519PublicKey: PLATFORM_KEYPAIR.publicKey(),
-        weight: 0,
-      },
-    })
-  );
+  builder.addOperation(buildRemoveSignerOperation(getPlatformKeypair().publicKey()));
 
   // 3. Account Merge (sweeps all native XLM and closes account entry on-chain)
   builder.addOperation(
     Operation.accountMerge({
-      destination: PLATFORM_KEYPAIR.publicKey(),
+      destination: getPlatformKeypair().publicKey(),
     })
   );
 
   const tx = builder.setTimeout(TX_TIMEOUT_CONTRIBUTION_S).build();
 
-  tx.sign(PLATFORM_KEYPAIR);
+  tx.sign(getPlatformKeypair());
 
   if (creatorSecret) {
     try {
@@ -1039,47 +1394,27 @@ async function revokeAndCloseCampaignWallet(campaign) {
 async function closeCampaignWalletBySecret(walletPublicKey, walletSecret) {
   try {
     const account = await server.loadAccount(walletPublicKey);
-    const tx = new TransactionBuilder(account, {
+    const builder = new TransactionBuilder(account, {
       fee: BASE_FEE,
       networkPassphrase,
-    })
-      // Remove campaign keypair as signer
-      .addOperation(
-        Operation.setOptions({
-          signer: {
-            ed25519PublicKey: walletPublicKey,
-            weight: 0,
-          },
-        })
-      )
-      // Remove platform signer
-      .addOperation(
-        Operation.setOptions({
-          signer: {
-            ed25519PublicKey: PLATFORM_KEYPAIR.publicKey(),
-            weight: 0,
-          },
-        })
-      )
-      // Set low threshold to 1 so the merge can go through with just the
-      // platform key when the campaign wallet signer is disabled.
-      .addOperation(
-        Operation.setOptions({
-          lowThreshold: 1,
-          medThreshold: 1,
-          highThreshold: 1,
-        })
-      )
+    });
+    for (const op of buildCloseWalletMultisigOperations({
+      walletPublicKey,
+      platformPublicKey: getPlatformKeypair().publicKey(),
+    })) {
+      builder.addOperation(op);
+    }
+    const tx = builder
       .addOperation(
         Operation.accountMerge({
-          destination: PLATFORM_KEYPAIR.publicKey(),
+          destination: getPlatformKeypair().publicKey(),
         })
       )
       .setTimeout(TX_TIMEOUT_CONTRIBUTION_S)
       .build();
 
     const campaignKeypair = Keypair.fromSecret(walletSecret);
-    tx.sign(PLATFORM_KEYPAIR);
+    tx.sign(getPlatformKeypair());
     tx.sign(campaignKeypair);
     await server.submitTransaction(tx);
     logger.info('Orphaned campaign wallet closed and merged back to platform', {
@@ -1096,12 +1431,14 @@ async function closeCampaignWalletBySecret(walletPublicKey, walletSecret) {
 }
 
 module.exports = {
+  calcFee,
   createCampaignWallet,
   toStellarAsset,
   getSupportedAssetCodes,
   listCreditAssetCodes,
   ensureCustodialAccountFundedAndTrusted,
   fundCustodialAccountFromPlatformIfNeeded,
+  submitWalletTopUpPayment,
   submitMissingTrustlinesForCustodialAccount,
   buildUnsignedContributionPayment,
   buildUnsignedContributionPathPayment,
@@ -1117,6 +1454,9 @@ module.exports = {
   signatureCountFromXdr,
   isXdrExpired,
   submitSignedWithdrawal,
+  transactionHashFromXdr,
+  getTransactionOutcome,
+  isDefinitiveSubmissionFailure,
   recoverWalletFromSecret,
   getWalletTransactionHistory,
   getWalletPayments,
@@ -1128,15 +1468,34 @@ module.exports = {
   getClaimableBalance,
   isClaimableBalanceGoneError,
   parseCreatedClaimableBalanceIds,
+  buildUnsignedSubscriptionTransaction,
+  submitPreparedSubscriptionTransaction,
 
   accountExistsOnLedger,
   getCampaignBalance,
   friendbotFund,
-  PLATFORM_PUBLIC_KEY: PLATFORM_KEYPAIR.publicKey(),
+  getPlatformKeypair,
+  getArbitratorKeypair,
+  getPlatformPublicKey,
+  getArbitratorPublicKey,
 
   freezeCampaignEscrow,
   releaseEscrowFreeze,
   submitDisputeRefund,
   buildBatchRefundTransaction,
-  ARBITRATOR_PUBLIC_KEY: ARBITRATOR_KEYPAIR.publicKey(),
+  validateSubmittedWithdrawalXdr,
+  validateWithdrawalForPlatformSigning,
+  WithdrawalValidationError,
+
+  buildCampaignMultisigOperations,
+  buildFreezeEscrowOperations,
+  buildReleaseEscrowFreezeOperations,
+  buildRemoveSignerOperation,
+  buildCloseWalletMultisigOperations,
 };
+
+// Backward-compat lazy properties (resolved on access, not at require time).
+Object.defineProperties(module.exports, {
+  PLATFORM_PUBLIC_KEY: { enumerable: true, get: getPlatformPublicKey },
+  ARBITRATOR_PUBLIC_KEY: { enumerable: true, get: getArbitratorPublicKey },
+});

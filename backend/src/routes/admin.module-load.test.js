@@ -32,10 +32,7 @@ describe('Admin Module Load (issue #559)', () => {
     const fs = require('fs');
     const path = require('path');
 
-    const adminSource = fs.readFileSync(
-      path.join(__dirname, 'admin.js'),
-      'utf-8'
-    );
+    const adminSource = fs.readFileSync(path.join(__dirname, 'admin.js'), 'utf-8');
 
     // Find all const declarations of IMPERSONATION_TTL_SECONDS
     const constDeclarations = adminSource.match(
@@ -45,9 +42,7 @@ describe('Admin Module Load (issue #559)', () => {
     assert.ok(constDeclarations, 'Should find at least one const declaration');
 
     // There should be exactly one declaration (the destructured import from constants.js)
-    const destructuredImports = constDeclarations.filter((d) =>
-      d.includes('{')
-    );
+    const destructuredImports = constDeclarations.filter(d => d.includes('{'));
     assert.strictEqual(
       destructuredImports.length,
       1,
@@ -55,9 +50,7 @@ describe('Admin Module Load (issue #559)', () => {
     );
 
     // Ensure no standalone `const IMPERSONATION_TTL_SECONDS =` (without destructuring)
-    const standaloneDeclarations = constDeclarations.filter(
-      (d) => !d.includes('{')
-    );
+    const standaloneDeclarations = constDeclarations.filter(d => !d.includes('{'));
     assert.strictEqual(
       standaloneDeclarations.length,
       0,

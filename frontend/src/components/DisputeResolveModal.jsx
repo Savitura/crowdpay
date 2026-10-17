@@ -4,7 +4,10 @@ import RelativeTime from './RelativeTime';
 const OUTCOMES = [
   { value: '', label: '— Select an outcome —' },
   { value: 'release_to_creator', label: 'Release to creator (escrow unfrozen, funds released)' },
-  { value: 'refund_contributors', label: 'Refund contributors (proportional refund to all backers)' },
+  {
+    value: 'refund_contributors',
+    label: 'Refund contributors (proportional refund to all backers)',
+  },
 ];
 
 const MIN_NOTE_LENGTH = 20;
@@ -91,7 +94,9 @@ export default function DisputeResolveModal({ dispute, thread = [], onClose, onR
           </div>
           <div style={contextRowStyle}>
             <span style={contextLabelStyle}>Reason</span>
-            <span style={{ textTransform: 'capitalize' }}>{dispute.reason?.replace(/_/g, ' ')}</span>
+            <span style={{ textTransform: 'capitalize' }}>
+              {dispute.reason?.replace(/_/g, ' ')}
+            </span>
           </div>
           {dispute.description && (
             <div style={{ ...contextRowStyle, alignItems: 'flex-start' }}>
@@ -185,12 +190,7 @@ export default function DisputeResolveModal({ dispute, thread = [], onClose, onR
           )}
 
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={onClose}
-              disabled={busy}
-            >
+            <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>
               Cancel
             </button>
             <button

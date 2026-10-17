@@ -42,6 +42,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -62,11 +64,45 @@ jobs:
         working-directory: ./backend
         run: npm run lint
 
+      - name: Check formatting
+        working-directory: ./backend
+        env:
+          FORMAT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: npm run format:check
+
+      - name: Check for blanket eslint-disable
+        working-directory: ./backend
+        run: |
+          if grep -r "/\* eslint-disable \*/" --include="*.js" src/; then
+            echo "ERROR: Found blanket eslint-disable comments (/* eslint-disable */). Use eslint-disable-next-line or eslint-disable-line with a reason instead."
+            exit 1
+          fi
+
       - name: Run migrations
         working-directory: ./backend
         env:
           DATABASE_URL: postgresql://postgres:password@localhost:5432/crowdpay_test
         run: npm run migrate
+
+      - name: Verify schema.sql and migrations converge (migrate:fresh flow)
+        working-directory: ./backend
+        env:
+          PGPASSWORD: password
+          DATABASE_URL_SCHEMA_CHECK: postgresql://postgres:password@localhost:5432/crowdpay_schema_check
+        run: |
+          createdb -h localhost -U postgres crowdpay_schema_check
+          DATABASE_URL="$DATABASE_URL_SCHEMA_CHECK" npm run migrate:fresh
+          DATABASE_URL="$DATABASE_URL_SCHEMA_CHECK" npm run verify-schema
+
+      - name: Compare migration-only and schema bootstrap snapshots
+        working-directory: ./backend
+        env:
+          DATABASE_URL_MIGRATION_CHECK: postgresql://postgres:password@localhost:5432/crowdpay_test
+          DATABASE_URL_SCHEMA_CHECK: postgresql://postgres:password@localhost:5432/crowdpay_schema_check
+        run: |
+          DATABASE_URL="$DATABASE_URL_MIGRATION_CHECK" npm run verify-schema -- --write-snapshot "$RUNNER_TEMP/migrations.json"
+          DATABASE_URL="$DATABASE_URL_SCHEMA_CHECK" npm run verify-schema -- --compare-snapshot "$RUNNER_TEMP/migrations.json"
+          dropdb -h localhost -U postgres crowdpay_schema_check
 
       - name: Run test suite
         working-directory: ./backend
@@ -87,6 +123,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -107,6 +145,20 @@ jobs:
         working-directory: ./frontend
         run: npm run lint
 
+      - name: Check formatting
+        working-directory: ./frontend
+        env:
+          FORMAT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: npm run format:check
+
+      - name: Check for blanket eslint-disable
+        working-directory: ./frontend
+        run: |
+          if grep -r "/\* eslint-disable \*/" --include="*.js" --include="*.jsx" src/; then
+            echo "ERROR: Found blanket eslint-disable comments (/* eslint-disable */). Use eslint-disable-next-line or eslint-disable-line with a reason instead."
+            exit 1
+          fi
+
       - name: Run unit tests
         working-directory: ./frontend
         run: npm test
@@ -117,3 +169,82 @@ jobs:
           SENTRY_RELEASE: ${{ github.sha }}
           VITE_SENTRY_RELEASE: ${{ github.sha }}
         run: npm run build
+
+  # -----------------------------------------------------------------------
+  # smoke-tests: Deterministic Playwright checks against mocked public
+  # routes. No PostgreSQL, Stellar testnet, or external API calls are made;
+  # all backend traffic is intercepted inside the browser by the spec's
+  # page.route() handler.
+  #
+  # This job is intended to be a REQUIRED status check in repository
+  # branch-protection settings (Settings → Branches → Require status
+  # checks → "smoke-tests"). Add it there once the first run passes.
+  # -----------------------------------------------------------------------
+  smoke-tests:
+    runs-on: ubuntu-latest
+    # Run after frontend dependencies are known to install and build cleanly,
+    # so we don't waste Chromium download time on a broken frontend.
+    needs: frontend-checks
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          # Root lock-file owns @playwright/test; frontend lock-file owns vite.
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Install root dependencies (@playwright/test)
+        run: npm ci
+
+      - name: Install frontend dependencies (vite dev server)
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Install Playwright Chromium browser + OS dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Run public smoke tests
+        run: npm run test:public
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
+      - name: Upload Playwright screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-screenshots
+          path: test-results/**/*.png
+          retention-days: 7
+
+  soroban-contracts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Run cargo test
+        working-directory: ./contracts/soroban
+        run: cargo test --workspace
+
+      - name: Build contracts
+        working-directory: ./contracts/soroban
+        run: cargo build --release --target wasm32-unknown-unknown

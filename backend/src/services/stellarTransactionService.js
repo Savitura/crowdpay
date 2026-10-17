@@ -1,5 +1,79 @@
 const db = require('../config/database');
 
+/**
+ * Record contribution intent BEFORE the Stellar transaction is submitted
+ * (#810), so a crash or failure between submission and indexing leaves an
+ * auditable pending row instead of an orphaned on-chain payment. Idempotent
+ * on idempotencyKey: a retry with the same key returns the existing row
+ * instead of inserting a duplicate.
+ */
+async function insertContributionPending(client, row) {
+  const runner = client || db;
+  if (row.idempotencyKey) {
+    const existing = await runner.query(
+      `SELECT id, status, tx_hash FROM stellar_transactions WHERE idempotency_key = $1`,
+      [row.idempotencyKey]
+    );
+    if (existing.rows.length) {
+      return {
+        id: existing.rows[0].id,
+        reused: true,
+        status: existing.rows[0].status,
+        txHash: existing.rows[0].tx_hash,
+      };
+    }
+  }
+  const { rows } = await runner.query(
+    `INSERT INTO stellar_transactions
+       (kind, status, campaign_id, initiated_by_user_id,
+        unsigned_xdr, signed_xdr, metadata, idempotency_key)
+     VALUES ('contribution', 'pending_signatures', $1, $2, $3, $4, $5::jsonb, $6)
+     RETURNING id`,
+    [
+      row.campaignId,
+      row.userId,
+      row.unsignedXdr,
+      row.signedXdr,
+      JSON.stringify(row.metadata || {}),
+      row.idempotencyKey || null,
+    ]
+  );
+  return { id: rows[0].id, reused: false };
+}
+
+/**
+ * Mark a pending contribution submitted. `extra` optionally records the XDR
+ * that was actually submitted and merges metadata that only became known at
+ * submission time (e.g. a slippage re-quote).
+ */
+async function markContributionSubmitted(client, id, txHash, extra = {}) {
+  const runner = client || db;
+  await runner.query(
+    `UPDATE stellar_transactions
+     SET status = 'submitted', tx_hash = $1,
+         unsigned_xdr = COALESCE($3, unsigned_xdr),
+         signed_xdr = COALESCE($4, signed_xdr),
+         metadata = COALESCE(metadata, '{}'::jsonb) || COALESCE($5::jsonb, '{}'::jsonb),
+         updated_at = NOW()
+     WHERE id = $2`,
+    [
+      txHash,
+      id,
+      extra.unsignedXdr || null,
+      extra.signedXdr || null,
+      extra.metadata ? JSON.stringify(extra.metadata) : null,
+    ]
+  );
+}
+
+async function markContributionFailed(client, id, failureReason) {
+  const runner = client || db;
+  await runner.query(
+    `UPDATE stellar_transactions SET status = 'failed', failure_reason = $1, updated_at = NOW() WHERE id = $2`,
+    [failureReason, id]
+  );
+}
+
 async function insertContributionSubmitted(client, row) {
   const runner = client || db;
   const { rows } = await runner.query(
@@ -76,7 +150,7 @@ async function insertContributionAdjustment(client, { campaignId, amount, assetT
        (campaign_id, sender_public_key, amount, asset, payment_type, tx_hash, created_at)
      VALUES ($1, 'system', $2, $3, 'reconciliation_adjustment', NULL, $4)
      RETURNING id`,
-    [campaignId, amount, assetType, adjustedAt || new Date()],
+    [campaignId, amount, assetType, adjustedAt || new Date()]
   );
   return rows[0].id;
 }
@@ -105,6 +179,9 @@ async function insertReconciliationAdjustment(client, row) {
 
 module.exports = {
   insertContributionSubmitted,
+  insertContributionPending,
+  markContributionSubmitted,
+  markContributionFailed,
   insertWithdrawalPendingSignatures,
   markContributionIndexed,
   finalizeWithdrawalSubmitted,

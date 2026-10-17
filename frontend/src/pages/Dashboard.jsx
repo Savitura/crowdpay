@@ -13,6 +13,7 @@ import DepositModal from '../components/DepositModal';
 import ApiKeysPanel from '../components/ApiKeysPanel';
 import { stellarExpertTxUrl, stellarExpertAccountUrl } from '../config/stellar';
 import ThankYouModal from '../components/ThankYouModal';
+import CreatorOnboardingChecklist from '../components/CreatorOnboardingChecklist';
 
 const BackerInsightsCard = React.lazy(() => import('../components/BackerInsightsCard'));
 const MiniLineChart = React.lazy(() => import('../components/MiniLineChart'));
@@ -185,7 +186,13 @@ function ActionCenter({ campaigns }) {
             }}
           >
             <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{item.title}</div>
-            <div style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)', marginTop: '0.15rem' }}>
+            <div
+              style={{
+                fontSize: '0.82rem',
+                color: 'var(--color-text-secondary)',
+                marginTop: '0.15rem',
+              }}
+            >
               {item.detail}
             </div>
           </Link>
@@ -419,9 +426,7 @@ export default function Dashboard() {
       const newHidden = !campaign.is_hidden;
       await api.toggleCampaignVisibility(campaign.id, newHidden);
       setCampaigns((prev) =>
-        prev.map((c) =>
-          c.id === campaign.id ? { ...c, is_hidden: newHidden } : c
-        )
+        prev.map((c) => (c.id === campaign.id ? { ...c, is_hidden: newHidden } : c))
       );
     } catch (err) {
       setError(err.message || 'Could not change campaign visibility');
@@ -525,6 +530,8 @@ export default function Dashboard() {
       <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '1rem' }}>
         {t('dashboard.title')}
       </h1>
+
+      {isCreator && <CreatorOnboardingChecklist user={user} campaigns={campaigns} stats={stats} />}
 
       <div className="campaign-card" style={{ marginBottom: '1rem', minHeight: 'auto' }}>
         <div
@@ -645,7 +652,11 @@ export default function Dashboard() {
                         : ''}
                     </div>
                   </div>
-                  <VerificationBadge status={user?.verification_status || user?.kyc_status} tier={user?.verification_tier} showTier />
+                  <VerificationBadge
+                    status={user?.verification_status || user?.kyc_status}
+                    tier={user?.verification_tier}
+                    showTier
+                  />
                 </div>
                 {kycRequired && user?.kyc_status !== 'verified' && (
                   <div style={{ marginTop: '0.85rem' }}>
@@ -692,172 +703,204 @@ export default function Dashboard() {
                 <p className="alert alert--info">{t('dashboard.noCampaigns')}</p>
               ) : (
                 <>
-                <div style={{ display: 'grid', gap: '0.75rem', opacity: isCampaignsPageLoading ? 0.5 : 1, transition: 'opacity 0.2s' }}>
-                  {campaigns.map((campaign) => {
-                    const pct = progressPct(campaign).toFixed(1);
-                    return (
-                      <div
-                        key={campaign.id}
-                        className="campaign-card"
-                        style={campaign.is_hidden ? { opacity: 0.6 } : undefined}
-                      >
+                  <div
+                    style={{
+                      display: 'grid',
+                      gap: '0.75rem',
+                      opacity: isCampaignsPageLoading ? 0.5 : 1,
+                      transition: 'opacity 0.2s',
+                    }}
+                  >
+                    {campaigns.map((campaign) => {
+                      const pct = progressPct(campaign).toFixed(1);
+                      return (
                         <div
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            gap: '0.5rem',
-                            flexWrap: 'wrap',
-                            alignItems: 'center',
-                          }}
-                        >
-                          <strong>{campaign.title}</strong>
-                          <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-                            {campaign.is_hidden && (
-                              <span
-                                style={{
-                                  fontSize: '0.72rem',
-                                  fontWeight: 700,
-                                  textTransform: 'uppercase',
-                                  letterSpacing: '0.04em',
-                                  padding: '0.15rem 0.5rem',
-                                  borderRadius: '99px',
-                                  background: 'var(--color-surface)',
-                                  color: 'var(--color-text-hint)',
-                                  opacity: 0.6,
-                                }}
-                              >
-                                {t('dashboard.hidden')}
-                              </span>
-                            )}
-                            <CampaignStatusBadge status={campaign.status} />
-                          </div>
-                        </div>
-                        <div style={{ marginTop: '0.35rem', fontSize: '0.9rem' }}>
-                          {Number(campaign.raised_amount).toLocaleString()} /{' '}
-                          {Number(campaign.target_amount).toLocaleString()} {campaign.asset_type}
-                        </div>
-                        <div
-                          style={{
-                            background: 'var(--color-surface)',
-                            borderRadius: '99px',
-                            height: '6px',
-                            marginTop: '0.35rem',
-                          }}
+                          key={campaign.id}
+                          className="campaign-card"
+                          style={campaign.is_hidden ? { opacity: 0.6 } : undefined}
                         >
                           <div
                             style={{
-                              background: 'var(--color-accent)',
-                              height: '6px',
-                              borderRadius: '99px',
-                              width: `${pct}%`,
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              gap: '0.5rem',
+                              flexWrap: 'wrap',
+                              alignItems: 'center',
                             }}
-                          />
-                        </div>
-                        <div
-                          style={{
-                            marginTop: '0.35rem',
-                            color: 'var(--color-text-hint)',
-                            fontSize: '0.85rem',
-                          }}
-                        >
-                          {t('dashboard.contributorsCount', { count: campaign.contributor_count })}
-                          {campaign.deadline
-                            ? ` • ${t('dashboard.deadline', { date: new Date(campaign.deadline).toLocaleDateString() })}`
-                            : ''}
-                        </div>
-                        <div
-                          style={{
-                            marginTop: '0.6rem',
-                            display: 'flex',
-                            gap: '0.75rem',
-                            flexWrap: 'wrap',
-                          }}
-                        >
-                          <Link
-                            to={`/campaigns/${campaign.id}`}
-                            style={{ color: 'var(--color-accent)', fontWeight: 600 }}
                           >
-                            {t('dashboard.viewCampaign')}
-                          </Link>
-                          <button
-                            type="button"
-                            className="btn-secondary"
-                            disabled={exportingCampaignId !== null}
-                            aria-busy={exportingCampaignId === campaign.id}
-                            onClick={() => handleExportContributions(campaign)}
-                            style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                            <strong>{campaign.title}</strong>
+                            <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                              {campaign.is_hidden && (
+                                <span
+                                  style={{
+                                    fontSize: '0.72rem',
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.04em',
+                                    padding: '0.15rem 0.5rem',
+                                    borderRadius: '99px',
+                                    background: 'var(--color-surface)',
+                                    color: 'var(--color-text-hint)',
+                                    opacity: 0.6,
+                                  }}
+                                >
+                                  {t('dashboard.hidden')}
+                                </span>
+                              )}
+                              <CampaignStatusBadge status={campaign.status} />
+                            </div>
+                          </div>
+                          <div style={{ marginTop: '0.35rem', fontSize: '0.9rem' }}>
+                            {Number(campaign.raised_amount).toLocaleString()} /{' '}
+                            {Number(campaign.target_amount).toLocaleString()} {campaign.asset_type}
+                          </div>
+                          <div
+                            style={{
+                              background: 'var(--color-surface)',
+                              borderRadius: '99px',
+                              height: '6px',
+                              marginTop: '0.35rem',
+                            }}
                           >
-                            {exportingCampaignId === campaign.id
-                              ? t('common.loading')
-                              : t('dashboard.exportCsv')}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-secondary"
-                            onClick={() => setBulkThankYouCampaignId(campaign.id)}
-                            style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                            <div
+                              style={{
+                                background: 'var(--color-accent)',
+                                height: '6px',
+                                borderRadius: '99px',
+                                width: `${pct}%`,
+                              }}
+                            />
+                          </div>
+                          <div
+                            style={{
+                              marginTop: '0.35rem',
+                              color: 'var(--color-text-hint)',
+                              fontSize: '0.85rem',
+                            }}
                           >
-                            {t('dashboard.sendThankYou')}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-secondary"
-                            disabled={togglingVisibility !== null}
-                            aria-busy={togglingVisibility === campaign.id}
-                            onClick={() => handleToggleVisibility(campaign)}
-                            style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                            {t('dashboard.contributorsCount', {
+                              count: campaign.contributor_count,
+                            })}
+                            {campaign.deadline
+                              ? ` • ${t('dashboard.deadline', { date: new Date(campaign.deadline).toLocaleDateString() })}`
+                              : ''}
+                          </div>
+                          <div
+                            style={{
+                              marginTop: '0.6rem',
+                              display: 'flex',
+                              gap: '0.75rem',
+                              flexWrap: 'wrap',
+                            }}
                           >
-                            {togglingVisibility === campaign.id
-                              ? t('common.loading')
-                              : campaign.is_hidden
-                                ? t('dashboard.showCampaign')
-                                : t('dashboard.hideCampaign')}
-                          </button>
-                          {campaign.status === 'funded' && (
                             <Link
-                              to={`/campaigns/${campaign.id}#withdrawals`}
+                              to={`/campaigns/${campaign.id}`}
                               style={{ color: 'var(--color-accent)', fontWeight: 600 }}
                             >
-                              {campaign.has_milestones
-                                ? t('dashboard.manageMilestoneReleases')
-                                : t('dashboard.requestWithdrawal')}
+                              {t('dashboard.viewCampaign')}
                             </Link>
-                          )}
+                            <Link
+                              to={`/campaigns/${campaign.id}/share`}
+                              style={{ color: 'var(--color-accent)', fontWeight: 600 }}
+                            >
+                              Share
+                            </Link>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              disabled={exportingCampaignId !== null}
+                              aria-busy={exportingCampaignId === campaign.id}
+                              onClick={() => handleExportContributions(campaign)}
+                              style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                            >
+                              {exportingCampaignId === campaign.id
+                                ? t('common.loading')
+                                : t('dashboard.exportCsv')}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => setBulkThankYouCampaignId(campaign.id)}
+                              style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                            >
+                              {t('dashboard.sendThankYou')}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              disabled={togglingVisibility !== null}
+                              aria-busy={togglingVisibility === campaign.id}
+                              onClick={() => handleToggleVisibility(campaign)}
+                              style={{ fontSize: '0.82rem', padding: '0.3rem 0.8rem' }}
+                            >
+                              {togglingVisibility === campaign.id
+                                ? t('common.loading')
+                                : campaign.is_hidden
+                                  ? t('dashboard.showCampaign')
+                                  : t('dashboard.hideCampaign')}
+                            </button>
+                            {campaign.status === 'funded' && (
+                              <Link
+                                to={`/campaigns/${campaign.id}#withdrawals`}
+                                style={{ color: 'var(--color-accent)', fontWeight: 600 }}
+                              >
+                                {campaign.has_milestones
+                                  ? t('dashboard.manageMilestoneReleases')
+                                  : t('dashboard.requestWithdrawal')}
+                              </Link>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                {campaignsTotalPages > 1 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-                    <span style={{ fontSize: '0.9rem', color: 'var(--color-text-hint)' }}>
-                      {t('dashboard.showingCampaignsOf', { count: campaigns.length, total: campaignsTotal })}
-                    </span>
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        disabled={campaignsPage === 1 || isCampaignsPageLoading}
-                        onClick={() => setCampaignsPage(p => Math.max(1, p - 1))}
-                        style={{ padding: '0.3rem 0.8rem', fontSize: '0.85rem' }}
-                      >
-                        {t('dashboard.previous')}
-                      </button>
-                      <span style={{ fontSize: '0.9rem' }}>
-                        {t('dashboard.pageOf', { page: campaignsPage, totalPages: campaignsTotalPages })}
-                      </span>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        disabled={campaignsPage === campaignsTotalPages || isCampaignsPageLoading}
-                        onClick={() => setCampaignsPage(p => Math.min(campaignsTotalPages, p + 1))}
-                        style={{ padding: '0.3rem 0.8rem', fontSize: '0.85rem' }}
-                      >
-                        {t('dashboard.next')}
-                      </button>
-                    </div>
+                      );
+                    })}
                   </div>
-                )}
+                  {campaignsTotalPages > 1 && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginTop: '1.5rem',
+                        flexWrap: 'wrap',
+                        gap: '1rem',
+                      }}
+                    >
+                      <span style={{ fontSize: '0.9rem', color: 'var(--color-text-hint)' }}>
+                        {t('dashboard.showingCampaignsOf', {
+                          count: campaigns.length,
+                          total: campaignsTotal,
+                        })}
+                      </span>
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={campaignsPage === 1 || isCampaignsPageLoading}
+                          onClick={() => setCampaignsPage((p) => Math.max(1, p - 1))}
+                          style={{ padding: '0.3rem 0.8rem', fontSize: '0.85rem' }}
+                        >
+                          {t('dashboard.previous')}
+                        </button>
+                        <span style={{ fontSize: '0.9rem' }}>
+                          {t('dashboard.pageOf', {
+                            page: campaignsPage,
+                            totalPages: campaignsTotalPages,
+                          })}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={campaignsPage === campaignsTotalPages || isCampaignsPageLoading}
+                          onClick={() =>
+                            setCampaignsPage((p) => Math.min(campaignsTotalPages, p + 1))
+                          }
+                          style={{ padding: '0.3rem 0.8rem', fontSize: '0.85rem' }}
+                        >
+                          {t('dashboard.next')}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </>
@@ -917,7 +960,13 @@ export default function Dashboard() {
                 </button>
               )}
             </div>
-            <React.Suspense fallback={<p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>Loading chart…</p>}>
+            <React.Suspense
+              fallback={
+                <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
+                  Loading chart…
+                </p>
+              }
+            >
               <MiniLineChart
                 data={dashAnalytics?.recent_trend}
                 dataKey="total_amount"
@@ -974,7 +1023,13 @@ export default function Dashboard() {
               <strong style={{ display: 'block', marginBottom: '0.6rem' }}>
                 Funding Velocity (last 60 days)
               </strong>
-              <React.Suspense fallback={<p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>Loading chart…</p>}>
+              <React.Suspense
+                fallback={
+                  <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
+                    Loading chart…
+                  </p>
+                }
+              >
                 <MiniLineChart
                   data={dashAnalytics.funding_velocity}
                   dataKey="daily_amount"
@@ -993,7 +1048,9 @@ export default function Dashboard() {
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                   <thead>
-                    <tr style={{ borderBottom: '2px solid var(--color-border)', textAlign: 'left' }}>
+                    <tr
+                      style={{ borderBottom: '2px solid var(--color-border)', textAlign: 'left' }}
+                    >
                       <th style={{ padding: '0.3rem 0.5rem' }}>Month</th>
                       <th style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>New</th>
                       <th style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>Returning</th>
@@ -1005,10 +1062,17 @@ export default function Dashboard() {
                       const total = (r.new_count || 0) + (r.returning_count || 0);
                       const pct = total > 0 ? Math.round((r.returning_count / total) * 100) : 0;
                       return (
-                        <tr key={r.month} style={{ borderBottom: '1px solid var(--color-border-lighter)' }}>
+                        <tr
+                          key={r.month}
+                          style={{ borderBottom: '1px solid var(--color-border-lighter)' }}
+                        >
                           <td style={{ padding: '0.3rem 0.5rem', fontWeight: 600 }}>{r.month}</td>
-                          <td style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>{r.new_count}</td>
-                          <td style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>{r.returning_count}</td>
+                          <td style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>
+                            {r.new_count}
+                          </td>
+                          <td style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>
+                            {r.returning_count}
+                          </td>
                           <td style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>{pct}%</td>
                         </tr>
                       );
@@ -1028,22 +1092,41 @@ export default function Dashboard() {
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                   <thead>
-                    <tr style={{ borderBottom: '2px solid var(--color-border)', textAlign: 'left' }}>
+                    <tr
+                      style={{ borderBottom: '2px solid var(--color-border)', textAlign: 'left' }}
+                    >
                       <th style={{ padding: '0.3rem 0.5rem' }}>Referral Code</th>
                       <th style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>Clicks</th>
-                      <th style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>Contributions</th>
+                      <th style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>
+                        Contributions
+                      </th>
                       <th style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>Conversion</th>
                     </tr>
                   </thead>
                   <tbody>
                     {dashAnalytics.referral_conversion.map((r) => (
-                      <tr key={r.referral_code} style={{ borderBottom: '1px solid var(--color-border-lighter)' }}>
-                        <td style={{ padding: '0.3rem 0.5rem', fontFamily: 'monospace', fontSize: '0.78rem' }}>
+                      <tr
+                        key={r.referral_code}
+                        style={{ borderBottom: '1px solid var(--color-border-lighter)' }}
+                      >
+                        <td
+                          style={{
+                            padding: '0.3rem 0.5rem',
+                            fontFamily: 'monospace',
+                            fontSize: '0.78rem',
+                          }}
+                        >
                           {r.referral_code}
                         </td>
-                        <td style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>{r.click_count}</td>
-                        <td style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>{r.contribution_count}</td>
-                        <td style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>{r.conversion_rate}%</td>
+                        <td style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>
+                          {r.click_count}
+                        </td>
+                        <td style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>
+                          {r.contribution_count}
+                        </td>
+                        <td style={{ padding: '0.3rem 0.5rem', textAlign: 'center' }}>
+                          {r.conversion_rate}%
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1070,7 +1153,7 @@ export default function Dashboard() {
                   marginBottom: '0.75rem',
                 }}
               >
-                    {campaigns.map((c) => (
+                {campaigns.map((c) => (
                   <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <button
                       key={c.id}
@@ -1092,7 +1175,12 @@ export default function Dashboard() {
                     </button>
                     <Link
                       to={`/dashboard/analytics/${c.id}`}
-                      style={{ color: 'var(--color-accent)', fontSize: '0.78rem', fontWeight: 600, whiteSpace: 'nowrap' }}
+                      style={{
+                        color: 'var(--color-accent)',
+                        fontSize: '0.78rem',
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                      }}
                     >
                       Deep Dive →
                     </Link>
@@ -1213,7 +1301,13 @@ export default function Dashboard() {
                 )}
 
                 {campaignBackers && (
-                  <React.Suspense fallback={<p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>Loading chart…</p>}>
+                  <React.Suspense
+                    fallback={
+                      <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
+                        Loading chart…
+                      </p>
+                    }
+                  >
                     <BackerInsightsCard
                       data={campaignBackers}
                       assetType={campaignAnalytics?.campaign?.asset_type || 'XLM'}
@@ -1225,7 +1319,13 @@ export default function Dashboard() {
                 <strong style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.9rem' }}>
                   {t('dashboard.contributionsOverTime')}
                 </strong>
-                <React.Suspense fallback={<p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>Loading chart…</p>}>
+                <React.Suspense
+                  fallback={
+                    <p style={{ color: 'var(--color-text-hint)', fontSize: '0.9rem' }}>
+                      Loading chart…
+                    </p>
+                  }
+                >
                   <MiniLineChart
                     data={campaignAnalytics.daily_buckets}
                     dataKey="total_amount"
@@ -1259,8 +1359,13 @@ export default function Dashboard() {
 
                 {/* Contributions list with individual thank-you */}
                 {campaignContributions.length > 0 && !contributionsLoading && (
-                  <div className="campaign-card" style={{ minHeight: 'auto', marginTop: '0.75rem' }}>
-                    <strong style={{ display: 'block', marginBottom: '0.6rem', fontSize: '0.9rem' }}>
+                  <div
+                    className="campaign-card"
+                    style={{ minHeight: 'auto', marginTop: '0.75rem' }}
+                  >
+                    <strong
+                      style={{ display: 'block', marginBottom: '0.6rem', fontSize: '0.9rem' }}
+                    >
                       {t('dashboard.contributors')}
                     </strong>
                     <div style={{ maxHeight: '300px', overflowY: 'auto' }}>

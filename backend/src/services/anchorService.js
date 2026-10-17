@@ -1,14 +1,12 @@
-const {
-  Keypair,
-  TransactionBuilder,
-  WebAuth,
-} = require('@stellar/stellar-sdk');
+const { Keypair, TransactionBuilder, WebAuth } = require('@stellar/stellar-sdk');
 const { Networks } = require('@stellar/stellar-sdk');
 const { configuredAssets } = require('../config/stellar');
 
 function moneyGramEnvironmentConfig() {
-  const env = process.env.ANCHOR_MONEYGRAM_ENV || (process.env.STELLAR_NETWORK === 'mainnet' ? 'production' : 'sandbox');
-  const getDomain = (defaultDomain) => process.env.STELLAR_ANCHOR_DOMAIN || defaultDomain;
+  const env =
+    process.env.ANCHOR_MONEYGRAM_ENV ||
+    (process.env.STELLAR_NETWORK === 'mainnet' ? 'production' : 'sandbox');
+  const getDomain = defaultDomain => process.env.STELLAR_ANCHOR_DOMAIN || defaultDomain;
 
   if (env === 'sandbox') {
     const domain = getDomain('extstellar.moneygram.com');
@@ -19,7 +17,9 @@ function moneyGramEnvironmentConfig() {
       homeDomain: domain,
       webAuthEndpoint: `https://${domain}/stellaradapterservice/auth`,
       sep24Endpoint: `https://${domain}/stellaradapterservice/sep24`,
-      signingKey: 'GCUZ6YLL5RQBTYLTTQLPCM73C5XAIUGK2TIMWQH7HPSGWVS2KJ2F3CHS',
+      signingKey:
+        process.env.ANCHOR_MONEYGRAM_SIGNING_KEY ||
+        'GCSESAP5ILVM6CWIEGK2SDOCQU7PHVFYYT7JNKRDAQNVQWKD5YEE5ZJ4',
       networkPassphrase: Networks.TESTNET,
       assetCode: 'USDC',
       assetIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
@@ -95,10 +95,31 @@ function customAnchorConfig() {
     assetIssuer: process.env.ANCHOR_CUSTOM_ASSET_ISSUER,
     market: process.env.ANCHOR_CUSTOM_MARKET || 'custom',
     rails: process.env.ANCHOR_CUSTOM_RAILS
-      ? process.env.ANCHOR_CUSTOM_RAILS.split(',').map((value) => value.trim()).filter(Boolean)
+      ? process.env.ANCHOR_CUSTOM_RAILS.split(',')
+          .map(value => value.trim())
+          .filter(Boolean)
       : ['bank'],
     testnetAvailable: process.env.ANCHOR_CUSTOM_TESTNET === 'true',
     productionAvailable: true,
+  };
+}
+
+function testAnchorEnvironmentConfig() {
+  return {
+    id: 'testanchor',
+    name: 'SDF Reference Test Anchor',
+    environment: 'sandbox',
+    homeDomain: 'testanchor.stellar.org',
+    webAuthEndpoint: 'https://testanchor.stellar.org/auth',
+    sep24Endpoint: 'https://testanchor.stellar.org/sep24',
+    signingKey: 'GBF5645ECAM2BP2EQS52EPPO5F753457ZDC67SO467SVY5NZ7A42G4LM',
+    networkPassphrase: Networks.TESTNET,
+    assetCode: 'USDC',
+    assetIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    market: 'global-usd',
+    rails: ['bank'],
+    testnetAvailable: true,
+    productionAvailable: false,
   };
 }
 
@@ -107,13 +128,17 @@ function getAvailableAnchors() {
   if (process.env.ANCHOR_MONEYGRAM_ENABLED !== 'false') {
     anchors.push(moneyGramEnvironmentConfig());
   }
+  if (process.env.ANCHOR_TESTANCHOR_ENABLED === 'true') {
+    anchors.push(testAnchorEnvironmentConfig());
+  }
   const custom = customAnchorConfig();
   if (custom) anchors.push(custom);
   return anchors;
 }
 
 function getAnchorById(anchorId) {
-  return getAvailableAnchors().find((anchor) => anchor.id === anchorId) || null;
+  if (anchorId === 'testanchor') return testAnchorEnvironmentConfig();
+  return getAvailableAnchors().find(anchor => anchor.id === anchorId) || null;
 }
 
 function walletDomainConfig() {
@@ -125,7 +150,9 @@ function walletDomainConfig() {
 
 function decodeJwtExp(token) {
   try {
-    const payload = JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8'));
+    const payload = JSON.parse(
+      Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8')
+    );
     return payload?.exp ? new Date(payload.exp * 1000) : null;
   } catch {
     return null;
@@ -177,7 +204,9 @@ async function fetchJson(url, options = {}) {
     }
   }
   if (!response.ok) {
-    const error = new Error(data.error || data.detail || `Anchor request failed (${response.status})`);
+    const error = new Error(
+      data.error || data.detail || `Anchor request failed (${response.status})`
+    );
     error.statusCode = response.status;
     error.payload = data;
     throw error;
@@ -185,11 +214,7 @@ async function fetchJson(url, options = {}) {
   return data;
 }
 
-async function authenticateWithAnchor({
-  anchor,
-  userPublicKey,
-  userSecret,
-}) {
+async function authenticateWithAnchor({ anchor, userPublicKey, userSecret }) {
   const walletDomain = walletDomainConfig();
   if (!walletDomain.homeDomain || !walletDomain.signingSecret) {
     const error = new Error('Anchor wallet domain signing is not configured on the backend');
@@ -243,26 +268,44 @@ async function authenticateWithAnchor({
   };
 }
 
-async function startInteractiveDeposit({
-  anchor,
-  authToken,
-  userPublicKey,
-  amount,
-}) {
-  const body = new URLSearchParams({
+async function startInteractiveDeposit({ anchor, authToken, userPublicKey, amount, memo }) {
+  const payload = {
     asset_code: anchor.assetCode,
     account: userPublicKey,
     amount: String(amount),
     lang: 'en',
-  });
-  const response = await fetchJson(`${anchor.sep24Endpoint}/transactions/deposit/interactive`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${authToken}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body,
-  });
+  };
+  if (memo) {
+    payload.memo = memo;
+    payload.memo_type = 'text';
+  }
+
+  let response;
+  try {
+    response = await fetchJson(`${anchor.sep24Endpoint}/transactions/deposit/interactive`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    if (err.statusCode === 415 || (err.message && /unsupported media type/i.test(err.message))) {
+      const body = new URLSearchParams(payload);
+      response = await fetchJson(`${anchor.sep24Endpoint}/transactions/deposit/interactive`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body,
+      });
+    } else {
+      throw err;
+    }
+  }
+
   if (!response.id || !response.url) {
     const error = new Error('Anchor did not return an interactive URL for this deposit');
     error.statusCode = 502;

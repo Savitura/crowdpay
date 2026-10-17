@@ -93,12 +93,12 @@ class TtlCache {
 
     const promise = Promise.resolve()
       .then(() => fn())
-      .then((result) => {
+      .then(result => {
         this.set(key, result, ttlMs);
         this._inflight.delete(key);
         return result;
       })
-      .catch((err) => {
+      .catch(err => {
         this._inflight.delete(key);
         throw err;
       });

@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 5,
+    "address": 6,
     "nonce": 0
   },
   "auth": [
@@ -23,7 +23,81 @@
         }
       ]
     ],
-    [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "function_name": "initialize",
+              "args": [
+                {
+                  "symbol": "cp1"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                },
+                {
+                  "address": "CBUSYNQKASUYFWYC3M2GUEDMX4AIVWPALDBYJPNK6554BREHTGZ2IUNF"
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 1000
+                  }
+                },
+                {
+                  "u64": 10000
+                },
+                {
+                  "vec": [
+                    {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "amount"
+                          },
+                          "val": {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 1000
+                            }
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "released"
+                          },
+                          "val": {
+                            "bool": false
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "target"
+                          },
+                          "val": {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 1000
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
@@ -95,6 +169,25 @@
               "sub_invocations": []
             }
           ]
+        }
+      ]
+    ],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "function_name": "approve_milestone",
+              "args": [
+                {
+                  "u32": 0
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
         }
       ]
     ],
@@ -174,7 +267,7 @@
       [
         {
           "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
             "key": {
               "ledger_key_nonce": {
                 "nonce": 5541220902715666415
@@ -189,10 +282,43 @@
             "data": {
               "contract_data": {
                 "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
                 "key": {
                   "ledger_key_nonce": {
                     "nonce": 5541220902715666415
+                  }
+                },
+                "durability": "temporary",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "ledger_key_nonce": {
+                "nonce": 1033654523790656264
+              }
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 1033654523790656264
                   }
                 },
                 "durability": "temporary",
@@ -249,7 +375,7 @@
             },
             "ext": "v0"
           },
-          4095
+          1038800
         ]
       ],
       [
@@ -330,6 +456,21 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "MilestoneApproved"
+                            },
+                            {
+                              "u32": 0
+                            }
+                          ]
+                        },
+                        "val": {
+                          "bool": true
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "Milestones"
                             }
                           ]
@@ -338,6 +479,17 @@
                           "vec": [
                             {
                               "map": [
+                                {
+                                  "key": {
+                                    "symbol": "amount"
+                                  },
+                                  "val": {
+                                    "i128": {
+                                      "hi": 0,
+                                      "lo": 1000
+                                    }
+                                  }
+                                },
                                 {
                                   "key": {
                                     "symbol": "released"
@@ -360,6 +512,18 @@
                               ]
                             }
                           ]
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "Platform"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                         }
                       },
                       {
@@ -400,6 +564,21 @@
                             "lo": 500
                           }
                         }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "TotalReleased"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "i128": {
+                            "hi": 0,
+                            "lo": 0
+                          }
+                        }
                       }
                     ]
                   }
@@ -408,7 +587,7 @@
             },
             "ext": "v0"
           },
-          4095
+          1038800
         ]
       ],
       [
@@ -417,7 +596,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 1033654523790656264
+                "nonce": 4837995959683129791
               }
             },
             "durability": "temporary"
@@ -432,7 +611,40 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 1033654523790656264
+                    "nonce": 4837995959683129791
+                  }
+                },
+                "durability": "temporary",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "ledger_key_nonce": {
+                "nonce": 2032731177588607455
+              }
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 2032731177588607455
                   }
                 },
                 "durability": "temporary",
@@ -720,7 +932,7 @@
             },
             "ext": "v0"
           },
-          4095
+          1038800
         ]
       ]
     ]
@@ -873,6 +1085,9 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                 },
                 {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                },
+                {
                   "address": "CBUSYNQKASUYFWYC3M2GUEDMX4AIVWPALDBYJPNK6554BREHTGZ2IUNF"
                 },
                 {
@@ -888,6 +1103,17 @@
                   "vec": [
                     {
                       "map": [
+                        {
+                          "key": {
+                            "symbol": "amount"
+                          },
+                          "val": {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 1000
+                            }
+                          }
+                        },
                         {
                           "key": {
                             "symbol": "released"
@@ -1192,6 +1418,76 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000004"
               },
               {
+                "symbol": "approve_milestone"
+              }
+            ],
+            "data": {
+              "u32": 0
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000004",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "approve"
+              },
+              {
+                "u32": 0
+              }
+            ],
+            "data": {
+              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000004",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "approve_milestone"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000004"
+              },
+              {
                 "symbol": "release_milestone"
               }
             ],
@@ -1218,7 +1514,7 @@
             "data": {
               "vec": [
                 {
-                  "string": "caught panic 'Milestone target not met' from contract function 'Symbol(obj#319)'"
+                  "string": "caught panic 'Milestone target not met' from contract function 'Symbol(obj#411)'"
                 },
                 {
                   "u32": 0

@@ -157,12 +157,17 @@ export default function MilestoneVotePanel({ milestones }) {
               />
 
               {error && (
-                <div className="alert alert--error" style={{ marginTop: '0.65rem', fontSize: '0.82rem' }}>
+                <div
+                  className="alert alert--error"
+                  style={{ marginTop: '0.65rem', fontSize: '0.82rem' }}
+                >
                   {error}
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
+              <div
+                style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}
+              >
                 <button
                   type="button"
                   disabled={busy}

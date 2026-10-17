@@ -10,7 +10,9 @@ export default function CampaignReferralsTab({ campaignId, assetType }) {
     api
       .getCampaignReferralCommissions(campaignId)
       .then(setData)
-      .catch((err) => setError(err.status === 404 ? 'not_enabled' : err.message || 'Failed to load referrals'));
+      .catch((err) =>
+        setError(err.status === 404 ? 'not_enabled' : err.message || 'Failed to load referrals')
+      );
   }, [campaignId]);
 
   if (error === 'not_enabled') {
@@ -53,8 +55,12 @@ export default function CampaignReferralsTab({ campaignId, assetType }) {
                   key={referrer.referral_link_id}
                   style={{ borderBottom: '1px solid var(--color-border-lighter)' }}
                 >
-                  <td style={{ padding: '0.5rem 0.75rem', fontWeight: 600 }}>{referrer.referrer_name}</td>
-                  <td style={{ padding: '0.5rem 0.75rem', fontFamily: 'monospace' }}>{referrer.code}</td>
+                  <td style={{ padding: '0.5rem 0.75rem', fontWeight: 600 }}>
+                    {referrer.referrer_name}
+                  </td>
+                  <td style={{ padding: '0.5rem 0.75rem', fontFamily: 'monospace' }}>
+                    {referrer.code}
+                  </td>
                   <td style={{ padding: '0.5rem 0.75rem', textAlign: 'center' }}>
                     {referrer.contribution_count}
                   </td>

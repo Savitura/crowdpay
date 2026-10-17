@@ -18,7 +18,9 @@ describe('ForgotPassword page', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /Send reset link/i }));
 
-    await waitFor(() => expect(apiMocks.forgotPassword).toHaveBeenCalledWith({ email: 'test@example.com' }));
+    await waitFor(() =>
+      expect(apiMocks.forgotPassword).toHaveBeenCalledWith({ email: 'test@example.com' })
+    );
     expect(await screen.findByText(/Reset email sent/i)).toBeInTheDocument();
   });
 });

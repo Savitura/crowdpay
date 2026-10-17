@@ -36,10 +36,14 @@ const asyncHandler = require('../utils/asyncHandler');
  *       401:
  *         description: Unauthorized
  */
-router.get('/sessions', requireAuth, asyncHandler(async (req, res) => {
-  const sessions = await listUserSessions(req.user.userId);
-  res.json({ sessions });
-}));
+router.get(
+  '/sessions',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const sessions = await listUserSessions(req.user.userId);
+    res.json({ sessions });
+  })
+);
 
 /**
  * @openapi
@@ -65,13 +69,17 @@ router.get('/sessions', requireAuth, asyncHandler(async (req, res) => {
  *       404:
  *         description: Session not found
  */
-router.delete('/sessions/:id', requireAuth, asyncHandler(async (req, res) => {
-  const revoked = await revokeUserSession(req.params.id, req.user.userId);
-  if (!revoked) {
-    return res.status(404).json({ error: 'Session not found or already revoked' });
-  }
-  res.json({ ok: true });
-}));
+router.delete(
+  '/sessions/:id',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const revoked = await revokeUserSession(req.params.id, req.user.userId);
+    if (!revoked) {
+      return res.status(404).json({ error: 'Session not found or already revoked' });
+    }
+    res.json({ ok: true });
+  })
+);
 
 /**
  * @openapi
@@ -88,12 +96,21 @@ router.delete('/sessions/:id', requireAuth, asyncHandler(async (req, res) => {
  *       200:
  *         description: List of login alerts
  */
-router.get('/login-alerts', requireAuth, asyncHandler(async (req, res) => {
-  const { alerts, total } = await getUserLoginAlerts(req.user.userId, {
-    acknowledged: req.query.acknowledged === 'true' ? true : req.query.acknowledged === 'false' ? false : undefined,
-  });
-  res.json({ alerts, total });
-}));
+router.get(
+  '/login-alerts',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { alerts, total } = await getUserLoginAlerts(req.user.userId, {
+      acknowledged:
+        req.query.acknowledged === 'true'
+          ? true
+          : req.query.acknowledged === 'false'
+            ? false
+            : undefined,
+    });
+    res.json({ alerts, total });
+  })
+);
 
 /**
  * @openapi
@@ -111,10 +128,14 @@ router.get('/login-alerts', requireAuth, asyncHandler(async (req, res) => {
  *       200:
  *         description: Alert acknowledged
  */
-router.post('/login-alerts/:id/acknowledge', requireAuth, asyncHandler(async (req, res) => {
-  await acknowledgeLoginAlert(req.params.id, req.user.userId);
-  res.json({ ok: true });
-}));
+router.post(
+  '/login-alerts/:id/acknowledge',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    await acknowledgeLoginAlert(req.params.id, req.user.userId);
+    res.json({ ok: true });
+  })
+);
 
 /**
  * @openapi
@@ -127,9 +148,13 @@ router.post('/login-alerts/:id/acknowledge', requireAuth, asyncHandler(async (re
  *       200:
  *         description: List of login attempts
  */
-router.get('/login-attempts', requireAuth, asyncHandler(async (req, res) => {
-  const { attempts, total } = await getUserLoginAttempts(req.user.userId);
-  res.json({ attempts, total });
-}));
+router.get(
+  '/login-attempts',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { attempts, total } = await getUserLoginAttempts(req.user.userId);
+    res.json({ attempts, total });
+  })
+);
 
 module.exports = router;

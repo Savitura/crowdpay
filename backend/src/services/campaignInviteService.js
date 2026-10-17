@@ -28,27 +28,25 @@ async function sendCampaignInviteEmail({ email, role, campaignTitle, inviteUrl }
   });
 }
 
-async function createCampaignInvite({
-  campaignId,
-  email,
-  role,
-  invitedByUserId,
-  campaignTitle,
-}) {
+async function createCampaignInvite({ campaignId, email, role, invitedByUserId, campaignTitle }) {
   if (!isValidRole(role)) {
     const err = new Error('Invalid role. Must be owner, manager, editor, or viewer');
     err.statusCode = 422;
     throw err;
   }
 
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = String(email || '')
+    .trim()
+    .toLowerCase();
   if (!normalizedEmail) {
     const err = new Error('Email is required');
     err.statusCode = 422;
     throw err;
   }
 
-  const { rows: users } = await db.query('SELECT id FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
+  const { rows: users } = await db.query('SELECT id FROM users WHERE LOWER(email) = $1', [
+    normalizedEmail,
+  ]);
   const inviteeUserId = users[0]?.id || null;
 
   const { rows: existing } = await db.query(
@@ -206,7 +204,9 @@ async function acceptCampaignInvite({ inviteToken, userId, userEmail }) {
     throw err;
   }
 
-  const normalizedUserEmail = String(userEmail || '').trim().toLowerCase();
+  const normalizedUserEmail = String(userEmail || '')
+    .trim()
+    .toLowerCase();
   if (normalizedUserEmail && normalizedUserEmail !== String(invite.email).toLowerCase()) {
     const err = new Error('This invitation was sent to a different email address');
     err.statusCode = 403;
@@ -228,10 +228,9 @@ async function acceptCampaignInvite({ inviteToken, userId, userEmail }) {
 }
 
 async function countAcceptedOwners(campaignId) {
-  const { rows: campaignRows } = await db.query(
-    'SELECT creator_id FROM campaigns WHERE id = $1',
-    [campaignId]
-  );
+  const { rows: campaignRows } = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [
+    campaignId,
+  ]);
   if (!campaignRows.length) return 0;
 
   const { rows } = await db.query(
@@ -250,10 +249,9 @@ async function countAcceptedOwners(campaignId) {
 async function resolveUserCampaignRole(campaignId, userId, isAdmin = false) {
   if (isAdmin) return 'owner';
 
-  const { rows: campaignRows } = await db.query(
-    'SELECT creator_id FROM campaigns WHERE id = $1',
-    [campaignId]
-  );
+  const { rows: campaignRows } = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [
+    campaignId,
+  ]);
   if (!campaignRows.length) return null;
   if (campaignRows[0].creator_id === userId) return 'owner';
 

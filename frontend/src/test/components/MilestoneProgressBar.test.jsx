@@ -29,9 +29,7 @@ describe('MilestoneProgressBar', () => {
     render(<MilestoneProgressBar milestones={MILESTONES} summary={SUMMARY} />);
 
     expect(screen.getByText('1 of 4 released')).toBeInTheDocument();
-    expect(
-      screen.getByRole('img', { name: '1 of 4 milestones released' })
-    ).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '1 of 4 milestones released' })).toBeInTheDocument();
   });
 
   it('lists every milestone with its status at the large size', () => {

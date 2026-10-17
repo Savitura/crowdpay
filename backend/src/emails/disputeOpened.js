@@ -1,32 +1,41 @@
-const { renderLayout, heading, paragraph, table, buttonRow } = require("./layout");
+const { renderLayout, heading, paragraph, table, buttonRow } = require('./layout');
 
-function buildForCreator({ creatorName, campaignTitle, reason }) {
-  const name = creatorName || "there";
+function buildForCreator({ creatorName, campaignTitle, reason, unsubscribeUrl }) {
+  const name = creatorName || 'there';
   const subject = `A dispute has been raised on "${campaignTitle}"`;
 
   const text = [
     `Hi ${name},`,
-    "",
+    '',
     `A contributor has raised a dispute on your campaign "${campaignTitle}".`,
     `Reason: ${reason}`,
-    "",
-    "The platform team will review and contact you shortly.",
-  ].join("\n");
+    '',
+    'The platform team will review and contact you shortly.',
+  ].join('\n');
 
   const html = renderLayout({
     previewText: `A dispute has been raised on "${campaignTitle}".`,
     bodyHtml: [
-      heading("Dispute raised"),
+      heading('Dispute raised'),
       paragraph(`A contributor has raised a dispute on your campaign "${campaignTitle}".`),
-      table([["Reason", reason]]),
-      paragraph("The platform team will review and contact you shortly."),
-    ].join(""),
+      table([['Reason', reason]]),
+      paragraph('The platform team will review and contact you shortly.'),
+    ].join(''),
+    unsubscribeUrl,
   });
 
   return { subject, text, html };
 }
 
-function buildForAdmin({ campaignTitle, campaignId, raisedByName, reason, description, adminUrl }) {
+function buildForAdmin({
+  campaignTitle,
+  campaignId,
+  raisedByName,
+  reason,
+  description,
+  adminUrl,
+  unsubscribeUrl,
+}) {
   const subject = `A dispute has been raised on "${campaignTitle}"`;
 
   const text = [
@@ -34,22 +43,23 @@ function buildForAdmin({ campaignTitle, campaignId, raisedByName, reason, descri
     `Raised by: ${raisedByName}`,
     `Reason: ${reason}`,
     `Description: ${description}`,
-    "",
+    '',
     `Review: ${adminUrl}`,
-  ].join("\n");
+  ].join('\n');
 
   const html = renderLayout({
     previewText: `A dispute has been raised on "${campaignTitle}".`,
     bodyHtml: [
-      heading("New dispute requires review"),
+      heading('New dispute requires review'),
       table([
-        ["Campaign", campaignTitle],
-        ["Raised by", raisedByName],
-        ["Reason", reason],
-        ["Description", description],
+        ['Campaign', campaignTitle],
+        ['Raised by', raisedByName],
+        ['Reason', reason],
+        ['Description', description],
       ]),
-      buttonRow("Review dispute", adminUrl),
-    ].join(""),
+      buttonRow('Review dispute', adminUrl),
+    ].join(''),
+    unsubscribeUrl,
   });
 
   return { subject, text, html };

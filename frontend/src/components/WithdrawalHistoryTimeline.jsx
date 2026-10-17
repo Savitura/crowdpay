@@ -40,7 +40,7 @@ export default function WithdrawalHistoryTimeline({ campaignId, token }) {
       rows
         .filter((row) => row.status === 'submitted')
         .reduce((sum, row) => sum + Number(row.amount || 0), 0),
-    [rows],
+    [rows]
   );
 
   if (!token) return null;
@@ -51,8 +51,8 @@ export default function WithdrawalHistoryTimeline({ campaignId, token }) {
         <div>
           <h2 style={styles.title}>Withdrawal history</h2>
           <p style={styles.intro}>
-            Track how funds have been released from this campaign, including recipients and
-            on-chain transaction hashes.
+            Track how funds have been released from this campaign, including recipients and on-chain
+            transaction hashes.
           </p>
         </div>
         <div style={styles.summary}>
@@ -99,12 +99,19 @@ export default function WithdrawalHistoryTimeline({ campaignId, token }) {
                   <span style={styles.status}>{row.status}</span>
                 </div>
                 <div style={styles.meta}>{formatDate(row.created_at)}</div>
-                {row.milestone_title && <div style={styles.meta}>Milestone: {row.milestone_title}</div>}
+                {row.milestone_title && (
+                  <div style={styles.meta}>Milestone: {row.milestone_title}</div>
+                )}
                 <div style={styles.meta}>
                   Recipient: <code>{row.destination_key || 'Pending'}</code>
                 </div>
                 {row.tx_hash && (
-                  <a href={stellarExpertTxUrl(row.tx_hash)} target="_blank" rel="noopener noreferrer" style={styles.link}>
+                  <a
+                    href={stellarExpertTxUrl(row.tx_hash)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={styles.link}
+                  >
                     {shortHash(row.tx_hash)} on Stellar Expert
                   </a>
                 )}
@@ -131,12 +138,28 @@ const styles = {
   summary: { textAlign: 'right', minWidth: '8rem' },
   summaryLabel: { display: 'block', color: 'var(--color-text-hint)', fontSize: '0.8rem' },
   controls: { display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '1rem' },
-  controlLabel: { display: 'grid', gap: '0.25rem', fontSize: '0.85rem', color: 'var(--color-text-secondary)' },
-  select: { minWidth: '10rem', padding: '0.45rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border-light)' },
+  controlLabel: {
+    display: 'grid',
+    gap: '0.25rem',
+    fontSize: '0.85rem',
+    color: 'var(--color-text-secondary)',
+  },
+  select: {
+    minWidth: '10rem',
+    padding: '0.45rem 0.6rem',
+    borderRadius: '6px',
+    border: '1px solid var(--color-border-light)',
+  },
   muted: { color: 'var(--color-text-muted)' },
   timeline: { listStyle: 'none', padding: 0, margin: '1rem 0 0', display: 'grid', gap: '0.85rem' },
   item: { display: 'grid', gridTemplateColumns: '14px 1fr', gap: '0.75rem', alignItems: 'start' },
-  dot: { width: 10, height: 10, borderRadius: '50%', background: 'var(--color-accent)', marginTop: '0.45rem' },
+  dot: {
+    width: 10,
+    height: 10,
+    borderRadius: '50%',
+    background: 'var(--color-accent)',
+    marginTop: '0.45rem',
+  },
   card: { borderLeft: '2px solid var(--color-border-light)', paddingLeft: '0.85rem' },
   itemTop: { display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' },
   status: { textTransform: 'capitalize', color: 'var(--color-text-hint)', fontSize: '0.85rem' },

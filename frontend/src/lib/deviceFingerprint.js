@@ -76,7 +76,9 @@ async function sha256Hex(input) {
     h1 = Math.imul(h1 ^ input.charCodeAt(i), 0x01000193) >>> 0;
     h2 = Math.imul(h2 ^ input.charCodeAt(input.length - 1 - i), 0x01000193) >>> 0;
   }
-  return (h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0')).repeat(4).slice(0, 64);
+  return (h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0'))
+    .repeat(4)
+    .slice(0, 64);
 }
 
 /**

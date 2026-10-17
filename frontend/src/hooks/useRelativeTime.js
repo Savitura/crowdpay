@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import i18n from 'i18next';
 
 function getRelative(date) {
   if (!date) return '';
@@ -7,7 +8,8 @@ function getRelative(date) {
 
   const seconds = Math.round((dateObj.getTime() - Date.now()) / 1000);
   const abs = Math.abs(seconds);
-  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  const locale = i18n.language || 'en';
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
 
   if (abs < 60) return rtf.format(Math.round(seconds), 'second');
   if (abs < 3600) return rtf.format(Math.round(seconds / 60), 'minute');
@@ -27,10 +29,10 @@ function getRelative(date) {
 function getIntervalMs(date) {
   if (!date) return null;
   const abs = Math.abs(Date.now() - new Date(date).getTime()) / 1000; // age in seconds
-  if (abs >= 86400) return null;   // older than 24 h — static, no timer needed
-  if (abs >= 3600)  return 300_000; // older than 1 h  — refresh every 5 min
-  if (abs >= 60)    return 60_000;  // older than 1 min — refresh every 60 s
-  return 30_000;                    // recent           — refresh every 30 s
+  if (abs >= 86400) return null; // older than 24 h — static, no timer needed
+  if (abs >= 3600) return 300_000; // older than 1 h  — refresh every 5 min
+  if (abs >= 60) return 60_000; // older than 1 min — refresh every 60 s
+  return 30_000; // recent           — refresh every 30 s
 }
 
 export function useRelativeTime(date) {

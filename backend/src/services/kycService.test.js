@@ -16,39 +16,45 @@ afterEach(() => {
 function buildKycService(kycStatus = 'pending') {
   return proxyquire('./kycService', {
     '../config/database': {
-      query: async (text) => {
+      query: async text => {
         if (text.includes('SELECT id, email, name, role, kyc_status')) {
           return {
-            rows: [{
-              id: 'user-1',
-              email: 'user@test.com',
-              name: 'User',
-              role: 'contributor',
-              kyc_status: kycStatus,
-            }],
+            rows: [
+              {
+                id: 'user-1',
+                email: 'user@test.com',
+                name: 'User',
+                role: 'contributor',
+                kyc_status: kycStatus,
+              },
+            ],
           };
         }
         if (text.includes('SELECT id, kyc_status, kyc_completed_at, kyc_provider_reference')) {
           return {
-            rows: [{
-              id: 'user-1',
-              kyc_status: kycStatus,
-              kyc_completed_at: kycStatus === 'verified' ? new Date().toISOString() : null,
-              kyc_provider_reference: 'inq_1',
-            }],
+            rows: [
+              {
+                id: 'user-1',
+                kyc_status: kycStatus,
+                kyc_completed_at: kycStatus === 'verified' ? new Date().toISOString() : null,
+                kyc_provider_reference: 'inq_1',
+              },
+            ],
           };
         }
         if (text.includes('UPDATE users')) {
           return {
-            rows: [{
-              id: 'user-1',
-              email: 'user@test.com',
-              name: 'User',
-              role: 'contributor',
-              kyc_status: 'pending',
-              kyc_completed_at: null,
-              wallet_public_key: 'GUSER',
-            }],
+            rows: [
+              {
+                id: 'user-1',
+                email: 'user@test.com',
+                name: 'User',
+                role: 'contributor',
+                kyc_status: 'pending',
+                kyc_completed_at: null,
+                wallet_public_key: 'GUSER',
+              },
+            ],
           };
         }
         if (text.includes('SELECT kyc_status FROM users')) {
@@ -88,7 +94,7 @@ test('assertUserKycVerified throws KYC_REQUIRED for pending users', async () => 
   const kycService = buildKycService('pending');
   await assert.rejects(
     () => kycService.assertUserKycVerified('user-1'),
-    (err) => err.code === 'KYC_REQUIRED' && err.kyc_status === 'pending'
+    err => err.code === 'KYC_REQUIRED' && err.kyc_status === 'pending'
   );
 });
 

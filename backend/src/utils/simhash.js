@@ -36,5 +36,5 @@ function simhashSimilarity(hash1, hash2) {
 
 module.exports = {
   getSimhash,
-  simhashSimilarity
+  simhashSimilarity,
 };

@@ -4,7 +4,7 @@ const { Keypair } = require('@stellar/stellar-sdk');
 const { createCampaignWallet } = require('./stellarService');
 const { deployCampaignContracts } = require('./sorobanService');
 const { watchCampaignWallet } = require('./ledgerMonitor');
-const { STELLAR_ASSET_DECIMALS_SCALE } = require('../config/constants');
+const { toStroops } = require('../utils/stroops');
 
 const MILESTONE_PERCENT_SCALE = 10000;
 
@@ -37,7 +37,7 @@ async function publishDraftCampaign(campaignId) {
     'SELECT title, description, release_percentage, sort_order FROM milestones WHERE campaign_id = $1 ORDER BY sort_order ASC',
     [campaignId]
   );
-  const milestones = milestoneRows.map((m) => ({
+  const milestones = milestoneRows.map(m => ({
     title: m.title,
     description: m.description,
     release_percentage: Number(m.release_percentage).toFixed(4),
@@ -49,14 +49,16 @@ async function publishDraftCampaign(campaignId) {
 
   const platformPublicKey = Keypair.fromSecret(process.env.PLATFORM_SECRET_KEY).publicKey();
   const platformFeeBps = parseInt(process.env.PLATFORM_FEE_BPS || '0', 10);
-  const deadlineUnix = campaign.deadline ? Math.floor(new Date(campaign.deadline).getTime() / 1000) : 0;
+  const deadlineUnix = campaign.deadline
+    ? Math.floor(new Date(campaign.deadline).getTime() / 1000)
+    : 0;
   const assetContractAddress = process.env.USDC_CONTRACT_ADDRESS || process.env.USDC_ISSUER;
 
   const { escrowContractId, milestonesContractId } = await deployCampaignContracts({
     creatorPublicKey,
     platformPublicKey,
     campaignId: campaign.title + Date.now(),
-    targetAmount: Math.floor(parseFloat(campaign.target_amount) * STELLAR_ASSET_DECIMALS_SCALE),
+    targetAmount: toStroops(campaign.target_amount),
     deadlineUnix,
     assetContractAddress,
     platformFeeBps,
@@ -64,11 +66,20 @@ async function publishDraftCampaign(campaignId) {
     signerSecret: process.env.PLATFORM_SECRET_KEY,
   });
 
+  // When Soroban is enabled, refuse to activate without verified contract IDs.
+  if (process.env.SOROBAN_ENABLED === 'true' && (!escrowContractId || !milestonesContractId)) {
+    throw new CampaignNotPublishableError(
+      'Soroban is enabled but campaign contract deployment returned no contract IDs'
+    );
+  }
+
   const { rows: updated } = await db.query(
     `UPDATE campaigns
      SET wallet_public_key = $1, escrow_contract_id = $2, milestones_contract_id = $3,
          contract_address = $2, contract_deployed_at = NOW(), platform_fee_bps = $4,
-         status = 'active', scheduled_publish_at = NULL
+         status = 'active', scheduled_publish_at = NULL,
+         contract_deployment_status = 'deployed', contract_deployment_error = NULL,
+         last_deployment_attempt_at = NOW()
      WHERE id = $5 AND status = 'draft'
      RETURNING *`,
     [wallet.publicKey, escrowContractId, milestonesContractId, platformFeeBps, campaignId]

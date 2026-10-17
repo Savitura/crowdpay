@@ -1,11 +1,46 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { getNetwork, signTransaction } from '@stellar/freighter-api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { api } from '../services/api';
 import Navbar from '../components/Navbar';
+import GovernanceSyncRunsPanel from '../components/GovernanceSyncRunsPanel';
+
+/**
+ * Governance actions are always requested from the same endpoint regardless
+ * of wallet type — the server resolves the caller's wallet and either signs
+ * inline (custodial) or hands back { mode: 'prepare', unsigned_xdr,
+ * prepare_token } for a Freighter wallet to sign in the browser (#802).
+ * This helper completes the Freighter leg when needed and returns the final
+ * response body either way. The signed submission runs through the shared
+ * API client so CSRF + session cookies are handled automatically (#801).
+ */
+async function completeGovernanceAction(prepareResponse, submitSignedUrl) {
+  if (prepareResponse.mode !== 'prepare') {
+    return prepareResponse;
+  }
+
+  const network = await getNetwork();
+  if (network?.error) throw new Error('Could not read Freighter network');
+
+  const signed = await signTransaction(prepareResponse.unsigned_xdr, {
+    networkPassphrase: network?.networkPassphrase,
+  });
+  if (signed?.error) throw new Error(signed.error?.message || 'Freighter signing failed');
+  if (!signed?.signedTxXdr) throw new Error('Freighter did not return a signed transaction');
+
+  return api.submitSignedGovernance(
+    submitSignedUrl,
+    prepareResponse.prepare_token,
+    signed.signedTxXdr
+  );
+}
 
 export default function Governance() {
   const { user } = useAuth();
   const { showToast } = useToast();
+  const { t } = useTranslation();
   const [feeInfo, setFeeInfo] = useState(null);
   const [proposals, setProposals] = useState([]);
   const [activeProposal, setActiveProposal] = useState(null);
@@ -13,12 +48,11 @@ export default function Governance() {
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [voting, setVoting] = useState(false);
-  
+
   const [newProposal, setNewProposal] = useState({
     new_fee_bps: '',
     new_creator_share_bps: '',
     rationale_text: '',
-    signer_secret: '',
   });
 
   useEffect(() => {
@@ -28,33 +62,25 @@ export default function Governance() {
   const loadGovernanceData = async () => {
     try {
       setLoading(true);
-      
+
       // Load fee info
-      const feeResponse = await fetch('/api/governance/fee');
-      const feeData = await feeResponse.json();
+      const feeData = await api.getGovernanceFee();
       setFeeInfo(feeData);
 
       // Load proposals
-      const proposalsResponse = await fetch('/api/governance/proposals');
-      const proposalsData = await proposalsResponse.json();
+      const proposalsData = await api.getGovernanceProposals();
       setProposals(proposalsData.proposals || []);
 
       // Load active proposal
       if (user) {
-        const balanceResponse = await fetch('/api/governance/user/token-balance', {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          },
-        });
-        const balanceData = await balanceResponse.json();
+        const balanceData = await api.getGovernanceUserTokenBalance();
         setUserTokenBalance(balanceData);
       }
 
       // Check for active proposal
-      const active = proposalsData.proposals?.find(p => p.status === 'active');
+      const active = proposalsData.proposals?.find((p) => p.status === 'active');
       if (active) {
-        const detailResponse = await fetch(`/api/governance/proposals/${active.id}`);
-        const detailData = await detailResponse.json();
+        const detailData = await api.getGovernanceProposal(active.id);
         setActiveProposal(detailData.proposal);
       }
     } catch (error) {
@@ -67,30 +93,18 @@ export default function Governance() {
 
   const handleCreateProposal = async (e) => {
     e.preventDefault();
-    
+
     try {
-      const response = await fetch('/api/governance/proposals', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-        body: JSON.stringify(newProposal),
-      });
+      const data = await api.createGovernanceProposal(newProposal);
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to create proposal');
-      }
+      await completeGovernanceAction(data, '/api/governance/proposals/submit-signed');
 
-      const data = await response.json();
       showToast('Proposal created successfully', 'success');
       setShowCreateForm(false);
       setNewProposal({
         new_fee_bps: '',
         new_creator_share_bps: '',
         rationale_text: '',
-        signer_secret: '',
       });
       loadGovernanceData();
     } catch (error) {
@@ -103,25 +117,13 @@ export default function Governance() {
 
     try {
       setVoting(true);
-      
-      // In production, this would use Freighter to sign the transaction
-      // For now, we'll use the signer secret (this should be replaced with proper wallet signing)
-      const response = await fetch(`/api/governance/proposals/${activeProposal.id}/vote`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-        body: JSON.stringify({
-          in_favor: inFavor,
-          signer_secret: newProposal.signer_secret, // This should come from wallet signing
-        }),
-      });
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to vote');
-      }
+      const data = await api.voteGovernanceProposal(activeProposal.id, inFavor);
+
+      await completeGovernanceAction(
+        data,
+        `/api/governance/proposals/${activeProposal.id}/vote/submit-signed`
+      );
 
       showToast('Vote recorded successfully', 'success');
       loadGovernanceData();
@@ -136,21 +138,7 @@ export default function Governance() {
     if (!activeProposal) return;
 
     try {
-      const response = await fetch(`/api/governance/proposals/${activeProposal.id}/execute`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-        body: JSON.stringify({
-          signer_secret: newProposal.signer_secret, // This should come from wallet signing
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to execute proposal');
-      }
+      await api.executeGovernanceProposal(activeProposal.id);
 
       showToast('Proposal executed successfully', 'success');
       loadGovernanceData();
@@ -164,12 +152,12 @@ export default function Governance() {
     const now = new Date();
     const end = new Date(deadline);
     const diff = end - now;
-    
+
     if (diff <= 0) return 'Voting ended';
-    
+
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
     const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    
+
     if (days > 0) return `${days}d ${hours}h remaining`;
     return `${hours}h remaining`;
   };
@@ -177,7 +165,7 @@ export default function Governance() {
   const getStellarExpertUrl = (contractId) => {
     if (!contractId) return '#';
     const isTestnet = import.meta.env.VITE_STELLAR_NETWORK === 'testnet';
-    return isTestnet 
+    return isTestnet
       ? `https://stellar.expert/testnet/contract/${contractId}`
       : `https://stellar.expert/mainnet/contract/${contractId}`;
   };
@@ -248,10 +236,14 @@ export default function Governance() {
               </div>
               <div className="text-right">
                 <p className="text-sm text-gray-500">Can Propose</p>
-                <p className={`text-lg font-semibold ${userTokenBalance.can_propose ? 'text-green-600' : 'text-red-600'}`}>
+                <p
+                  className={`text-lg font-semibold ${userTokenBalance.can_propose ? 'text-green-600' : 'text-red-600'}`}
+                >
                   {userTokenBalance.can_propose ? 'Yes' : 'No'}
                 </p>
-                <p className="text-xs text-gray-400">Minimum: {userTokenBalance.min_required} CROWD</p>
+                <p className="text-xs text-gray-400">
+                  Minimum: {userTokenBalance.min_required} CROWD
+                </p>
               </div>
             </div>
           </div>
@@ -266,13 +258,15 @@ export default function Governance() {
                 <div>
                   <p className="text-sm text-gray-500">Proposed Platform Fee</p>
                   <p className="text-lg font-semibold">
-                    {activeProposal.proposed_fee_bps} bps ({(activeProposal.proposed_fee_bps / 100).toFixed(2)}%)
+                    {activeProposal.proposed_fee_bps} bps (
+                    {(activeProposal.proposed_fee_bps / 100).toFixed(2)}%)
                   </p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-500">Proposed Creator Share</p>
                   <p className="text-lg font-semibold">
-                    {activeProposal.proposed_creator_share_bps} bps ({(activeProposal.proposed_creator_share_bps / 100).toFixed(2)}%)
+                    {activeProposal.proposed_creator_share_bps} bps (
+                    {(activeProposal.proposed_creator_share_bps / 100).toFixed(2)}%)
                   </p>
                 </div>
               </div>
@@ -288,15 +282,21 @@ export default function Governance() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <p className="text-sm text-gray-500">Votes For</p>
-                    <p className="text-lg font-semibold text-green-600">{activeProposal.vote_stats.votes_for}</p>
+                    <p className="text-lg font-semibold text-green-600">
+                      {activeProposal.vote_stats.votes_for}
+                    </p>
                   </div>
                   <div>
                     <p className="text-sm text-gray-500">Votes Against</p>
-                    <p className="text-lg font-semibold text-red-600">{activeProposal.vote_stats.votes_against}</p>
+                    <p className="text-lg font-semibold text-red-600">
+                      {activeProposal.vote_stats.votes_against}
+                    </p>
                   </div>
                   <div>
                     <p className="text-sm text-gray-500">Participation</p>
-                    <p className="text-lg font-semibold text-blue-600">{activeProposal.vote_stats.participation_rate}%</p>
+                    <p className="text-lg font-semibold text-blue-600">
+                      {activeProposal.vote_stats.participation_rate}%
+                    </p>
                   </div>
                 </div>
               )}
@@ -309,11 +309,15 @@ export default function Governance() {
               {activeProposal.outcome_projection && (
                 <div>
                   <p className="text-sm text-gray-500">Current Outcome</p>
-                  <p className={`text-lg font-semibold ${
-                    activeProposal.outcome_projection === 'likely_pass' ? 'text-green-600' :
-                    activeProposal.outcome_projection === 'likely_fail' ? 'text-red-600' :
-                    'text-yellow-600'
-                  }`}>
+                  <p
+                    className={`text-lg font-semibold ${
+                      activeProposal.outcome_projection === 'likely_pass'
+                        ? 'text-green-600'
+                        : activeProposal.outcome_projection === 'likely_fail'
+                          ? 'text-red-600'
+                          : 'text-yellow-600'
+                    }`}
+                  >
                     {activeProposal.outcome_projection.replace('_', ' ').toUpperCase()}
                   </p>
                 </div>
@@ -338,14 +342,15 @@ export default function Governance() {
                 </div>
               )}
 
-              {activeProposal.status === 'active' && getTimeRemaining(activeProposal.deadline) === 'Voting ended' && (
-                <button
-                  onClick={handleExecuteProposal}
-                  className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700"
-                >
-                  Execute Proposal
-                </button>
-              )}
+              {activeProposal.status === 'active' &&
+                getTimeRemaining(activeProposal.deadline) === 'Voting ended' && (
+                  <button
+                    onClick={handleExecuteProposal}
+                    className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700"
+                  >
+                    Execute Proposal
+                  </button>
+                )}
             </div>
           </div>
         )}
@@ -371,14 +376,18 @@ export default function Governance() {
                     <input
                       type="number"
                       min="0"
-                      max="10000"
+                      max="1000"
                       required
                       value={newProposal.new_fee_bps}
-                      onChange={(e) => setNewProposal({ ...newProposal, new_fee_bps: e.target.value })}
+                      onChange={(e) =>
+                        setNewProposal({ ...newProposal, new_fee_bps: e.target.value })
+                      }
                       className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                      placeholder="250 (2.5%)"
+                      placeholder={t('governance.feePlaceholder')}
                     />
-                    <p className="text-xs text-gray-500 mt-1">Enter basis points (0-10000). 100 bps = 1%</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {t('governance.feeBasisPointsHelp')}
+                    </p>
                   </div>
 
                   <div>
@@ -391,11 +400,13 @@ export default function Governance() {
                       max="10000"
                       required
                       value={newProposal.new_creator_share_bps}
-                      onChange={(e) => setNewProposal({ ...newProposal, new_creator_share_bps: e.target.value })}
+                      onChange={(e) =>
+                        setNewProposal({ ...newProposal, new_creator_share_bps: e.target.value })
+                      }
                       className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                      placeholder="500 (5%)"
+                      placeholder={t('governance.creatorSharePlaceholder')}
                     />
-                    <p className="text-xs text-gray-500 mt-1">Enter basis points (0-10000). 100 bps = 1%</p>
+                    <p className="text-xs text-gray-500 mt-1">{t('governance.basisPointsHelp')}</p>
                   </div>
 
                   <div>
@@ -407,28 +418,13 @@ export default function Governance() {
                       minLength="10"
                       maxLength="1000"
                       value={newProposal.rationale_text}
-                      onChange={(e) => setNewProposal({ ...newProposal, rationale_text: e.target.value })}
+                      onChange={(e) =>
+                        setNewProposal({ ...newProposal, rationale_text: e.target.value })
+                      }
                       className="w-full border border-gray-300 rounded-lg px-3 py-2"
                       rows="3"
-                      placeholder="Explain why this change is needed..."
+                      placeholder={t('governance.rationalePlaceholder')}
                     />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Signer Secret (for transaction signing)
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      value={newProposal.signer_secret}
-                      onChange={(e) => setNewProposal({ ...newProposal, signer_secret: e.target.value })}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                      placeholder="Your Stellar secret key"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      In production, this would use Freighter wallet signing
-                    </p>
                   </div>
 
                   <div className="flex space-x-4">
@@ -492,12 +488,17 @@ export default function Governance() {
                         {proposal.proposed_creator_share_bps} bps
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                          proposal.status === 'executed' ? 'bg-green-100 text-green-800' :
-                          proposal.status === 'failed' ? 'bg-red-100 text-red-800' :
-                          proposal.status === 'active' ? 'bg-blue-100 text-blue-800' :
-                          'bg-gray-100 text-gray-800'
-                        }`}>
+                        <span
+                          className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                            proposal.status === 'executed'
+                              ? 'bg-green-100 text-green-800'
+                              : proposal.status === 'failed'
+                                ? 'bg-red-100 text-red-800'
+                                : proposal.status === 'active'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-gray-100 text-gray-800'
+                          }`}
+                        >
                           {proposal.status}
                         </span>
                       </td>
@@ -511,6 +512,8 @@ export default function Governance() {
             </div>
           )}
         </div>
+
+        {user?.role === 'admin' && <GovernanceSyncRunsPanel />}
       </div>
     </div>
   );

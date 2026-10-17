@@ -83,7 +83,7 @@ function encodeMilestone(milestone) {
   }
 
   return nativeToScVal({
-    title_hash: Buffer.alloc(32, 0),                        // zero hash for testing
+    title_hash: Buffer.alloc(32, 0), // zero hash for testing
     release_bps: milestone.release_percentage_units ?? 0,
     status: 0,
     evidence_hash: null,
@@ -93,13 +93,15 @@ function encodeMilestone(milestone) {
 module.exports = {
   invokeContract,
   encodeMilestone,
-  nativeToScVal,   // re-exported as-is from the real SDK
+  nativeToScVal, // re-exported as-is from the real SDK
   // Test helpers
   __mock: {
     reset,
     simulateFailure,
     setReturnValue,
     getCalls: () => invokeContract._calls.slice(),
-    clearCalls: () => { invokeContract._calls = []; },
+    clearCalls: () => {
+      invokeContract._calls = [];
+    },
   },
 };

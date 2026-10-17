@@ -6,20 +6,35 @@ const path = require('path');
 
 describe('Database Models & Constraints', async () => {
   let client;
+  let savepointSeq = 0;
+
+  // A failed statement aborts the surrounding transaction (25P02 on the
+  // next command), so expected-constraint-violations must run inside a
+  // SAVEPOINT that is rolled back afterwards.
+  async function expectConstraintViolation(fn, code) {
+    const sp = `sp_${savepointSeq++}`;
+    await client.query(`SAVEPOINT ${sp}`);
+    await assert.rejects(fn(), err => err.code === code);
+    await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+    await client.query(`RELEASE SAVEPOINT ${sp}`);
+  }
 
   before(async () => {
     client = await pool.connect();
     await client.query('BEGIN');
-    
-    // Create the schema within the transaction to ensure a clean slate 
+
+    // Create the schema within the transaction to ensure a clean slate
     // and that the test doesn't fail if the db is completely empty
-    const schemaSql = fs.readFileSync(path.join(__dirname, '../db/migrations/20260401_users_campaigns_contributions.sql'), 'utf-8');
-    
-    // We drop if exists just to be safe, but since it's a transaction that rolls back it shouldn't be needed 
+    const schemaSql = fs.readFileSync(
+      path.join(__dirname, '../db/migrations/20260401_users_campaigns_contributions.sql'),
+      'utf-8'
+    );
+
+    // We drop if exists just to be safe, but since it's a transaction that rolls back it shouldn't be needed
     // unless the DB already has these tables. To avoid conflicts with existing tables, we can test in a temp schema.
     await client.query('CREATE SCHEMA IF NOT EXISTS test_models_schema');
     await client.query('SET search_path TO test_models_schema');
-    
+
     // Run the migration script
     await client.query(schemaSql);
   });
@@ -45,13 +60,14 @@ describe('Database Models & Constraints', async () => {
       INSERT INTO users (email, password_hash, name, wallet_public_key, wallet_secret_encrypted)
       VALUES ('duplicate@example.com', 'hash', 'Test User 1', 'G_PUB_2', 'enc_sec')
     `);
-    
-    await assert.rejects(
-      client.query(`
+
+    await expectConstraintViolation(
+      () =>
+        client.query(`
         INSERT INTO users (email, password_hash, name, wallet_public_key, wallet_secret_encrypted)
         VALUES ('duplicate@example.com', 'hash', 'Test User 2', 'G_PUB_3', 'enc_sec')
       `),
-      (err) => err.code === '23505' // unique_violation
+      '23505' // unique_violation
     );
   });
 
@@ -63,12 +79,16 @@ describe('Database Models & Constraints', async () => {
     `);
     const creatorId = userRes.rows[0].id;
 
-    await assert.rejects(
-      client.query(`
+    await expectConstraintViolation(
+      () =>
+        client.query(
+          `
         INSERT INTO campaigns (creator_id, title, target_amount, asset_type, wallet_public_key, status)
         VALUES ($1, 'Invalid Asset Campaign', 1000, 'BTC', 'G_CAMPAIGN_PUB_1', 'active')
-      `, [creatorId]),
-      (err) => err.code === '23514' // check_violation
+      `,
+          [creatorId]
+        ),
+      '23514' // check_violation
     );
   });
 
@@ -80,11 +100,14 @@ describe('Database Models & Constraints', async () => {
     `);
     const creatorId = userRes.rows[0].id;
 
-    const res = await client.query(`
+    const res = await client.query(
+      `
       INSERT INTO campaigns (creator_id, title, target_amount, asset_type, wallet_public_key, status)
       VALUES ($1, 'Valid Campaign', 1000, 'USDC', 'G_CAMPAIGN_PUB_2', 'active')
       RETURNING id;
-    `, [creatorId]);
+    `,
+      [creatorId]
+    );
     assert.strictEqual(res.rows.length, 1);
   });
 
@@ -96,15 +119,19 @@ describe('Database Models & Constraints', async () => {
     `);
     const creatorId = userRes.rows[0].id;
 
-    await assert.rejects(
-      client.query(`
+    await expectConstraintViolation(
+      () =>
+        client.query(
+          `
         INSERT INTO campaigns (creator_id, title, target_amount, asset_type, wallet_public_key, status)
         VALUES ($1, 'Invalid Status Campaign', 1000, 'USDC', 'G_CAMPAIGN_PUB_3', 'unknown_status')
-      `, [creatorId]),
-      (err) => err.code === '23514' // check_violation
+      `,
+          [creatorId]
+        ),
+      '23514' // check_violation
     );
   });
-  
+
   it('should enforce payment_type constraint on contributions', async () => {
     const userRes = await client.query(`
       INSERT INTO users (email, password_hash, name, wallet_public_key, wallet_secret_encrypted)
@@ -113,20 +140,26 @@ describe('Database Models & Constraints', async () => {
     `);
     const creatorId = userRes.rows[0].id;
 
-    const campRes = await client.query(`
+    const campRes = await client.query(
+      `
       INSERT INTO campaigns (creator_id, title, target_amount, asset_type, wallet_public_key, status)
       VALUES ($1, 'Campaign for Contribs', 1000, 'USDC', 'G_CAMPAIGN_PUB_4', 'active')
       RETURNING id;
-    `, [creatorId]);
+    `,
+      [creatorId]
+    );
     const campaignId = campRes.rows[0].id;
 
-    await assert.rejects(
-      client.query(`
+    await expectConstraintViolation(
+      () =>
+        client.query(
+          `
         INSERT INTO contributions (campaign_id, sender_public_key, amount, asset, payment_type, tx_hash)
         VALUES ($1, 'G_SENDER_1', 100, 'USDC', 'invalid_payment_type', 'TX_1')
-      `, [campaignId]),
-      (err) => err.code === '23514' // check_violation
+      `,
+          [campaignId]
+        ),
+      '23514' // check_violation
     );
   });
-
 });

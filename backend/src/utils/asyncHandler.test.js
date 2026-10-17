@@ -6,7 +6,9 @@ test('asyncHandler passes (req, res, next) to the wrapped function', async () =>
   const req = {};
   const res = {};
   let nextCalled = false;
-  const next = () => { nextCalled = true; };
+  const next = () => {
+    nextCalled = true;
+  };
 
   const handler = asyncHandler(async (r, s, n) => {
     assert.equal(r, req);
@@ -21,7 +23,9 @@ test('asyncHandler passes (req, res, next) to the wrapped function', async () =>
 test('asyncHandler forwards a thrown error to next()', async () => {
   const err = new Error('DB connection refused');
   let capturedError;
-  const next = (e) => { capturedError = e; };
+  const next = e => {
+    capturedError = e;
+  };
 
   const handler = asyncHandler(async () => {
     throw err;
@@ -34,7 +38,9 @@ test('asyncHandler forwards a thrown error to next()', async () => {
 test('asyncHandler forwards a rejected promise to next()', async () => {
   const err = new Error('Query failed');
   let capturedError;
-  const next = (e) => { capturedError = e; };
+  const next = e => {
+    capturedError = e;
+  };
 
   const handler = asyncHandler(() => Promise.reject(err));
 
@@ -44,7 +50,9 @@ test('asyncHandler forwards a rejected promise to next()', async () => {
 
 test('asyncHandler does not call next() when handler resolves successfully', async () => {
   let nextCallCount = 0;
-  const next = () => { nextCallCount++; };
+  const next = () => {
+    nextCallCount++;
+  };
 
   const handler = asyncHandler(async (_req, res) => {
     res.body = 'ok';

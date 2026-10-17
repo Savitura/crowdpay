@@ -24,7 +24,9 @@ export default function FollowedCampaigns() {
 
   async function togglePreference(campaignId, key, value) {
     setCampaigns((prev) =>
-      prev.map((campaign) => (campaign.id === campaignId ? { ...campaign, [key]: value } : campaign))
+      prev.map((campaign) =>
+        campaign.id === campaignId ? { ...campaign, [key]: value } : campaign
+      )
     );
     try {
       await api.updateCampaignFollow(campaignId, { [key]: value });
@@ -136,7 +138,12 @@ export default function FollowedCampaigns() {
                 {FOLLOW_PREFERENCES.map((preference) => (
                   <label
                     key={preference.key}
-                    style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', cursor: 'pointer' }}
+                    style={{
+                      display: 'flex',
+                      gap: '0.35rem',
+                      alignItems: 'center',
+                      cursor: 'pointer',
+                    }}
                   >
                     <input
                       type="checkbox"

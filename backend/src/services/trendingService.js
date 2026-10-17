@@ -77,15 +77,14 @@ async function recomputeTrendingScores() {
 
   if (!campaigns.length) return { updated: 0 };
 
-  const maxContributions24h = Math.max(1, ...campaigns.map((c) => c.contributions_last_24h));
-  const maxContributors7d = Math.max(1, ...campaigns.map((c) => c.unique_contributors_last_7d));
+  const maxContributions24h = Math.max(1, ...campaigns.map(c => c.contributions_last_24h));
+  const maxContributors7d = Math.max(1, ...campaigns.map(c => c.unique_contributors_last_7d));
 
   const now = Date.now();
   const values = [];
   const rows = campaigns.map((c, i) => {
-    const percentFunded = c.target_amount > 0
-      ? Math.min(1, Number(c.raised_amount) / Number(c.target_amount))
-      : 0;
+    const percentFunded =
+      c.target_amount > 0 ? Math.min(1, Number(c.raised_amount) / Number(c.target_amount)) : 0;
     const daysRemaining = c.deadline
       ? Math.ceil((new Date(c.deadline).getTime() - now) / (1000 * 60 * 60 * 24))
       : null;
@@ -125,9 +124,11 @@ async function recomputeTrendingScores() {
 async function getTrendingCampaigns({ limit = 20 } = {}) {
   const capped = Math.min(Math.max(Number(limit) || 20, 1), 50);
 
-  const rows = await trendingCache.wrap(TRENDING_CACHE_KEY, async () => {
-    const { rows } = await db.query(
-      `SELECT c.id, c.title, c.description, c.category, c.tags, c.asset_type,
+  const rows = await trendingCache.wrap(
+    TRENDING_CACHE_KEY,
+    async () => {
+      const { rows } = await db.query(
+        `SELECT c.id, c.title, c.description, c.category, c.tags, c.asset_type,
               c.target_amount, c.raised_amount, c.status, c.deadline,
               c.contributions_last_24h, c.unique_contributors_last_7d,
               c.trending_score, c.trending_last_computed_at,
@@ -140,9 +141,11 @@ async function getTrendingCampaigns({ limit = 20 } = {}) {
          AND c.status = 'active'
        ORDER BY c.trending_score DESC, c.created_at DESC
        LIMIT 50`
-    );
-    return rows;
-  }, TRENDING_CACHE_TTL_MS);
+      );
+      return rows;
+    },
+    TRENDING_CACHE_TTL_MS
+  );
 
   return rows.slice(0, capped);
 }

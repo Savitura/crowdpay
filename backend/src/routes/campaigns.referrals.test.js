@@ -1,4 +1,4 @@
-const test = require('node:test');
+﻿const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -49,8 +49,8 @@ function buildApp({ queryImpl, authUser }) {
         status: 0,
         evidence_hash: null,
       }),
-      nativeToScVal: (v) => v,
-      scvAddressFromString: (s) => s,
+      nativeToScVal: v => v,
+      scvAddressFromString: s => s,
     },
     '../services/emailService': { sendEmail: async () => {} },
     '../services/alerting': { sendAlert: () => {} },
@@ -73,12 +73,14 @@ function buildApp({ queryImpl, authUser }) {
       getCampaignContributors: async () => ({}),
     },
     '../middleware/validation': {
+      createValidateRequest: () => (req, res, next) => next(),
       createCampaignValidation: [],
       createCampaignUpdateValidation: [],
       getCampaignsValidation: [],
       validateRequest: (_req, _res, next) => next(),
+      updateCampaignValidation: [],
     },
-    '../utils/asyncHandler': (fn) => (req, res, next) => fn(req, res, next).catch(next),
+    '../utils/asyncHandler': fn => (req, res, next) => fn(req, res, next).catch(next),
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
         req.user = authUser || { userId: 'user-1', role: 'creator' };
@@ -98,15 +100,17 @@ function buildApp({ queryImpl, authUser }) {
 
 test('GET /api/campaigns/:id/referral returns existing referral code', async () => {
   const app = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaign_referrals cr')) {
         return {
-          rows: [{
-            id: 'ref-1',
-            referral_code: 'stable12',
-            click_count: 3,
-            contribution_count: 1,
-          }],
+          rows: [
+            {
+              id: 'ref-1',
+              referral_code: 'stable12',
+              click_count: 3,
+              contribution_count: 1,
+            },
+          ],
         };
       }
       return { rows: [] };
@@ -127,18 +131,20 @@ test('GET /api/campaigns/:id/referral returns existing referral code', async () 
 test('GET /api/campaigns/:id/referral creates a new referral code', async () => {
   const calls = [];
   const app = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       calls.push(text);
       if (text.includes('FROM campaign_referrals cr') && text.includes('referrer_user_id')) {
         return { rows: [] };
       }
       if (text.includes('INSERT INTO campaign_referrals')) {
         return {
-          rows: [{
-            referral_code: 'newcode1',
-            click_count: 0,
-            contribution_count: 0,
-          }],
+          rows: [
+            {
+              referral_code: 'newcode1',
+              click_count: 0,
+              contribution_count: 0,
+            },
+          ],
         };
       }
       return { rows: [] };
@@ -151,13 +157,13 @@ test('GET /api/campaigns/:id/referral creates a new referral code', async () => 
 
   assert.equal(response.status, 201);
   assert.equal(response.body.referral_code, 'newcode1');
-  assert.ok(calls.some((text) => text.includes('INSERT INTO campaign_referrals')));
+  assert.ok(calls.some(text => text.includes('INSERT INTO campaign_referrals')));
 });
 
 test('GET /api/campaigns/:id/referral retries on referral_code collision', async () => {
   let selectCount = 0;
   const app = buildApp({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT 1 FROM campaign_referrals WHERE referral_code')) {
         selectCount++;
         if (selectCount === 1) {
@@ -167,11 +173,13 @@ test('GET /api/campaigns/:id/referral retries on referral_code collision', async
       }
       if (text.includes('INSERT INTO campaign_referrals')) {
         return {
-          rows: [{
-            referral_code: 'retrycode1',
-            click_count: 0,
-            contribution_count: 0,
-          }],
+          rows: [
+            {
+              referral_code: 'retrycode1',
+              click_count: 0,
+              contribution_count: 0,
+            },
+          ],
         };
       }
       return { rows: [] };
@@ -200,16 +208,18 @@ test('GET /api/campaigns/:id?ref=CODE increments click count and sets cookie', a
       }
       if (text.includes('FROM campaigns')) {
         return {
-          rows: [{
-            id: 'camp-1',
-            title: 'Test',
-            description: 'Desc',
-            target_amount: '100',
-            raised_amount: '0',
-            asset_type: 'XLM',
-            status: 'active',
-            creator_id: 'creator-1',
-          }],
+          rows: [
+            {
+              id: 'camp-1',
+              title: 'Test',
+              description: 'Desc',
+              target_amount: '100',
+              raised_amount: '0',
+              asset_type: 'XLM',
+              status: 'active',
+              creator_id: 'creator-1',
+            },
+          ],
         };
       }
       return { rows: [] };
@@ -219,8 +229,8 @@ test('GET /api/campaigns/:id?ref=CODE increments click count and sets cookie', a
   const response = await request(app).get('/api/campaigns/camp-1?ref=abc12345');
 
   assert.equal(response.status, 200);
-  assert.ok(calls.some((call) => call.text.includes('click_count = click_count + 1')));
-  const cookie = response.headers['set-cookie']?.find((value) => value.startsWith('cp_ref_camp-1='));
+  assert.ok(calls.some(call => call.text.includes('click_count = click_count + 1')));
+  const cookie = response.headers['set-cookie']?.find(value => value.startsWith('cp_ref_camp-1='));
   assert.ok(cookie);
   assert.match(cookie, /abc12345/);
 });
@@ -228,20 +238,22 @@ test('GET /api/campaigns/:id?ref=CODE increments click count and sets cookie', a
 test('GET /api/campaigns/:id/referrals returns leaderboard for owner', async () => {
   const app = buildApp({
     authUser: { userId: 'creator-1', role: 'creator' },
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('SELECT creator_id FROM campaigns')) {
         return { rows: [{ creator_id: 'creator-1' }] };
       }
       if (text.includes('FROM campaign_referrals cr') && text.includes('JOIN users')) {
         return {
-          rows: [{
-            referral_code: 'topref01',
-            click_count: 10,
-            contribution_count: 2,
-            created_at: '2026-06-01T00:00:00.000Z',
-            referrer_name: 'Alice',
-            referrer_id: 'user-2',
-          }],
+          rows: [
+            {
+              referral_code: 'topref01',
+              click_count: 10,
+              contribution_count: 2,
+              created_at: '2026-06-01T00:00:00.000Z',
+              referrer_name: 'Alice',
+              referrer_id: 'user-2',
+            },
+          ],
         };
       }
       return { rows: [] };
@@ -257,3 +269,5 @@ test('GET /api/campaigns/:id/referrals returns leaderboard for owner', async () 
   assert.equal(response.body[0].referrer_name, 'Alice');
   assert.equal(response.body[0].contribution_count, 2);
 });
+
+

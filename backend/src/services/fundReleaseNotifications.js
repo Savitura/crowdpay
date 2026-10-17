@@ -48,8 +48,8 @@ async function notifyContributorFundRelease({
   let notified = 0;
   await Promise.all(
     contributors
-      .filter((contributor) => !excluded.has(contributor.id))
-      .map(async (contributor) => {
+      .filter(contributor => !excluded.has(contributor.id))
+      .map(async contributor => {
         try {
           await createNotification(contributor.id, message);
           if (contributor.email) {

@@ -93,10 +93,9 @@ async function refreshActiveCampaignStatuses() {
   let lockAcquired = false;
 
   try {
-    const { rows: lockRows } = await client.query(
-      'SELECT pg_try_advisory_lock($1) AS acquired',
-      [CAMPAIGN_STATUS_REFRESH_LOCK_KEY]
-    );
+    const { rows: lockRows } = await client.query('SELECT pg_try_advisory_lock($1) AS acquired', [
+      CAMPAIGN_STATUS_REFRESH_LOCK_KEY,
+    ]);
     lockAcquired = lockRows[0]?.acquired === true;
     if (!lockAcquired) {
       logger.info('Campaign status refresh skipped — another instance holds the advisory lock');

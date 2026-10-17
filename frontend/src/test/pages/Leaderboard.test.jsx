@@ -16,8 +16,22 @@ describe('Leaderboard page', () => {
 
   it('ranks contributors by amount contributed', async () => {
     api.getLeaderboard.mockResolvedValue([
-      { rank: 1, user_id: 'u1', name: 'Ada', total_contributed: 900, campaigns_backed: 4, badge_count: 3 },
-      { rank: 2, user_id: 'u2', name: 'Grace', total_contributed: 400, campaigns_backed: 2, badge_count: 1 },
+      {
+        rank: 1,
+        user_id: 'u1',
+        name: 'Ada',
+        total_contributed: 900,
+        campaigns_backed: 4,
+        badge_count: 3,
+      },
+      {
+        rank: 2,
+        user_id: 'u2',
+        name: 'Grace',
+        total_contributed: 400,
+        campaigns_backed: 2,
+        badge_count: 1,
+      },
     ]);
 
     renderWithProviders(<Leaderboard />);

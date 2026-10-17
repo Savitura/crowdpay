@@ -8,10 +8,7 @@ export function OfflineBanner() {
   if (isOnline) return null;
 
   return (
-    <div
-      role="alert"
-      className="alert alert--warning offline-banner"
-    >
+    <div role="alert" className="alert alert--warning offline-banner">
       {t('offline.banner')}
     </div>
   );

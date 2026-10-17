@@ -5,6 +5,8 @@ const db = require('../config/database');
 const logger = require('../config/logger');
 const soroban = require('./sorobanService');
 const { withDecryptedWalletSecret } = require('./walletSecrets');
+const { assertCustodialWithdrawalAllowed } = require('./custodialSigningPolicy');
+const { toStroops: exactToStroops, fromStroops } = require('../utils/stroops');
 
 /**
  * Compiled campaign_treasury WASM. Built from contracts/soroban with
@@ -92,17 +94,9 @@ function validatePolicy(policy) {
   return normalized;
 }
 
-/** Stellar amounts carry 7 decimals; the contract works in stroops. */
+/** Stellar amounts carry 7 decimals; the contract works in stroops (#840: shared exact helper). */
 function toStroops(amount) {
-  const [whole, fraction = ''] = String(amount).split('.');
-  return BigInt(whole) * 10000000n + BigInt(fraction.padEnd(7, '0').slice(0, 7));
-}
-
-function fromStroops(stroops) {
-  const value = BigInt(stroops);
-  const whole = value / 10000000n;
-  const fraction = (value % 10000000n).toString().padStart(7, '0');
-  return `${whole}.${fraction}`;
+  return exactToStroops(amount, { allowZero: true, allowNegative: true });
 }
 
 function i128(amount) {
@@ -161,6 +155,7 @@ async function loadCustodialSigner(userId, role, missingCode) {
   }
   return {
     userId,
+    walletType: user.wallet_type,
     walletPublicKey: user.wallet_public_key,
     walletSecretEncrypted: user.wallet_secret_encrypted,
   };
@@ -272,9 +267,7 @@ async function deployTreasury(campaignId, { auditorPublicKey = null, assetContra
   const creatorKey = creatorRows[0]?.wallet_public_key;
   if (!creatorKey) throw fail('Campaign creator has no wallet', 409, 'CREATOR_WALLET_MISSING');
 
-  const deadline = campaign.deadline
-    ? Math.floor(new Date(campaign.deadline).getTime() / 1000)
-    : 0;
+  const deadline = campaign.deadline ? Math.floor(new Date(campaign.deadline).getTime() / 1000) : 0;
 
   try {
     await soroban.invokeContract({
@@ -347,14 +340,24 @@ async function indexContribution(campaignId, { contributor, amount, txHash }) {
 async function buildWithdrawalRequest(campaignId, { amount, destination, memo, requestedBy }) {
   const campaign = await loadCampaign(campaignId);
   const contractId = requireContractMode(campaign);
-  const creator = await loadCustodialSigner(campaign.creator_id, 'creator', 'CREATOR_WALLET_MISSING');
+  const creator = await loadCustodialSigner(
+    campaign.creator_id,
+    'creator',
+    'CREATOR_WALLET_MISSING'
+  );
+  // The creator key used below is server-held; cap what it may authorize.
+  try {
+    assertCustodialWithdrawalAllowed({ walletType: creator.walletType, amount });
+  } catch (err) {
+    throw fail(err.message, err.statusCode, err.code);
+  }
 
   let result;
   try {
     result = await withDecryptedWalletSecret(
       creator.walletSecretEncrypted,
       { userId: creator.userId, walletPublicKey: creator.walletPublicKey },
-      (creatorSecret) =>
+      creatorSecret =>
         soroban.invokeContract({
           contractId,
           method: 'request_withdrawal',
@@ -412,7 +415,7 @@ async function approvePendingWithdrawal(campaignId, pendingId, { approverId } = 
     await withDecryptedWalletSecret(
       auditor.walletSecretEncrypted,
       { userId: auditor.userId, walletPublicKey: auditor.walletPublicKey },
-      (auditorSecret) =>
+      auditorSecret =>
         soroban.invokeContract({
           contractId,
           method: 'approve_withdrawal',
@@ -442,8 +445,7 @@ async function getTreasuryStatus(campaignId) {
   const campaign = await loadCampaign(campaignId);
   const contractId = requireContractMode(campaign);
 
-  const read = (method) =>
-    soroban.invokeContractReadOnly({ contractId, method, args: [] });
+  const read = method => soroban.invokeContractReadOnly({ contractId, method, args: [] });
 
   const [policy, totalReceived, totalWithdrawn, history, pending, paused] = await Promise.all([
     read('get_policy'),
@@ -467,7 +469,7 @@ async function getTreasuryStatus(campaignId) {
     totalWithdrawn: fromStroops(totalWithdrawn || 0),
     available: fromStroops(BigInt(totalReceived || 0) - BigInt(totalWithdrawn || 0)),
     paused: Boolean(paused),
-    withdrawalHistory: (history || []).map((record) => ({
+    withdrawalHistory: (history || []).map(record => ({
       id: Number(record.id),
       amount: fromStroops(record.amount),
       destination: String(record.destination),
@@ -475,7 +477,7 @@ async function getTreasuryStatus(campaignId) {
       requester: String(record.requester),
       approvedBy: record.approved_by ? String(record.approved_by) : null,
     })),
-    pendingWithdrawals: (pending || []).map((entry) => ({
+    pendingWithdrawals: (pending || []).map(entry => ({
       id: Number(entry.id),
       amount: fromStroops(entry.amount),
       destination: String(entry.destination),

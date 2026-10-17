@@ -5,7 +5,7 @@ const MODULE_PATH = './walletSecrets';
 const VALID_SECRET = 'SD4P6WLGL222ADEXEIAPJAW37RLGXOB5OEESXLQLVJFOQQIJHSEMINS3';
 const VALID_SECRET_2 = 'SCFNUJWAKVOHW2MT5Q3I3NQGU3GQVE3V5GDFCXH6MBPCBY3ADLPQ6C7D';
 
-test('encryptWalletSecret stores an envelope and decrypts back with local provider', async (t) => {
+test('encryptWalletSecret stores an envelope and decrypts back with local provider', async t => {
   process.env.NODE_ENV = 'test';
   process.env.WALLET_SECRET_PROVIDER = 'local';
   process.env.WALLET_SECRET_LOCAL_KEK = Buffer.alloc(32, 7).toString('base64');
@@ -25,7 +25,7 @@ test('encryptWalletSecret stores an envelope and decrypts back with local provid
   const decrypted = await walletSecrets.withDecryptedWalletSecret(
     encrypted,
     { userId: 'user-1', walletPublicKey: 'GABC123' },
-    async (secret) => secret
+    async secret => secret
   );
 
   assert.equal(decrypted, VALID_SECRET);
@@ -36,7 +36,7 @@ test('encryptWalletSecret stores an envelope and decrypts back with local provid
   });
 });
 
-test('rotateLegacyUserWalletSecrets rewrites only plaintext rows', async (t) => {
+test('rotateLegacyUserWalletSecrets rewrites only plaintext rows', async t => {
   process.env.NODE_ENV = 'test';
   process.env.WALLET_SECRET_PROVIDER = 'local';
   process.env.WALLET_SECRET_LOCAL_KEK = Buffer.alloc(32, 9).toString('base64');

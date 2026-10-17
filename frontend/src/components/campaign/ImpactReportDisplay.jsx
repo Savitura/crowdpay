@@ -109,10 +109,11 @@ export function ImpactReportDisplay({ report, campaignTitle }) {
           marginBottom: '1.5rem',
         }}
       >
-        Published on {new Date(report.publishedAt).toLocaleDateString('en-US', { 
-          year: 'numeric', 
-          month: 'long', 
-          day: 'numeric' 
+        Published on{' '}
+        {new Date(report.publishedAt).toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
         })}
       </p>
 
@@ -200,7 +201,12 @@ export function ImpactReportDisplay({ report, campaignTitle }) {
                 }}
               >
                 {video.thumbnail && (
-                  <a href={video.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block' }}>
+                  <a
+                    href={video.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ display: 'block' }}
+                  >
                     <img
                       src={video.thumbnail}
                       alt={video.title || `Video ${idx + 1}`}
@@ -264,7 +270,15 @@ export function ImpactReportDisplay({ report, campaignTitle }) {
             marginBottom: '1rem',
           }}
         >
-          <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h3
+            style={{
+              fontSize: '1.1rem',
+              marginBottom: '1rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+            }}
+          >
             <span>🎯</span> Milestones Achieved
           </h3>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
@@ -279,7 +293,9 @@ export function ImpactReportDisplay({ report, campaignTitle }) {
                   borderRadius: '0.25rem',
                 }}
               >
-                <div style={{ fontWeight: '600', color: 'var(--color-text)', marginBottom: '0.25rem' }}>
+                <div
+                  style={{ fontWeight: '600', color: 'var(--color-text)', marginBottom: '0.25rem' }}
+                >
                   ✓ {milestone.title}
                 </div>
                 {milestone.description && (
@@ -288,7 +304,13 @@ export function ImpactReportDisplay({ report, campaignTitle }) {
                   </div>
                 )}
                 {milestone.achievedAt && (
-                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)', marginTop: '0.25rem' }}>
+                  <div
+                    style={{
+                      fontSize: '0.8rem',
+                      color: 'var(--color-text-hint)',
+                      marginTop: '0.25rem',
+                    }}
+                  >
                     Achieved on {new Date(milestone.achievedAt).toLocaleDateString()}
                   </div>
                 )}
@@ -308,7 +330,9 @@ export function ImpactReportDisplay({ report, campaignTitle }) {
           borderTop: '1px solid var(--color-border)',
         }}
       >
-        <span style={{ fontSize: '0.85rem', fontWeight: '500', display: 'flex', alignItems: 'center' }}>
+        <span
+          style={{ fontSize: '0.85rem', fontWeight: '500', display: 'flex', alignItems: 'center' }}
+        >
           Share this report:
         </span>
         <a

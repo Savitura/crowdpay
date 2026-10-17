@@ -31,9 +31,14 @@ function build({ queryImpl, soroban = {} } = {}) {
   const calls = [];
   const sorobanStub = {
     deployMilestonesV2Contract: async () => ({ contractId: 'CMILESTONESV2', txHash: 'deploy-tx' }),
-    deployMigrationContract: async () => ({ contractId: 'CMIGRATION', txHash: 'deploy-migration-tx' }),
-    initializeMilestones: async (params) => { calls.push({ fn: 'initializeMilestones', params }); },
-    runMigration: async (params) => {
+    deployMigrationContract: async () => ({
+      contractId: 'CMIGRATION',
+      txHash: 'deploy-migration-tx',
+    }),
+    initializeMilestones: async params => {
+      calls.push({ fn: 'initializeMilestones', params });
+    },
+    runMigration: async params => {
       calls.push({ fn: 'runMigration', params });
       return { txHash: 'migrate-tx', milestoneCount: 2 };
     },
@@ -51,7 +56,7 @@ function build({ queryImpl, soroban = {} } = {}) {
 
 test('refuses to upgrade a campaign with a milestone under review', async () => {
   const { service } = build({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns c')) return { rows: [campaignRow()] };
       if (text.includes("status = 'pending_review'")) return { rows: [{ id: 'm1' }] };
       throw new Error(`Unexpected query: ${text}`);
@@ -60,7 +65,7 @@ test('refuses to upgrade a campaign with a milestone under review', async () => 
 
   await assert.rejects(
     () => service.upgradeCampaignContract(CAMPAIGN_ID, 'admin-1'),
-    (err) => {
+    err => {
       assert.equal(err.code, 'ACTIVE_REVIEW_IN_PROGRESS');
       assert.equal(err.status, 409);
       return true;
@@ -70,7 +75,7 @@ test('refuses to upgrade a campaign with a milestone under review', async () => 
 
 test('refuses to upgrade a campaign already on V2', async () => {
   const { service } = build({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns c')) {
         return { rows: [campaignRow({ escrow_contract_version: 2 })] };
       }
@@ -80,7 +85,7 @@ test('refuses to upgrade a campaign already on V2', async () => {
 
   await assert.rejects(
     () => service.upgradeCampaignContract(CAMPAIGN_ID, 'admin-1'),
-    (err) => {
+    err => {
       assert.equal(err.code, 'ALREADY_V2');
       return true;
     }
@@ -89,7 +94,7 @@ test('refuses to upgrade a campaign already on V2', async () => {
 
 test('refuses a second concurrent upgrade for the same campaign', async () => {
   const { service } = build({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns c')) return { rows: [campaignRow()] };
       if (text.includes("status = 'pending_review'")) return { rows: [] };
       if (text.includes('SELECT title, release_percentage FROM milestones')) {
@@ -102,17 +107,19 @@ test('refuses a second concurrent upgrade for the same campaign', async () => {
 
   await assert.rejects(
     () => service.upgradeCampaignContract(CAMPAIGN_ID, 'admin-1'),
-    (err) => {
+    err => {
       assert.equal(err.code, 'MIGRATION_ALREADY_IN_PROGRESS');
       return true;
     }
   );
 });
 
-test('happy path deploys V2, migrates V1 state across, and persists the new contract id', async (t) => {
+test('happy path deploys V2, migrates V1 state across, and persists the new contract id', async t => {
   const originalSecret = process.env.PLATFORM_SECRET_KEY;
   process.env.PLATFORM_SECRET_KEY = PLATFORM_SECRET;
-  t.after(() => { process.env.PLATFORM_SECRET_KEY = originalSecret; });
+  t.after(() => {
+    process.env.PLATFORM_SECRET_KEY = originalSecret;
+  });
 
   const updates = [];
   const { service, calls } = build({
@@ -120,7 +127,12 @@ test('happy path deploys V2, migrates V1 state across, and persists the new cont
       if (text.includes('FROM campaigns c')) return { rows: [campaignRow()] };
       if (text.includes("status = 'pending_review'")) return { rows: [] };
       if (text.includes('SELECT title, release_percentage FROM milestones')) {
-        return { rows: [{ title: 'M1', release_percentage: '40' }, { title: 'M2', release_percentage: '60' }] };
+        return {
+          rows: [
+            { title: 'M1', release_percentage: '40' },
+            { title: 'M2', release_percentage: '60' },
+          ],
+        };
       }
       if (text.includes('SET migration_in_progress = TRUE')) return { rowCount: 1 };
       if (text.includes('SET previous_milestones_contract_id')) {
@@ -138,12 +150,12 @@ test('happy path deploys V2, migrates V1 state across, and persists the new cont
   assert.equal(result.migrationTxHash, 'migrate-tx');
   assert.equal(result.milestoneCount, 2);
 
-  const initCall = calls.find((c) => c.fn === 'initializeMilestones');
+  const initCall = calls.find(c => c.fn === 'initializeMilestones');
   assert.equal(initCall.params.contractId, 'CMILESTONESV2');
   assert.equal(initCall.params.escrowContractId, 'CESCROWV1');
   assert.equal(initCall.params.milestones.length, 2);
 
-  const migrateCall = calls.find((c) => c.fn === 'runMigration');
+  const migrateCall = calls.find(c => c.fn === 'runMigration');
   assert.equal(migrateCall.params.v1ContractId, 'CMILESTONESV1');
   assert.equal(migrateCall.params.v2ContractId, 'CMILESTONESV2');
 
@@ -157,7 +169,7 @@ test('clears migration_in_progress and rethrows if the on-chain deploy fails', a
 
   let clearedFlag = false;
   const { service } = build({
-    queryImpl: async (text) => {
+    queryImpl: async text => {
       if (text.includes('FROM campaigns c')) return { rows: [campaignRow()] };
       if (text.includes("status = 'pending_review'")) return { rows: [] };
       if (text.includes('SELECT title, release_percentage FROM milestones')) {
@@ -171,7 +183,9 @@ test('clears migration_in_progress and rethrows if the on-chain deploy fails', a
       throw new Error(`Unexpected query: ${text}`);
     },
     soroban: {
-      deployMilestonesV2Contract: async () => { throw new Error('RPC unavailable'); },
+      deployMilestonesV2Contract: async () => {
+        throw new Error('RPC unavailable');
+      },
     },
   });
 

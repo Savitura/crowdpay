@@ -33,13 +33,12 @@ async function sendToUser(userId, message) {
   const client = messaging();
   if (!client) return false;
 
-  const { rows } = await db.query(
-    'SELECT token FROM push_subscriptions WHERE user_id = $1',
-    [userId]
-  );
+  const { rows } = await db.query('SELECT token FROM push_subscriptions WHERE user_id = $1', [
+    userId,
+  ]);
   if (!rows.length) return false;
 
-  const tokens = rows.map((row) => row.token);
+  const tokens = rows.map(row => row.token);
   let delivered = false;
   for (let start = 0; start < tokens.length; start += 500) {
     const batch = tokens.slice(start, start + 500);
@@ -54,7 +53,9 @@ async function sendToUser(userId, message) {
     delivered ||= response.successCount > 0;
 
     const invalid = response.responses
-      .map((result, index) => (result.success || !isInvalidToken(result.error) ? null : batch[index]))
+      .map((result, index) =>
+        result.success || !isInvalidToken(result.error) ? null : batch[index]
+      )
       .filter(Boolean);
     if (invalid.length) {
       await db.query(

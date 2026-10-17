@@ -59,7 +59,7 @@ describe('TtlCache — TTL expiry', () => {
     cache.set('k', 'value');
     assert.equal(cache.get('k'), 'value');
 
-    await new Promise((r) => setTimeout(r, 80));
+    await new Promise(r => setTimeout(r, 80));
     assert.equal(cache.get('k'), undefined);
   });
 
@@ -68,7 +68,7 @@ describe('TtlCache — TTL expiry', () => {
     cache.set('short', 'x', 40); // 40ms override
     assert.equal(cache.get('short'), 'x');
 
-    await new Promise((r) => setTimeout(r, 70));
+    await new Promise(r => setTimeout(r, 70));
     assert.equal(cache.get('short'), undefined);
   });
 
@@ -78,7 +78,7 @@ describe('TtlCache — TTL expiry', () => {
     cache.set('b', 2);
     assert.equal(cache.size, 2);
 
-    await new Promise((r) => setTimeout(r, 80));
+    await new Promise(r => setTimeout(r, 80));
     assert.equal(cache.size, 0);
   });
 });
@@ -90,7 +90,10 @@ describe('TtlCache — wrap()', () => {
   it('calls the factory on cache miss', async () => {
     const cache = new TtlCache(1000);
     let calls = 0;
-    const result = await cache.wrap('k', async () => { calls++; return 'value'; });
+    const result = await cache.wrap('k', async () => {
+      calls++;
+      return 'value';
+    });
     assert.equal(result, 'value');
     assert.equal(calls, 1);
   });
@@ -98,8 +101,14 @@ describe('TtlCache — wrap()', () => {
   it('returns cached value without calling the factory again', async () => {
     const cache = new TtlCache(1000);
     let calls = 0;
-    await cache.wrap('k', async () => { calls++; return 99; });
-    const second = await cache.wrap('k', async () => { calls++; return 99; });
+    await cache.wrap('k', async () => {
+      calls++;
+      return 99;
+    });
+    const second = await cache.wrap('k', async () => {
+      calls++;
+      return 99;
+    });
     assert.equal(second, 99);
     assert.equal(calls, 1); // factory called exactly once
   });
@@ -107,16 +116,26 @@ describe('TtlCache — wrap()', () => {
   it('re-calls the factory after TTL expires', async () => {
     const cache = new TtlCache(40); // 40ms
     let calls = 0;
-    await cache.wrap('k', async () => { calls++; return 1; });
-    await new Promise((r) => setTimeout(r, 70));
-    await cache.wrap('k', async () => { calls++; return 2; });
+    await cache.wrap('k', async () => {
+      calls++;
+      return 1;
+    });
+    await new Promise(r => setTimeout(r, 70));
+    await cache.wrap('k', async () => {
+      calls++;
+      return 2;
+    });
     assert.equal(calls, 2);
   });
 
   it('does not cache when the factory throws', async () => {
     const cache = new TtlCache(1000);
     let calls = 0;
-    const failing = () => cache.wrap('k', async () => { calls++; throw new Error('oops'); });
+    const failing = () =>
+      cache.wrap('k', async () => {
+        calls++;
+        throw new Error('oops');
+      });
     await assert.rejects(failing, /oops/);
     await assert.rejects(failing, /oops/); // second call also hits the factory
     assert.equal(calls, 2);
@@ -127,7 +146,7 @@ describe('TtlCache — wrap()', () => {
     let calls = 0;
     const factory = async () => {
       calls++;
-      await new Promise((r) => setTimeout(r, 20));
+      await new Promise(r => setTimeout(r, 20));
       return 'shared';
     };
 

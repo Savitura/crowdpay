@@ -107,7 +107,7 @@ async function auditPlatformWallet() {
   let balanceXlm = 0;
   try {
     const acc = await server.loadAccount(pubKey);
-    const nativeBal = acc.balances.find((b) => b.asset_type === 'native');
+    const nativeBal = acc.balances.find(b => b.asset_type === 'native');
     balanceXlm = nativeBal ? parseFloat(nativeBal.balance) : 0;
   } catch (err) {
     logger.warn('Failed to load platform account from Horizon', { error: err.message, pubKey });
@@ -123,7 +123,7 @@ async function auditPlatformWallet() {
        WHERE status IN ('submitted', 'pending_signatures')`
     );
     pendingCount = rows.length;
-    stalePendingCount = rows.filter((r) => r.is_stale).length;
+    stalePendingCount = rows.filter(r => r.is_stale).length;
   } catch {
     // If table doesn't exist yet or query fails
   }
@@ -169,16 +169,14 @@ async function auditCampaignWallets() {
 
     try {
       const acc = await server.loadAccount(c.wallet_public_key);
-      const native = acc.balances.find((b) => b.asset_type === 'native');
+      const native = acc.balances.find(b => b.asset_type === 'native');
       balanceXlm = native ? parseFloat(native.balance) : 0;
-      trustlineCount = acc.balances.filter((b) => b.asset_type !== 'native').length;
+      trustlineCount = acc.balances.filter(b => b.asset_type !== 'native').length;
     } catch (err) {
       loadError = err.message;
     }
 
-    const minRequired = parseFloat(
-      (2 * BASE_RESERVE_XLM + trustlineCount * 0.5).toFixed(7)
-    );
+    const minRequired = parseFloat((2 * BASE_RESERVE_XLM + trustlineCount * 0.5).toFixed(7));
     const rawDeficit = minRequired - balanceXlm;
     const deficit = rawDeficit > 0 ? parseFloat(rawDeficit.toFixed(7)) : 0;
 
@@ -213,9 +211,10 @@ async function auditCampaignWallets() {
  * Check database connection pool & slow queries.
  */
 async function auditDatabase() {
-  const poolMetrics = typeof db.getPoolMetrics === 'function'
-    ? db.getPoolMetrics()
-    : { total: 0, idle: 0, waiting: 0, max: 10, utilisation: 0 };
+  const poolMetrics =
+    typeof db.getPoolMetrics === 'function'
+      ? db.getPoolMetrics()
+      : { total: 0, idle: 0, waiting: 0, max: 10, utilisation: 0 };
 
   let longestQuerySeconds = 0;
   let slowQueryDetected = false;
@@ -370,9 +369,9 @@ async function collectHealthMetrics() {
     logger.warn('Failed to retrieve ledger stream health', { error: err.message });
   }
 
-  const activeSseConnections = sseHealth.streams.filter((s) => s.stream_state === 'connected').length;
+  const activeSseConnections = sseHealth.streams.filter(s => s.stream_state === 'connected').length;
   const droppedSseStreams = sseHealth.streams.filter(
-    (s) => s.stream_state === 'not_connected' || s.stale_stream_no_messages_15m
+    s => s.stream_state === 'not_connected' || s.stale_stream_no_messages_15m
   ).length;
 
   // 3. Platform wallet & campaigns
@@ -437,17 +436,57 @@ async function collectHealthMetrics() {
  */
 async function persistMetrics(collectedAt, metrics) {
   const entries = [
-    { name: 'horizon_testnet_latency_ms', value: metrics.horizon_testnet_latency, breached: metrics.horizon_testnet_latency > 2000 },
-    { name: 'horizon_mainnet_latency_ms', value: metrics.horizon_mainnet_latency, breached: metrics.horizon_mainnet_latency > 2000 },
-    { name: 'ledger_staleness_seconds', value: metrics.ledger_staleness_seconds, breached: metrics.ledger_staleness_seconds > 10 },
+    {
+      name: 'horizon_testnet_latency_ms',
+      value: metrics.horizon_testnet_latency,
+      breached: metrics.horizon_testnet_latency > 2000,
+    },
+    {
+      name: 'horizon_mainnet_latency_ms',
+      value: metrics.horizon_mainnet_latency,
+      breached: metrics.horizon_mainnet_latency > 2000,
+    },
+    {
+      name: 'ledger_staleness_seconds',
+      value: metrics.ledger_staleness_seconds,
+      breached: metrics.ledger_staleness_seconds > 10,
+    },
     { name: 'sse_active_connections', value: metrics.sse_active_connections, breached: false },
-    { name: 'sse_dropped_streams_count', value: metrics.sse_dropped_streams_count, breached: metrics.sse_dropped_streams_count > 0 },
-    { name: 'platform_wallet_balance_xlm', value: metrics.platform_wallet_balance_xlm, breached: metrics.platform_wallet_balance_xlm < PLATFORM_MIN_XLM },
-    { name: 'campaign_wallets_at_risk_count', value: metrics.campaign_wallets_at_risk_count, breached: metrics.campaign_wallets_at_risk_count > 0 },
-    { name: 'db_pool_utilisation', value: metrics.db_pool_utilisation, breached: metrics.db_pool_utilisation > 80 },
-    { name: 'db_longest_query_seconds', value: metrics.db_longest_query_seconds, breached: metrics.db_longest_query_seconds > 5 },
-    { name: 'stuck_pending_contributions_count', value: metrics.stuck_pending_contributions_count, breached: metrics.stuck_pending_contributions_count > 0 },
-    { name: 'stuck_pending_withdrawals_count', value: metrics.stuck_pending_withdrawals_count, breached: metrics.stuck_pending_withdrawals_count > 0 },
+    {
+      name: 'sse_dropped_streams_count',
+      value: metrics.sse_dropped_streams_count,
+      breached: metrics.sse_dropped_streams_count > 0,
+    },
+    {
+      name: 'platform_wallet_balance_xlm',
+      value: metrics.platform_wallet_balance_xlm,
+      breached: metrics.platform_wallet_balance_xlm < PLATFORM_MIN_XLM,
+    },
+    {
+      name: 'campaign_wallets_at_risk_count',
+      value: metrics.campaign_wallets_at_risk_count,
+      breached: metrics.campaign_wallets_at_risk_count > 0,
+    },
+    {
+      name: 'db_pool_utilisation',
+      value: metrics.db_pool_utilisation,
+      breached: metrics.db_pool_utilisation > 80,
+    },
+    {
+      name: 'db_longest_query_seconds',
+      value: metrics.db_longest_query_seconds,
+      breached: metrics.db_longest_query_seconds > 5,
+    },
+    {
+      name: 'stuck_pending_contributions_count',
+      value: metrics.stuck_pending_contributions_count,
+      breached: metrics.stuck_pending_contributions_count > 0,
+    },
+    {
+      name: 'stuck_pending_withdrawals_count',
+      value: metrics.stuck_pending_withdrawals_count,
+      breached: metrics.stuck_pending_withdrawals_count > 0,
+    },
   ];
 
   for (const m of entries) {

@@ -29,9 +29,10 @@ function validateRenderUrl(urlString, options = {}) {
     return { safe: false, reason: 'Invalid URL format', normalized: '' };
   }
 
-  const allowLocalhostHttp = options.allowLocalhostHttp !== undefined
-    ? options.allowLocalhostHttp
-    : process.env.NODE_ENV !== 'production';
+  const allowLocalhostHttp =
+    options.allowLocalhostHttp !== undefined
+      ? options.allowLocalhostHttp
+      : process.env.NODE_ENV !== 'production';
 
   const allowedSchemes = allowLocalhostHttp ? DEV_ALLOWED_SCHEMES : ALLOWED_SCHEMES;
 
@@ -45,7 +46,8 @@ function validateRenderUrl(urlString, options = {}) {
 
   if (u.protocol === 'http:') {
     const host = u.hostname.toLowerCase();
-    const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+    const isLocalhost =
+      host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
     if (!isLocalhost) {
       return {
         safe: false,

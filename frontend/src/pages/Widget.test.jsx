@@ -18,7 +18,7 @@ function renderWidget() {
       <Routes>
         <Route path="/embed/campaigns/:id" element={<Widget />} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
 }
 
@@ -29,7 +29,10 @@ describe('Widget polling interval lifecycle', () => {
   beforeEach(() => {
     setVisibility('visible');
     // Keep load()'s fetch pending so the effect performs no state updates.
-    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {}))
+    );
     setIntervalSpy = vi.spyOn(window, 'setInterval');
     clearIntervalSpy = vi.spyOn(window, 'clearInterval');
   });
@@ -66,8 +69,6 @@ describe('Widget polling interval lifecycle', () => {
     // Each hide clears the live interval before the next show starts a new one,
     // so exactly one interval is ever outstanding (started = cleared + 1).
     expect(clearIntervalSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(setIntervalSpy.mock.calls.length).toBe(
-      clearIntervalSpy.mock.calls.length + 1,
-    );
+    expect(setIntervalSpy.mock.calls.length).toBe(clearIntervalSpy.mock.calls.length + 1);
   });
 });

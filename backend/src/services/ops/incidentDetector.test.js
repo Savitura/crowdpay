@@ -97,7 +97,7 @@ test('evaluateIncidentConditions triggers warning for underfunded campaign walle
   };
 
   const incidents = evaluateIncidentConditions(snapshot);
-  const types = incidents.map((i) => i.type);
+  const types = incidents.map(i => i.type);
   assert.ok(types.includes('sse_stream_dropped'));
   assert.ok(types.includes('campaign_wallet_underfunded'));
   assert.ok(types.includes('stuck_pending_contributions'));

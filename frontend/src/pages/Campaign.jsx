@@ -1,11 +1,191 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Link, useParams, useLocation, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import DOMPurify from 'dompurify';
 import * as Sentry from '@sentry/react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import ContributeModal from '../components/ContributeModal';
+import RefundsSection from '../components/RefundsSection';
+import BudgetBreakdown from '../components/BudgetBreakdown';
+import TeamCampaignsSection from '../components/TeamCampaignsSection';
+import { useExchangeRate } from '../hooks/useExchangeRate';
+
+const SUPPORTED_LOCALES = [
+  { code: 'fr', label: 'French (Français)' },
+  { code: 'es', label: 'Spanish (Español)' },
+  { code: 'de', label: 'German (Deutsch)' },
+];
+
+/**
+ * CampaignRequirementsNotice — shown to non-logged-in visitors when the
+ * campaign has KYC or reputation requirements set.
+ */
+function CampaignRequirementsNotice({ campaignId }) {
+  const [req, setReq] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getCampaignRequirements(campaignId)
+      .then((data) => {
+        if (!cancelled) setReq(data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [campaignId]);
+
+  if (!req) return null;
+  const attestations = req.required_attestations || [];
+  const hasRequirements = req.min_reputation_score > 0 || attestations.length > 0;
+  if (!hasRequirements) return null;
+
+  const lines = [];
+  if (attestations.length) {
+    const label = attestations[attestations.length - 1].replace('kyc_', 'KYC ');
+    lines.push(
+      `This campaign requires ${label.charAt(0).toUpperCase() + label.slice(1)} verification`
+    );
+  }
+  if (req.min_reputation_score > 0) {
+    lines.push(`Minimum reputation score: ${req.min_reputation_score}`);
+  }
+
+  return (
+    <div
+      style={{
+        padding: '0.5rem 0.75rem',
+        borderRadius: '0.4rem',
+        background: '#fffbeb',
+        border: '1px solid #fde68a',
+        fontSize: '0.8rem',
+        color: '#92400e',
+      }}
+    >
+      {lines.map((l, i) => (
+        <div key={i}>{l}</div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Shows a green "You're eligible" or red "Requirements not met" badge.
+ * Fetches campaign requirements + contributor profile in parallel.
+ */
+function ContributorEligibilityBadge({ user, campaignId }) {
+  const [status, setStatus] = useState(null); // null | 'loading' | 'eligible' | 'ineligible' | 'no-requirements'
+  const [missing, setMissing] = useState([]);
+  const [requirements, setRequirements] = useState(null);
+
+  useEffect(() => {
+    if (!user?.wallet_public_key || !campaignId) return;
+    let cancelled = false;
+    setStatus('loading');
+
+    Promise.all([
+      api.getCampaignRequirements(campaignId),
+      api.getContributorIdentityProfile(user.wallet_public_key),
+    ])
+      .then(([req, profile]) => {
+        if (cancelled) return;
+        setRequirements(req);
+
+        const noReq =
+          (!req.min_reputation_score || req.min_reputation_score === 0) &&
+          (!req.required_attestations || req.required_attestations.length === 0);
+
+        if (noReq) {
+          setStatus('no-requirements');
+          return;
+        }
+
+        const gaps = [];
+
+        if (req.min_reputation_score > 0 && profile.reputationScore < req.min_reputation_score) {
+          gaps.push(
+            `Reputation score ${profile.reputationScore} / ${req.min_reputation_score} required`
+          );
+        }
+
+        for (const attType of req.required_attestations || []) {
+          const hasAtt = profile.attestations.some(
+            (a) =>
+              a.type === attType &&
+              !a.revoked &&
+              (!a.expiresAt || new Date(a.expiresAt) > new Date())
+          );
+          if (!hasAtt) {
+            const label = attType.replace('kyc_', 'KYC ');
+            gaps.push(`Missing ${label.charAt(0).toUpperCase() + label.slice(1)} verification`);
+          }
+        }
+
+        setMissing(gaps);
+        setStatus(gaps.length ? 'ineligible' : 'eligible');
+      })
+      .catch(() => {
+        if (!cancelled) setStatus(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.wallet_public_key, campaignId]);
+
+  if (!status || status === 'loading' || status === 'no-requirements') return null;
+
+  if (status === 'eligible') {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.4rem',
+          padding: '0.45rem 0.75rem',
+          borderRadius: '0.4rem',
+          background: '#f0fff4',
+          border: '1px solid #9ae6b4',
+          fontSize: '0.82rem',
+          color: '#276749',
+          marginBottom: '0.5rem',
+        }}
+        role="status"
+        aria-label="You are eligible to contribute"
+      >
+        <span aria-hidden="true">✅</span>
+        <span>You&apos;re eligible to contribute</span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        padding: '0.55rem 0.75rem',
+        borderRadius: '0.4rem',
+        background: '#fff5f5',
+        border: '1px solid #fed7d7',
+        fontSize: '0.82rem',
+        color: '#c53030',
+        marginBottom: '0.5rem',
+      }}
+      role="alert"
+    >
+      <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
+        <span aria-hidden="true">🔒</span> Requirements not met
+      </div>
+      <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
+        {missing.map((m, i) => (
+          <li key={i}>{m}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 import RecurringPledgeForm from '../components/RecurringPledgeForm';
 import ReferralProgramSettings from '../components/ReferralProgramSettings';
 import CampaignReferralsTab from '../components/CampaignReferralsTab';
@@ -29,9 +209,13 @@ import { isConnected, getPublicKey } from '@stellar/freighter-api';
 const BackerInsightsCard = React.lazy(() => import('../components/BackerInsightsCard'));
 import CampaignComments from '../components/CampaignComments';
 import FollowCampaignButton from '../components/FollowCampaignButton';
+import CampaignCommunicationPreferences from '../components/CampaignCommunicationPreferences';
+import OutcomeSurveyPanel from '../components/campaign/OutcomeSurveyPanel';
+import OutcomeSurveyEditor from '../components/campaign/OutcomeSurveyEditor';
+import PoolManager from '../components/PoolManager';
+import SponsorMatchingPanel from '../components/SponsorMatchingPanel';
 import LanguageToggle from '../components/LanguageToggle';
 import { addRecentlyViewed } from '../lib/recentlyViewed';
-
 
 function escapeHtml(text) {
   return text
@@ -171,27 +355,41 @@ function CampaignPublishControls({ campaign, isOwner, navigate }) {
         >
           <strong style={{ fontSize: '0.9rem' }}>This campaign is a draft</strong>
           <p style={{ fontSize: '0.82rem', color: 'var(--color-text-hint)', margin: 0 }}>
-            No wallet or on-chain contracts exist yet. Publish now, or schedule an automatic
-            publish time.
+            No wallet or on-chain contracts exist yet. Publish now, or schedule an automatic publish
+            time.
           </p>
           {campaign.scheduled_publish_at && (
             <p style={{ fontSize: '0.82rem', margin: 0 }}>
-              Scheduled to auto-publish at {new Date(campaign.scheduled_publish_at).toLocaleString()}
+              Scheduled to auto-publish at{' '}
+              {new Date(campaign.scheduled_publish_at).toLocaleString()}
             </p>
           )}
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button type="button" className="btn-primary" onClick={publishNow} disabled={publishing}>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={publishNow}
+              disabled={publishing}
+            >
               {publishing ? 'Publishing…' : 'Publish now'}
             </button>
           </div>
-          <form onSubmit={schedulePublish} style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <form
+            onSubmit={schedulePublish}
+            style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}
+          >
             <input
               type="datetime-local"
               value={scheduledAt}
               onChange={(e) => setScheduledAt(e.target.value)}
               style={{ fontSize: '0.85rem' }}
             />
-            <button type="submit" className="btn-secondary" disabled={scheduling} style={{ fontSize: '0.85rem' }}>
+            <button
+              type="submit"
+              className="btn-secondary"
+              disabled={scheduling}
+              style={{ fontSize: '0.85rem' }}
+            >
               {scheduling ? 'Saving…' : 'Schedule publish'}
             </button>
           </form>
@@ -299,9 +497,20 @@ export default function Campaign() {
   const navigate = useNavigate();
   const { user, token } = useAuth();
   const toast = useToast();
+  const { t, i18n } = useTranslation();
+  const currentLocale = (i18n.resolvedLanguage || i18n.language || 'en').split('-')[0];
 
   const [campaign, setCampaign] = useState(null);
+  const { formatNaira } = useExchangeRate(campaign?.asset_type || 'USDC');
+  const nairaRaised = campaign ? formatNaira(campaign.raised_amount) : null;
+  const nairaTarget = campaign ? formatNaira(campaign.target_amount) : null;
   const [translation, setTranslation] = useState(null);
+  const [translations, setTranslations] = useState([]);
+  const [translationsLoading, setTranslationsLoading] = useState(false);
+  const [translationForm, setTranslationForm] = useState(null);
+  const [translationError, setTranslationError] = useState('');
+  const [translationSuccess, setTranslationSuccess] = useState('');
+  const [translationSaving, setTranslationSaving] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [contributions, setContributions] = useState(null);
   const [totalContributions, setTotalContributions] = useState(0);
@@ -377,6 +586,7 @@ export default function Campaign() {
   const deleteModalRef = useRef(null);
 
   const refParam = new URLSearchParams(location.search).get('ref');
+  const presetAmount = new URLSearchParams(location.search).get('amount') || '';
 
   const currentUserId = user?.id || user?.userId;
   const userRole =
@@ -394,12 +604,14 @@ export default function Campaign() {
         setReferralCode(data.referral_code);
         setReferralUrl(data.referral_url);
       })
-      .catch(() => { });
+      .catch(() => {});
   }, [user, id]);
 
   useEffect(() => {
     if (!isEditingCampaign) return;
-    const onKey = (e) => { if (e.key === 'Escape') handleCloseEditModal(); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') handleCloseEditModal();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isEditingCampaign, handleCloseEditModal]);
@@ -408,14 +620,25 @@ export default function Campaign() {
     if (!isEditingCampaign) return;
     const modal = editModalRef.current;
     if (!modal) return;
-    const focusable = modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    const focusable = modal.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     first?.focus();
     function trapTab(e) {
       if (e.key !== 'Tab') return;
-      if (e.shiftKey) { if (document.activeElement === first) { e.preventDefault(); last?.focus(); } }
-      else { if (document.activeElement === last) { e.preventDefault(); first?.focus(); } }
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
     }
     modal.addEventListener('keydown', trapTab);
     return () => modal.removeEventListener('keydown', trapTab);
@@ -438,14 +661,25 @@ export default function Campaign() {
     if (!showDeleteDialog) return;
     const modal = deleteModalRef.current;
     if (!modal) return;
-    const focusable = modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    const focusable = modal.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     first?.focus();
     function trapTab(e) {
       if (e.key !== 'Tab') return;
-      if (e.shiftKey) { if (document.activeElement === first) { e.preventDefault(); last?.focus(); } }
-      else { if (document.activeElement === last) { e.preventDefault(); first?.focus(); } }
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
     }
     modal.addEventListener('keydown', trapTab);
     return () => modal.removeEventListener('keydown', trapTab);
@@ -456,7 +690,7 @@ export default function Campaign() {
     api
       .getReferralLeaderboard(id)
       .then(setReferralLeaderboard)
-      .catch(() => { });
+      .catch(() => {});
   }, [isOwner, id]);
 
   useEffect(() => {
@@ -469,8 +703,37 @@ export default function Campaign() {
   }, []);
 
   useEffect(() => {
+    if (!campaign) return;
+    const baseUrl = import.meta.env.VITE_API_URL || window.location.origin;
+    const ogImageUrl =
+      campaign.og_image_url || `${baseUrl}/api/campaigns/${campaign.id}/og-image.png`;
+    const setMeta = (property, content) => {
+      let el = document.querySelector(`meta[property="${property}"]`);
+      if (!el) {
+        el = document.createElement('meta');
+        el.setAttribute('property', property);
+        document.head.appendChild(el);
+      }
+      el.setAttribute('content', content);
+    };
+    setMeta('og:title', campaign.title);
+    setMeta('og:description', (campaign.description || '').slice(0, 160));
+    setMeta('og:image', ogImageUrl);
+    setMeta('og:url', campaign.share_url || window.location.href);
+    setMeta('og:type', 'website');
+    return () => {
+      ['og:title', 'og:description', 'og:image', 'og:url', 'og:type'].forEach((p) => {
+        document.querySelector(`meta[property="${p}"]`)?.remove();
+      });
+    };
+  }, [campaign]);
+
+  useEffect(() => {
     setLoadError('');
-    const campaignOpts = refParam ? { ref: refParam } : {};
+    const campaignOpts = {
+      locale: currentLocale,
+      ...(refParam ? { ref: refParam } : {}),
+    };
     api
       .getCampaign(id, campaignOpts)
       .then((data) => {
@@ -503,7 +766,24 @@ export default function Campaign() {
         setAnalyticsBackersLoading(false);
       })
       .catch((err) => setLoadError(err.message || 'Could not load campaign.'));
+  }, [id, currentLocale, refParam, contributed]);
 
+  // Load backer insights when analytics tab is 'backers'
+  useEffect(() => {
+    if (!id || analyticsTab !== 'backers') {
+      setBackersAnalytics(null);
+      return;
+    }
+    setAnalyticsBackersLoading(true);
+    api
+      .getCampaignBackerInsights(id)
+      .then(setBackersAnalytics)
+      .catch(() => setBackersAnalytics(null))
+      .finally(() => setAnalyticsBackersLoading(false));
+  }, [id, analyticsTab]);
+
+  // Load contributions
+  useEffect(() => {
     api
       .getContributions(id, { limit: showAll ? 100 : 10, offset: 0 })
       .then((data) => {
@@ -514,13 +794,20 @@ export default function Campaign() {
         setContributions([]);
         setTotalContributions(0);
       });
+  }, [id, showAll, contributed]);
+
+  // Load milestones, stretch goals, contract status, tiers, NFT rewards, updates
+  useEffect(() => {
     setMilestonesLoading(true);
     api
-      .getMilestones(id)
+      .getMilestones(id, { locale: currentLocale })
       .then(setMilestones)
       .catch(() => setMilestones([]))
       .finally(() => setMilestonesLoading(false));
-    api.getStretchGoals(id).then(setStretchGoals).catch(() => setStretchGoals([]));
+    api
+      .getStretchGoals(id)
+      .then(setStretchGoals)
+      .catch(() => setStretchGoals([]));
     api
       .getContractStatus(id)
       .then((data) => {
@@ -554,7 +841,7 @@ export default function Campaign() {
         })
         .catch(() => setHasPendingWithdrawal(false));
     }
-  }, [id, token, contributed, showAll]);
+  }, [id, token, currentLocale, contributed]);
 
   useEffect(() => {
     if (!id || !user || campaign?.status !== 'disputed') {
@@ -577,7 +864,7 @@ export default function Campaign() {
     api
       .getReferralLeaderboard(id)
       .then(setReferralLeaderboard)
-      .catch(() => { });
+      .catch(() => {});
   }, [campaign, id, user]);
 
   useEffect(() => {
@@ -791,17 +1078,121 @@ export default function Campaign() {
       title: campaign.title || '',
       description: campaign.description || '',
       deadline: campaign.deadline ? campaign.deadline.split('T')[0] : '',
+      target_amount: campaign.target_amount || '',
     });
     setEditError('');
     setEditSuccess('');
+    setTranslationForm(null);
+    setTranslationError('');
+    setTranslationSuccess('');
     setIsEditingCampaign(true);
+    setTranslationsLoading(true);
+    api
+      .getCampaignTranslations(campaign.id)
+      .then((data) => setTranslations(Array.isArray(data) ? data : []))
+      .catch(() => setTranslations([]))
+      .finally(() => setTranslationsLoading(false));
   }
 
   function handleCloseEditModal() {
     setIsEditingCampaign(false);
-    setEditFormData({ title: '', description: '', deadline: '' });
+    setEditFormData({ title: '', description: '', deadline: '', target_amount: '' });
     setEditError('');
     setEditSuccess('');
+    setTranslationForm(null);
+    setTranslationError('');
+    setTranslationSuccess('');
+  }
+
+  function handleStartAddTranslation(locale) {
+    const existing = translations.find((t) => t.locale === locale || t.language === locale);
+    setTranslationError('');
+    setTranslationSuccess('');
+    if (existing) {
+      let mt = existing.milestone_titles || [];
+      if (typeof mt === 'string') {
+        try {
+          mt = JSON.parse(mt);
+        } catch {
+          mt = [];
+        }
+      }
+      setTranslationForm({
+        locale,
+        title: existing.title || '',
+        description: existing.description || '',
+        milestone_titles: Array.isArray(mt) ? [...mt] : [],
+      });
+    } else {
+      setTranslationForm({
+        locale,
+        title: '',
+        description: '',
+        milestone_titles: (milestones || []).map(() => ''),
+      });
+    }
+  }
+
+  async function handleSaveTranslation() {
+    if (!translationForm) return;
+    if (!translationForm.title.trim()) {
+      setTranslationError('Title is required for translation');
+      return;
+    }
+    setTranslationSaving(true);
+    setTranslationError('');
+    try {
+      const saved = await api.saveCampaignTranslation(campaign.id, {
+        locale: translationForm.locale,
+        title: translationForm.title.trim(),
+        description: translationForm.description.trim() || null,
+        milestone_titles: translationForm.milestone_titles || [],
+      });
+      setTranslations((prev) => {
+        const filtered = prev.filter(
+          (t) => t.locale !== translationForm.locale && t.language !== translationForm.locale
+        );
+        return [...filtered, saved];
+      });
+      setTranslationSuccess(`Translation for ${translationForm.locale.toUpperCase()} saved!`);
+      setTranslationForm(null);
+      if (currentLocale === translationForm.locale) {
+        api
+          .getCampaign(id, { locale: currentLocale })
+          .then(setCampaign)
+          .catch(() => {});
+        api
+          .getMilestones(id, { locale: currentLocale })
+          .then(setMilestones)
+          .catch(() => {});
+      }
+      setTimeout(() => setTranslationSuccess(''), 3000);
+    } catch (err) {
+      setTranslationError(err.message || 'Failed to save translation');
+    } finally {
+      setTranslationSaving(false);
+    }
+  }
+
+  async function handleDeleteTranslation(locale) {
+    if (!window.confirm(`Are you sure you want to delete the ${locale.toUpperCase()} translation?`))
+      return;
+    try {
+      await api.deleteCampaignTranslation(campaign.id, locale);
+      setTranslations((prev) => prev.filter((t) => t.locale !== locale && t.language !== locale));
+      if (currentLocale === locale) {
+        api
+          .getCampaign(id, { locale: currentLocale })
+          .then(setCampaign)
+          .catch(() => {});
+        api
+          .getMilestones(id, { locale: currentLocale })
+          .then(setMilestones)
+          .catch(() => {});
+      }
+    } catch (err) {
+      setTranslationError(err.message || 'Failed to delete translation');
+    }
   }
 
   async function handleSaveEdit() {
@@ -840,6 +1231,9 @@ export default function Campaign() {
       if (editFormData.deadline !== (campaign.deadline ? campaign.deadline.split('T')[0] : '')) {
         updates.deadline = editFormData.deadline || null;
       }
+      if (editFormData.target_amount !== campaign.target_amount) {
+        updates.target_amount = editFormData.target_amount;
+      }
 
       if (Object.keys(updates).length === 0) {
         setEditError('No changes to save');
@@ -850,7 +1244,7 @@ export default function Campaign() {
       const updated = await api.updateCampaign(campaign.id, updates, token);
       setCampaign(updated);
       setIsEditingCampaign(false);
-      setEditFormData({ title: '', description: '', deadline: '' });
+      setEditFormData({ title: '', description: '', deadline: '', target_amount: '' });
       setEditSuccess('Campaign updated successfully!');
       setTimeout(() => setEditSuccess(''), 3000);
     } catch (err) {
@@ -928,7 +1322,7 @@ export default function Campaign() {
           setContributions(data.contributions || []);
           setTotalContributions(data.total || 0);
         })
-        .catch(() => { });
+        .catch(() => {});
     } catch (err) {
       setContributorRefundError(err.message || 'On-chain refund failed.');
     } finally {
@@ -1020,7 +1414,10 @@ export default function Campaign() {
   const acceptedMembers = members.filter((m) => m.accepted_at);
   const pendingInvites = members.filter((m) => !m.accepted_at);
   const campaignUrl = `${window.location.origin}/campaigns/${id}`;
-  const apiBase = (import.meta.env.VITE_API_BASE_URL || `${window.location.origin}`).replace(/\/+$/, "");
+  const apiBase = (import.meta.env.VITE_API_BASE_URL || `${window.location.origin}`).replace(
+    /\/+$/,
+    ''
+  );
   const widgetEmbedCode = `<iframe src="${window.location.origin}/widget/campaigns/${id}" width="320" height="140" frameborder="0" style="border-radius:10px" title="CrowdPay funding widget"></iframe>`;
   const fullEmbedCode = `<iframe src="${window.location.origin}/embed/campaigns/${id}" width="480" height="280" frameborder="0" title="CrowdPay campaign embed"></iframe>`;
   const badgeMarkdown = `[![CrowdPay](${apiBase}/api/campaigns/${id}/badge.svg)](${campaignUrl})`;
@@ -1056,7 +1453,6 @@ export default function Campaign() {
       window.open('https://www.freighter.app/', '_blank', 'noopener,noreferrer');
     }
   }
-
 
   async function submitUpdate(e) {
     e.preventDefault();
@@ -1115,8 +1511,7 @@ export default function Campaign() {
     >
       {showCreatedBanner && (
         <div className="alert alert--success" style={{ marginBottom: '1.25rem' }} role="status">
-          <strong>Campaign is live.</strong> Share the link — contributors can fund in XLM or USDC
-          when conversion paths are available.
+          <strong>{t('campaign.createdBanner')}</strong> {t('campaign.createdBannerBody')}
           <button
             type="button"
             onClick={() => setShowCreatedBanner(false)}
@@ -1130,31 +1525,28 @@ export default function Campaign() {
               minHeight: 'auto',
             }}
           >
-            Dismiss
+            {t('common.dismiss')}
           </button>
         </div>
       )}
       {coverUploadError && (
         <div className="alert alert--warning" style={{ marginBottom: '1.25rem' }} role="status">
-          <strong>Cover image upload failed:</strong> {coverUploadError}
+          <strong>{t('campaign.coverUploadFailed')}</strong> {coverUploadError}
         </div>
       )}
       {campaign.status === 'funded' && (
         <div className="alert alert--success" style={{ marginBottom: '1.25rem' }} role="status">
-          <strong>Goal reached.</strong> This campaign has met its funding target. Contributions may
-          still be open until the creator closes the campaign.
+          <strong>{t('campaign.goalReached')}</strong> {t('campaign.goalReachedBody')}
         </div>
       )}
       {campaign.status === 'failed' && (
         <div className="alert alert--error" style={{ marginBottom: '1.25rem' }} role="status">
-          <strong>Campaign ended.</strong> This campaign did not reach its goal. Contributions are
-          closed and refunds can be requested.
+          <strong>{t('campaign.campaignEnded')}</strong> {t('campaign.campaignEndedBody')}
         </div>
       )}
       {campaign.status === 'refunded' && (
         <div className="alert alert--success" style={{ marginBottom: '1.25rem' }} role="status">
-          <strong>Campaign refunded.</strong> This campaign was refunded — all contributions have
-          been returned to their original senders.
+          <strong>{t('campaign.campaignRefunded')}</strong> {t('campaign.campaignRefundedBody')}
         </div>
       )}
       {campaign.status === 'failed' && user && user.id === campaign.creator_id && (
@@ -1175,8 +1567,7 @@ export default function Campaign() {
               lineHeight: 1.55,
             }}
           >
-            This campaign did not reach its goal. You can refund all contributors — this will build
-            and sign a Stellar transaction that returns each contributor&apos;s exact amount.
+            {t('campaign.campaignEndedBody')}
           </p>
           {refundError && (
             <p
@@ -1208,14 +1599,13 @@ export default function Campaign() {
               fontSize: '0.9rem',
             }}
           >
-            {refundBusy ? 'Processing refund…' : 'Refund contributors'}
+            {refundBusy ? t('campaign.processingRefund') : t('campaign.refundContributors')}
           </button>
         </div>
       )}
       {campaign.creator_kyc_status !== 'verified' && (
         <div className="alert alert--warning" style={{ marginBottom: '1.25rem' }} role="status">
-          <strong>Legacy campaign:</strong> this campaign was created before creator identity
-          verification was required.
+          <strong>{t('campaign.legacyCampaign')}</strong> {t('campaign.legacyCampaignDescription')}
         </div>
       )}
       {editSuccess && (
@@ -1228,14 +1618,18 @@ export default function Campaign() {
       )}
       {!campaign.cover_image_url && (
         <div style={styles.detailCoverPlaceholder} aria-hidden="true">
-          <span style={styles.detailCoverPlaceholderText}>No campaign image yet</span>
+          <span style={styles.detailCoverPlaceholderText}>{t('campaign.noImage')}</span>
         </div>
       )}
       <div style={styles.header}>
         <div style={styles.badgeRow}>
           <span style={styles.asset}>{campaign.asset_type}</span>
           <CampaignStatusBadge status={campaign.status} />
-          <VerificationBadge status={campaign.creator_kyc_status || campaign.creator_verification_status} tier={campaign.creator_verification_tier} showTier />
+          <VerificationBadge
+            status={campaign.creator_kyc_status || campaign.creator_verification_status}
+            tier={campaign.creator_verification_tier}
+            showTier
+          />
           {user && <FavoriteToggle campaignId={campaign.id} />}
           {user && <FollowCampaignButton campaignId={campaign.id} />}
           {campaign.contract_address && (
@@ -1259,7 +1653,7 @@ export default function Campaign() {
         </div>
         <LanguageToggle
           campaignId={campaign.id}
-          defaultLanguage="en"
+          defaultLanguage={campaign.locale || currentLocale}
           defaultTitle={campaign.title}
           defaultDescription={campaign.description || ''}
           onTranslationChange={setTranslation}
@@ -1270,10 +1664,10 @@ export default function Campaign() {
             role="status"
             style={{ marginBottom: '1rem', display: 'grid', gap: '0.5rem' }}
           >
-            <strong>This campaign has an open dispute.</strong>
+            <strong>{t('campaign.openDispute')}</strong>
             <span style={{ fontSize: '0.85rem' }}>
-              New contributions are paused and the escrow is frozen while the platform reviews
-              the case.
+              New contributions are paused and the escrow is frozen while the platform reviews the
+              case.
             </span>
             {activeDispute &&
               (evidenceSubmitted ? (
@@ -1295,34 +1689,42 @@ export default function Campaign() {
         <div
           style={{ ...styles.desc, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
           dangerouslySetInnerHTML={{
-            __html: DOMPurify.sanitize(markdownToHtml(translation?.description || campaign.description)),
+            __html: DOMPurify.sanitize(
+              markdownToHtml(translation?.description || campaign.description)
+            ),
           }}
         />
       </div>
 
       {campaign.wallet_mode === 'contract' && (
         <div style={{ ...styles.card, marginBottom: '1rem' }}>
-          <TreasuryTransparencyPanel
-            campaignId={campaign.id}
-            assetType={campaign.asset_type}
-          />
+          <TreasuryTransparencyPanel campaignId={campaign.id} assetType={campaign.asset_type} />
         </div>
       )}
 
       <CampaignComments campaignId={campaign.id} campaign={campaign} />
 
       {nftRewards.length > 0 && (
-        <div style={{ marginBottom: "1rem" }}>
+        <div style={{ marginBottom: '1rem' }}>
           <h2 style={styles.sectionTitle}>NFT proof of support</h2>
-          <div style={{ display: "grid", gap: "0.75rem" }}>
+          <div style={{ display: 'grid', gap: '0.75rem' }}>
             {nftRewards.slice(0, 3).map((reward) => (
               <div key={reward.id} style={{ ...styles.card, marginBottom: 0 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: '0.75rem',
+                    flexWrap: 'wrap',
+                  }}
+                >
                   <strong>{reward.reward_tier_title || 'NFT reward'}</strong>
                   <span style={styles.small}>{reward.status || 'configured'}</span>
                 </div>
                 {reward.serial_number && (
-                  <p style={{ ...styles.small, marginTop: '0.4rem' }}>Serial: {reward.serial_number}</p>
+                  <p style={{ ...styles.small, marginTop: '0.4rem' }}>
+                    Serial: {reward.serial_number}
+                  </p>
                 )}
               </div>
             ))}
@@ -1331,9 +1733,9 @@ export default function Campaign() {
       )}
 
       {tiers.length > 0 && (
-        <div style={{ marginBottom: "1rem" }}>
+        <div style={{ marginBottom: '1rem' }}>
           <h2 style={styles.sectionTitle}>Reward tiers</h2>
-          <div style={{ display: "grid", gap: "0.85rem" }}>
+          <div style={{ display: 'grid', gap: '0.85rem' }}>
             {tiers.map((tier) => (
               <div
                 key={tier.id}
@@ -1343,28 +1745,50 @@ export default function Campaign() {
                   opacity: tier.sold_out ? 0.65 : 1,
                 }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", alignItems: "baseline" }}>
-                  <strong style={{ fontSize: "1.05rem" }}>{tier.title}</strong>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: '0.75rem',
+                    flexWrap: 'wrap',
+                    alignItems: 'baseline',
+                  }}
+                >
+                  <strong style={{ fontSize: '1.05rem' }}>{tier.title}</strong>
                   <span style={styles.asset}>
                     {Number(tier.min_amount).toLocaleString()}+ {tier.asset_type}
+                    {formatNaira(tier.min_amount) && (
+                      <span style={styles.nairaTier} title="Approximate NGN value">
+                        {' '}
+                        (≈ ₦{formatNaira(tier.min_amount)} approx.)
+                      </span>
+                    )}
                   </span>
                 </div>
                 {tier.description && (
-                  <p style={{ ...styles.small, marginTop: "0.5rem", lineHeight: 1.5 }}>
+                  <p style={{ ...styles.small, marginTop: '0.5rem', lineHeight: 1.5 }}>
                     {tier.description}
                   </p>
                 )}
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: '0.75rem',
+                    flexWrap: 'wrap',
+                    marginTop: '0.75rem',
+                  }}
+                >
                   {tier.estimated_delivery && (
                     <span style={styles.small}>
                       Estimated delivery: {new Date(tier.estimated_delivery).toLocaleDateString()}
                     </span>
                   )}
-                  <span style={{ ...styles.small, fontWeight: 700, marginLeft: "auto" }}>
+                  <span style={{ ...styles.small, fontWeight: 700, marginLeft: 'auto' }}>
                     {tier.sold_out
-                      ? "Sold out"
+                      ? 'Sold out'
                       : tier.remaining === null || tier.remaining === undefined
-                        ? "Unlimited backers"
+                        ? 'Unlimited backers'
                         : `${Number(tier.remaining).toLocaleString()} remaining`}
                   </span>
                 </div>
@@ -1379,15 +1803,35 @@ export default function Campaign() {
           <div>
             <div style={styles.big}>
               {Number(campaign.raised_amount).toLocaleString()} {campaign.asset_type}
+              {nairaRaised && (
+                <span
+                  style={styles.nairaBig}
+                  title="Approximate NGN value"
+                  aria-label={`approximate naira value: ₦${nairaRaised}`}
+                >
+                  {' '}
+                  (≈ ₦{nairaRaised} approx.)
+                </span>
+              )}
             </div>
             <div style={styles.small}>
-              raised of {Number(campaign.target_amount).toLocaleString()} goal
+              raised of {Number(campaign.target_amount).toLocaleString()} {campaign.asset_type}{' '}
+              {nairaTarget && (
+                <span
+                  style={styles.nairaSmall}
+                  title="Approximate NGN value"
+                  aria-label={`approximate naira goal: ₦${nairaTarget}`}
+                >
+                  (≈ ₦{nairaTarget} approx.){' '}
+                </span>
+              )}
+              goal
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>
             <div style={styles.big}>{pct}%</div>
             <div style={styles.small}>
-              funded by <strong>{campaign.contributor_count || 0}</strong> backers
+              {t('campaign.fundedByBackers', { count: campaign.contributor_count || 0 })}
             </div>
           </div>
         </div>
@@ -1412,26 +1856,29 @@ export default function Campaign() {
 
         {campaign.status === 'refunded' ? (
           <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
-            This campaign has been <strong>refunded</strong>. All contributions were returned to
-            their original senders.
+            {t('campaign.refundedCampaignNotice')}
           </p>
         ) : ['failed', 'closed', 'withdrawn'].includes(campaign.status) ? (
           <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
-            Contributions are closed while this campaign is <strong>{campaign.status}</strong>.
+            {t('campaign.contributionsClosedStatus', { status: campaign.status })}
           </p>
         ) : user ? (
-          <button
-            type="button"
-            className="btn-primary"
-            style={styles.cta}
-            ref={contributeBtnRef}
-            aria-label={`Contribute to ${campaign.title}`}
-            onClick={() => setShowModal(true)}
-          >
-            Contribute
-          </button>
+          <>
+            <ContributorEligibilityBadge user={user} campaignId={campaign.id} />
+            <button
+              type="button"
+              className="btn-primary"
+              style={styles.cta}
+              ref={contributeBtnRef}
+              aria-label={`Contribute to ${campaign.title}`}
+              onClick={() => setShowModal(true)}
+            >
+              Contribute
+            </button>
+          </>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+            <CampaignRequirementsNotice campaignId={campaign.id} />
             <Link
               to="/login"
               state={{ from: `/campaigns/${id}` }}
@@ -1460,8 +1907,15 @@ export default function Campaign() {
           <RecurringPledgeForm
             campaignId={id}
             asset={campaign.asset_type}
+            walletType={user.wallet_type}
             onSubscribed={() => setContributed((prev) => !prev)}
           />
+        )}
+
+        {campaign.status === 'active' && (
+          <div style={{ marginTop: '1.5rem' }}>
+            <PoolManager campaignId={id} campaignTitle={campaign.title} />
+          </div>
         )}
 
         {user && (
@@ -1530,9 +1984,17 @@ export default function Campaign() {
           onClick={() => {
             api.trackShare(campaign.id, 'twitter').catch(() => {});
             const shareUrl = referralUrl || window.location.href;
-            const pct = Math.min(100, (campaign.raised_amount / campaign.target_amount) * 100).toFixed(1);
-            const daysLeft = Math.max(0, Math.ceil((new Date(campaign.end_date) - new Date()) / (1000 * 60 * 60 * 24)));
-            const text = encodeURIComponent(`Back ${campaign.title} on CrowdPay — ${pct}% funded, ${daysLeft} days left. Built on Stellar. ${shareUrl} #Stellar #CrowdPay`);
+            const pct = Math.min(
+              100,
+              (campaign.raised_amount / campaign.target_amount) * 100
+            ).toFixed(1);
+            const daysLeft = Math.max(
+              0,
+              Math.ceil((new Date(campaign.end_date) - new Date()) / (1000 * 60 * 60 * 24))
+            );
+            const text = encodeURIComponent(
+              `Back ${campaign.title} on CrowdPay — ${pct}% funded, ${daysLeft} days left. Built on Stellar. ${shareUrl} #Stellar #CrowdPay`
+            );
             window.open(`https://twitter.com/intent/tweet?text=${text}`, '_blank');
           }}
           aria-label="Share on X"
@@ -1553,8 +2015,13 @@ export default function Campaign() {
           onClick={() => {
             api.trackShare(campaign.id, 'whatsapp').catch(() => {});
             const shareUrl = referralUrl || window.location.href;
-            const pct = Math.min(100, (campaign.raised_amount / campaign.target_amount) * 100).toFixed(1);
-            const text = encodeURIComponent(`Hey! Check out this campaign on CrowdPay: ${campaign.title}. They're ${pct}% funded and need your help. ${shareUrl}`);
+            const pct = Math.min(
+              100,
+              (campaign.raised_amount / campaign.target_amount) * 100
+            ).toFixed(1);
+            const text = encodeURIComponent(
+              `Hey! Check out this campaign on CrowdPay: ${campaign.title}. They're ${pct}% funded and need your help. ${shareUrl}`
+            );
             window.open(`https://wa.me/?text=${text}`, '_blank');
           }}
           aria-label="Share on WhatsApp"
@@ -1597,7 +2064,10 @@ export default function Campaign() {
             api.trackShare(campaign.id, 'telegram').catch(() => {});
             const shareUrl = referralUrl || window.location.href;
             const text = encodeURIComponent(`Check out this campaign: ${campaign.title}`);
-            window.open(`https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${text}`, '_blank');
+            window.open(
+              `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${text}`,
+              '_blank'
+            );
           }}
           aria-label="Share on Telegram"
         >
@@ -1876,19 +2346,19 @@ export default function Campaign() {
                 </div>
               </div>
 
-              <div style={{ marginBottom: "1rem" }}>
+              <div style={{ marginBottom: '1rem' }}>
                 <label
                   style={{
-                    fontSize: "0.8rem",
+                    fontSize: '0.8rem',
                     fontWeight: 600,
-                    color: "var(--color-text-hint)",
-                    display: "block",
-                    marginBottom: "0.5rem",
+                    color: 'var(--color-text-hint)',
+                    display: 'block',
+                    marginBottom: '0.5rem',
                   }}
                 >
                   Full embed (iframe)
                 </label>
-                <div style={{ position: "relative" }}>
+                <div style={{ position: 'relative' }}>
                   <pre style={styles.embedCode}>{fullEmbedCode}</pre>
                   <button
                     type="button"
@@ -1899,36 +2369,34 @@ export default function Campaign() {
                       });
                     }}
                     style={{
-                      position: "absolute",
-                      top: "0.5rem",
-                      right: "0.5rem",
-                      background: embedCopied
-                        ? "var(--color-success-text)"
-                        : "var(--color-accent)",
-                      color: "#fff",
-                      padding: "0.4rem 0.8rem",
-                      fontSize: "0.8rem",
-                      minHeight: "auto",
+                      position: 'absolute',
+                      top: '0.5rem',
+                      right: '0.5rem',
+                      background: embedCopied ? 'var(--color-success-text)' : 'var(--color-accent)',
+                      color: '#fff',
+                      padding: '0.4rem 0.8rem',
+                      fontSize: '0.8rem',
+                      minHeight: 'auto',
                     }}
                   >
-                    {embedCopied ? "Copied!" : "Copy"}
+                    {embedCopied ? 'Copied!' : 'Copy'}
                   </button>
                 </div>
               </div>
 
-              <div style={{ marginBottom: "1rem" }}>
+              <div style={{ marginBottom: '1rem' }}>
                 <label
                   style={{
-                    fontSize: "0.8rem",
+                    fontSize: '0.8rem',
                     fontWeight: 600,
-                    color: "var(--color-text-hint)",
-                    display: "block",
-                    marginBottom: "0.5rem",
+                    color: 'var(--color-text-hint)',
+                    display: 'block',
+                    marginBottom: '0.5rem',
                   }}
                 >
                   README badge (markdown)
                 </label>
-                <div style={{ position: "relative" }}>
+                <div style={{ position: 'relative' }}>
                   <pre style={styles.embedCode}>{badgeMarkdown}</pre>
                   <button
                     type="button"
@@ -1939,19 +2407,17 @@ export default function Campaign() {
                       });
                     }}
                     style={{
-                      position: "absolute",
-                      top: "0.5rem",
-                      right: "0.5rem",
-                      background: badgeCopied
-                        ? "var(--color-success-text)"
-                        : "var(--color-accent)",
-                      color: "#fff",
-                      padding: "0.4rem 0.8rem",
-                      fontSize: "0.8rem",
-                      minHeight: "auto",
+                      position: 'absolute',
+                      top: '0.5rem',
+                      right: '0.5rem',
+                      background: badgeCopied ? 'var(--color-success-text)' : 'var(--color-accent)',
+                      color: '#fff',
+                      padding: '0.4rem 0.8rem',
+                      fontSize: '0.8rem',
+                      minHeight: 'auto',
                     }}
                   >
-                    {badgeCopied ? "Copied!" : "Copy"}
+                    {badgeCopied ? 'Copied!' : 'Copy'}
                   </button>
                 </div>
               </div>
@@ -1998,11 +2464,11 @@ export default function Campaign() {
               api
                 .getCampaign(id)
                 .then(setCampaign)
-                .catch(() => { });
+                .catch(() => {});
               api
                 .getMilestones(id)
                 .then(setMilestones)
-                .catch(() => { });
+                .catch(() => {});
             }}
           />
         </div>
@@ -2017,6 +2483,14 @@ export default function Campaign() {
 
       <MilestoneTracker milestones={milestones} assetType={campaign.asset_type} />
       <MilestoneVotePanel milestones={milestones} />
+
+      <SponsorMatchingPanel campaignId={campaign.id} campaignStatus={campaign.status} user={user} />
+
+      <BudgetBreakdown
+        campaignId={campaign.id}
+        targetAmount={campaign.target_amount}
+        disabled={!canEditCampaign}
+      />
 
       {/* Stretch Goals (#585) */}
       {stretchGoals.length > 0 && (
@@ -2042,14 +2516,35 @@ export default function Campaign() {
                 >
                   <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>{reached ? '✅' : '🎯'}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        flexWrap: 'wrap',
+                      }}
+                    >
                       <strong style={{ fontSize: '0.9rem' }}>{goal.title}</strong>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)', fontWeight: 600, flexShrink: 0 }}>
+                      <span
+                        style={{
+                          fontSize: '0.8rem',
+                          color: 'var(--color-text-hint)',
+                          fontWeight: 600,
+                          flexShrink: 0,
+                        }}
+                      >
                         {Number(goal.amount).toLocaleString()} {campaign.asset_type}
                       </span>
                     </div>
                     {goal.description && (
-                      <p style={{ margin: '0.2rem 0 0', fontSize: '0.82rem', color: 'var(--color-text-secondary)' }}>
+                      <p
+                        style={{
+                          margin: '0.2rem 0 0',
+                          fontSize: '0.82rem',
+                          color: 'var(--color-text-secondary)',
+                        }}
+                      >
                         {goal.description}
                       </p>
                     )}
@@ -2098,7 +2593,8 @@ export default function Campaign() {
                 onClick={() => setActiveTab('analytics')}
                 style={{
                   background: activeTab === 'analytics' ? 'var(--color-accent)' : 'transparent',
-                  color: activeTab === 'analytics' ? 'var(--color-bg)' : 'var(--color-text-primary)',
+                  color:
+                    activeTab === 'analytics' ? 'var(--color-bg)' : 'var(--color-text-primary)',
                   border: '1px solid var(--color-border-light)',
                   borderRadius: '6px',
                   padding: '0.4rem 0.9rem',
@@ -2115,6 +2611,15 @@ export default function Campaign() {
           {activeTab !== 'analytics' && (
             <>
               <h2 style={styles.sectionTitle}>Team</h2>
+
+              {/* Team fundraising pages (#952): aggregated member campaigns */}
+              <div className="campaign-card" style={{ marginBottom: '1.5rem' }}>
+                <strong style={{ display: 'block', marginBottom: '0.75rem' }}>
+                  Fundraising teams
+                </strong>
+                <TeamCampaignsSection campaignId={campaign.id} canManage={isOwner} />
+              </div>
+
               <div
                 className="campaign-card"
                 style={{ marginBottom: '1.5rem', fontSize: '0.85rem' }}
@@ -2416,7 +2921,9 @@ export default function Campaign() {
           <strong style={{ marginBottom: '0.5rem', display: 'block' }}>
             {editingUpdateId ? 'Edit update' : 'Post update'}
           </strong>
-          <label htmlFor="update-title" className="sr-only">Update title</label>
+          <label htmlFor="update-title" className="sr-only">
+            Update title
+          </label>
           <input
             id="update-title"
             placeholder="Update title"
@@ -2425,7 +2932,9 @@ export default function Campaign() {
             required
             style={{ marginBottom: '0.5rem' }}
           />
-          <label htmlFor="update-body" className="sr-only">Update body</label>
+          <label htmlFor="update-body" className="sr-only">
+            Update body
+          </label>
           <textarea
             id="update-body"
             placeholder="Write markdown update..."
@@ -2518,6 +3027,23 @@ export default function Campaign() {
         <CampaignComments campaignId={campaign.id} campaign={campaign} />
       </div>
 
+      {/* Beneficiary outcome survey (#960) and per-campaign communication
+          preferences (#961). The creator/manager sees the editor, everybody
+          else sees the backer panel. */}
+      <div style={{ marginBottom: '2rem' }} data-no-print>
+        {canManageTeam ? (
+          <OutcomeSurveyEditor campaignId={campaign.id} />
+        ) : (
+          <OutcomeSurveyPanel campaignId={campaign.id} canRespond={Boolean(user)} />
+        )}
+      </div>
+
+      {user && !canManageTeam && (
+        <div style={{ marginBottom: '2rem' }} data-no-print>
+          <CampaignCommunicationPreferences campaignId={campaign.id} />
+        </div>
+      )}
+
       {/* Analytics Section */}
       {canViewAnalytics && (canManageTeam ? activeTab === 'analytics' : true) && (
         <div style={{ marginBottom: '2rem' }}>
@@ -2540,7 +3066,8 @@ export default function Campaign() {
               onClick={() => setAnalyticsTab('overview')}
               style={{
                 background: analyticsTab === 'overview' ? 'var(--color-accent)' : 'transparent',
-                color: analyticsTab === 'overview' ? 'var(--color-bg)' : 'var(--color-text-primary)',
+                color:
+                  analyticsTab === 'overview' ? 'var(--color-bg)' : 'var(--color-text-primary)',
                 border: '1px solid var(--color-border-light)',
                 borderRadius: '6px',
                 padding: '0.4rem 0.9rem',
@@ -2578,7 +3105,8 @@ export default function Campaign() {
               onClick={() => setAnalyticsTab('referrals')}
               style={{
                 background: analyticsTab === 'referrals' ? 'var(--color-accent)' : 'transparent',
-                color: analyticsTab === 'referrals' ? 'var(--color-bg)' : 'var(--color-text-primary)',
+                color:
+                  analyticsTab === 'referrals' ? 'var(--color-bg)' : 'var(--color-text-primary)',
                 border: '1px solid var(--color-border-light)',
                 borderRadius: '6px',
                 padding: '0.4rem 0.9rem',
@@ -2597,7 +3125,8 @@ export default function Campaign() {
               onClick={() => setAnalyticsTab('treasury')}
               style={{
                 background: analyticsTab === 'treasury' ? 'var(--color-accent)' : 'transparent',
-                color: analyticsTab === 'treasury' ? 'var(--color-bg)' : 'var(--color-text-primary)',
+                color:
+                  analyticsTab === 'treasury' ? 'var(--color-bg)' : 'var(--color-text-primary)',
                 border: '1px solid var(--color-border-light)',
                 borderRadius: '6px',
                 padding: '0.4rem 0.9rem',
@@ -2621,8 +3150,12 @@ export default function Campaign() {
                       Contributions (Last 30 Days)
                     </strong>
 
-
-                    <svg width="100%" height={150} viewBox={`0 0 600 150`} preserveAspectRatio="none">
+                    <svg
+                      width="100%"
+                      height={150}
+                      viewBox={`0 0 600 150`}
+                      preserveAspectRatio="none"
+                    >
                       {analytics.dailyTotals.map((day, i) => {
                         const maxAmount = Math.max(
                           ...analytics.dailyTotals.map((d) => Number(d.total_amount) || 0),
@@ -2650,7 +3183,9 @@ export default function Campaign() {
                   </div>
 
                   <div className="campaign-card">
-                    <strong style={{ display: 'block', marginBottom: '1rem' }}>Asset Breakdown</strong>
+                    <strong style={{ display: 'block', marginBottom: '1rem' }}>
+                      Asset Breakdown
+                    </strong>
                     {analytics.assetBreakdown.map((asset) => (
                       <div
                         key={asset.paid_with}
@@ -2667,7 +3202,9 @@ export default function Campaign() {
                   </div>
 
                   <div className="campaign-card">
-                    <strong style={{ display: 'block', marginBottom: '1rem' }}>Top Contributors</strong>
+                    <strong style={{ display: 'block', marginBottom: '1rem' }}>
+                      Top Contributors
+                    </strong>
                     {analytics.topContributors.map((c, i) => (
                       <div
                         key={i}
@@ -2694,7 +3231,17 @@ export default function Campaign() {
           )}
 
           {analyticsTab === 'backers' && (
-            <p style={{ color: 'var(--color-text-muted)' }}>Backer insights coming soon.</p>
+            <React.Suspense
+              fallback={
+                <p style={{ color: 'var(--color-text-muted)' }}>Loading backer insights...</p>
+              }
+            >
+              {analyticsBackersLoading ? (
+                <p style={{ color: 'var(--color-text-muted)' }}>Loading backer insights...</p>
+              ) : (
+                <BackerInsightsCard data={backersAnalytics} assetType={campaign.asset_type} />
+              )}
+            </React.Suspense>
           )}
 
           {analyticsTab === 'referrals' && (
@@ -2821,6 +3368,7 @@ export default function Campaign() {
           campaign={campaign}
           tiers={tiers}
           referralCode={refParam}
+          initialAmount={presetAmount}
           guestFreighterMode={freighterGuestMode}
           onClose={() => {
             setShowModal(false);
@@ -2864,7 +3412,10 @@ export default function Campaign() {
               overflowY: 'auto',
             }}
           >
-            <h2 id="evidence-form-title" style={{ fontSize: '1.2rem', fontWeight: 700, marginTop: 0 }}>
+            <h2
+              id="evidence-form-title"
+              style={{ fontSize: '1.2rem', fontWeight: 700, marginTop: 0 }}
+            >
               Submit evidence
             </h2>
             <EvidenceForm
@@ -3036,6 +3587,286 @@ export default function Campaign() {
               />
             </div>
 
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label
+                style={{
+                  display: 'block',
+                  fontWeight: 600,
+                  marginBottom: '0.5rem',
+                }}
+              >
+                Target Amount
+              </label>
+              <input
+                type="number"
+                value={editFormData.target_amount}
+                onChange={(e) =>
+                  setEditFormData({ ...editFormData, target_amount: e.target.value })
+                }
+                min="0"
+                step="0.01"
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  border: '1px solid var(--color-border-lightest)',
+                  borderRadius: '6px',
+                  fontSize: '1rem',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            <div
+              style={{
+                marginTop: '1.5rem',
+                marginBottom: '1.5rem',
+                borderTop: '1px solid var(--color-border-lightest)',
+                paddingTop: '1.25rem',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: '0.75rem',
+                }}
+              >
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Translations</h3>
+                {translationsLoading && (
+                  <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                    Loading...
+                  </span>
+                )}
+              </div>
+              <p
+                style={{
+                  fontSize: '0.85rem',
+                  color: 'var(--color-text-muted)',
+                  marginBottom: '1rem',
+                }}
+              >
+                Add translated versions of your campaign content for international contributors. If
+                a translation is not provided, the original content will be displayed.
+              </p>
+
+              {translationSuccess && (
+                <div
+                  className="alert alert--success"
+                  style={{ marginBottom: '1rem', fontSize: '0.85rem' }}
+                >
+                  {translationSuccess}
+                </div>
+              )}
+              {translationError && (
+                <div
+                  className="alert alert--error"
+                  style={{ marginBottom: '1rem', fontSize: '0.85rem' }}
+                >
+                  {translationError}
+                </div>
+              )}
+
+              <div
+                style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}
+              >
+                {SUPPORTED_LOCALES.map((loc) => {
+                  const hasTranslation = translations.some(
+                    (t) => (t.locale || t.language) === loc.code
+                  );
+                  const isCurrentForm = translationForm?.locale === loc.code;
+                  return (
+                    <button
+                      key={loc.code}
+                      type="button"
+                      className={isCurrentForm ? 'btn-primary' : 'btn-secondary'}
+                      style={{ fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
+                      onClick={() => handleStartAddTranslation(loc.code)}
+                    >
+                      {hasTranslation ? `✓ Edit ${loc.label}` : `+ Add Translation (${loc.label})`}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {translationForm && (
+                <div
+                  style={{
+                    background: 'var(--color-surface, #f9fafb)',
+                    border: '1px solid var(--color-border-lightest, #e5e7eb)',
+                    borderRadius: '8px',
+                    padding: '1rem',
+                    marginBottom: '1rem',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: '0.75rem',
+                    }}
+                  >
+                    <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>
+                      Editing{' '}
+                      {SUPPORTED_LOCALES.find((l) => l.code === translationForm.locale)?.label ||
+                        translationForm.locale.toUpperCase()}{' '}
+                      Translation
+                    </h4>
+                    {translations.some(
+                      (t) => (t.locale || t.language) === translationForm.locale
+                    ) && (
+                      <button
+                        type="button"
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--color-error, #ef4444)',
+                          fontSize: '0.8rem',
+                          cursor: 'pointer',
+                          padding: 0,
+                        }}
+                        onClick={() => handleDeleteTranslation(translationForm.locale)}
+                      >
+                        Delete translation
+                      </button>
+                    )}
+                  </div>
+
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.85rem',
+                        fontWeight: 600,
+                        marginBottom: '0.35rem',
+                      }}
+                    >
+                      Translated Title *
+                    </label>
+                    <input
+                      type="text"
+                      value={translationForm.title}
+                      onChange={(e) =>
+                        setTranslationForm({ ...translationForm, title: e.target.value })
+                      }
+                      placeholder="Title in selected language"
+                      style={{
+                        width: '100%',
+                        padding: '0.6rem',
+                        border: '1px solid var(--color-border-lightest)',
+                        borderRadius: '6px',
+                        fontSize: '0.9rem',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.85rem',
+                        fontWeight: 600,
+                        marginBottom: '0.35rem',
+                      }}
+                    >
+                      Translated Description (optional)
+                    </label>
+                    <textarea
+                      value={translationForm.description}
+                      onChange={(e) =>
+                        setTranslationForm({ ...translationForm, description: e.target.value })
+                      }
+                      placeholder="Description in selected language"
+                      rows={3}
+                      style={{
+                        width: '100%',
+                        padding: '0.6rem',
+                        border: '1px solid var(--color-border-lightest)',
+                        borderRadius: '6px',
+                        fontSize: '0.9rem',
+                        boxSizing: 'border-box',
+                        resize: 'vertical',
+                      }}
+                    />
+                  </div>
+
+                  {milestones && milestones.length > 0 && (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <label
+                        style={{
+                          display: 'block',
+                          fontSize: '0.85rem',
+                          fontWeight: 600,
+                          marginBottom: '0.35rem',
+                        }}
+                      >
+                        Translated Milestone Titles (optional)
+                      </label>
+                      {milestones.map((m, idx) => (
+                        <div key={m.id || idx} style={{ marginBottom: '0.5rem' }}>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                            Milestone {idx + 1}: {m.title}
+                          </span>
+                          <input
+                            type="text"
+                            value={translationForm.milestone_titles[idx] || ''}
+                            onChange={(e) => {
+                              const newTitles = [...(translationForm.milestone_titles || [])];
+                              newTitles[idx] = e.target.value;
+                              setTranslationForm({
+                                ...translationForm,
+                                milestone_titles: newTitles,
+                              });
+                            }}
+                            placeholder={`Translated title for "${m.title}"`}
+                            style={{
+                              width: '100%',
+                              padding: '0.5rem',
+                              border: '1px solid var(--color-border-lightest)',
+                              borderRadius: '6px',
+                              fontSize: '0.85rem',
+                              boxSizing: 'border-box',
+                              marginTop: '0.2rem',
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: '0.5rem',
+                      justifyContent: 'flex-end',
+                      marginTop: '0.75rem',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}
+                      onClick={() => setTranslationForm(null)}
+                      disabled={translationSaving}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}
+                      onClick={handleSaveTranslation}
+                      disabled={translationSaving}
+                    >
+                      {translationSaving ? 'Saving...' : 'Save Translation'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div
               style={{
                 display: 'flex',
@@ -3188,6 +4019,19 @@ export default function Campaign() {
           </div>
         </div>
       )}
+
+      {(isOwner || user?.role === 'admin') && campaign && (
+        <RefundsSection
+          campaign={campaign}
+          user={user}
+          onRefundSuccess={() => {
+            api
+              .getCampaign(id)
+              .then(setCampaign)
+              .catch(() => {});
+          }}
+        />
+      )}
     </main>
   );
 }
@@ -3230,6 +4074,24 @@ const styles = {
   },
   big: { fontSize: '1.5rem', fontWeight: 800, color: 'var(--color-text-primary)' },
   small: { fontSize: '0.85rem', color: 'var(--color-text-muted)' },
+  nairaBig: {
+    fontSize: '0.95rem',
+    fontWeight: 500,
+    color: 'var(--color-text-secondary)',
+    marginLeft: '0.35rem',
+    verticalAlign: 'middle',
+  },
+  nairaSmall: {
+    fontSize: '0.8rem',
+    color: 'var(--color-text-secondary)',
+    fontWeight: 500,
+  },
+  nairaTier: {
+    fontSize: '0.85rem',
+    color: 'var(--color-text-secondary)',
+    fontWeight: 500,
+    marginLeft: '0.25rem',
+  },
   bar: {
     background: 'var(--color-surface)',
     borderRadius: '99px',
@@ -3267,7 +4129,8 @@ const styles = {
     borderRadius: '14px',
     marginBottom: '1.5rem',
     height: '260px',
-    background: 'linear-gradient(135deg, var(--color-accent-lighter) 0%, var(--color-accent-lightest) 100%)',
+    background:
+      'linear-gradient(135deg, var(--color-accent-lighter) 0%, var(--color-accent-lightest) 100%)',
     border: '1px solid var(--color-purple-light)',
     display: 'flex',
     alignItems: 'center',
@@ -3376,4 +4239,3 @@ const styles = {
     justifyContent: 'center',
   },
 };
-

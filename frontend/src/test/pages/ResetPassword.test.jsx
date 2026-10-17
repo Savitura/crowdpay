@@ -22,6 +22,11 @@ describe('ResetPassword page', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /Reset password/i }));
 
-    await waitFor(() => expect(apiMocks.resetPassword).toHaveBeenCalledWith({ token: 'abc123', password: 'Password1' }));
+    await waitFor(() =>
+      expect(apiMocks.resetPassword).toHaveBeenCalledWith({
+        token: 'abc123',
+        password: 'Password1',
+      })
+    );
   });
 });

@@ -54,7 +54,7 @@ function contractError(code, statusCode = 422) {
 }
 
 function ownerQuery(overrides = {}) {
-  return async (text) => {
+  return async text => {
     if (text.includes('SELECT creator_id FROM campaigns')) {
       return { rows: [{ creator_id: CREATOR_ID }] };
     }
@@ -118,7 +118,7 @@ test('POST /treasury/policy surfaces an out-of-range policy as 400 INVALID_POLIC
     .post(`/api/campaigns/${CAMPAIGN_ID}/treasury/policy`)
     .send({ maxSingleWithdrawalPct: 500 });
   assert.equal(res.status, 400);
-  assert.equal(res.body.code, 'INVALID_POLICY');
+  assert.equal(res.body.error.code, 'INVALID_POLICY');
 });
 
 test('POST /treasury/policy is refused once the treasury is deployed', async () => {
@@ -134,7 +134,7 @@ test('POST /treasury/policy is refused once the treasury is deployed', async () 
     .post(`/api/campaigns/${CAMPAIGN_ID}/treasury/policy`)
     .send({ minHoldDays: 1 });
   assert.equal(res.status, 409);
-  assert.equal(res.body.code, 'TREASURY_ALREADY_DEPLOYED');
+  assert.equal(res.body.error.code, 'TREASURY_ALREADY_DEPLOYED');
 });
 
 // ── status ───────────────────────────────────────────────────────────────────
@@ -171,7 +171,7 @@ test('GET /treasury/status is a 409 for a standard multisig campaign', async () 
   });
   const res = await request(app).get(`/api/campaigns/${CAMPAIGN_ID}/treasury/status`);
   assert.equal(res.status, 409);
-  assert.equal(res.body.code, 'NOT_CONTRACT_WALLET');
+  assert.equal(res.body.error.code, 'NOT_CONTRACT_WALLET');
 });
 
 // ── withdrawals ──────────────────────────────────────────────────────────────
@@ -233,7 +233,7 @@ test('POST /treasury/withdrawal reports a hold-period rejection as 422', async (
     .send({ amount: '100', destination: DEST });
 
   assert.equal(res.status, 422);
-  assert.equal(res.body.code, 'HOLD_PERIOD_NOT_ELAPSED');
+  assert.equal(res.body.error.code, 'HOLD_PERIOD_NOT_ELAPSED');
 });
 
 test('POST /treasury/withdrawal reports the percentage ceiling as 422', async () => {
@@ -251,7 +251,7 @@ test('POST /treasury/withdrawal reports the percentage ceiling as 422', async ()
     .send({ amount: '3000', destination: DEST });
 
   assert.equal(res.status, 422);
-  assert.equal(res.body.code, 'EXCEEDS_MAX_WITHDRAWAL_PCT');
+  assert.equal(res.body.error.code, 'EXCEEDS_MAX_WITHDRAWAL_PCT');
 });
 
 test('POST /treasury/withdrawal validates its own input before calling the contract', async () => {
@@ -330,7 +330,7 @@ test('approval is refused when the campaign has no auditor', async () => {
     .post(`/api/campaigns/${CAMPAIGN_ID}/treasury/withdrawal/7/approve`)
     .send({});
   assert.equal(res.status, 409);
-  assert.equal(res.body.code, 'AUDITOR_NOT_CONFIGURED');
+  assert.equal(res.body.error.code, 'AUDITOR_NOT_CONFIGURED');
 });
 
 test('a non-numeric pending id is rejected before the contract is called', async () => {
@@ -378,7 +378,7 @@ test('POST /treasury/refund reports unmet conditions as 422', async () => {
   });
   const res = await request(app).post(`/api/campaigns/${CAMPAIGN_ID}/treasury/refund`).send({});
   assert.equal(res.status, 422);
-  assert.equal(res.body.code, 'REFUND_CONDITIONS_NOT_MET');
+  assert.equal(res.body.error.code, 'REFUND_CONDITIONS_NOT_MET');
 });
 
 // ── reconciliation ───────────────────────────────────────────────────────────

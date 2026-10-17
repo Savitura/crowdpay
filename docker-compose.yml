@@ -8,7 +8,6 @@ services:
       POSTGRES_USER: crowdpay
       POSTGRES_PASSWORD: crowdpay
     volumes:
-      - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
       - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
@@ -18,18 +17,28 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
   backend:
     build: ./backend
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
     env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgres://crowdpay:crowdpay@db:5432/crowdpay
+      REDIS_URL: redis://redis:6379
     ports:
       - "3001:3001"
     volumes:
       - ./backend:/app
       - /app/node_modules
-    command: npm run dev
+    command: sh -c "npm run migrate && npm run dev"
 
   frontend:
     build: ./frontend
