@@ -24,9 +24,19 @@ CREATE TABLE users (
   is_admin                BOOLEAN DEFAULT FALSE,
   totp_secret             TEXT,
   totp_enabled            BOOLEAN DEFAULT FALSE,
-  backup_codes            TEXT[],
+  -- backup_codes TEXT[] removed; backup codes are stored in user_backup_codes
   created_at              TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- One row per hashed backup code; consumed atomically via DELETE ... RETURNING
+CREATE TABLE IF NOT EXISTS user_backup_codes (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash  TEXT        NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS user_backup_codes_user_idx ON user_backup_codes (user_id);
 
 CREATE TABLE campaigns (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),

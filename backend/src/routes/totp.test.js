@@ -21,8 +21,8 @@ function buildApp({ queryImpl, totpServiceImpl, bcryptImpl, userOverrides = {} }
       raw: ['code1', 'code2'],
       hashed: ['hashed1', 'hashed2'],
     }),
-    verifyBackupCode: async () => ({ valid: true, index: 0 }),
-    removeBackupCode: async () => {},
+    consumeBackupCode: async () => ({ consumed: true }),
+    storeBackupCodes: async () => {},
     logAuditEvent: async () => {},
     isDeviceTrusted: async () => false,
     trustDevice: async () => {},
@@ -48,6 +48,10 @@ function buildApp({ queryImpl, totpServiceImpl, bcryptImpl, userOverrides = {} }
     },
     '../services/walletSecrets': {
       encryptWalletSecret: async secret => `cpws:v1:${secret.slice(0, 8)}`,
+    },
+    '../services/walletService': {
+      encryptSecret: (s) => `enc:${s}`,
+      decryptSecret: (s) => s.replace(/^enc:/, ''),
     },
     '../services/emailService': {
       sendEmail: () => {},
@@ -80,14 +84,12 @@ const creatorUser = {
   wallet_public_key: 'GUSER',
   totp_enabled: false,
   totp_secret: null,
-  backup_codes: null,
 };
 
 const totpEnabledUser = {
   ...creatorUser,
   totp_enabled: true,
-  totp_secret: 'JBSWY3DPEHPK3PXP',
-  backup_codes: ['hashed1', 'hashed2'],
+  totp_secret: 'enc:JBSWY3DPEHPK3PXP',
 };
 
 test('POST /2fa/setup generates secret and QR code', async () => {
@@ -137,15 +139,19 @@ test('POST /2fa/setup rejects already-enabled account', async () => {
 
 test('POST /2fa/verify activates 2FA and returns backup codes', async () => {
   let updated = false;
+  let storedCodes = false;
   const { app } = buildApp({
     queryImpl: async text => {
       if (text.includes('SELECT * FROM users')) {
-        return { rows: [{ ...creatorUser, totp_secret: 'JBSWY3DPEHPK3PXP' }] };
+        return { rows: [{ ...creatorUser, totp_secret: 'enc:JBSWY3DPEHPK3PXP' }] };
       }
       if (text.includes('UPDATE users SET totp_enabled')) {
         updated = true;
       }
       return { rows: [] };
+    },
+    totpServiceImpl: {
+      storeBackupCodes: async () => { storedCodes = true; },
     },
   });
 
@@ -155,13 +161,14 @@ test('POST /2fa/verify activates 2FA and returns backup codes', async () => {
   assert.equal(res.body.message, '2FA enabled successfully');
   assert.ok(Array.isArray(res.body.backupCodes));
   assert.equal(updated, true);
+  assert.equal(storedCodes, true);
 });
 
 test('POST /2fa/verify rejects invalid code', async () => {
   const { app } = buildApp({
     totpServiceImpl: { verifyTotp: () => false },
     queryImpl: async () => ({
-      rows: [{ ...creatorUser, totp_secret: 'JBSWY3DPEHPK3PXP' }],
+      rows: [{ ...creatorUser, totp_secret: 'enc:JBSWY3DPEHPK3PXP' }],
     }),
   });
 
@@ -229,7 +236,7 @@ test('POST /2fa/disable rejects invalid code', async () => {
   const { app } = buildApp({
     totpServiceImpl: { verifyTotp: () => false },
     queryImpl: async () => ({
-      rows: [{ ...totpEnabledUser, backup_codes: [] }],
+      rows: [{ ...totpEnabledUser }],
     }),
   });
 
@@ -246,10 +253,10 @@ test('GET /2fa/backup-codes regenerates and returns codes', async () => {
       if (text.includes('SELECT * FROM users')) {
         return { rows: [totpEnabledUser] };
       }
-      if (text.includes('UPDATE users SET backup_codes')) {
-        updated = true;
-      }
       return { rows: [] };
+    },
+    totpServiceImpl: {
+      storeBackupCodes: async () => { updated = true; },
     },
   });
 
@@ -295,7 +302,7 @@ test('POST /2fa/trust-device rejects invalid code', async () => {
   const { app } = buildApp({
     totpServiceImpl: { verifyTotp: () => false },
     queryImpl: async () => ({
-      rows: [{ ...totpEnabledUser, backup_codes: [] }],
+      rows: [{ ...totpEnabledUser }],
     }),
   });
 
@@ -461,7 +468,7 @@ test('POST /2fa/verify generates 10 backup codes', async () => {
   const { app } = buildApp({
     queryImpl: async text => {
       if (text.includes('SELECT * FROM users')) {
-        return { rows: [{ ...creatorUser, totp_secret: 'JBSWY3DPEHPK3PXP' }] };
+        return { rows: [{ ...creatorUser, totp_secret: 'enc:JBSWY3DPEHPK3PXP' }] };
       }
       return { rows: [] };
     },
