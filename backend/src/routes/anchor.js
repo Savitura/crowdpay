@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const router = require('express').Router();
 const db = require('../config/database');
 const logger = require('../config/logger');
@@ -15,6 +16,35 @@ const {
   getAnchorTransaction,
   isAnchorFailureStatus,
 } = require('../services/anchorService');
+
+function verifyCallbackSignature(req) {
+  const secret = process.env.ANCHOR_CALLBACK_HMAC_SECRET;
+  const insecureBypass =
+    process.env.NODE_ENV === 'test' ||
+    process.env.ANCHOR_CALLBACK_INSECURE === 'true';
+
+  if (!secret) {
+    return insecureBypass; // only allow unsigned when bypass is explicitly active
+  }
+
+  const signature = req.headers['x-anchor-signature'] || req.headers['x-stellar-signature'];
+  if (!signature) return false;
+
+  const body = typeof req.rawBody === 'string'
+    ? req.rawBody
+    : JSON.stringify(req.body);
+
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(body)
+    .digest('hex');
+
+  // constant-time comparison to prevent timing attacks
+  const sigBuf = Buffer.from(signature.replace(/^sha256=/, ''));
+  const expBuf = Buffer.from(expected);
+  if (sigBuf.length !== expBuf.length) return false;
+  return crypto.timingSafeEqual(sigBuf, expBuf);
+}
 
 function mapSessionForClient(row) {
   const session = {
@@ -484,12 +514,34 @@ router.get('/deposits/:id', requireAuth, async (req, res) => {
 });
 
 router.post('/callbacks/sep24', async (req, res) => {
+  if (!verifyCallbackSignature(req)) {
+    logger.warn('Anchor callback rejected: invalid or missing HMAC signature', {
+      ip: req.ip,
+      anchor_transaction_id: req.body?.transaction?.id || req.body?.id,
+    });
+    return res.status(401).json({ error: 'Invalid callback signature' });
+  }
+
   const transaction = req.body?.transaction || req.body;
   if (!transaction || !transaction.id) {
     return res.status(400).json({ error: 'Invalid callback payload' });
   }
 
   try {
+    // Deduplication: ignore replayed callbacks for the same anchor transaction
+    // Must be before the session lookup to short-circuit before any DB reads
+    try {
+      await db.query(
+        'INSERT INTO webhook_events(event_source, event_id) VALUES ($1, $2)',
+        ['anchor', transaction.id]
+      );
+    } catch (dupErr) {
+      if (dupErr.code === '23505') {
+        return res.status(200).json({ success: true, duplicate: true });
+      }
+      throw dupErr;
+    }
+
     const { rows } = await db.query(
       `SELECT ad.*, u.wallet_public_key, u.wallet_secret_encrypted
        FROM anchor_deposits ad
@@ -503,7 +555,37 @@ router.post('/callbacks/sep24', async (req, res) => {
     }
 
     const session = rows[0];
-    const remoteStatus = transaction.status;
+
+    // Re-fetch the transaction from the anchor to avoid trusting the callback body
+    const anchor = getAnchorById(session.anchor_id);
+    if (!anchor) {
+      return res.status(503).json({ error: 'Anchor not found' });
+    }
+    const user = {
+      id: session.user_id,
+      wallet_public_key: session.wallet_public_key,
+      wallet_secret_encrypted: session.wallet_secret_encrypted,
+    };
+    let auth;
+    try {
+      auth = await issueAnchorAuthToken({ anchor, user });
+    } catch (authErr) {
+      logger.warn('Could not obtain anchor auth for re-fetch in callback', { anchor_deposit_id: session.id, error: authErr.message });
+      return res.status(503).json({ error: 'Could not verify transaction status with anchor' });
+    }
+    let remoteTx;
+    try {
+      const remote = await getAnchorTransaction({
+        anchor,
+        authToken: auth.token,
+        transactionId: session.anchor_transaction_id,
+      });
+      remoteTx = remote.transaction || remote;
+    } catch (fetchErr) {
+      logger.warn('Anchor transaction re-fetch failed in callback', { anchor_deposit_id: session.id, error: fetchErr.message });
+      return res.status(503).json({ error: 'Could not re-verify transaction status with anchor' });
+    }
+    const remoteStatus = remoteTx.status;
     let localStatus = session.status;
 
     if (isAnchorFailureStatus(remoteStatus)) {
@@ -526,7 +608,7 @@ router.post('/callbacks/sep24', async (req, res) => {
            updated_at = NOW(),
            completed_at = CASE WHEN $1 IN ('completed', 'failed') THEN COALESCE(completed_at, NOW()) ELSE completed_at END
        WHERE id = $4`,
-      [localStatus, remoteStatus, JSON.stringify(transaction), session.id]
+      [localStatus, remoteStatus, JSON.stringify(remoteTx), session.id]
     );
 
     if (remoteStatus === 'completed' && !session.contribution_tx_hash && !session.contribution_id) {

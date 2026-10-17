@@ -58,21 +58,70 @@ async function generateBackupCodes() {
   return { raw, hashed };
 }
 
-async function verifyBackupCode(backupCodes, code) {
-  for (let i = 0; i < backupCodes.length; i++) {
-    if (await bcrypt.compare(code, backupCodes[i])) {
-      return { valid: true, index: i };
+/**
+ * Atomically consume a backup code.
+ *
+ * Fetches all code hashes for the user, bcrypt-compares each one, then issues
+ * a single DELETE … RETURNING to consume the matching row.  Because the DELETE
+ * is the only write, two concurrent requests that both pass the bcrypt check
+ * will race on the DELETE: only the request whose DELETE returns a row wins;
+ * the other gets rowCount 0 and returns { consumed: false }.
+ *
+ * @param {string} userId
+ * @param {string} code  - the raw backup code supplied by the user
+ * @returns {{ consumed: boolean }}
+ */
+async function consumeBackupCode(userId, code) {
+  const { rows } = await db.query(
+    'SELECT id, code_hash FROM user_backup_codes WHERE user_id = $1',
+    [userId]
+  );
+
+  for (const row of rows) {
+    if (await bcrypt.compare(code, row.code_hash)) {
+      // Atomically delete this specific row.  If another concurrent request
+      // already deleted it the rowCount will be 0 and we return failure.
+      const result = await db.query(
+        'DELETE FROM user_backup_codes WHERE id = $1 AND user_id = $2 RETURNING id',
+        [row.id, userId]
+      );
+      if (result.rowCount > 0) {
+        return { consumed: true };
+      }
+      // Lost the race — the code was already consumed.
+      return { consumed: false };
     }
   }
-  return { valid: false, index: -1 };
+
+  return { consumed: false };
 }
 
-async function removeBackupCode(userId, codes, index) {
-  codes.splice(index, 1);
-  await db.query('UPDATE users SET backup_codes = $1 WHERE id = $2', [
-    codes,
-    userId,
-  ]);
+/**
+ * Replace all backup codes for a user.
+ * Runs a DELETE then bulk INSERT inside a single transaction so there is never
+ * a window where the user has zero codes mid-operation.
+ *
+ * @param {string}   userId
+ * @param {string[]} hashedCodes - bcrypt hashes of the new codes
+ */
+async function storeBackupCodes(userId, hashedCodes) {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM user_backup_codes WHERE user_id = $1', [userId]);
+    for (const hash of hashedCodes) {
+      await client.query(
+        'INSERT INTO user_backup_codes (user_id, code_hash) VALUES ($1, $2)',
+        [userId, hash]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function logAuditEvent(userId, eventType, req, metadata = {}) {
@@ -151,8 +200,8 @@ module.exports = {
   buildOtpauthUri,
   generateQrCode,
   generateBackupCodes,
-  verifyBackupCode,
-  removeBackupCode,
+  consumeBackupCode,
+  storeBackupCodes,
   logAuditEvent,
   isDeviceTrusted,
   trustDevice,

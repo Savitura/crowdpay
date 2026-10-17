@@ -226,6 +226,8 @@ function extractWebhookResult(payload = {}) {
   return { providerReference: reference, userId, kycStatus, verificationStatus, tier, reason };
 }
 
+const PERSONA_WEBHOOK_MAX_AGE_SECONDS = 300;
+
 function verifyPersonaWebhookSignature(rawBody, signatureHeader) {
   const secret = process.env.PERSONA_WEBHOOK_SECRET;
   if (!secret) {
@@ -246,6 +248,12 @@ function verifyPersonaWebhookSignature(rawBody, signatureHeader) {
   }
 
   if (!timestamp || !signatures.length) {
+    return false;
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const parsedTimestamp = parseInt(timestamp, 10);
+  if (!timestamp || isNaN(parsedTimestamp) || nowSec - parsedTimestamp > PERSONA_WEBHOOK_MAX_AGE_SECONDS) {
     return false;
   }
 

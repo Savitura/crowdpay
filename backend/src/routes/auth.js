@@ -11,6 +11,7 @@ const { ensureCustodialAccountFundedAndTrusted } = require('../services/stellarS
 const { sendEmail, sendWelcomeEmail, sendWalletFundingFailedEmail } = require('../services/emailService');
 const { requireAuth } = require('../middleware/auth');
 const { encryptWalletSecret } = require('../services/walletSecrets');
+const { encryptSecret, decryptSecret } = require('../services/walletService');
 const { isKycRequiredForCampaigns } = require('../services/kycProvider');
 const { startKycForUser, getKycStatusForUser } = require('../services/kycService');
 const {
@@ -581,12 +582,22 @@ router.post('/2fa/challenge', totpChallengeLimiter, totpChallengeEmailLimiter, v
   let codeValid = false;
 
   if (code.length === 6) {
-    codeValid = totpService.verifyTotp(user.totp_secret, code);
-  } else if (user.backup_codes && user.backup_codes.length > 0) {
-    const result = await totpService.verifyBackupCode(user.backup_codes, code);
-    if (result.valid) {
+    if (!user.totp_secret) {
+      logger.error('TOTP secret is null for user with 2FA enabled — check DB integrity', { userId: user.id });
+      return res.status(503).json({ error: 'Service temporarily unavailable. Please try again later.' });
+    }
+    let plainSecret;
+    try {
+      plainSecret = decryptSecret(user.totp_secret);
+    } catch (err) {
+      logger.error('Failed to decrypt TOTP secret — run migrate-totp-secrets', { userId: user.id, error: err.message });
+      return res.status(503).json({ error: 'Service temporarily unavailable. Please try again later.' });
+    }
+    codeValid = totpService.verifyTotp(plainSecret, code);
+  } else {
+    const result = await totpService.consumeBackupCode(user.id, code);
+    if (result.consumed) {
       codeValid = true;
-      await totpService.removeBackupCode(user.id, user.backup_codes, result.index);
     }
   }
 
@@ -666,7 +677,8 @@ router.post('/2fa/setup', requireAuth, async (req, res) => {
   const otpauth = totpService.buildOtpauthUri(user.email, secret);
   const qrCodeDataUrl = await totpService.generateQrCode(otpauth);
 
-  await db.query('UPDATE users SET totp_secret = $1 WHERE id = $2', [secret, user.id]);
+  const encryptedTotpSecret = encryptSecret(secret);
+  await db.query('UPDATE users SET totp_secret = $1 WHERE id = $2', [encryptedTotpSecret, user.id]);
   await totpService.logAuditEvent(user.id, 'totp_setup_initiated', req);
 
   res.json({
@@ -688,14 +700,22 @@ router.post('/2fa/verify', requireAuth, async (req, res) => {
     return res.status(400).json({ error: '2FA setup not initiated' });
   }
 
-  const isValid = totpService.verifyTotp(user.totp_secret, code);
+  let plainSecret;
+  try {
+    plainSecret = decryptSecret(user.totp_secret);
+  } catch (err) {
+    logger.error('Failed to decrypt TOTP secret — run migrate-totp-secrets', { userId: user.id, error: err.message });
+    return res.status(503).json({ error: 'Service temporarily unavailable. Please try again later.' });
+  }
+  const isValid = totpService.verifyTotp(plainSecret, code);
   if (!isValid) {
     return res.status(401).json({ error: 'Invalid 2FA code' });
   }
 
   const { raw: rawBackupCodes, hashed: hashedBackupCodes } = await totpService.generateBackupCodes();
 
-  await db.query('UPDATE users SET totp_enabled = true, backup_codes = $1 WHERE id = $2', [hashedBackupCodes, user.id]);
+  await db.query('UPDATE users SET totp_enabled = true WHERE id = $1', [user.id]);
+  await totpService.storeBackupCodes(user.id, hashedBackupCodes);
   await totpService.logAuditEvent(user.id, 'totp_enabled', req);
 
   res.json({
@@ -719,12 +739,22 @@ router.post('/2fa/disable', requireAuth, async (req, res) => {
 
   let codeValid = false;
   if (code.length === 6) {
-    codeValid = totpService.verifyTotp(user.totp_secret, code);
-  } else if (user.backup_codes && user.backup_codes.length > 0) {
-    const result = await totpService.verifyBackupCode(user.backup_codes, code);
-    if (result.valid) {
+    if (!user.totp_secret) {
+      logger.error('TOTP secret is null for user with 2FA enabled — check DB integrity', { userId: user.id });
+      return res.status(503).json({ error: 'Service temporarily unavailable. Please try again later.' });
+    }
+    let plainSecret;
+    try {
+      plainSecret = decryptSecret(user.totp_secret);
+    } catch (err) {
+      logger.error('Failed to decrypt TOTP secret — run migrate-totp-secrets', { userId: user.id, error: err.message });
+      return res.status(503).json({ error: 'Service temporarily unavailable. Please try again later.' });
+    }
+    codeValid = totpService.verifyTotp(plainSecret, code);
+  } else {
+    const result = await totpService.consumeBackupCode(user.id, code);
+    if (result.consumed) {
       codeValid = true;
-      await totpService.removeBackupCode(user.id, user.backup_codes, result.index);
     }
   }
 
@@ -733,9 +763,12 @@ router.post('/2fa/disable', requireAuth, async (req, res) => {
   }
 
   await db.query(
-    'UPDATE users SET totp_enabled = false, totp_secret = NULL, backup_codes = NULL WHERE id = $1',
+    'UPDATE users SET totp_enabled = false, totp_secret = NULL WHERE id = $1',
     [user.id]
   );
+  // Delete orphaned backup codes — ON DELETE CASCADE handles account deletion
+  // but not 2FA disable, so we remove them explicitly here.
+  await db.query('DELETE FROM user_backup_codes WHERE user_id = $1', [user.id]);
   await totpService.revokeAllDevices(user.id);
   await totpService.logAuditEvent(user.id, 'totp_disabled', req);
 
@@ -751,7 +784,7 @@ router.get('/2fa/backup-codes', requireAuth, async (req, res) => {
   }
 
   const { raw, hashed } = await totpService.generateBackupCodes();
-  await db.query('UPDATE users SET backup_codes = $1 WHERE id = $2', [hashed, user.id]);
+  await totpService.storeBackupCodes(user.id, hashed);
   await totpService.logAuditEvent(user.id, 'backup_codes_regenerated', req);
 
   res.json({ backupCodes: raw });
@@ -770,7 +803,19 @@ router.post('/2fa/trust-device', requireAuth, async (req, res) => {
     return res.status(400).json({ error: '2FA is not enabled' });
   }
 
-  const isValid = totpService.verifyTotp(user.totp_secret, code);
+  if (!user.totp_secret) {
+    logger.error('TOTP secret is null for user with 2FA enabled — check DB integrity', { userId: user.id });
+    return res.status(503).json({ error: 'Service temporarily unavailable. Please try again later.' });
+  }
+
+  let plainSecret;
+  try {
+    plainSecret = decryptSecret(user.totp_secret);
+  } catch (err) {
+    logger.error('Failed to decrypt TOTP secret — run migrate-totp-secrets', { userId: user.id, error: err.message });
+    return res.status(503).json({ error: 'Service temporarily unavailable. Please try again later.' });
+  }
+  const isValid = totpService.verifyTotp(plainSecret, code);
   if (!isValid) {
     return res.status(401).json({ error: 'Invalid 2FA code' });
   }
