@@ -25,21 +25,20 @@ mod test {
     }
 
     #[test]
+    #[should_panic]
     fn test_initialize_requires_admin_auth() {
         let env = Env::default();
+        // Deliberately omit mock_all_auths() so admin.require_auth() panics
         let admin = Address::generate(&env);
         let governance_token = Address::generate(&env);
 
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            FeeRegistry::initialize(
-                &env,
-                admin,
-                governance_token,
-                250,
-                500,
-            );
-        }));
-        assert!(result.is_err());
+        FeeRegistry::initialize(
+            &env,
+            admin,
+            governance_token,
+            250,
+            500,
+        );
     }
 
     #[test]
