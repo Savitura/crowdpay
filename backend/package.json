@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
+    "worker": "node src/worker.js",
     "lint": "eslint src/ db/ scripts/",
     "lint:fix": "eslint src/ db/ scripts/ --fix",
     "format": "prettier --write src/ db/ scripts/",

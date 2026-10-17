@@ -13,6 +13,11 @@ const db = require('./config/database');
 const { validateEnv } = require('./config/env');
 
 const app = express();
+const trustProxyHops = process.env.TRUST_PROXY_HOPS ?? '1';
+if (!/^\d+$/.test(trustProxyHops) || !Number.isSafeInteger(Number(trustProxyHops))) {
+  throw new Error('TRUST_PROXY_HOPS must be a non-negative integer');
+}
+app.set('trust proxy', Number(trustProxyHops));
 
 if (process.env.NODE_ENV !== 'test') {
   validateEnv();
@@ -128,16 +133,12 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
 if (require.main === module) {
-  const { startBackgroundWorkers, stopBackgroundWorkers } = require('./worker');
-
   const server = app.listen(PORT, async () => {
     logger.info(`Server running on port ${PORT}`);
-    await startBackgroundWorkers();
   });
 
   const gracefulShutdown = async () => {
-    logger.info('Received shutdown signal, stopping background workers...');
-    await stopBackgroundWorkers();
+    logger.info('Received shutdown signal, closing HTTP server...');
     server.close(() => {
       logger.info('HTTP server closed');
       process.exit(0);

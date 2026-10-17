@@ -12,18 +12,27 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const silentLogger = { info: () => {}, error: () => {}, warn: () => {}, debug: () => {} };
 
-function buildService({ queryImpl, stellar = {}, clientQueryImpl, closeImpl }) {
+function buildService({
+  queryImpl,
+  stellar = {},
+  clientQueryImpl,
+  closeImpl,
+  lockAcquired = true,
+}) {
   const calls = [];
   const notifications = [];
   const record = (text, params) => calls.push({ text, params });
 
-  const client = {
+  const createClient = () => ({
     query: async (text, params) => {
       record(text, params);
+      if (text.includes('pg_try_advisory_lock')) return { rows: [{ locked: lockAcquired }] };
+      if (text.includes('pg_advisory_unlock')) return { rows: [] };
+      if (text.includes('FOR UPDATE OF sb') && queryImpl) return queryImpl(text, params);
       return clientQueryImpl ? clientQueryImpl(text, params) : { rows: [] };
     },
     release: () => {},
-  };
+  });
 
   const service = proxyquire('./recurring', {
     '../config/database': {
@@ -36,7 +45,7 @@ function buildService({ queryImpl, stellar = {}, clientQueryImpl, closeImpl }) {
         }
         return queryImpl ? queryImpl(text, params) : { rows: [] };
       },
-      connect: async () => client,
+      connect: async () => createClient(),
     },
     '../config/logger': silentLogger,
     './stellarService': {
@@ -307,6 +316,28 @@ test('the claim worker claims a due balance and records it as a contribution', a
   assert.equal(contribution.params[4], 'claim-tx-hash');
   assert.ok(contribution.text.includes('subscription_claim'));
   assert.ok(calls.some(c => c.text.includes('raised_amount = raised_amount + $1')));
+});
+
+test('the claim worker skips processing when another instance holds its advisory lock', async () => {
+  let dueQueryRan = false;
+  const { service } = buildService({
+    lockAcquired: false,
+    queryImpl: async text => {
+      if (text.includes('FROM subscription_balances sb')) dueQueryRan = true;
+      return { rows: [] };
+    },
+  });
+
+  const result = await service.processDueSubscriptionBalances();
+
+  assert.deepEqual(result, {
+    claimed: 0,
+    reclaimed: 0,
+    failed: 0,
+    closed: 0,
+    skipped: true,
+  });
+  assert.equal(dueQueryRan, false);
 });
 
 test('the claim worker completes a subscription once every period has been claimed', async () => {

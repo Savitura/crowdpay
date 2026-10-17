@@ -61,7 +61,7 @@ async function generateUserExport(userId, exportId) {
         [userId]
       ),
       db.query(
-        `SELECT id, campaign_id, amount, interval, active, created_at FROM recurring_contributions WHERE user_id = $1`,
+        `SELECT id, campaign_id, amount, interval, active, retired_at, created_at FROM recurring_contributions WHERE user_id = $1`,
         [userId]
       ),
       db.query(

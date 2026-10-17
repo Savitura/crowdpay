@@ -1,4 +1,4 @@
-version: '3.9'
+version: "3.9"
 
 services:
   db:
@@ -39,6 +39,23 @@ services:
       - ./backend:/app
       - /app/node_modules
     command: sh -c "npm run migrate && npm run dev"
+
+  worker:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgres://crowdpay:crowdpay@db:5432/crowdpay
+      REDIS_URL: redis://redis:6379
+      WORKER_ENABLED: "true"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: npm run worker
 
   frontend:
     build: ./frontend
