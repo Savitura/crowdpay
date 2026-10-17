@@ -23,7 +23,9 @@
 'use strict';
 
 // Every column on the `campaigns` table (schema.sql + migration history).
+// `id` is kept first (primary key convention); the rest stay alphabetical.
 const CAMPAIGN_TABLE_COLUMNS = [
+  'id',
   'auditor_public_key',
   'asset_type',
   'campaign_github_stats',
@@ -52,7 +54,6 @@ const CAMPAIGN_TABLE_COLUMNS = [
   'fraud_score',
   'fraud_signals',
   'github_repo_url',
-  'id',
   'is_flagged_duplicate',
   'is_flagged_fraud',
   'is_hidden',

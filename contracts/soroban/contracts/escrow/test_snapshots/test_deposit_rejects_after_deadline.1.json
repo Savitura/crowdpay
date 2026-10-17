@@ -446,7 +446,7 @@
             },
             "ext": "v0"
           },
-          4095
+          1036820
         ]
       ],
       [
@@ -725,7 +725,7 @@
             },
             "ext": "v0"
           },
-          4095
+          1036820
         ]
       ]
     ]
@@ -1199,7 +1199,7 @@
             "data": {
               "vec": [
                 {
-                  "string": "caught panic 'Campaign deadline has passed' from contract function 'Symbol(deposit)'"
+                  "string": "caught panic 'Campaign is closed for contributions' from contract function 'Symbol(deposit)'"
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"

@@ -69,11 +69,19 @@ async function listRefunds(campaignId, options = {}) {
 }
 
 async function processRefund(contributionId, amount, service = stellarService) {
+  let reason = null;
+  let initiatorId = null;
+  let isForceRefund = false;
+  let adminNote = null;
   if (contributionId && typeof contributionId === 'object') {
     const options = contributionId;
     contributionId = options.contributionId;
     amount = options.amount;
     service = options.service || service;
+    reason = options.reason || null;
+    initiatorId = options.initiatorId || null;
+    isForceRefund = Boolean(options.isForceRefund);
+    adminNote = options.adminNote || null;
   }
   const numericAmount = Number(amount);
   if (isNaN(numericAmount) || numericAmount <= 0) {
@@ -108,20 +116,29 @@ async function processRefund(contributionId, amount, service = stellarService) {
     }
 
     let txHash = null;
-    if (service && typeof service.sendCampaignRefund === 'function') {
-      const result = await service.sendCampaignRefund({
+    try {
+      if (service && typeof service.sendCampaignRefund === 'function') {
+        const result = await service.sendCampaignRefund({
+          campaignId: contrib.campaign_id,
+          destinationKey: contrib.sender_public_key,
+          amount: numericAmount,
+        });
+        txHash = result?.txHash || result?.hash || null;
+      } else if (service && typeof service.submitDisputeRefund === 'function') {
+        const result = await service.submitDisputeRefund({
+          campaignWalletPublicKey: contrib.wallet_public_key,
+          creatorId: contrib.creator_id,
+          refunds: [{ walletPublicKey: contrib.sender_public_key, amount: numericAmount }],
+        });
+        txHash = result?.txHash || result?.hash || null;
+      }
+    } catch (err) {
+      logger.error('On-chain refund transfer failed', {
+        contributionId,
         campaignId: contrib.campaign_id,
-        destinationKey: contrib.sender_public_key,
-        amount: numericAmount,
+        error: err.message,
       });
-      txHash = result?.txHash || result?.hash || null;
-    } else if (service && typeof service.submitDisputeRefund === 'function') {
-      const result = await service.submitDisputeRefund({
-        campaignWalletPublicKey: contrib.wallet_public_key,
-        creatorId: contrib.creator_id,
-        refunds: [{ walletPublicKey: contrib.sender_public_key, amount: numericAmount }],
-      });
-      txHash = result?.txHash || result?.hash || null;
+      txHash = null;
     }
 
     if (!txHash) {
@@ -131,10 +148,22 @@ async function processRefund(contributionId, amount, service = stellarService) {
     }
 
     const { rows: refundRows } = await client.query(
-      `INSERT INTO refunds (campaign_id, contribution_id, amount, status, tx_hash, created_at)
-       VALUES ($1, $2, $3, 'completed', $4, NOW())
-       RETURNING id, campaign_id, contribution_id, amount, status, tx_hash, created_at`,
-      [contrib.campaign_id, contributionId, numericAmount, txHash]
+      `INSERT INTO creator_refunds
+         (campaign_id, contribution_id, recipient_wallet, amount, asset, reason, status,
+          tx_hash, stellar_tx_hash, is_force_refund, admin_note, created_by, processed_at)
+       VALUES ($1, $2, $3, $4, 'native', $5, 'completed', $6, $6, $7, $8, $9, NOW())
+       RETURNING id, campaign_id, contribution_id, amount, status, tx_hash, is_force_refund, admin_note, created_at`,
+      [
+        contrib.campaign_id,
+        contributionId,
+        contrib.sender_public_key,
+        numericAmount,
+        reason,
+        txHash,
+        isForceRefund,
+        adminNote,
+        initiatorId,
+      ]
     );
 
     await client.query(

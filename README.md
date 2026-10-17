@@ -17,7 +17,7 @@ CrowdPay lets creators, startups, and communities raise funds globally. Each cam
 1. Creator launches a campaign with a funding goal, deadline, and optional milestones
 2. Contributors send USDC (or any Stellar asset — path payments handle conversion)
 3. Funds sit in a campaign escrow wallet; the Soroban contract tracks milestone completion
-4. Creator requests withdrawal → platform co-signs → funds released to creator
+4. Creator requests withdrawal → platform co-signs → funds released to creator (see [Custodial vs. non-custodial creators](#custodial-vs-non-custodial-creators) for what that does and does not protect)
 5. If the campaign fails to hit its goal, contributors can claim refunds
 
 ---
@@ -144,6 +144,7 @@ cd frontend && npm run dev   # http://localhost:5173
 | `STELLAR_NETWORK` | `testnet` or `mainnet` |
 | `STELLAR_HORIZON_URL` | Horizon endpoint URL |
 | `PLATFORM_SECRET_KEY` | Stellar secret key for the platform co-signer wallet |
+| `CUSTODIAL_WITHDRAWAL_LIMIT` | Largest withdrawal (asset units, default `1000`) the server will sign with a custodial creator key. Larger payouts need a Freighter creator. See [Custodial vs. non-custodial creators](#custodial-vs-non-custodial-creators). |
 | `USDC_ISSUER` | USDC issuer (`GBBD47...` on testnet) |
 | `WALLET_ENCRYPTION_KEY` | Base64 or hex-encoded 32-byte encryption key used by backend wallet recovery |
 | `WALLET_SECRET_LOCAL_KEK` | Base64-encoded 32-byte key-encryption key for stored secrets |
@@ -273,7 +274,16 @@ source test-env.sh && cd backend && npm test
 
 ## Key Concepts
 
-**Campaign wallet**: Each campaign has a dedicated Stellar account with a 2-of-2 multisig threshold — contributions go directly to it. The platform co-signer key is required for withdrawals.
+**Campaign wallet**: Each campaign has a dedicated Stellar account with a 2-of-2 creator + platform multisig threshold — contributions go directly to it. The platform co-signer key is required for withdrawals. Whether the creator's signature is an independent check depends on who holds the creator key; see below.
+
+#### Custodial vs. non-custodial creators
+
+The 2-of-2 multisig only gives two-party control when the two keys are held by two different parties.
+
+- **Non-custodial (Freighter) creators** sign withdrawals in their own wallet. The backend holds only the platform key, so neither a compromised server nor a platform admin can move campaign funds alone.
+- **Custodial creators** have their wallet secret stored encrypted on the backend, next to the platform key. For these campaigns the backend can produce *both* signatures, so the multisig does **not** protect against a backend compromise or a malicious admin.
+
+To bound that exposure, every server-side path that signs as a custodial creator (creator withdrawal approval, platform milestone release, scheduled milestone auto-release, and contract-treasury withdrawal requests) refuses amounts above `CUSTODIAL_WITHDRAWAL_LIMIT` (default `1000` units of the campaign asset) with `403 NON_CUSTODIAL_SIGNATURE_REQUIRED`; an auto-release above the limit falls back to manual review. Larger withdrawals require a Freighter creator. Refunds to contributors are exempt, since they return funds to where they came from. The limit caps what the application will sign; it is not a cryptographic guarantee, since anyone with full access to the server's key material can still sign directly. Creators raising significant amounts should use Freighter.
 
 **Soroban escrow**: The Rust contract at `contracts/soroban/` holds contribution records on-chain. Milestone release calls invoke the contract before the backend builds the withdrawal transaction.
 
@@ -299,7 +309,10 @@ Feature flags use pluggable adapters. In addition to the default `env` adapter, 
 
 ## Part of Savitura
 
-- **[Fluxa](https://github.com/Savitura/Fluxa)** — the payment infrastructure layer
+CrowdPay operates as a fully self-contained crowdfunding platform with native Stellar/Soroban payments, escrow, and anchor integrations.
+
+Within the broader Savitura ecosystem:
+- **[Fluxa](https://github.com/Savitura/Fluxa)** — a separate, standalone payment infrastructure product under development, planned as a modular integration in future iterations (see [Architecture Decision](docs/architecture-decision-fluxa.md))
 - **[SaviTools](https://github.com/Savitura/SaviTools)** — developer tools for Stellar builders
 
 ---

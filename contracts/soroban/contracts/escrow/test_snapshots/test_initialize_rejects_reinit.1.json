@@ -387,7 +387,7 @@
             },
             "ext": "v0"
           },
-          4095
+          1036820
         ]
       ],
       [
@@ -593,7 +593,7 @@
             },
             "ext": "v0"
           },
-          4095
+          1036820
         ]
       ]
     ]
@@ -993,7 +993,7 @@
             "data": {
               "vec": [
                 {
-                  "string": "caught panic 'Contract is already initialized' from contract function 'Symbol(obj#243)'"
+                  "string": "caught panic 'Contract is already initialized' from contract function 'Symbol(obj#245)'"
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"

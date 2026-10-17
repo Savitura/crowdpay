@@ -133,3 +133,37 @@ test('PATCH /api/users/me/notification-preferences stores category_digest', asyn
   assert.ok(insert.text.includes('category_digest'));
   assert.deepEqual(insert.params, ['user-1', null, null, null, null, null, false]);
 });
+
+test('recurring contribution amounts validate precision and persist as exact decimals', async () => {
+  const calls = [];
+  const app = buildApp(async (text, params) => {
+    calls.push({ text, params });
+    if (text.includes('SELECT id FROM campaigns')) return { rows: [{ id: 'campaign-1' }] };
+    if (text.includes('INSERT INTO recurring_contributions'))
+      return { rows: [{ id: 'recurring-1' }] };
+    return { rows: [] };
+  });
+
+  for (const amount of ['0.00000001', '1000000000000']) {
+    const response = await request(app)
+      .post('/api/users/me/recurring-contributions')
+      .send({ campaign_id: 'campaign-1', amount, interval: 'monthly' });
+    assert.equal(response.status, 400);
+  }
+
+  const created = await request(app)
+    .post('/api/users/me/recurring-contributions')
+    .send({ campaign_id: 'campaign-1', amount: '0.1', interval: 'monthly' });
+  assert.equal(created.status, 201);
+  const insert = calls.find(call => call.text.includes('INSERT INTO recurring_contributions'));
+  assert.equal(insert.params[2], '0.1000000');
+
+  const invalidUpdate = await request(app)
+    .patch('/api/users/me/recurring-contributions/recurring-1')
+    .send({ amount: '1e-9' });
+  assert.equal(invalidUpdate.status, 400);
+  assert.equal(
+    calls.filter(call => call.text.includes('UPDATE recurring_contributions')).length,
+    0
+  );
+});

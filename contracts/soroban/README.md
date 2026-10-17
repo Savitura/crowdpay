@@ -74,9 +74,22 @@ A campaign is modelled on-chain as two paired contract instances:
    `approve_withdrawal` and `execute_withdrawal`; funds are released to the
    creator with the platform fee deducted.
 4. **Refund phase (campaign failed)** — after the deadline passes, if the
-   target was not met, any contributor can call `escrow.refund(contributor)`
-   to reclaim their deposit. The escrow enforces `total_raised < target` and
-   `now > deadline`.
+   target was not met (or once the admin has called `mark_campaign_failed`),
+   any contributor can call `escrow.refund(contributor)` to reclaim their
+   deposit. Because milestone releases may already have paid out part of the
+   pot, refunds are **pro-rata**: the first refund snapshots the funds still
+   held and the total contributed, and every contributor receives
+   `balance * remaining / total_raised`, whatever order they refund in.
+
+### 2.1a Storage TTL
+
+Every contract extends its instance storage and the persistent entries it
+writes on each state change (`deposit`/`contribute`, approvals, releases,
+refunds, votes). `escrow` and `crowdpay` extend to "time until the deadline +
+`REFUND_WINDOW_LEDGERS` (60 days)", capped at the network's max TTL, so
+contributor balances can't be archived before refunds are possible.
+`milestones` and `fee_registry` have no deadline and extend to
+`STORAGE_TTL_LEDGERS` (180 days) on every write.
 
 ### 2.2 Events emitted
 
@@ -87,7 +100,7 @@ subscribes to these events to update off-chain state and trigger notifications.
 |------------|-----------------|---------------------|----------------------------|--------------------------------------------------|
 | `escrow`     | `deposit`       | `Symbol::new("deposit")`     | `deposit`               | `i128` amount                                     |
 | `escrow`     | `withdrawal`    | `Symbol::new("withdrawal")`  | `execute_withdrawal`    | `(release_amount, net_amount, fee_amount)`        |
-| `escrow`     | `refund`        | `Symbol::new("refund")`       | `refund`                | `i128` amount                                     |
+| `escrow`     | `refund`        | `Symbol::new("refund")`       | `refund`                | `i128` amount paid (pro-rata share)               |
 | `escrow`     | `fee_proposed`  | `Symbol::new("fee_proposed")` | `propose_fee_change`    | `u32` new_fee_bps                                  |
 | `escrow`     | `fee_changed`   | `Symbol::new("fee_changed")`  | `confirm_fee_change`    | `u32` new_fee_bps                                  |
 | `escrow`     | `fee_cancelled` | `Symbol::new("fee_cancelled")`| `cancel_fee_change`     | `()`                                               |
@@ -377,10 +390,11 @@ the backend in any form:
 
 ### 6.1 Public entry points (for reference)
 
-- `initialize(campaign_id, creator, token, goal, deadline, milestones)`
+- `initialize(campaign_id, creator, platform, token, goal, deadline, milestones)`
 - `contribute(contributor, amount)`
-- `release_milestone(index)` — direct release within the same contract
-- `refund(contributor)` — refund a single contributor if status is `Failed`
+- `approve_milestone(index)` — platform sign-off; requires the `platform` address's auth
+- `release_milestone(index)` — creator release; panics with `Milestone not approved` until the platform has approved that index, and is blocked once the campaign has `Failed`
+- `refund(contributor)` — pro-rata refund of a single contributor if status is `Failed`
 - `set_failed()` — mark campaign failed after deadline if goal not met
 - `get_status()`, `get_total_raised()`
 

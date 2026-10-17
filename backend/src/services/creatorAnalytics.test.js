@@ -1,59 +1,50 @@
-const { describe, it, expect, vi, beforeEach } = require('vitest');
-const proxyquire = require('proxyquire');
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const proxyquire = require('proxyquire').noCallThru();
 
-describe('creatorAnalytics velocity service', () => {
-  let dbQueryMock;
-  let getCampaignVelocity;
-  let updateCampaignVelocityAlertThreshold;
+function buildService(queryImpl) {
+  return proxyquire('./creatorAnalytics', {
+    '../config/database': { query: queryImpl || (async () => ({ rows: [] })) },
+    '../config/logger': { info: () => {}, error: () => {}, warn: () => {} },
+  });
+}
 
-  beforeEach(() => {
-    dbQueryMock = vi.fn();
-    const velocityService = proxyquire('./velocityService', {
-      '../config/database': {
-        query: dbQueryMock,
-      },
-    });
-    getCampaignVelocity = velocityService.getCampaignVelocity;
-    updateCampaignVelocityAlertThreshold = velocityService.updateCampaignVelocityAlertThreshold;
+test('classifyBracket buckets amounts into small/medium/large', () => {
+  const { classifyBracket } = buildService();
+  assert.equal(classifyBracket(0), 'small');
+  assert.equal(classifyBracket(4999), 'small');
+  assert.equal(classifyBracket(5000), 'medium');
+  assert.equal(classifyBracket(49999), 'medium');
+  assert.equal(classifyBracket(50000), 'large');
+  assert.equal(classifyBracket(1_000_000), 'large');
+});
+
+test('checkExportRateLimit allows the full daily quota when no exports have run yet', async () => {
+  const { checkExportRateLimit, EXPORT_DAILY_LIMIT } = buildService(async () => ({ rows: [] }));
+  const result = await checkExportRateLimit('creator-1');
+  assert.deepEqual(result, { allowed: true, remaining: EXPORT_DAILY_LIMIT });
+});
+
+test('checkExportRateLimit blocks once the daily export quota is used up', async () => {
+  const { checkExportRateLimit, EXPORT_DAILY_LIMIT } = buildService(async () => ({
+    rows: [{ export_count: EXPORT_DAILY_LIMIT }],
+  }));
+  const result = await checkExportRateLimit('creator-1');
+  assert.equal(result.allowed, false);
+  assert.equal(result.remaining, 0);
+});
+
+test('incrementExportCount upserts today\'s export count for the creator', async () => {
+  const calls = [];
+  const { incrementExportCount } = buildService(async (text, params) => {
+    calls.push({ text, params });
+    return { rows: [] };
   });
 
-  it('gets campaign velocity including velocity_alert_threshold', async () => {
-    dbQueryMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: 'camp-1',
-            category: 'technology',
-            target_amount: 1000,
-            raised_amount: 250,
-            deadline: '2025-12-31',
-            velocity_alert_threshold: 50,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ category_avg_weekly: 100 }] });
+  await incrementExportCount('creator-1');
 
-    const result = await getCampaignVelocity('camp-1');
-    expect(result).toBeDefined();
-    expect(result.velocityAlertThreshold).toBe(50);
-  });
-
-  it('updates campaign velocity alert threshold successfully', async () => {
-    dbQueryMock.mockResolvedValueOnce({
-      rows: [
-        {
-          id: 'camp-1',
-          velocity_alert_threshold: 150,
-        },
-      ],
-    });
-
-    const result = await updateCampaignVelocityAlertThreshold('camp-1', 150);
-    expect(result).toEqual({ success: true, velocityAlertThreshold: 150 });
-    expect(dbQueryMock).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE campaigns SET velocity_alert_threshold'),
-      [150, 'camp-1']
-    );
-  });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].text, /INSERT INTO creator_export_rate_limits/);
+  assert.match(calls[0].text, /ON CONFLICT \(creator_id, export_date\)/);
+  assert.deepEqual(calls[0].params, ['creator-1']);
 });

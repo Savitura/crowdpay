@@ -15,6 +15,7 @@ const { ensureCustodialAccountFundedAndTrusted } = require('../services/stellarS
 const { withDecryptedWalletSecret } = require('../services/walletSecrets');
 const { sendWalletFundingFailedEmail } = require('../services/emailService');
 const asyncHandler = require('../utils/asyncHandler');
+const { normalizeAmount } = require('../utils/stroops');
 
 router.get(
   '/me',
@@ -400,14 +401,18 @@ router.get(
 );
 
 // GET /api/users/me — already proposed in issue #163, implement together
-router.get('/me', requireAuth, asyncHandler(async (req, res) => {
-  const { rows } = await db.query(
-    `SELECT id, email, name, wallet_public_key, created_at FROM users WHERE id = $1`,
-    [req.user.userId]
-  );
-  if (!rows.length) return res.status(404).json({ error: 'User not found' });
-  res.json(rows[0]);
-}));
+router.get(
+  '/me',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT id, email, name, wallet_public_key, created_at FROM users WHERE id = $1`,
+      [req.user.userId]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'User not found' });
+    res.json(rows[0]);
+  })
+);
 
 const { getCredentialActivity } = require('../services/auditService');
 
@@ -460,18 +465,22 @@ router.get(
 );
 
 // PATCH /api/users/me — update display name only
-router.patch('/me', requireAuth, asyncHandler(async (req, res) => {
-  const { name } = req.body;
-  if (!name || !name.trim()) {
-    return res.status(400).json({ error: 'name is required' });
-  }
-  const { rows } = await db.query(
-    `UPDATE users SET name = $1 WHERE id = $2
+router.patch(
+  '/me',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { name } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+    const { rows } = await db.query(
+      `UPDATE users SET name = $1 WHERE id = $2
      RETURNING id, email, name, wallet_public_key, created_at`,
-    [name.trim(), req.user.userId]
-  );
-  res.json(rows[0]);
-}));
+      [name.trim(), req.user.userId]
+    );
+    res.json(rows[0]);
+  })
+);
 
 const { generateUserExport, getExportDownloadUrl } = require('../services/exportService');
 
@@ -616,8 +625,13 @@ router.post(
   asyncHandler(async (req, res) => {
     const { campaign_id, amount, interval } = req.body;
     if (!campaign_id) return res.status(400).json({ error: 'campaign_id is required' });
-    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
-      return res.status(400).json({ error: 'amount must be a positive number' });
+    let normalizedAmount;
+    try {
+      normalizedAmount = normalizeAmount(amount);
+    } catch {
+      return res.status(400).json({
+        error: 'amount must be positive, fit a Stellar amount, and have at most 7 decimal places',
+      });
     }
     if (!['weekly', 'monthly'].includes(interval)) {
       return res.status(400).json({ error: 'interval must be weekly or monthly' });
@@ -637,7 +651,7 @@ router.post(
       `INSERT INTO recurring_contributions (user_id, campaign_id, amount, interval, next_run_at)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING id, campaign_id, amount, interval, active, next_run_at, run_count`,
-      [req.user.userId, campaign_id, Number(amount), interval, nextRunAt]
+      [req.user.userId, campaign_id, normalizedAmount, interval, nextRunAt]
     );
     res.status(201).json(rows[0]);
   })
@@ -657,10 +671,16 @@ router.patch(
       values.push(!!active);
     }
     if (amount !== undefined) {
-      if (isNaN(Number(amount)) || Number(amount) <= 0)
-        return res.status(400).json({ error: 'amount must be positive' });
+      let normalizedAmount;
+      try {
+        normalizedAmount = normalizeAmount(amount);
+      } catch {
+        return res.status(400).json({
+          error: 'amount must be positive, fit a Stellar amount, and have at most 7 decimal places',
+        });
+      }
       updates.push(`amount = $${idx++}`);
-      values.push(Number(amount));
+      values.push(normalizedAmount);
     }
     if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
     updates.push(`updated_at = NOW()`);

@@ -479,13 +479,20 @@ router.get(
   requireAdmin,
   asyncHandler(async (req, res) => {
     const { limit, offset } = parsePagination(req.query, { limit: 20, max: 100 });
-    const page = await governanceSyncRuns.listRuns({
-      status: req.query.status,
-      trigger: req.query.trigger,
-      limit,
-      offset,
-    });
-    return res.json(page);
+    try {
+      const page = await governanceSyncRuns.listRuns({
+        status: req.query.status,
+        trigger: req.query.trigger,
+        limit,
+        offset,
+      });
+      return res.json(page);
+    } catch (err) {
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({ error: err.message, code: err.code });
+      }
+      throw err;
+    }
   })
 );
 
@@ -522,18 +529,25 @@ router.post(
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-    const { run, deduplicated } = await governanceSyncRuns.retryRun(req.params.id, {
-      requestedBy: req.user.userId,
-      req,
-    });
-    if (deduplicated && run && run.retry_of_run_id !== req.params.id) {
-      return res.status(409).json({
-        code: 'SYNC_ALREADY_RUNNING',
-        error: 'A governance sync is already running; retry once it finishes',
-        run,
+    try {
+      const { run, deduplicated } = await governanceSyncRuns.retryRun(req.params.id, {
+        requestedBy: req.user.userId,
+        req,
       });
+      if (deduplicated && run && run.retry_of_run_id !== req.params.id) {
+        return res.status(409).json({
+          code: 'SYNC_ALREADY_RUNNING',
+          error: 'A governance sync is already running; retry once it finishes',
+          run,
+        });
+      }
+      return res.status(deduplicated ? 200 : 201).json({ run, deduplicated });
+    } catch (err) {
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({ error: err.message, code: err.code });
+      }
+      throw err;
     }
-    return res.status(deduplicated ? 200 : 201).json({ run, deduplicated });
   })
 );
 

@@ -20,6 +20,7 @@ const DESTINATION_KEY = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA
 function buildApp({
   queryImpl = async () => ({ rows: [] }),
   user = { userId: CREATOR_ID, role: 'creator' },
+  lockState = { locked: false },
 } = {}) {
   const calls = [];
   const notificationsCalled = [];
@@ -33,6 +34,15 @@ function buildApp({
       connect: async () => ({
         query: async (text, params) => {
           calls.push({ text, params });
+          if (text.includes('pg_try_advisory_lock')) {
+            const locked = !lockState.locked;
+            if (locked) lockState.locked = true;
+            return { rows: [{ locked }] };
+          }
+          if (text.includes('pg_advisory_unlock')) {
+            lockState.locked = false;
+            return { rows: [] };
+          }
           return queryImpl(text, params);
         },
         release: () => {},
@@ -198,7 +208,7 @@ test('processDuePayoutSchedules raises withdrawal through two-approver flow and 
     creator_wallet_public_key: DESTINATION_KEY,
   };
 
-  const { service, notificationsCalled } = buildApp({
+  const { service, notificationsCalled, calls } = buildApp({
     queryImpl: async (text, params) => {
       if (text.includes("status = 'active' AND s.next_run_at <= NOW()")) {
         return { rows: [dueSchedule] };
@@ -241,6 +251,11 @@ test('processDuePayoutSchedules raises withdrawal through two-approver flow and 
   assert.equal(processed.length, 1);
   assert.equal(processed[0].scheduleId, 'sched-100');
   assert.equal(processed[0].withdrawalRequestId, 'wr-123');
+  const payoutRun = calls.find(call => call.text.includes('INSERT INTO recurring_payout_runs'));
+  assert.equal(
+    payoutRun.params[4],
+    `recurring-payout:${dueSchedule.id}:${new Date(dueSchedule.next_run_at).toISOString()}`
+  );
   assert.ok(notificationsCalled.length >= 2, 'Creator and platform approver should be notified');
 });
 
@@ -286,4 +301,60 @@ test('processDuePayoutSchedules handles insufficient funds gracefully without ra
   assert.equal(processed.length, 0);
   assert.equal(runInsertedStatus, 'insufficient_funds');
   assert.ok(notificationsCalled.some(n => n.data.type === 'payout_shortfall'));
+});
+
+test('concurrent payout schedule runs create only one withdrawal request', async () => {
+  const dueSchedule = {
+    id: 'sched-concurrent',
+    campaign_id: CAMPAIGN_ID,
+    creator_id: CREATOR_ID,
+    amount: '100.0000000',
+    percentage: null,
+    asset_type: 'USDC',
+    destination_key: DESTINATION_KEY,
+    cadence: 'monthly',
+    next_run_at: new Date(Date.now() - 1000).toISOString(),
+    occurrences_count: 0,
+    status: 'active',
+    timezone: 'UTC',
+    campaign_title: 'Water Project',
+    raised_amount: '5000',
+    wallet_public_key: 'GCAMPAIGNKEY',
+    creator_wallet_public_key: DESTINATION_KEY,
+  };
+  let startFundsCheck;
+  const fundsCheckStarted = new Promise(resolve => {
+    startFundsCheck = resolve;
+  });
+  let releaseFundsCheck;
+  const fundsCheckGate = new Promise(resolve => {
+    releaseFundsCheck = resolve;
+  });
+  let withdrawalCount = 0;
+  const { service } = buildApp({
+    queryImpl: async text => {
+      if (text.includes("status = 'active' AND s.next_run_at <= NOW()")) {
+        return { rows: [dueSchedule] };
+      }
+      if (text.includes('COALESCE(SUM(amount), 0) AS total_withdrawn')) {
+        startFundsCheck();
+        await fundsCheckGate;
+        return { rows: [{ total_withdrawn: '0' }] };
+      }
+      if (text.includes('INSERT INTO withdrawal_requests')) {
+        withdrawalCount += 1;
+        return { rows: [{ id: 'wr-concurrent' }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const firstRun = service.processDuePayoutSchedules();
+  await fundsCheckStarted;
+  const secondResult = await service.processDuePayoutSchedules();
+  assert.deepEqual(secondResult, []);
+  releaseFundsCheck();
+  const firstResult = await firstRun;
+  assert.equal(firstResult.length, 1);
+  assert.equal(withdrawalCount, 1);
 });

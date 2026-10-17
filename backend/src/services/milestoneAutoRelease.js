@@ -47,6 +47,7 @@ const {
   finalizeWithdrawalSubmitted,
 } = require('./stellarTransactionService');
 const { withDecryptedWalletSecret } = require('./walletSecrets');
+const { assertCustodialWithdrawalAllowed } = require('./custodialSigningPolicy');
 const { parseMilestoneEvidenceUrl, milestoneEvidenceExists } = require('./storage');
 const { sanitizeMetadata } = require('./auditService');
 const { sendAlert } = require('./alerting');
@@ -310,7 +311,8 @@ const CONTEXT_SELECT = `
   SELECT m.*, c.status AS campaign_status, c.raised_amount, c.asset_type,
          c.wallet_public_key AS campaign_wallet_public_key, c.title AS campaign_title,
          c.creator_id, c.milestones_contract_id,
-         u.wallet_public_key AS creator_wallet_public_key, u.wallet_secret_encrypted
+         u.wallet_public_key AS creator_wallet_public_key, u.wallet_secret_encrypted,
+         u.wallet_type AS creator_wallet_type
   FROM milestones m
   JOIN campaigns c ON c.id = m.campaign_id
   JOIN users u ON u.id = c.creator_id
@@ -749,6 +751,12 @@ function releaseBlocker(ctx) {
 /** Build and sign the payout envelope, persisting it before anything is submitted. */
 async function prepare(attempt, ctx, repo, deps) {
   const m = ctx.milestone;
+  // Signing below uses the creator's custodial key plus the platform key, so
+  // above the custodial limit the release goes back to manual review instead.
+  assertCustodialWithdrawalAllowed({
+    walletType: m.creator_wallet_type,
+    amount: Number(attempt.amount).toFixed(7),
+  });
   const unsignedXdr = await deps.stellar.buildWithdrawalTransaction({
     campaignWalletPublicKey: m.campaign_wallet_public_key,
     destinationPublicKey: attempt.destination_key,

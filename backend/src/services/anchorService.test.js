@@ -29,6 +29,7 @@ const ANCHOR_ENV_KEYS = [
   'STELLAR_NETWORK',
   'STELLAR_ANCHOR_DOMAIN',
   'ANCHOR_MONEYGRAM_ENABLED',
+  'ANCHOR_TESTANCHOR_ENABLED',
   'ANCHOR_CUSTOM_ID',
   'ANCHOR_CUSTOM_NAME',
   'ANCHOR_CUSTOM_HOME_DOMAIN',
@@ -207,6 +208,24 @@ test.describe('anchorService', () => {
           assert.equal(svc.getAnchorById('partial'), null);
         }
       )
+    );
+
+    test('getAnchorById returns testanchor when queried directly', async () => {
+      const svc = buildService();
+      const anchor = svc.getAnchorById('testanchor');
+      assert.ok(anchor);
+      assert.equal(anchor.id, 'testanchor');
+      assert.equal(anchor.homeDomain, 'testanchor.stellar.org');
+    });
+
+    test(
+      'includes testanchor when ANCHOR_TESTANCHOR_ENABLED is true',
+      withEnv({ STELLAR_NETWORK: 'testnet', ANCHOR_TESTANCHOR_ENABLED: 'true' }, async () => {
+        const svc = buildService();
+        const anchors = svc.getAvailableAnchors();
+        assert.equal(anchors.length, 2);
+        assert.ok(anchors.some(a => a.id === 'testanchor'));
+      })
     );
 
     test('getAnchorById returns null for an unknown anchor', async () => {

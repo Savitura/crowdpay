@@ -9,6 +9,38 @@ function frontendBaseUrl() {
   return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
 }
 
+const UPDATE_EXCERPT_MAX_LENGTH = 200;
+
+function buildExcerpt(body) {
+  return body.length > UPDATE_EXCERPT_MAX_LENGTH
+    ? `${body.slice(0, UPDATE_EXCERPT_MAX_LENGTH).trim()}…`
+    : body;
+}
+
+/**
+ * Single representation of a campaign update, used by both the creator-facing
+ * preview routes and the real publish-time notifications/emails below, so the
+ * two can never diverge (#945).
+ */
+function renderUpdate({ campaignId, campaignTitle, update }) {
+  const scheduledFor = update.scheduled_for ? new Date(update.scheduled_for).toISOString() : null;
+  const publishedAt =
+    update.status === 'published' ? update.published_at || update.updated_at || null : null;
+
+  return {
+    campaign_id: campaignId,
+    title: update.title,
+    body: update.body,
+    excerpt: buildExcerpt(update.body),
+    notification_title: `${campaignTitle}: ${update.title}`,
+    link: `${frontendBaseUrl()}/campaigns/${campaignId}`,
+    status: update.status,
+    scheduled_for: scheduledFor,
+    published_at: publishedAt,
+    attachments: update.attachments || [],
+  };
+}
+
 /**
  * Dispatches notifications and emails to campaign followers and contributors.
  *
@@ -23,9 +55,9 @@ function frontendBaseUrl() {
  * @param {string} params.authorId
  */
 async function sendCampaignUpdateNotifications({ campaignId, campaignTitle, update, authorId }) {
-  const campaignUrl = `${frontendBaseUrl()}/campaigns/${campaignId}`;
-  const updateExcerpt =
-    update.body.length > 200 ? `${update.body.slice(0, 200).trim()}…` : update.body;
+  const rendered = renderUpdate({ campaignId, campaignTitle, update });
+  const campaignUrl = rendered.link;
+  const updateExcerpt = rendered.excerpt;
 
   try {
     const { rows: contributors } = await db.query(
@@ -61,7 +93,7 @@ async function sendCampaignUpdateNotifications({ campaignId, campaignTitle, upda
       'notify_updates',
       {
         type: 'campaign_update',
-        title: `${campaignTitle}: ${update.title}`,
+        title: rendered.notification_title,
         body: updateExcerpt,
         link: `/campaigns/${campaignId}`,
       },
@@ -78,7 +110,7 @@ async function sendCampaignUpdateNotifications({ campaignId, campaignTitle, upda
       reachable.map(async contributor => {
         await createNotification(contributor.id, {
           type: 'campaign_update',
-          title: `${campaignTitle}: ${update.title}`,
+          title: rendered.notification_title,
           body: updateExcerpt,
           link: `/campaigns/${campaignId}`,
         }).catch(() => {});
@@ -176,6 +208,7 @@ async function publishDueCampaignUpdates() {
 }
 
 module.exports = {
+  renderUpdate,
   sendCampaignUpdateNotifications,
   publishDueCampaignUpdates,
 };

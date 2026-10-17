@@ -3,6 +3,14 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, BytesN, Env, Symbol, Vec, IntoVal
 };
 
+const DAY_IN_LEDGERS: u32 = 17_280;
+/// Campaigns run for weeks and milestones can take months to deliver, so
+/// keep this contract's entries live well beyond the 4096-ledger default.
+pub const STORAGE_TTL_LEDGERS: u32 = 180 * DAY_IN_LEDGERS;
+/// Entries are only re-extended once their remaining TTL drops this far
+/// below the target, so back-to-back calls don't pay for redundant bumps.
+const TTL_BUMP_SLACK: u32 = DAY_IN_LEDGERS;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[contracttype]
 pub enum MilestoneStatus {
@@ -75,6 +83,7 @@ impl MilestonesContract {
         env.storage().instance().set(&DataKey::Platform, &platform);
         env.storage().instance().set(&DataKey::Escrow, &escrow);
         env.storage().instance().set(&DataKey::Milestones, &milestones);
+        Self::bump_instance(&env);
         env.storage().instance().set(&DataKey::Initialized, &true);
     }
 
@@ -87,10 +96,18 @@ impl MilestonesContract {
         let platform: Address = env.storage().instance().get(&DataKey::Platform).expect("Not initialized");
         platform.require_auth();
         env.storage().instance().set(&DataKey::Paused, &paused);
+        Self::bump_instance(&env);
     }
 
     pub fn is_paused(env: Env) -> bool {
         env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+    }
+
+    fn bump_instance(env: &Env) {
+        let extend_to = STORAGE_TTL_LEDGERS.min(env.storage().max_ttl());
+        env.storage()
+            .instance()
+            .extend_ttl(extend_to.saturating_sub(TTL_BUMP_SLACK), extend_to);
     }
 
     fn require_not_paused(env: &Env) {
@@ -116,6 +133,7 @@ impl MilestonesContract {
         milestone.evidence_hash = evidence_hash.clone();
         milestones.set(index, milestone);
         env.storage().instance().set(&DataKey::Milestones, &milestones);
+        Self::bump_instance(&env);
 
         env.events().publish(
             (symbol_short!("submit"), index),
@@ -139,6 +157,7 @@ impl MilestonesContract {
         let release_bps = milestone.release_bps;
         milestones.set(index, milestone);
         env.storage().instance().set(&DataKey::Milestones, &milestones);
+        Self::bump_instance(&env);
 
         let escrow_address: Address = env.storage().instance().get(&DataKey::Escrow).expect("Not initialized");
         let creator: Address = env.storage().instance().get(&DataKey::Creator).expect("Not initialized");
@@ -181,6 +200,7 @@ impl MilestonesContract {
         milestone.status = MilestoneStatus::Rejected;
         milestones.set(index, milestone);
         env.storage().instance().set(&DataKey::Milestones, &milestones);
+        Self::bump_instance(&env);
 
         env.events().publish(
             (symbol_short!("reject"), index),

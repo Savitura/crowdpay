@@ -243,6 +243,9 @@ function buildApp({
     '../services/pathPaymentPreview': {
       consumeContributionPreview: pathPaymentPreviewImpl || (async () => null),
     },
+    '../middleware/contributionRateLimiter': {
+      contributionRateLimiter: (_req, _res, next) => next(),
+    },
     '../services/sorobanService': sorobanStub,
     '../services/ledgerMonitor': ledgerMonitorStub,
     '../services/kycService': {
@@ -1548,8 +1551,13 @@ test('POST /api/contributions/embed validates success path, expired, revoked, an
       .send({ campaign_id: 'campaign-1', amount: '5.0000000', embed_token: 'invalid.jwt.token' });
     assert.equal(resTampered.status, 401);
 
-    // 3. Revoked token path
-    const revokedJwt = embedTokenJwtService.signEmbedToken({ campaignId: 'campaign-1' });
+    // 3. Revoked token path — scope differs so this is guaranteed to be a
+    // distinct token string from validToken (identical-payload signs made
+    // within the same second otherwise collide, since iat is second-granular).
+    const revokedJwt = embedTokenJwtService.signEmbedToken({
+      campaignId: 'campaign-1',
+      scope: 'revoked-test',
+    });
     const resRevoked = await request(app)
       .post('/api/contributions/embed')
       .send({ campaign_id: 'campaign-1', amount: '5.0000000', embed_token: revokedJwt });
@@ -1973,6 +1981,9 @@ function buildRefundApp({ contributionRow, refundImpl }) {
     },
     '../services/sorobanService': {
       triggerRefund: refundImpl || (async () => 'refund-tx-hash'),
+    },
+    '../middleware/contributionRateLimiter': {
+      contributionRateLimiter: (_req, _res, next) => next(),
     },
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {

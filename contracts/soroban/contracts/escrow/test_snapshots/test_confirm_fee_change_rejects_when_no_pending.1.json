@@ -386,7 +386,7 @@
             },
             "ext": "v0"
           },
-          4095
+          1236799
         ]
       ],
       [
@@ -592,7 +592,7 @@
             },
             "ext": "v0"
           },
-          4095
+          1236799
         ]
       ]
     ]
@@ -916,7 +916,7 @@
               }
             ],
             "data": {
-              "string": "caught panic 'No pending fee change to confirm' from contract function 'Symbol(obj#199)'"
+              "string": "caught panic 'No pending fee change to confirm' from contract function 'Symbol(obj#201)'"
             }
           }
         }
