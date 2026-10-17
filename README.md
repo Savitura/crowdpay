@@ -218,6 +218,7 @@ npm run rotate-wallet-secrets:confirm --prefix backend
 |---|---|
 | `npm run dev` | Start development server with hot reload |
 | `npm start` | Start production server |
+| `npm run worker` | Start background jobs in a separate process from the API server |
 | `npm run lint` | Lint backend code |
 | `npm run lint:fix` | Lint and auto-fix backend code |
 | `npm run format:check` | Check backend formatting with Prettier |
@@ -249,6 +250,8 @@ npm run rotate-wallet-secrets:confirm --prefix backend
 ## Production database
 
 Production Compose intentionally expects an external PostgreSQL service. See the **[Production PostgreSQL guide](docs/production-database.md)** for provisioning, TLS connection configuration, migrations, pooling, backups, recovery, monitoring, and tuning.
+
+Background jobs run separately from the API server. Set `WORKER_ENABLED=false` on API instances, and run a dedicated worker process with `npm run worker` and `WORKER_ENABLED=true`.
 
 ---
 

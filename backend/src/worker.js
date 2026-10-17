@@ -1,14 +1,11 @@
 const logger = require('./config/logger');
 const db = require('./config/database');
+const { validateEnv } = require('./config/env');
 const featureFlags = require('./services/featureFlags');
 
 // Imported workers that have their own start/stop functions
 const { startLedgerMonitor } = require('./services/ledgerMonitor');
 const { startWebhookRetryPoller } = require('./services/webhookDispatcher');
-const {
-  startRecurringContributionsCron,
-  stopRecurringContributionsCron,
-} = require('./services/recurringContributionsService');
 const {
   startSubscriptionClaimWorker,
   stopSubscriptionClaimWorker,
@@ -28,6 +25,36 @@ const { processAutoReleases } = require('./services/milestoneAutoRelease');
 
 let intervals = [];
 let isShuttingDown = false;
+
+async function runWithAdvisoryLock(name, fn) {
+  const client = await db.connect();
+  let lockAcquired = false;
+  let releaseError;
+  const lockName = `crowdpay:worker:${name}`;
+
+  try {
+    const { rows } = await client.query(
+      'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS locked',
+      [lockName]
+    );
+    lockAcquired = rows[0]?.locked === true;
+    if (!lockAcquired) {
+      logger.info(`worker: ${name} skipped (another instance holds the advisory lock)`);
+      return;
+    }
+    await fn();
+  } finally {
+    if (lockAcquired) {
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [lockName]);
+      } catch (err) {
+        releaseError = err;
+        logger.error(`worker: ${name} advisory unlock failed`, { error: err.message });
+      }
+    }
+    client.release(releaseError);
+  }
+}
 
 async function runScheduledPublishing() {
   if (isShuttingDown) return;
@@ -56,19 +83,21 @@ function startInterval(name, fn, intervalMs, featureFlagKey = null) {
 
   logger.info(`worker: starting ${name} (interval ${intervalMs}ms)`);
 
-  // Run immediately then schedule
-  Promise.resolve(fn()).catch(err => {
-    logger.error(`worker: ${name} failed on initial run`, { error: err.message });
-  });
-
-  const timer = setInterval(async () => {
-    if (isShuttingDown) return;
+  let inFlight = false;
+  const run = async () => {
+    if (isShuttingDown || inFlight) return;
+    inFlight = true;
     try {
-      await fn();
+      await runWithAdvisoryLock(name, fn);
     } catch (err) {
       logger.error(`worker: ${name} failed`, { error: err.message });
+    } finally {
+      inFlight = false;
     }
-  }, intervalMs);
+  };
+
+  run();
+  const timer = setInterval(run, intervalMs);
 
   intervals.push(timer);
 }
@@ -96,8 +125,7 @@ async function startBackgroundWorkers() {
     startWebhookRetryPoller();
   }
 
-  // Recurring Contributions & Subscriptions
-  startRecurringContributionsCron();
+  // Recurring subscription installments are claimed by the subscription worker.
   startSubscriptionClaimWorker();
 
   // Health collector
@@ -192,7 +220,6 @@ async function stopBackgroundWorkers() {
 
   // Call exposed stop functions
   try {
-    if (typeof stopRecurringContributionsCron === 'function') stopRecurringContributionsCron();
     if (typeof stopSubscriptionClaimWorker === 'function') stopSubscriptionClaimWorker();
     if (typeof stopHealthCollector === 'function') stopHealthCollector();
     // (Ledger monitor and webhook poller might need stop functions if they exist, but we do best-effort)
@@ -209,4 +236,20 @@ module.exports = {
   startBackgroundWorkers,
   stopBackgroundWorkers,
   isWorkerRunning,
+  startInterval,
 };
+
+if (require.main === module) {
+  if (process.env.NODE_ENV !== 'test') validateEnv();
+  startBackgroundWorkers().catch(err => {
+    logger.error('worker: failed to start', { error: err.message });
+    process.exitCode = 1;
+  });
+
+  const gracefulShutdown = async () => {
+    await stopBackgroundWorkers();
+    process.exit(0);
+  };
+  process.on('SIGTERM', gracefulShutdown);
+  process.on('SIGINT', gracefulShutdown);
+}

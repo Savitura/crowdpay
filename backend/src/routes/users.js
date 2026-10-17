@@ -15,7 +15,6 @@ const { ensureCustodialAccountFundedAndTrusted } = require('../services/stellarS
 const { withDecryptedWalletSecret } = require('../services/walletSecrets');
 const { sendWalletFundingFailedEmail } = require('../services/emailService');
 const asyncHandler = require('../utils/asyncHandler');
-const { normalizeAmount } = require('../utils/stroops');
 
 router.get(
   '/me',
@@ -595,118 +594,6 @@ router.get(
       },
       campaigns: campaignsRes.rows,
     });
-  })
-);
-
-// ── Recurring Contributions (#584) ──────────────────────────────────────────────
-
-// GET /api/users/me/recurring-contributions
-router.get(
-  '/me/recurring-contributions',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const { rows } = await db.query(
-      `SELECT rc.id, rc.campaign_id, c.title AS campaign_title, rc.amount, rc.interval,
-            rc.active, rc.next_run_at, rc.last_run_at, rc.run_count, rc.created_at
-     FROM recurring_contributions rc
-     JOIN campaigns c ON c.id = rc.campaign_id
-     WHERE rc.user_id = $1
-     ORDER BY rc.created_at DESC`,
-      [req.user.userId]
-    );
-    res.json(rows);
-  })
-);
-
-// POST /api/users/me/recurring-contributions
-router.post(
-  '/me/recurring-contributions',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const { campaign_id, amount, interval } = req.body;
-    if (!campaign_id) return res.status(400).json({ error: 'campaign_id is required' });
-    let normalizedAmount;
-    try {
-      normalizedAmount = normalizeAmount(amount);
-    } catch {
-      return res.status(400).json({
-        error: 'amount must be positive, fit a Stellar amount, and have at most 7 decimal places',
-      });
-    }
-    if (!['weekly', 'monthly'].includes(interval)) {
-      return res.status(400).json({ error: 'interval must be weekly or monthly' });
-    }
-
-    const { rows: campaign } = await db.query(
-      `SELECT id FROM campaigns WHERE id = $1 AND deleted_at IS NULL AND status = 'active'`,
-      [campaign_id]
-    );
-    if (!campaign.length) return res.status(404).json({ error: 'Active campaign not found' });
-
-    const nextRunAt = new Date();
-    if (interval === 'weekly') nextRunAt.setDate(nextRunAt.getDate() + 7);
-    else nextRunAt.setMonth(nextRunAt.getMonth() + 1);
-
-    const { rows } = await db.query(
-      `INSERT INTO recurring_contributions (user_id, campaign_id, amount, interval, next_run_at)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, campaign_id, amount, interval, active, next_run_at, run_count`,
-      [req.user.userId, campaign_id, normalizedAmount, interval, nextRunAt]
-    );
-    res.status(201).json(rows[0]);
-  })
-);
-
-// PATCH /api/users/me/recurring-contributions/:id — pause/resume or update amount
-router.patch(
-  '/me/recurring-contributions/:id',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const { active, amount } = req.body;
-    const updates = [];
-    const values = [];
-    let idx = 1;
-    if (active !== undefined) {
-      updates.push(`active = $${idx++}`);
-      values.push(!!active);
-    }
-    if (amount !== undefined) {
-      let normalizedAmount;
-      try {
-        normalizedAmount = normalizeAmount(amount);
-      } catch {
-        return res.status(400).json({
-          error: 'amount must be positive, fit a Stellar amount, and have at most 7 decimal places',
-        });
-      }
-      updates.push(`amount = $${idx++}`);
-      values.push(normalizedAmount);
-    }
-    if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
-    updates.push(`updated_at = NOW()`);
-    values.push(req.params.id, req.user.userId);
-    const { rows } = await db.query(
-      `UPDATE recurring_contributions SET ${updates.join(', ')}
-     WHERE id = $${idx} AND user_id = $${idx + 1}
-     RETURNING id, campaign_id, amount, interval, active, next_run_at`,
-      values
-    );
-    if (!rows.length) return res.status(404).json({ error: 'Recurring contribution not found' });
-    res.json(rows[0]);
-  })
-);
-
-// DELETE /api/users/me/recurring-contributions/:id
-router.delete(
-  '/me/recurring-contributions/:id',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const { rows } = await db.query(
-      `DELETE FROM recurring_contributions WHERE id = $1 AND user_id = $2 RETURNING id`,
-      [req.params.id, req.user.userId]
-    );
-    if (!rows.length) return res.status(404).json({ error: 'Recurring contribution not found' });
-    res.status(204).end();
   })
 );
 

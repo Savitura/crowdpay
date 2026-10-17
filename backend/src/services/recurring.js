@@ -42,8 +42,10 @@ const CANCELLATION_NOTICE_DAYS = 7;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WORKER_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const SUBSCRIPTION_CLAIM_LOCK_KEY = 738821;
 
 let _workerTimer = null;
+let _workerInFlight = false;
 
 /**
  * SQL predicate (over campaign `c` and balance `sb`) for "this campaign still
@@ -816,7 +818,7 @@ async function closeIneligibleInstallments({ balanceId = null } = {}) {
  * suspended, deleted or past their deadline are closed instead of claimed. Balances the
  * contributor already reclaimed are recorded as such and end the subscription.
  */
-async function processDueSubscriptionBalances() {
+async function processDueSubscriptionBalancesUnlocked() {
   const closedRows = await closeIneligibleInstallments();
 
   let due = [];
@@ -903,6 +905,34 @@ async function processDueSubscriptionBalances() {
   return { claimed, reclaimed, failed, closed };
 }
 
+async function processDueSubscriptionBalances() {
+  const lockClient = await db.connect();
+  let lockAcquired = false;
+  let releaseError;
+
+  try {
+    const { rows } = await lockClient.query('SELECT pg_try_advisory_lock($1) AS locked', [
+      SUBSCRIPTION_CLAIM_LOCK_KEY,
+    ]);
+    lockAcquired = rows[0]?.locked === true;
+    if (!lockAcquired) {
+      logger.info('subscription-claim-worker: another run is active; skipping');
+      return { claimed: 0, reclaimed: 0, failed: 0, closed: 0, skipped: true };
+    }
+    return await processDueSubscriptionBalancesUnlocked();
+  } finally {
+    if (lockAcquired) {
+      try {
+        await lockClient.query('SELECT pg_advisory_unlock($1)', [SUBSCRIPTION_CLAIM_LOCK_KEY]);
+      } catch (err) {
+        releaseError = err;
+        logger.error('subscription-claim-worker: advisory unlock failed', { error: err.message });
+      }
+    }
+    lockClient.release(releaseError);
+  }
+}
+
 async function installmentStillClaimable(balanceId) {
   const { rows } = await db.query(
     `SELECT 1
@@ -916,13 +946,21 @@ async function installmentStillClaimable(balanceId) {
 }
 
 function startSubscriptionClaimWorker() {
-  processDueSubscriptionBalances().catch(err =>
-    logger.error('subscription-claim-worker: initial run failed', { error: err.message })
-  );
+  if (_workerTimer) return;
+  const run = async () => {
+    if (_workerInFlight) return;
+    _workerInFlight = true;
+    try {
+      await processDueSubscriptionBalances();
+    } catch (err) {
+      logger.error('subscription-claim-worker: run failed', { error: err.message });
+    } finally {
+      _workerInFlight = false;
+    }
+  };
+  run();
   _workerTimer = setInterval(() => {
-    processDueSubscriptionBalances().catch(err =>
-      logger.error('subscription-claim-worker: run failed', { error: err.message })
-    );
+    run();
   }, WORKER_INTERVAL_MS);
   logger.info('subscription-claim-worker: started', { interval_ms: WORKER_INTERVAL_MS });
 }

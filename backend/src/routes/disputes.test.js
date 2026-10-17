@@ -369,7 +369,11 @@ test('POST /disputes/:id/evidence accepts submission from the campaign creator',
 
 // --- admin decision (#674) ---------------------------------------------------
 
-function buildDecideQuery({ contributorRows = [], escrowContractId = null } = {}) {
+function buildDecideQuery({
+  contributorRows = [],
+  escrowContractId = null,
+  raisedAmount = '100.00',
+} = {}) {
   return async (sql, params) => {
     if (
       sql.includes('FROM disputes d') &&
@@ -384,7 +388,7 @@ function buildDecideQuery({ contributorRows = [], escrowContractId = null } = {}
             creator_id: 'creator-1',
             wallet_public_key: 'GCAMPAIGN',
             escrow_contract_id: escrowContractId,
-            raised_amount: '100.00',
+            raised_amount: raisedAmount,
             campaign_title: 'Test Campaign',
             creator_wallet_public_key: 'GCREATORWALLET',
             status: 'open',
@@ -451,6 +455,27 @@ test('POST /admin/disputes/:id/decide release_to_creator releases the escrow fre
   assert.equal(res.status, 200);
   assert.equal(res.body.status, 'resolved');
   assert.equal(releaseCalled, true);
+});
+
+test('POST /admin/disputes/:id/decide releases exact Soroban stroops', async () => {
+  let receivedReleaseAmount;
+  const app = buildApp({
+    queryImpl: buildDecideQuery({ escrowContractId: 'CESCROW123', raisedAmount: '8.29' }),
+    sorobanImpl: {
+      isRealSorobanContract: () => true,
+      releaseEscrowToCreator: async ({ releaseAmount }) => {
+        receivedReleaseAmount = releaseAmount;
+        return 'soroban-tx-hash';
+      },
+    },
+  });
+
+  const res = await request(app)
+    .post('/api/admin/disputes/dispute-1/decide')
+    .send({ decision: 'release_to_creator', reason: 'Evidence supports the creator' });
+
+  assert.equal(res.status, 200);
+  assert.equal(receivedReleaseAmount, 82_900_000n);
 });
 
 test('POST /admin/disputes/:id/decide refund_contributors allocates proportional refunds summing to the balance', async () => {
@@ -724,13 +749,18 @@ test('PATCH /disputes/:id with resolved_creator calls freeze release when arbitr
 test('PATCH /disputes/:id with resolved_creator calls BOTH freeze release AND Soroban release when real contract', async () => {
   const freezeReleaseCalled = { count: 0 };
   const sorobanReleaseCalled = { count: 0 };
+  let receivedReleaseAmount;
   const { app, cleanup } = buildAppForPatch({
     escrowContractId: 'CESCROW123',
     arbitratorSignerAdded: true,
     sorobanEnabled: 'true',
-    raisedAmount: '500.00',
+    raisedAmount: '8.29',
     freezeReleaseCalled,
     sorobanReleaseCalled,
+    sorobanReleaseMock: ({ releaseAmount }) => {
+      receivedReleaseAmount = releaseAmount;
+      return 'soroban-tx-hash';
+    },
   });
 
   try {
@@ -746,6 +776,7 @@ test('PATCH /disputes/:id with resolved_creator calls BOTH freeze release AND So
       1,
       'releaseEscrowToCreator should be called for real Soroban contract'
     );
+    assert.equal(receivedReleaseAmount, 82_900_000n);
   } finally {
     cleanup();
   }

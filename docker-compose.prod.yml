@@ -1,10 +1,24 @@
-version: '3.9'
+version: "3.9"
 services:
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile.prod
     env_file: ./backend/.env
+    environment:
+      WORKER_ENABLED: "false"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    env_file: ./backend/.env
+    environment:
+      WORKER_ENABLED: "true"
+    command: ["node", "src/worker.js"]
+    healthcheck:
+      disable: true
     restart: unless-stopped
 
   frontend:

@@ -19,6 +19,7 @@ const stellarService = require('../services/stellarService');
 const { ERROR_CODES, allocateProportionalRefunds } = require('../services/dispute');
 const { validateRenderUrl } = require('../utils/urlValidation');
 const { haltScheduledReleases } = require('../services/milestoneAutoRelease');
+const { toStroops } = require('../utils/stroops');
 
 function frontendBaseUrl() {
   return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
@@ -536,8 +537,8 @@ router.patch(
           campaign.creator_wallet_public_key
         ) {
           try {
-            const releaseAmount = Math.floor(parseFloat(campaign.raised_amount || 0) * 10000000);
-            if (releaseAmount > 0) {
+            const releaseAmount = toStroops(campaign.raised_amount || '0', { allowZero: true });
+            if (releaseAmount > 0n) {
               sorobanReleaseTxHash = await releaseEscrowToCreator({
                 escrowContractId: campaign.escrow_contract_id,
                 creatorAddress: campaign.creator_wallet_public_key,
@@ -546,7 +547,7 @@ router.patch(
               logger.info('Soroban escrow released to creator', {
                 dispute_id: dispute.id,
                 campaign_id: dispute.campaign_id,
-                release_amount: releaseAmount,
+                release_amount: releaseAmount.toString(),
                 tx_hash: sorobanReleaseTxHash,
               });
 
@@ -701,8 +702,8 @@ router.post(
           isRealSorobanContract(dispute.escrow_contract_id) &&
           dispute.creator_wallet_public_key
         ) {
-          const releaseAmount = Math.floor(parseFloat(dispute.raised_amount || 0) * 10000000);
-          if (releaseAmount > 0) {
+          const releaseAmount = toStroops(dispute.raised_amount || '0', { allowZero: true });
+          if (releaseAmount > 0n) {
             sorobanReleaseTxHash = await releaseEscrowToCreator({
               escrowContractId: dispute.escrow_contract_id,
               creatorAddress: dispute.creator_wallet_public_key,

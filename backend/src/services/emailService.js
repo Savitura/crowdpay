@@ -24,7 +24,6 @@ const thankYouEmail = require('../emails/thankYou');
 const walletFundingFailedEmail = require('../emails/walletFundingFailed');
 const campaignCommentEmail = require('../emails/campaignComment');
 const fundsReleasedEmail = require('../emails/fundsReleased');
-const recurringContributionNoticeEmail = require('../emails/recurringContributionNotice');
 const campaignDeadlineReminderEmail = require('../emails/campaignDeadlineReminder');
 
 let transporter;
@@ -176,34 +175,6 @@ async function sendWelcomeEmail({ to, name, walletPublicKey }) {
   const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'marketing' });
   const { subject, text, html } = welcomeEmail.build({ name, walletPublicKey, unsubscribeUrl });
   await sendIdempotent({ dedupeKey: `welcome:${to}`, to, subject, text, html });
-}
-
-/**
- * Sends a recurring automated-billing notification (#738). `kind` is one of
- * 'upcoming' | 'charged' | 'failed'. `recurringRunKey` identifies the exact
- * charge attempt so the message is sent at most once per occurrence.
- */
-async function sendRecurringContributionNoticeEmail({ to, kind, recurringRunKey, ...params }) {
-  if (!to) return;
-  if (await isUnsubscribed(to, 'campaign_update')) return;
-  const unsubscribeUrl = buildUnsubscribeUrl({ email: to, category: 'campaign_update' });
-  if (!['upcoming', 'charged', 'failed'].includes(kind)) return;
-
-  let built;
-  if (kind === 'upcoming')
-    built = recurringContributionNoticeEmail.buildUpcoming({ ...params, unsubscribeUrl });
-  else if (kind === 'charged')
-    built = recurringContributionNoticeEmail.buildCharged({ ...params, unsubscribeUrl });
-  else built = recurringContributionNoticeEmail.buildFailed({ ...params, unsubscribeUrl });
-
-  const { subject, text, html } = built;
-  await sendIdempotent({
-    dedupeKey: `recurring_notice:${kind}:${recurringRunKey}`,
-    to,
-    subject,
-    text,
-    html,
-  });
 }
 
 async function sendContributionReceipt({ campaignId, txHash, amount, asset, senderPublicKey }) {
@@ -645,7 +616,6 @@ module.exports = {
   isCampaignUpdateUnsubscribed,
   getStellarExpertTxUrl,
   sendContributionReceipt,
-  sendRecurringContributionNoticeEmail,
   sendWelcomeEmail,
   sendWalletFundingFailedEmail,
   sendCampaignFundedCreatorEmail,
