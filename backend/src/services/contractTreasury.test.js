@@ -11,6 +11,11 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const proxyquire = require('proxyquire').noCallThru();
 
+// These tests exercise the contract's own policy (auditor threshold, caps) with
+// amounts above the default custodial signing limit; that limit has its own
+// test below, so lift it here.
+process.env.CUSTODIAL_WITHDRAWAL_LIMIT = '1000000';
+
 const CAMPAIGN_ID = '11111111-1111-1111-1111-111111111111';
 // Real Stellar keys — Address.fromString validates, so placeholders will not do.
 const DEST = 'GAJZF6DOHVKNA4VYDMGEB4BOBV27VI6O5ERDGJP5TH6JPGIUAUSLNCRS';
@@ -678,4 +683,34 @@ test('a refund the contract refuses is surfaced with its condition code', async 
     () => service.triggerAutoRefund(CAMPAIGN_ID),
     err => err.code === 'REFUND_CONDITIONS_NOT_MET'
   );
+});
+
+test('a custodial creator is refused above the custodial signing limit and nothing is signed', async () => {
+  const previous = process.env.CUSTODIAL_WITHDRAWAL_LIMIT;
+  process.env.CUSTODIAL_WITHDRAWAL_LIMIT = '500';
+  let insertedRow = false;
+  const { service, calls } = build({
+    queryImpl: async text => {
+      if (text.includes('FROM campaigns')) return { rows: [campaignRow()] };
+      if (text.includes('FROM users')) return { rows: [userRow({ wallet_type: 'custodial' })] };
+      if (text.includes('INSERT INTO withdrawal_requests')) insertedRow = true;
+      return { rows: [] };
+    },
+  });
+
+  try {
+    await assert.rejects(
+      service.buildWithdrawalRequest(CAMPAIGN_ID, {
+        amount: '501',
+        destination: DEST,
+        memo: 'big',
+        requestedBy: 'creator-1',
+      }),
+      err => err.statusCode === 403 && err.code === 'NON_CUSTODIAL_SIGNATURE_REQUIRED'
+    );
+  } finally {
+    process.env.CUSTODIAL_WITHDRAWAL_LIMIT = previous;
+  }
+  assert.equal(calls.length, 0);
+  assert.equal(insertedRow, false);
 });

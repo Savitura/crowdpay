@@ -5,6 +5,7 @@ const db = require('../config/database');
 const logger = require('../config/logger');
 const soroban = require('./sorobanService');
 const { withDecryptedWalletSecret } = require('./walletSecrets');
+const { assertCustodialWithdrawalAllowed } = require('./custodialSigningPolicy');
 const { toStroops: exactToStroops, fromStroops } = require('../utils/stroops');
 
 /**
@@ -154,6 +155,7 @@ async function loadCustodialSigner(userId, role, missingCode) {
   }
   return {
     userId,
+    walletType: user.wallet_type,
     walletPublicKey: user.wallet_public_key,
     walletSecretEncrypted: user.wallet_secret_encrypted,
   };
@@ -343,6 +345,12 @@ async function buildWithdrawalRequest(campaignId, { amount, destination, memo, r
     'creator',
     'CREATOR_WALLET_MISSING'
   );
+  // The creator key used below is server-held; cap what it may authorize.
+  try {
+    assertCustodialWithdrawalAllowed({ walletType: creator.walletType, amount });
+  } catch (err) {
+    throw fail(err.message, err.statusCode, err.code);
+  }
 
   let result;
   try {

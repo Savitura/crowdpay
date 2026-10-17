@@ -10,11 +10,21 @@ const CSRF_COOKIE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
 // Using exact path matching (not prefixes) to prevent silent exemption of new sub-paths
 const CSRF_EXEMPT_PATHS = new Set([
   '/api/webhooks/kyc',
-  '/api/webhooks/incoming',
   '/api/anchor/callbacks',
   '/api/anchor/callbacks/sep24',
   '/api/anchor/sep24',
 ]);
+
+// Parameterized webhook ingress routes: exactly one additional path segment,
+// no further nesting. Deliberately narrow (not a blanket prefix match) so an
+// unrelated nested path under the same prefix is never silently exempted.
+const CSRF_EXEMPT_PATH_PATTERNS = [/^\/api\/webhooks\/incoming\/[^/]+$/];
+
+// Paths with no mounted route at all (removed/renamed endpoints). These
+// aren't "exempt" in the security sense — there's nothing here to protect —
+// skipping CSRF lets Express's own 404 handler respond correctly instead of
+// masking it behind a CSRF 403.
+const CSRF_KNOWN_REMOVED_PATHS = new Set(['/api/kyc-webhook']);
 
 /**
  * Check if the request is authenticated via API key (not cookie-based session).
@@ -34,7 +44,9 @@ function isApiKeyRequest(req) {
  * @returns {boolean}
  */
 function isExemptPath(requestPath) {
-  return CSRF_EXEMPT_PATHS.has(requestPath);
+  if (CSRF_EXEMPT_PATHS.has(requestPath)) return true;
+  if (CSRF_KNOWN_REMOVED_PATHS.has(requestPath)) return true;
+  return CSRF_EXEMPT_PATH_PATTERNS.some(pattern => pattern.test(requestPath));
 }
 
 /**

@@ -17,6 +17,10 @@ const {
   finalizeWithdrawalSubmitted,
 } = require('../services/stellarTransactionService');
 const { withDecryptedWalletSecret } = require('../services/walletSecrets');
+const {
+  assertCustodialWithdrawalAllowed,
+  CustodialSigningLimitError,
+} = require('../services/custodialSigningPolicy');
 const { resolveUserCampaignRole } = require('../services/campaignInviteService');
 const { canSubmitMilestones } = require('../lib/campaignPermissions');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
@@ -868,7 +872,7 @@ const approveMilestoneReleaseHandler = asyncHandler(async (req, res) => {
     `SELECT m.*, c.status AS campaign_status, c.wallet_public_key AS campaign_wallet_public_key,
             c.asset_type, c.raised_amount, c.target_amount, c.title AS campaign_title,
             c.creator_id, u.wallet_public_key AS creator_wallet_public_key,
-            u.wallet_secret_encrypted
+            u.wallet_secret_encrypted, u.wallet_type AS creator_wallet_type
      FROM milestones m
      JOIN campaigns c ON c.id = m.campaign_id
      JOIN users u ON u.id = c.creator_id
@@ -910,6 +914,22 @@ const approveMilestoneReleaseHandler = asyncHandler(async (req, res) => {
     });
   }
 
+  // The server signs below with the creator's custodial key and the platform
+  // key, so for custodial creators it alone satisfies the 2-of-2 multisig.
+  // Cap how much it may move that way; larger releases need a Freighter creator.
+  const releaseAmount = toReleaseAmount(milestone.raised_amount, milestone.release_percentage);
+  try {
+    assertCustodialWithdrawalAllowed({
+      walletType: milestone.creator_wallet_type,
+      amount: releaseAmount,
+    });
+  } catch (err) {
+    if (!(err instanceof CustodialSigningLimitError)) throw err;
+    return res
+      .status(err.statusCode)
+      .json({ error: err.message, code: err.code, limit: err.limit });
+  }
+
   // Atomically claim the milestone to prevent concurrent approvals.
   // Uses SELECT FOR UPDATE + UPDATE claimed_at to serialize concurrent requests.
   const claimClient = await db.connect();
@@ -939,7 +959,6 @@ const approveMilestoneReleaseHandler = asyncHandler(async (req, res) => {
     claimClient.release();
   }
 
-  const releaseAmount = toReleaseAmount(milestone.raised_amount, milestone.release_percentage);
   const unsignedXdr = await buildWithdrawalTransaction({
     campaignWalletPublicKey: milestone.campaign_wallet_public_key,
     destinationPublicKey: milestone.destination_key,

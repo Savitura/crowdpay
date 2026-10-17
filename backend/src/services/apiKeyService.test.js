@@ -2,6 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const bcrypt = require('bcryptjs');
 
+process.env.INTEGRATION_SECRET_LOCAL_KEK =
+  process.env.INTEGRATION_SECRET_LOCAL_KEK || 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+
 const MODULE_PATH = './apiKeyService';
 
 function mockDb(queries) {
@@ -85,7 +88,7 @@ test('authenticateCpkApiKey validates bcrypt hash and updates last_used_at', asy
   assert.equal(auth.userId, 'user-1');
   assert.equal(auth.apiKeyId, 'key-1');
   assert.deepEqual(auth.scopes, ['read', 'write']);
-  assert.deepEqual(updates, [['key-1']]);
+  assert.deepEqual(updates, [['key-1', 5 * 60 * 1000]]);
 
   require.cache[require.resolve('../config/database')].exports = originalDb;
   delete require.cache[require.resolve(MODULE_PATH)];
@@ -159,9 +162,22 @@ test('createApiKeyForUser stores bcrypt hash and returns raw key once', async ()
   assert.equal(inserts.length, 1);
   assert.equal(inserts[0][0], 'user-9');
   assert.equal(inserts[0][3], 'My bot');
-  assert.match(inserts[0][2], /^\$2[aby]\$/);
 
-  const valid = await bcrypt.compare(created.api_key, inserts[0][2]);
+  // The stored key_hash is now encrypted at rest (defense in depth) rather
+  // than a bare bcrypt string — decrypt it the same way authenticateCpkApiKey
+  // does before verifying it's a valid bcrypt hash of the raw key.
+  const { withDecryptedIntegrationSecret } = require('./integrationSecrets');
+  let decryptedHash;
+  await withDecryptedIntegrationSecret(
+    inserts[0][2],
+    { type: 'api_key', id: 'user-9' },
+    hash => {
+      decryptedHash = hash;
+    }
+  );
+  assert.match(decryptedHash, /^\$2[aby]\$/);
+
+  const valid = await bcrypt.compare(created.api_key, decryptedHash);
   assert.equal(valid, true);
 
   require.cache[require.resolve('../config/database')].exports = originalDb;

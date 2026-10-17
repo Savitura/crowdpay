@@ -1,4 +1,4 @@
-const router = require('express').Router();
+﻿const router = require('express').Router();
 const { requireAuth } = require('../middleware/auth');
 const asyncHandler = require('../utils/asyncHandler');
 const {
@@ -42,3 +42,4 @@ router.patch(
 );
 
 module.exports = router;
+module.exports.requireCampaignCreatorOrMember = requireCampaignCreatorOrMember;

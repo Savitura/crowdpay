@@ -3,6 +3,9 @@ const assert = require('node:assert/strict');
 const crypto = require('crypto');
 const express = require('express');
 const request = require('supertest');
+
+process.env.INTEGRATION_SECRET_LOCAL_KEK =
+  process.env.INTEGRATION_SECRET_LOCAL_KEK || 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const proxyquire = require('proxyquire').noCallThru();
 
 function buildApp({ deliveryRow = null, currentRow = null } = {}) {
@@ -296,6 +299,9 @@ function buildCreateApp({ safeUrlResult = { safe: true, reason: '' } } = {}) {
           this.status = s;
         }
       },
+    },
+    '../services/auditService': {
+      logCredentialEvent: async () => {},
     },
   });
 

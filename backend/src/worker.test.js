@@ -1,58 +1,72 @@
-const assert = require('assert').strict;
-const { startBackgroundWorkers, stopBackgroundWorkers, isWorkerRunning } = require('./worker');
-const featureFlags = require('./services/featureFlags');
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const proxyquire = require('proxyquire').noCallThru();
 
-// Mock external dependencies
-jest.mock('./services/ledgerMonitor', () => ({
-  startLedgerMonitor: jest.fn(),
-}));
-jest.mock('./services/webhookDispatcher', () => ({
-  startWebhookRetryPoller: jest.fn(),
-}));
-jest.mock('./services/recurringContributionsService', () => ({
-  startRecurringContributionsCron: jest.fn(),
-  stopRecurringContributionsCron: jest.fn(),
-}));
-jest.mock('./services/recurring', () => ({
-  startSubscriptionClaimWorker: jest.fn(),
-  stopSubscriptionClaimWorker: jest.fn(),
-}));
-jest.mock('./services/ops/healthCollector', () => ({
-  startHealthCollector: jest.fn(),
-  stopHealthCollector: jest.fn(),
-}));
-jest.mock('./services/featureFlags', () => ({
-  isEnabled: jest.fn(() => true),
-}));
+function noop() {}
+async function asyncNoop() {}
 
-describe('Background Worker Bootstrap', () => {
+function buildWorker() {
+  return proxyquire('./worker', {
+    './config/logger': { info: noop, error: noop, warn: noop, debug: noop },
+    './config/database': { query: async () => ({ rows: [] }) },
+    './services/featureFlags': { isEnabled: () => true },
+    './services/ledgerMonitor': { startLedgerMonitor: asyncNoop },
+    './services/webhookDispatcher': { startWebhookRetryPoller: noop },
+    './services/recurringContributionsService': {
+      startRecurringContributionsCron: noop,
+      stopRecurringContributionsCron: noop,
+    },
+    './services/recurring': {
+      startSubscriptionClaimWorker: noop,
+      stopSubscriptionClaimWorker: noop,
+    },
+    './services/ops/healthCollector': {
+      startHealthCollector: noop,
+      stopHealthCollector: noop,
+    },
+    './services/campaignStatusService': { refreshActiveCampaignStatuses: asyncNoop },
+    './services/reconciliation': { reconcileCampaignBalances: asyncNoop },
+    './services/campaignPublishing': { publishDraftCampaign: asyncNoop },
+    './services/contractDeploymentRetryService': { retryFailedContractDeployments: asyncNoop },
+    './services/weeklyDigestService': { sendWeeklyContributorDigests: asyncNoop },
+    './services/deadlineReminderService': { sendDeadlineReminders: asyncNoop },
+    './services/campaignUpdatesPublishing': { publishDueCampaignUpdates: asyncNoop },
+    './services/payoutScheduleService': { processDuePayoutSchedules: asyncNoop },
+    './services/milestoneAutoRelease': { processAutoReleases: asyncNoop },
+  });
+}
+
+test('Background Worker Bootstrap', async t => {
   let originalEnv;
 
-  beforeEach(() => {
+  t.beforeEach(() => {
     originalEnv = process.env;
     process.env = { ...originalEnv };
   });
 
-  afterEach(async () => {
-    await stopBackgroundWorkers();
+  t.afterEach(() => {
     process.env = originalEnv;
-    jest.clearAllMocks();
   });
 
-  it('does not start in test environment', async () => {
+  await t.test('does not start in test environment', async () => {
+    const { startBackgroundWorkers, stopBackgroundWorkers, isWorkerRunning } = buildWorker();
     process.env.NODE_ENV = 'test';
     await startBackgroundWorkers();
     assert.equal(isWorkerRunning(), false);
+    await stopBackgroundWorkers();
   });
 
-  it('does not start when WORKER_ENABLED is false', async () => {
+  await t.test('does not start when WORKER_ENABLED is false', async () => {
+    const { startBackgroundWorkers, stopBackgroundWorkers, isWorkerRunning } = buildWorker();
     process.env.WORKER_ENABLED = 'false';
     process.env.NODE_ENV = 'development';
     await startBackgroundWorkers();
     assert.equal(isWorkerRunning(), false);
+    await stopBackgroundWorkers();
   });
 
-  it('starts workers when enabled', async () => {
+  await t.test('starts workers when enabled', async () => {
+    const { startBackgroundWorkers, stopBackgroundWorkers, isWorkerRunning } = buildWorker();
     process.env.WORKER_ENABLED = 'true';
     process.env.NODE_ENV = 'production';
 

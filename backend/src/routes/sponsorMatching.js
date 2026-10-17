@@ -13,6 +13,7 @@ const {
 } = require('../services/sponsorMatchingService');
 const { logAuditEvent } = require('../services/auditService');
 const { emitWebhookEventForCampaign, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
+const { toStroops, fromStroops } = require('../utils/stroops');
 
 /**
  * Campaign-scoped sponsor matching routes.
@@ -309,7 +310,10 @@ campaignRouter.patch(
     emitWebhookEventForCampaign(campaignId, WEBHOOK_EVENTS.SPONSOR_MATCH_COMPLETED, {
       match_id: completed.id,
       sponsor_user_id: completed.sponsor_user_id,
-      unclaimed_amount: parseFloat(completed.pledge_amount) - parseFloat(completed.matched_amount),
+      unclaimed_amount: fromStroops(
+        toStroops(completed.pledge_amount, { allowZero: true }) -
+          toStroops(completed.matched_amount, { allowZero: true })
+      ),
     }).catch(err => logger.error('Webhook emit failed', { err }));
 
     res.json(completed);

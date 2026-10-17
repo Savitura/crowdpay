@@ -77,16 +77,28 @@ describe('CSRF middleware', () => {
   describe('isExemptPath', () => {
     it('returns true for exact exempt paths', () => {
       assert.strictEqual(isExemptPath('/api/webhooks/kyc'), true);
-      assert.strictEqual(isExemptPath('/api/webhooks/incoming'), true);
       assert.strictEqual(isExemptPath('/api/anchor/callbacks'), true);
       assert.strictEqual(isExemptPath('/api/anchor/sep24'), true);
     });
 
-    it('returns false for sub-paths of exempt paths (no prefix matching)', () => {
+    it('returns false for sub-paths of exact exempt paths (no prefix matching)', () => {
       assert.strictEqual(isExemptPath('/api/webhooks/kyc/subpath'), false);
-      assert.strictEqual(isExemptPath('/api/webhooks/incoming/extra'), false);
       assert.strictEqual(isExemptPath('/api/anchor/callbacks/extra'), false);
       assert.strictEqual(isExemptPath('/api/anchor/sep24/extra'), false);
+    });
+
+    it('returns true for the parameterized webhook ingress route (exactly one segment)', () => {
+      assert.strictEqual(isExemptPath('/api/webhooks/incoming/wh-1'), true);
+      assert.strictEqual(isExemptPath('/api/webhooks/incoming/extra'), true);
+    });
+
+    it('returns false for the bare incoming path or a nested sub-path (no mounted route there)', () => {
+      assert.strictEqual(isExemptPath('/api/webhooks/incoming'), false);
+      assert.strictEqual(isExemptPath('/api/webhooks/incoming/wh-1/extra'), false);
+    });
+
+    it('returns true for a known-removed legacy path so it falls through to a real 404', () => {
+      assert.strictEqual(isExemptPath('/api/kyc-webhook'), true);
     });
 
     it('returns false for non-exempt paths', () => {

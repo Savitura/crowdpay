@@ -431,3 +431,36 @@ fn test_resubmit_after_rejection() {
     assert_eq!(milestone.status, MilestoneStatus::Submitted);
     assert_eq!(milestone.evidence_hash, new_evidence);
 }
+
+#[test]
+fn test_storage_ttl_outlives_default_ttl() {
+    use soroban_sdk::testutils::{storage::Instance as _, Ledger};
+    use milestones::STORAGE_TTL_LEDGERS;
+
+    let env = Env::default();
+    let milestones = Vec::from_array(
+        &env,
+        [
+            make_milestone(&env, b"TTTT1111111111111111111111111111", 5000u32),
+            make_milestone(&env, b"TTTT2222222222222222222222222222", 5000u32),
+        ],
+    );
+    let (contract_id, _creator, _platform, escrow_id) =
+        setup_milestones_contract(&env, milestones, 1000);
+    let client = MilestonesContractClient::new(&env, &contract_id);
+
+    env.as_contract(&contract_id, || {
+        assert!(env.storage().instance().get_ttl() >= STORAGE_TTL_LEDGERS - 1);
+    });
+
+    // Keep the mock escrow alive; only this contract's storage is under test.
+    let jump = env.ledger().get().min_persistent_entry_ttl * 100;
+    env.as_contract(&escrow_id, || {
+        env.storage().instance().extend_ttl(jump + 1000, jump + 1000);
+    });
+    env.ledger().with_mut(|li| li.sequence_number += jump);
+
+    let evidence = BytesN::from_array(&env, b"evid_hash_1234567890123456789012");
+    client.submit_milestone(&0u32, &evidence);
+    assert_eq!(client.get_milestone(&0u32).status, MilestoneStatus::Submitted);
+}

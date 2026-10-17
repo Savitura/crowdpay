@@ -24,20 +24,21 @@ const mockClient = {
     this.queryLog.push({ sql: sql.replace(/\s+/g, ' ').trim(), params });
     if (sql.includes('FOR UPDATE')) return { rows: this.rows.contrib };
     if (sql.includes('INSERT INTO creator_refunds')) {
+      // Params: campaign_id, contribution_id, recipient_wallet, amount,
+      // reason, tx_hash, is_force_refund, admin_note, created_by — matches
+      // refundService.processRefund's INSERT column order.
       return {
         rows: [
           {
             id: 'refund-1',
             campaign_id: params[0],
             contribution_id: params[1],
-            recipient_wallet: params[2],
             amount: params[3],
-            asset: params[4],
-            reason: params[5],
-            status: 'processing',
+            status: 'completed',
+            tx_hash: params[5],
             is_force_refund: params[6],
             admin_note: params[7],
-            created_by: params[8],
+            created_at: new Date().toISOString(),
           },
         ],
       };

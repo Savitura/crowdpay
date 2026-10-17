@@ -28,12 +28,17 @@ const {
 } = require('../services/emailService');
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
 const { withDecryptedWalletSecret } = require('../services/walletSecrets');
+const {
+  assertCustodialWithdrawalAllowed,
+  CustodialSigningLimitError,
+} = require('../services/custodialSigningPolicy');
 const { createNotification } = require('../services/notifications');
 const { notifyContributorFundRelease } = require('../services/fundReleaseNotifications');
 const { calculateCommissions, settleCommissions } = require('../services/referral');
 const { parsePagination } = require('../utils/pagination');
 const asyncHandler = require('../utils/asyncHandler');
 const withTransaction = require('../utils/withTransaction');
+const { toStroops, fromStroops } = require('../utils/stroops');
 
 const ALLOWED_CAMPAIGN_STATUS_FOR_REQUEST = ['active', 'funded'];
 
@@ -267,15 +272,18 @@ router.post(
     // transaction as the creator payout (#675).
     const { commissions, totalCommission } = await calculateCommissions(campaign_id);
     const payableCommissions = commissions.filter(
-      commission => commission.destination_public_key && parseFloat(commission.commission_owed) > 0
+      commission =>
+        commission.destination_public_key &&
+        toStroops(commission.commission_owed, { allowZero: true }) > 0n
     );
     const commissionTotal = payableCommissions.reduce(
-      (sum, commission) => sum + parseFloat(commission.commission_owed),
-      0
+      (sum, commission) => sum + toStroops(commission.commission_owed, { allowZero: true }),
+      0n
     );
-    const creatorAmount = (parseFloat(amount) - commissionTotal).toFixed(7);
+    const creatorAmountStroops = toStroops(amount) - commissionTotal;
+    const creatorAmount = fromStroops(creatorAmountStroops);
 
-    if (parseFloat(creatorAmount) <= 0) {
+    if (creatorAmountStroops <= 0n) {
       return res.status(422).json({
         error: `Referral commissions of ${totalCommission} ${campaign.asset_type} exceed the requested withdrawal amount. Withdraw a larger amount.`,
         code: 'COMMISSIONS_EXCEED_WITHDRAWAL',
@@ -419,6 +427,13 @@ router.post(
 
         signedXdr = signed_xdr;
       } else {
+        // Custodial key: the server would hold both multisig signatures, so
+        // only sign up to the custodial limit (refunds to contributors exempt).
+        assertCustodialWithdrawalAllowed({
+          walletType: userRow.wallet_type,
+          amount: requestRow.amount,
+          isRefund: !!requestRow.is_refund,
+        });
         signedXdr = await withDecryptedWalletSecret(
           userRow.wallet_secret_encrypted,
           {
@@ -433,6 +448,11 @@ router.post(
         );
       }
     } catch (err) {
+      if (err instanceof CustodialSigningLimitError) {
+        return res
+          .status(err.statusCode)
+          .json({ error: err.message, code: err.code, limit: err.limit });
+      }
       logger.error('Creator withdrawal signing failed', {
         withdrawal_id: req.params.id,
         error: err.message,

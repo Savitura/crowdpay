@@ -445,6 +445,7 @@ test('POST /api/withdrawals/:id/approve/creator signs withdrawal request', async
               creator_signed: false,
               platform_signed: false,
               unsigned_xdr: 'xdr-base',
+              amount: '100.0000000',
               creator_id: 'creator-1',
               campaign_id: '11111111-1111-1111-1111-111111111111',
               campaign_status: 'active',
@@ -472,6 +473,58 @@ test('POST /api/withdrawals/:id/approve/creator signs withdrawal request', async
   assert.equal(response.status, 200);
   assert.equal(response.body.creator_signed, true);
   assert.ok(calls.some(c => c.includes('creator_signed')));
+});
+
+test('POST /api/withdrawals/:id/approve/creator refuses a custodial signature above the limit', async () => {
+  const previous = process.env.CUSTODIAL_WITHDRAWAL_LIMIT;
+  process.env.CUSTODIAL_WITHDRAWAL_LIMIT = '50';
+  const calls = [];
+  const { app, cleanup } = buildApp({
+    queryImpl: async text => {
+      calls.push(text);
+      if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [] };
+      if (text.includes('SELECT creator_id FROM campaigns WHERE id')) {
+        return { rows: [{ creator_id: 'creator-1' }] };
+      }
+      if (text.includes('FROM withdrawal_requests wr')) {
+        return {
+          rows: [
+            {
+              id: 'w-1',
+              status: 'pending',
+              creator_signed: false,
+              platform_signed: false,
+              unsigned_xdr: 'xdr-base',
+              amount: '100.0000000',
+              creator_id: 'creator-1',
+              campaign_id: '11111111-1111-1111-1111-111111111111',
+              campaign_status: 'active',
+            },
+          ],
+        };
+      }
+      if (text.includes('wallet_secret_encrypted') && text.includes('FROM users')) {
+        return { rows: [{ wallet_secret_encrypted: 'SCREATOR', wallet_public_key: 'GCREATOR' }] };
+      }
+      if (text.includes('UPDATE withdrawal_requests') && text.includes('creator_signed = TRUE')) {
+        return { rows: [{ id: 'w-1', creator_signed: true, unsigned_xdr: 'xdr-signed' }] };
+      }
+      if (text.includes('INSERT INTO withdrawal_approval_events')) return { rows: [] };
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/withdrawals/w-1/approve/creator')
+    .set('Authorization', 'Bearer token')
+    .send({});
+
+  cleanup();
+  if (previous === undefined) delete process.env.CUSTODIAL_WITHDRAWAL_LIMIT;
+  else process.env.CUSTODIAL_WITHDRAWAL_LIMIT = previous;
+  assert.equal(response.status, 403);
+  assert.equal(response.body.code, 'NON_CUSTODIAL_SIGNATURE_REQUIRED');
+  assert.ok(!calls.some(c => c.includes('UPDATE withdrawal_requests')));
 });
 
 test('POST /api/withdrawals/:id/approve/platform denies insufficient signatures', async () => {
@@ -916,6 +969,56 @@ test('POST /api/withdrawals/request rejects a withdrawal smaller than the commis
   cleanup();
   assert.equal(response.status, 422);
   assert.equal(response.body.code, 'COMMISSIONS_EXCEED_WITHDRAWAL');
+});
+
+test('POST /api/withdrawals/request sums referral commissions in exact stroops', async () => {
+  let builtWith;
+  const { app, cleanup } = buildApp({
+    referralImpl: {
+      calculateCommissions: async () => ({
+        commissions: [
+          { destination_public_key: 'GALICE', commission_owed: '0.1' },
+          { destination_public_key: 'GBOB', commission_owed: '0.2' },
+        ],
+        totalCommission: '0.3000000',
+      }),
+    },
+    stellarImpl: {
+      buildWithdrawalTransaction: async params => {
+        builtWith = params;
+        return 'xdr-base';
+      },
+    },
+    queryImpl: async text => {
+      if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [] };
+      if (text.includes('FROM campaigns WHERE id')) return { rows: [campaignRow()] };
+      if (text.includes('FROM withdrawal_requests') && text.includes("status = 'pending'"))
+        return { rows: [] };
+      if (text.includes('wallet_public_key FROM users'))
+        return { rows: [{ wallet_public_key: 'GCREATOR' }] };
+      if (text.includes('INSERT INTO withdrawal_requests')) {
+        return {
+          rows: [{ id: 'w-1', status: 'pending', creator_signed: false, platform_signed: false }],
+        };
+      }
+      if (text.includes('INSERT INTO stellar_transactions')) return { rows: [{ id: 'stellar-1' }] };
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .send({
+      campaign_id: '11111111-1111-1111-1111-111111111111',
+      destination_key: VALID_DESTINATION,
+      amount: '1.0',
+      evidence: [{ type: 'link', url: 'https://example.test/invoice' }],
+    });
+
+  cleanup();
+  assert.equal(response.status, 201);
+  assert.equal(builtWith.amount, '0.7000000');
 });
 
 test('POST /api/withdrawals/:id/approve/platform settles the commissions it submitted', async () => {

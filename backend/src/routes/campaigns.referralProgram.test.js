@@ -68,8 +68,10 @@ function buildApp({ queryImpl = async () => ({ rows: [] }), referralStub = {}, a
     '../middleware/validation': {
       createCampaignValidation: [],
       createCampaignUpdateValidation: [],
+      updateCampaignValidation: [],
       getCampaignsValidation: [],
       validateRequest: (_req, _res, next) => next(),
+      createValidateRequest: () => (_req, _res, next) => next(),
     },
     '../utils/asyncHandler': fn => (req, res, next) => fn(req, res, next).catch(next),
     '../middleware/auth': {
