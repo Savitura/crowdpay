@@ -588,6 +588,8 @@ router.post(
     }
 
     res.json({
+      success: true,
+      amount: contribAmount,
       id: campaign.id,
       raised_amount: updated.raised_amount,
       target_amount: updated.target_amount,

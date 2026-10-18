@@ -276,10 +276,8 @@ function buildApp({
   return app;
 }
 
-// TODO(#786): Unimplemented Freighter prepare/submit-signed + quote flow — route doesn't exist yet
 test(
   'GET /api/contributions/quote returns best path quote',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const app = buildApp({
       queryImpl: async () => ({ rows: [] }),
@@ -311,7 +309,6 @@ test(
 
 test(
   'GET /api/contributions/quote returns 404 when no path exists',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const app = buildApp({
       queryImpl: async () => ({ rows: [] }),
@@ -330,10 +327,8 @@ test(
   }
 );
 
-// TODO(#786): Tests below require stubbed route impl with migration_in_progress, CAMPAIGN_DISPUTED, max_per_user, advisory locks
 test(
   'POST /api/contributions uses direct payment for same asset',
-  { skip: 'Stubbed route impl not matching real route - see #786' },
   async () => {
     const prepared = [];
     const submitted = [];
@@ -394,7 +389,6 @@ test(
 
 test(
   'POST /api/contributions uses direct payment for same USDC asset',
-  { skip: 'Stubbed route impl not matching real route - see #786' },
   async () => {
     const submitted = [];
     const app = buildApp({
@@ -449,7 +443,6 @@ test(
 
 test(
   'POST /api/contributions is blocked while the campaign contract is being migrated',
-  { skip: 'Stubbed route impl not matching real route - see #786' },
   async () => {
     const app = buildApp({
       queryImpl: async text => {
@@ -486,7 +479,6 @@ test(
 
 test(
   'POST /api/contributions uses path payment for conversion',
-  { skip: 'Stubbed route impl not matching real route - see #786' },
   async () => {
     let pathPayload = null;
     const app = buildApp({
@@ -551,7 +543,6 @@ test(
 
 test(
   'POST /api/contributions supports reverse conversion USDC -> XLM',
-  { skip: 'Stubbed route impl not matching real route - see #786' },
   async () => {
     let pathPayload = null;
     const app = buildApp({
@@ -617,7 +608,6 @@ test(
 
 test(
   'POST /api/contributions returns 503 when custodial trustline setup fails',
-  { skip: 'Stubbed route impl not matching real route - see #786' },
   async () => {
     const app = buildApp({
       queryImpl: async text => {
@@ -663,7 +653,6 @@ test(
 
 test(
   'POST /api/contributions returns 502 when Stellar submit fails and skips audit insert',
-  { skip: 'Stubbed route impl not matching real route - see #786' },
   async () => {
     let inserted = false;
     const app = buildApp({
@@ -716,7 +705,6 @@ test(
 
 test(
   'POST /api/contributions returns 409 CAMPAIGN_DISPUTED for a disputed campaign',
-  { skip: 'Stubbed route impl not matching real route - see #786' },
   async () => {
     const app = buildApp({
       queryImpl: async text => {
@@ -753,10 +741,8 @@ test(
   }
 );
 
-// TODO(#786): Freighter prepare/submit-signed flow not implemented
 test(
   'POST /api/contributions/prepare returns 409 CAMPAIGN_DISPUTED for a disputed campaign',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const sender = Keypair.random();
     const app = buildApp({
@@ -785,7 +771,6 @@ test(
 
 test(
   'POST /api/contributions/prepare returns unsigned XDR and prepare token for Freighter',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const sender = Keypair.random();
     let preparedPayload = null;
@@ -845,7 +830,6 @@ test(
 
 test(
   'POST /api/contributions/submit-signed accepts Freighter-signed XDR that matches prepared transaction',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const sender = Keypair.random();
     const destination = Keypair.random();
@@ -943,7 +927,6 @@ test(
 
 test(
   'POST /api/contributions/submit-signed rejects a signed XDR that does not match prepared transaction',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const sender = Keypair.random();
     const destination = Keypair.random();
@@ -1018,7 +1001,6 @@ test(
 
 test(
   'POST /api/contributions/prepare enforces max_per_user atomically',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const sender = Keypair.random();
     const app = buildApp({
@@ -1063,7 +1045,6 @@ test(
 
 test(
   'POST /api/contributions/prepare counts an existing in-flight reservation toward the cap',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const sender = Keypair.random();
     const app = buildApp({
@@ -1109,7 +1090,6 @@ test(
 
 test(
   'POST /api/contributions/prepare serializes concurrent requests from the same sender so only one fits under the cap',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     // Simulates real Postgres pg_advisory_xact_lock serialization: concurrent
     // /prepare calls for the same (campaign, sender) queue on the lock, and
@@ -1188,7 +1168,6 @@ test(
 
 test(
   'POST /api/contributions/submit-signed rejects a reservation that is no longer reserved (expired or already used)',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const sender = Keypair.random();
     const destination = Keypair.random();
@@ -1266,7 +1245,6 @@ test(
 
 test(
   'POST /api/contributions/prepare builds a Soroban deposit for a contract-mode, same-asset campaign',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const sender = Keypair.random();
     let depositArgs = null;
@@ -1322,7 +1300,6 @@ test(
 
 test(
   'POST /api/contributions/prepare rejects a cross-asset contribution to a contract-mode campaign',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const sender = Keypair.random();
     const app = buildApp({
@@ -1364,7 +1341,6 @@ test(
 
 test(
   'POST /api/contributions/submit-signed records the contribution synchronously for a contract-mode deposit',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const sender = Keypair.random();
     const recordCalls = [];
@@ -1461,7 +1437,6 @@ test(
 
 test(
   'GET /api/contributions/finalization/:txHash returns finalized when indexed',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const app = buildApp({
       queryImpl: async text => {
@@ -1772,7 +1747,6 @@ test('POST /api/contributions rejects an expired cross-asset preview token witho
 
 test(
   'POST /api/contributions validates min_contribution limit',
-  { skip: 'Stubbed route impl not matching real route - see #786' },
   async () => {
     const app = buildApp({
       queryImpl: async text => {
@@ -1812,7 +1786,6 @@ test(
 
 test(
   'POST /api/contributions validates max_contribution limit',
-  { skip: 'Stubbed route impl not matching real route - see #786' },
   async () => {
     const app = buildApp({
       queryImpl: async text => {
@@ -1852,7 +1825,6 @@ test(
 
 test(
   'POST /api/contributions validates cumulative max_per_user cap',
-  { skip: 'Stubbed route impl not matching real route - see #786' },
   async () => {
     const app = buildApp({
       queryImpl: async text => {
@@ -1901,7 +1873,6 @@ test(
 
 test(
   'POST /api/contributions uses an advisory lock around the per-user cap check',
-  { skip: 'Stubbed route impl not matching real route - see #786' },
   async () => {
     const lockQueries = [];
     const app = buildApp({
@@ -2013,10 +1984,8 @@ const FAILED_CONTRIBUTION = {
   contract_refund_tx_hash: null,
 };
 
-// TODO(#786): Refund route not implemented
 test(
   'POST /api/contributions/:id/refund returns 400 for a funded campaign',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const { app } = buildRefundApp({
       contributionRow: { ...FAILED_CONTRIBUTION, campaign_status: 'funded' },
@@ -2036,7 +2005,6 @@ test(
 
 test(
   'POST /api/contributions/:id/refund returns 400 for an active campaign',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const { app } = buildRefundApp({
       contributionRow: { ...FAILED_CONTRIBUTION, campaign_status: 'active' },
@@ -2053,7 +2021,6 @@ test(
 
 test(
   'POST /api/contributions/:id/refund rejects a duplicate refund with 409',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const { app } = buildRefundApp({
       contributionRow: {
@@ -2076,7 +2043,6 @@ test(
 
 test(
   'POST /api/contributions/:id/refund processes an eligible failed-campaign refund',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     const { app, updates } = buildRefundApp({ contributionRow: FAILED_CONTRIBUTION });
 
@@ -2097,10 +2063,8 @@ test(
 // bound on limit; both are now delegated to the shared parsePagination()
 // utility (the same one campaigns.js/admin.js/withdrawals.js/disputes.js use).
 
-// TODO(#786): GET /api/contributions/campaign/:campaignId route not implemented
 test(
   'GET /api/contributions/campaign/:campaignId uses default limit/offset when none given',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     let receivedParams;
     const app = buildApp({
@@ -2120,7 +2084,6 @@ test(
 
 test(
   'GET /api/contributions/campaign/:campaignId clamps ?limit= to the 100 upper bound',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     let receivedParams;
     const app = buildApp({
@@ -2140,7 +2103,6 @@ test(
 
 test(
   'GET /api/contributions/campaign/:campaignId parses ?offset= with radix 10 and floors at 0',
-  { skip: 'Route not implemented - see #786' },
   async () => {
     let receivedParams;
     const app = buildApp({
