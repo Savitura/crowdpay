@@ -367,7 +367,7 @@ router.get(
   '/recommended',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const limit = Math.min(Number(req.query.limit || 6), 12);
+    const { limit } = parsePagination(req.query, { limit: 6, max: 12 });
     const rows = await getRecommendedCampaigns(req.user.userId, { limit });
     res.json(rows);
   })
@@ -421,8 +421,7 @@ router.get(
      */
     const { search, status, asset, category, min_progress, sort = 'newest' } = req.query;
     const { min_funding, max_funding, deadline_within, creator_verified, country } = req.query;
-    const limit = Math.min(Number(req.query.limit || 20), 100);
-    const offset = Math.max(Number(req.query.offset || 0), 0);
+    const { limit, offset } = parsePagination(req.query, { limit: 20, max: 100 });
     const filters = [];
     const params = [];
 
@@ -896,7 +895,7 @@ router.post(
 router.get(
   '/trending',
   asyncHandler(async (req, res) => {
-    const limit = Math.min(Number(req.query.limit || 20), 20);
+    const { limit } = parsePagination(req.query, { limit: 20, max: 20 });
     const campaigns = await getTrendingCampaigns({ limit });
     res.json({ campaigns });
   })
@@ -2716,8 +2715,7 @@ router.post(
 router.get(
   '/:id/updates',
   asyncHandler(async (req, res) => {
-    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
-    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const { limit, offset } = parsePagination(req.query, { limit: 10, max: 50 });
     const { rows } = await db.query(
       `SELECT cu.id, cu.campaign_id, cu.author_id, cu.title, cu.body, cu.created_at, u.name AS author_name
      FROM campaign_updates cu
@@ -3576,7 +3574,9 @@ router.post(
 
 function mapDraftError(err, res) {
   if (err.code === 'DRAFT_VERSION_CONFLICT') {
-    return res.status(409).json({ error: err.message, code: err.code, current_version: err.currentVersion });
+    return res
+      .status(409)
+      .json({ error: err.message, code: err.code, current_version: err.currentVersion });
   }
   if (err.statusCode === 404) {
     return res.status(404).json({ error: err.message });
