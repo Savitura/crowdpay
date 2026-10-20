@@ -21,7 +21,7 @@ CREATE TABLE users (
   kyc_status              kyc_status NOT NULL DEFAULT 'unverified',
   kyc_provider_reference  TEXT,
   kyc_completed_at        TIMESTAMPTZ,
-  is_admin                BOOLEAN DEFAULT FALSE,
+  is_admin                BOOLEAN NOT NULL DEFAULT FALSE,
   totp_secret             TEXT,
   totp_enabled            BOOLEAN DEFAULT FALSE,
   backup_codes            TEXT[],
@@ -45,6 +45,9 @@ CREATE TABLE campaigns (
                         'technology', 'community', 'arts', 'education',
                         'environment', 'health', 'business', 'open_source', 'other'
                       )),
+  refund_initiated_at TIMESTAMPTZ,
+  refund_tx_hash      TEXT,
+  refund_xdr          TEXT,
   min_contribution    NUMERIC(20, 7) CHECK (min_contribution > 0),
   max_contribution    NUMERIC(20, 7) CHECK (max_contribution > 0),
   max_per_user        NUMERIC(20, 7) CHECK (max_per_user > 0),
@@ -115,7 +118,7 @@ CREATE TABLE contributions (
   tx_hash             TEXT UNIQUE NOT NULL,  -- deduplicate by Stellar transaction hash
   display_name        VARCHAR(50),
   refunded            BOOLEAN NOT NULL DEFAULT FALSE,
-  refund_status       TEXT CHECK (refund_status IN ('partial', 'full')),
+  refund_status       TEXT DEFAULT 'none' CHECK (refund_status IN ('none', 'partial', 'full')),
   platform_fee_amount NUMERIC(20, 7),
   ip_address          TEXT,
   device_fingerprint  TEXT,   -- salted HMAC of client device fingerprint (never raw)

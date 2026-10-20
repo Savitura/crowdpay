@@ -81,7 +81,7 @@ crowdpay/
 │   │   ├── middleware/      # auth, validation, error handler, request ID
 │   │   └── index.js         # Express app entry point
 │   └── db/
-│       ├── schema.sql       # canonical base schema (matches migrations, see Feature Flags)
+│       ├── schema.sql       # canonical base schema (same table/column set as migrations; physical column order is not significant)
 │       ├── migrate.js       # migration runner (--bootstrap-schema for the fresh flow)
 │       └── migrations/      # date-prefixed SQL files
 ├── frontend/

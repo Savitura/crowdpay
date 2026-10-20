@@ -26,6 +26,42 @@ All timestamps (like campaign deadlines) **must be in ISO 8601 format with a UTC
 
 Authenticated. Returns the current profile, including `email_verified` (boolean), `kyc_status` (`unverified`, `pending`, `verified`, `rejected`) and `kyc_completed_at`.
 
+### Account data export
+
+Authenticated users can request a portable JSON archive of their own records.
+
+- `POST /api/users/me/exports` — queue an export. Returns `202` with the export
+  id/status. A user may have only one `pending` export at a time (`409`).
+- `GET /api/users/me/exports` — list the caller's exports and their status.
+- `GET /api/users/me/exports/:id/download` — return a short-lived signed
+  download URL for a completed export. The export id is always scoped to the
+  authenticated user, so another user's export returns `404`. Completed
+  archives expire after 24 hours (`410` after expiry) and download URLs expire
+  after one hour.
+
+The archive includes the scopes below. It never includes password hashes,
+wallet secret ciphertext, API key hashes, device fingerprints, session IP
+addresses/user agents, or any row belonging to another user.
+
+| Scope | Contents |
+|---|---|
+| `profile` | Account id, email, name, role, wallet public key, created timestamp |
+| `creator_campaigns` | Campaigns created by the caller |
+| `creator_milestones` | Milestones belonging to the caller's campaigns |
+| `campaign_updates` | Updates authored by the caller |
+| `contributions` | Contributions sent from the caller's wallet |
+| `notification_preferences` | Account-level notification settings |
+| `category_follows` | Followed campaign categories |
+| `notifications` | In-app notifications addressed to the caller |
+| `referrals` | Referral links created by the caller |
+| `disputes` | Disputes raised by the caller |
+| `subscriptions` | Recurring contribution records |
+| `credentials` | API-key metadata (never the key hash or secret) |
+| `sessions` | Session id/timestamps and coarse region only |
+
+Export requests and downloads are written to the append-only `audit_logs`
+table as `user_data_export_requested` and `user_data_export_downloaded`.
+
 ### `GET /api/users/verify-email`
 
 Public. Validates a verification token and marks the associated user's email as verified.
