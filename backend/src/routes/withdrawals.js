@@ -39,6 +39,20 @@ const { parsePagination } = require('../utils/pagination');
 const asyncHandler = require('../utils/asyncHandler');
 const withTransaction = require('../utils/withTransaction');
 const { toStroops, fromStroops } = require('../utils/stroops');
+const { logAuditEvent } = require('../services/auditService');
+
+async function recordPayoutAudit(payload) {
+  try {
+    return await logAuditEvent(payload);
+  } catch (err) {
+    logger.error('Payout audit event failed', {
+      action: payload.action,
+      resource_id: payload.resourceId,
+      error: err.message,
+    });
+    return null;
+  }
+}
 
 const ALLOWED_CAMPAIGN_STATUS_FOR_REQUEST = ['active', 'funded'];
 
@@ -843,6 +857,29 @@ const platformApproveHandler = asyncHandler(async (req, res) => {
     finalizeClient.release();
   }
 
+  if (updatedWithdrawalRow) {
+    await recordPayoutAudit({
+      actorId: req.user.userId,
+      action: 'payout.approved',
+      resourceType: 'withdrawal',
+      resourceId: req.params.id,
+      before: { status: 'pending', platform_signed: false },
+      after: {
+        status: updatedWithdrawalRow.status,
+        platform_signed: updatedWithdrawalRow.platform_signed,
+        tx_hash: txHash,
+      },
+      metadata: {
+        campaign_id: updatedWithdrawalRow.campaign_id,
+        amount: updatedWithdrawalRow.amount,
+        asset_type: updatedWithdrawalRow.asset_type,
+        destination_key: updatedWithdrawalRow.destination_key,
+        is_refund: Boolean(updatedWithdrawalRow.is_refund),
+      },
+      req,
+    });
+  }
+
   return res.status(200).json(updatedWithdrawalRow || { status: 'submitted', tx_hash: txHash });
 });
 
@@ -897,6 +934,21 @@ router.post(
           action: 'creator_cancelled',
           note: reason,
           metadata: {},
+        });
+        await logAuditEvent({
+          actorId: req.user.userId,
+          action: 'payout.cancelled',
+          resourceType: 'withdrawal',
+          resourceId: req.params.id,
+          before: { status: requestRow.status },
+          after: { status: updated[0].status, denial_reason: updated[0].denial_reason || null },
+          metadata: {
+            campaign_id: requestRow.campaign_id,
+            amount: requestRow.amount,
+            reason,
+          },
+          client,
+          req,
         });
         return updated[0];
       }, db);
@@ -989,6 +1041,24 @@ router.post(
           action: 'platform_rejected',
           note: reason,
           metadata: {},
+        });
+        await logAuditEvent({
+          actorId: req.user.userId,
+          action: 'payout.rejected',
+          resourceType: 'withdrawal',
+          resourceId: req.params.id,
+          before: { status: requestRow.status },
+          after: { status: updated[0].status, denial_reason: updated[0].denial_reason || null },
+          metadata: {
+            campaign_id: requestRow.campaign_id,
+            amount: requestRow.amount,
+            asset_type: requestRow.asset_type,
+            destination_key: requestRow.destination_key,
+            is_refund: Boolean(requestRow.is_refund),
+            reason,
+          },
+          client,
+          req,
         });
         return updated[0];
       }, db);
