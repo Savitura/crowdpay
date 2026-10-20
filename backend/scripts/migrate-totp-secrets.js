@@ -79,5 +79,5 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    try { await db.end(); } catch (_) {}
+    try { await db.end(); } catch (_) { /* db may already be closed */ }
   });

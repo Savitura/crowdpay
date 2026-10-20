@@ -90,9 +90,35 @@ async function consumeBackupCode(userId, code) {
     }
   }
 
-async function removeBackupCode(userId, codes, index) {
-  codes.splice(index, 1);
-  await db.query('UPDATE users SET backup_codes = $1 WHERE id = $2', [codes, userId]);
+  return { consumed: false };
+}
+
+/**
+ * Replace all backup codes for a user.
+ * Runs a DELETE then bulk INSERT inside a single transaction so there is never
+ * a window where the user has zero codes mid-operation.
+ *
+ * @param {string}   userId
+ * @param {string[]} hashedCodes - bcrypt hashes of the new codes
+ */
+async function storeBackupCodes(userId, hashedCodes) {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM user_backup_codes WHERE user_id = $1', [userId]);
+    for (const hash of hashedCodes) {
+      await client.query(
+        'INSERT INTO user_backup_codes (user_id, code_hash) VALUES ($1, $2)',
+        [userId, hash]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function logAuditEvent(userId, eventType, req, metadata = {}) {
