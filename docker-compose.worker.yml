@@ -1,0 +1,34 @@
+# Runs the background workers in their own container next to the web server:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.worker.yml up
+#
+# The backend service keeps serving HTTP on port 3001 without the workers, and
+# the worker service runs them with hot reload once the backend is up, so the
+# migrations have already run. See "Web server and background workers" in the
+# README.
+services:
+  backend:
+    environment:
+      WORKER_ENABLED: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health/live > /dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  worker:
+    build:
+      context: ./backend
+      target: builder
+    depends_on:
+      backend:
+        condition: service_healthy
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgres://crowdpay:crowdpay@db:5432/crowdpay
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: npm run dev:worker

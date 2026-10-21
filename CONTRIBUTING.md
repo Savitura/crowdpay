@@ -21,17 +21,22 @@ docker compose up
 | Backend | http://localhost:3001 |
 | API docs | http://localhost:3001/api/docs |
 
+The backend container also runs the background workers. To give them their own container, run `docker compose -f docker-compose.yml -f docker-compose.worker.yml up` instead.
+
 ### Manual
 
 ```bash
 # Backend
 cd backend && npm install && cp .env.example .env
-npm run migrate:fresh
-npm run dev          # http://localhost:3001
+# Fill in .env, then apply the migrations (the runner reads .env itself)
+npm run migrate
+npm run dev          # http://localhost:3001, also runs the background workers
 
 # Frontend (new terminal)
 cd frontend && npm install && npm run dev   # http://localhost:5173
 ```
+
+To run the web server and the background workers as two processes, see [Web server and background workers](README.md#web-server-and-background-workers) in the README.
 
 Fund your testnet platform account:
 ```bash

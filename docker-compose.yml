@@ -23,7 +23,11 @@ services:
       - "6379:6379"
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      # The final stage of backend/Dockerfile installs production dependencies
+      # only, and the dev command below needs nodemon.
+      target: builder
     depends_on:
       db:
         condition: service_healthy
