@@ -2677,6 +2677,15 @@ router.post(
   (req, res, next) => {
     upload.single('cover_image')(req, res, err => {
       if (err) {
+        if (err.code === 'LIMIT_FILE_SIZE' || err.status === 413) {
+          return res.status(413).json({
+            error: {
+              code: 'LIMIT_FILE_SIZE',
+              message: 'File exceeds maximum allowed size of 5MB',
+              fields: { cover_image: 'File exceeds maximum allowed size of 5MB' },
+            },
+          });
+        }
         return res.status(422).json({
           error: {
             code: 'VALIDATION_ERROR',
@@ -2705,8 +2714,28 @@ router.post(
         'UPDATE campaigns SET cover_image_url = $1 WHERE id = $2 RETURNING *',
         [coverImageUrl, req.params.id]
       );
-      res.json(updatedRows[0]);
+      cache.invalidate(`campaigns:id:${req.params.id}`);
+      cache.invalidatePrefix('campaigns:list:');
+      res.json(stripInternalCampaignFields(updatedRows[0]));
     } catch (err) {
+      if (err.status === 413 || err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({
+          error: {
+            code: 'LIMIT_FILE_SIZE',
+            message: 'File exceeds maximum allowed size of 5MB',
+            fields: { cover_image: 'File exceeds maximum allowed size of 5MB' },
+          },
+        });
+      }
+      if (err.status === 415) {
+        return res.status(415).json({
+          error: {
+            code: 'UNSUPPORTED_MEDIA_TYPE',
+            message: err.message || 'Unsupported Media Type',
+            fields: { cover_image: err.message || 'Unsupported Media Type' },
+          },
+        });
+      }
       return res.status(500).json({ error: 'Could not upload campaign cover image' });
     }
   }
