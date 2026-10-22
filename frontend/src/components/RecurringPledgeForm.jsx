@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { getNetwork, signTransaction } from '@stellar/freighter-api';
+import { validateMonetaryInput, parseDecimal } from '../utils/decimal';
 
 const PERIOD_OPTIONS = [
   { months: 1, label: 'Monthly' },
@@ -179,8 +180,12 @@ export default function RecurringPledgeForm({ campaignId, asset, walletType, onS
   const [created, setCreated] = useState(null);
   const [signing, setSigning] = useState(false);
 
-  const amount = parseFloat(amountPerPeriod);
-  const amountValid = Number.isFinite(amount) && amount > 0;
+  const amountCheck = validateMonetaryInput(amountPerPeriod, {
+    fieldName: 'Amount per period',
+    allowZero: false,
+  });
+  const amountValid = amountCheck.isValid;
+  const amount = amountValid ? amountCheck.numericValue : 0;
   const totalCommitment = amountValid ? Number((amount * totalPeriods).toFixed(7)) : 0;
 
   const isFreighter = walletType === 'freighter';
@@ -212,40 +217,42 @@ export default function RecurringPledgeForm({ campaignId, asset, walletType, onS
   }
 
   async function confirmPledgeFreighter() {
-    const prepared = await api.prepareSubscription(campaignId, {
-      amountPerPeriod: amount,
-      asset,
-      periodMonths,
-      totalPeriods,
-    });
+    let subscription;
+    try {
+      const prepared = await api.prepareSubscription(campaignId, {
+        amountPerPeriod: amount,
+        asset,
+        periodMonths,
+        totalPeriods,
+      });
 
-    const network = await getNetwork();
-    if (network?.error) throw new Error('Could not read Freighter network');
+      const network = await getNetwork();
+      if (network?.error) throw new Error('Could not read Freighter network');
 
-    // Check if the transaction XDR is expired
-    if (prepared.unsignedXdr.timeBounds?.maxTime) {
-      const maxTime = Number(prepared.unsignedXdr.timeBounds.maxTime);
-      if (Math.floor(Date.now() / 1000) > maxTime) {
-        throw new Error('This transaction has expired. Please request a new quote.');
+      // Check if the transaction XDR is expired
+      if (prepared.unsignedXdr.timeBounds?.maxTime) {
+        const maxTime = Number(prepared.unsignedXdr.timeBounds.maxTime);
+        if (Math.floor(Date.now() / 1000) > maxTime) {
+          throw new Error('This transaction has expired. Please request a new quote.');
+        }
       }
-    }
 
-    const signed = await signTransaction(prepared.unsignedXdr, {
-      networkPassphrase: network?.networkPassphrase,
-      address: prepared.walletPublicKey,
-    });
-    if (signed?.error) throw new Error(signed.error?.message || 'Freighter signing failed');
-    if (!signed?.signedTxXdr) throw new Error('Freighter did not return a signed transaction');
+      const signed = await signTransaction(prepared.unsignedXdr, {
+        networkPassphrase: network?.networkPassphrase,
+        address: prepared.walletPublicKey,
+      });
+      if (signed?.error) throw new Error(signed.error?.message || 'Freighter signing failed');
+      if (!signed?.signedTxXdr) throw new Error('Freighter did not return a signed transaction');
 
-    const subscription = await api.submitSubscription(campaignId, {
-      unsignedXdr: prepared.unsignedXdr,
-      signedXdr: signed.signedTxXdr,
-      amountPerPeriod: amount,
-      asset,
-      periodMonths,
-      totalPeriods,
-    });
-    setCreated(subscription);
+      subscription = await api.submitSubscription(campaignId, {
+        unsignedXdr: prepared.unsignedXdr,
+        signedXdr: signed.signedTxXdr,
+        amountPerPeriod: amount,
+        asset,
+        periodMonths,
+        totalPeriods,
+      });
+      setCreated(subscription);
     } catch (err) {
       if (err?.message && err.message.includes('expired')) {
         setError('This transaction has expired. Please request a new quote.');
@@ -258,7 +265,9 @@ export default function RecurringPledgeForm({ campaignId, asset, walletType, onS
     setShowConfirm(false);
     setOpen(false);
     setAmountPerPeriod('');
-    onSubscribed?.(subscription);
+    if (subscription) {
+      onSubscribed?.(subscription);
+    }
   }
 
   return (

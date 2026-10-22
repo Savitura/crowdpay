@@ -1,5 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../services/api';
+import {
+  validateMonetaryInput,
+  parseDecimal,
+  isValidDecimal,
+  compareDecimals,
+} from '../utils/decimal';
 
 function Amount({ value, asset }) {
   if (value === undefined || value === null) return <span>—</span>;
@@ -98,10 +104,21 @@ export default function TreasuryPanel({ campaignId, assetType = 'USDC', isAudito
 
   async function submitWithdrawal(event) {
     event.preventDefault();
+    const amountCheck = validateMonetaryInput(amount, {
+      fieldName: 'Amount',
+      allowZero: false,
+    });
+    if (!amountCheck.isValid) {
+      setOutcome({ kind: 'error', message: amountCheck.error });
+      return;
+    }
     setSubmitting(true);
     setOutcome(null);
     try {
-      const result = await api.requestTreasuryWithdrawal(campaignId, { amount, destination });
+      const result = await api.requestTreasuryWithdrawal(campaignId, {
+        amount: parseDecimal(amount),
+        destination,
+      });
       setOutcome(
         result.type === 'pending_auditor'
           ? { kind: 'pending', message: 'Sent to the auditor for approval.' }
@@ -179,11 +196,15 @@ export default function TreasuryPanel({ campaignId, assetType = 'USDC', isAudito
           value={destination}
           onChange={(e) => setDestination(e.target.value)}
         />
-        {amount && Number(amount) > Number(status.policy.requireAuditorForAbove) && (
-          <p style={{ color: 'var(--color-text-muted)' }}>
-            This amount is above the auditor threshold, so it will need auditor approval.
-          </p>
-        )}
+        {amount &&
+          isValidDecimal(amount, { allowZero: false }) &&
+          status?.policy?.requireAuditorForAbove !== undefined &&
+          isValidDecimal(status.policy.requireAuditorForAbove, { allowZero: true }) &&
+          compareDecimals(amount, status.policy.requireAuditorForAbove) > 0 && (
+            <p style={{ color: 'var(--color-text-muted)' }}>
+              This amount is above the auditor threshold, so it will need auditor approval.
+            </p>
+          )}
         <button type="submit" disabled={submitting || !amount || !destination}>
           {submitting ? 'Requesting…' : 'Request withdrawal'}
         </button>

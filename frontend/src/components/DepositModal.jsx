@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../services/api';
+import { validateMonetaryInput, parseDecimal } from '../utils/decimal';
 
 const POLL_INTERVAL_MS = 4000;
 // Consecutive-failure backoff. A 5th failure gives up instead of polling forever.
@@ -142,8 +143,17 @@ export default function DepositModal({ onClose, onSuccess }) {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!amount || Number(amount) <= 0) {
-      setError('Enter an amount greater than zero.');
+    const amountCheck = validateMonetaryInput(amount, {
+      fieldName: 'Deposit amount',
+      allowZero: false,
+    });
+    if (!amountCheck.isValid) {
+      setError(
+        amountCheck.error === 'Deposit amount is required.' ||
+          amountCheck.error === 'Deposit amount must be greater than zero.'
+          ? 'Enter an amount greater than zero.'
+          : amountCheck.error
+      );
       return;
     }
     if (!selectedAnchorId) {
@@ -160,7 +170,7 @@ export default function DepositModal({ onClose, onSuccess }) {
       popupRef.current = popup;
 
       const result = await api.startWalletDeposit({
-        amount: String(amount),
+        amount: parseDecimal(amount),
         anchor_id: selectedAnchorId,
       });
 
