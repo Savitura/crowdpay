@@ -12,6 +12,19 @@ All timestamps (like campaign deadlines) **must be in ISO 8601 format with a UTC
 ### Public API lifecycle
 `GET /api/v1/changelog` returns the v1 changelog without authentication. To announce a sunset, configure both `PUBLIC_API_DEPRECATION_DATE` and `PUBLIC_API_SUNSET_DATE` as ISO 8601 timestamps, with the sunset later than the deprecation date. The v1 API will then include the RFC 9745 `Deprecation` header, the HTTP-date `Sunset` header, and a `Link` to the changelog on every response. Leave either variable unset to avoid announcing a deprecation.
 
+## Recurring contribution architecture
+
+The canonical subsystem for recurring contributions uses Stellar Claimable Balance schedules (`/api/campaigns/:id/subscriptions`). Complete architectural specifications, worker retry semantics, data model diagrams, and migration plans for superseded paths are documented in [`docs/recurring-contributions-architecture.md`](../docs/recurring-contributions-architecture.md).
+
+### Subscriptions endpoints
+- `POST /api/campaigns/:id/subscriptions` - Enable a recurring pledge on a campaign.
+- `POST /api/campaigns/:id/subscriptions/prepare` - Prepare unsigned XDR for Freighter signing.
+- `POST /api/campaigns/:id/subscriptions/submit` - Submit signed XDR from Freighter.
+- `DELETE /api/campaigns/:id/subscriptions/:subscriptionId` - Cancel future installments (> 7 days out).
+- `GET /api/subscriptions/mine` - List authenticated contributor's subscriptions and claim status.
+
+> **Note on Deprecated Paths**: Legacy recurring contribution cron endpoints under `/api/users/me/recurring-contributions` (`recurring_contributions` table) are superseded and planned for deprecation. See the migration plan in `docs/recurring-contributions-architecture.md`.
+
 ## Contribution conversion model
 
 - Campaigns define a default settlement asset via `campaigns.asset_type` (`USDC` or `XLM`).

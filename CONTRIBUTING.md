@@ -126,6 +126,12 @@ All tests must pass before submitting a PR. CI runs the same suite on every push
 
 ---
 
+## Recurring Contributions
+
+CrowdPay uses Stellar Claimable Balance schedules as its single canonical recurring contribution subsystem (`backend/src/services/recurring.js`, `backend/src/routes/subscriptions.js`).
+- Full architectural details, worker ownership, retry behavior, and the deprecation roadmap for legacy cron-based contributions are documented in [`docs/recurring-contributions-architecture.md`](docs/recurring-contributions-architecture.md).
+- When implementing or extending contribution flows, always build on top of the Claimable Balance subscription subsystem rather than legacy recurring schedules.
+
 ## Code Style
 
 - **Backend**: follow the patterns in `src/routes/` and `src/services/`; 2-space indent; single quotes; no semicolons debate — match what's already there
