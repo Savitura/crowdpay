@@ -7,9 +7,11 @@ In development, browse the interactive API docs at `GET /api/docs`.
 ## Important Notes
 
 ### Timestamps
+
 All timestamps (like campaign deadlines) **must be in ISO 8601 format with a UTC timezone indicator (Z suffix)**, e.g., `2026-12-31T23:59:59.999Z`. The server will treat all timestamps as UTC for validation and storage.
 
 ### Public API lifecycle
+
 `GET /api/v1/changelog` returns the v1 changelog without authentication. To announce a sunset, configure both `PUBLIC_API_DEPRECATION_DATE` and `PUBLIC_API_SUNSET_DATE` as ISO 8601 timestamps, with the sunset later than the deprecation date. The v1 API will then include the RFC 9745 `Deprecation` header, the HTTP-date `Sunset` header, and a `Link` to the changelog on every response. Leave either variable unset to avoid announcing a deprecation.
 
 ## Recurring contribution architecture
@@ -17,6 +19,7 @@ All timestamps (like campaign deadlines) **must be in ISO 8601 format with a UTC
 The canonical subsystem for recurring contributions uses Stellar Claimable Balance schedules (`/api/campaigns/:id/subscriptions`). Complete architectural specifications, worker retry semantics, data model diagrams, and migration plans for superseded paths are documented in [`docs/recurring-contributions-architecture.md`](../docs/recurring-contributions-architecture.md).
 
 ### Subscriptions endpoints
+
 - `POST /api/campaigns/:id/subscriptions` - Enable a recurring pledge on a campaign.
 - `POST /api/campaigns/:id/subscriptions/prepare` - Prepare unsigned XDR for Freighter signing.
 - `POST /api/campaigns/:id/subscriptions/submit` - Submit signed XDR from Freighter.
@@ -56,21 +59,21 @@ The archive includes the scopes below. It never includes password hashes,
 wallet secret ciphertext, API key hashes, device fingerprints, session IP
 addresses/user agents, or any row belonging to another user.
 
-| Scope | Contents |
-|---|---|
-| `profile` | Account id, email, name, role, wallet public key, created timestamp |
-| `creator_campaigns` | Campaigns created by the caller |
-| `creator_milestones` | Milestones belonging to the caller's campaigns |
-| `campaign_updates` | Updates authored by the caller |
-| `contributions` | Contributions sent from the caller's wallet |
-| `notification_preferences` | Account-level notification settings |
-| `category_follows` | Followed campaign categories |
-| `notifications` | In-app notifications addressed to the caller |
-| `referrals` | Referral links created by the caller |
-| `disputes` | Disputes raised by the caller |
-| `subscriptions` | Recurring contribution records |
-| `credentials` | API-key metadata (never the key hash or secret) |
-| `sessions` | Session id/timestamps and coarse region only |
+| Scope                      | Contents                                                            |
+| -------------------------- | ------------------------------------------------------------------- |
+| `profile`                  | Account id, email, name, role, wallet public key, created timestamp |
+| `creator_campaigns`        | Campaigns created by the caller                                     |
+| `creator_milestones`       | Milestones belonging to the caller's campaigns                      |
+| `campaign_updates`         | Updates authored by the caller                                      |
+| `contributions`            | Contributions sent from the caller's wallet                         |
+| `notification_preferences` | Account-level notification settings                                 |
+| `category_follows`         | Followed campaign categories                                        |
+| `notifications`            | In-app notifications addressed to the caller                        |
+| `referrals`                | Referral links created by the caller                                |
+| `disputes`                 | Disputes raised by the caller                                       |
+| `subscriptions`            | Recurring contribution records                                      |
+| `credentials`              | API-key metadata (never the key hash or secret)                     |
+| `sessions`                 | Session id/timestamps and coarse region only                        |
 
 Export requests and downloads are written to the append-only `audit_logs`
 table as `user_data_export_requested` and `user_data_export_downloaded`.
@@ -80,6 +83,7 @@ table as `user_data_export_requested` and `user_data_export_downloaded`.
 Public. Validates a verification token and marks the associated user's email as verified.
 
 Query params:
+
 - `token` (required): The UUID token sent via email.
 
 Returns `200` on success or `400/410` if the token is invalid or expired (> 24 hours).
@@ -119,6 +123,7 @@ Gift notifications are written to a database-backed outbox in the same
 transaction that records the confirmed contribution. Email delivery retries
 with exponential backoff; registered recipients also receive an in-app
 notification. Gift data is not added to the public contribution response.
+
 - `dest_asset` (required): `XLM` or `USDC`
 - `dest_amount` (required): amount the campaign should receive
 
@@ -300,6 +305,88 @@ Success response (`200`):
   }
 ]
 ```
+
+### `GET /api/contributions/:id/refund-status`
+
+Fetch comprehensive contribution refund status tracking details, including stage, timeline events, and estimated completion times.
+
+Accessible by:
+
+- The contributor who made the contribution
+- The campaign creator or managers
+- Platform administrators
+
+Success response (`200`):
+
+```json
+{
+  "contribution_id": "c-1",
+  "campaign_id": "camp-1",
+  "campaign_title": "Clean Water Initiative",
+  "contributor_wallet": "GBBD...",
+  "amount": 100,
+  "asset": "native",
+  "refunded_amount": 0,
+  "remaining_refundable_amount": 100,
+  "refund_status": "pending",
+  "stage": "review",
+  "stage_label": "Under Review",
+  "stage_description": "The refund request has been submitted and is awaiting creator or administrator review.",
+  "estimated_completion_at": "2026-10-25T12:00:00.000Z",
+  "estimated_duration_seconds": 259200,
+  "estimated_time_text": "2–3 business days",
+  "tx_hash": null,
+  "stellar_tx_url": null,
+  "rejection_reason": null,
+  "failure_reason": null,
+  "events": [
+    {
+      "type": "contribution_confirmed",
+      "title": "Contribution confirmed",
+      "description": "Contributed 100 native",
+      "timestamp": "2026-09-01T12:00:00.000Z",
+      "completed": true
+    },
+    {
+      "type": "campaign_failed",
+      "title": "Campaign ended below goal",
+      "description": "The campaign did not reach its funding target by the deadline.",
+      "timestamp": "2026-09-10T00:00:00.000Z",
+      "completed": true
+    },
+    {
+      "type": "refund_requested",
+      "title": "Refund requested",
+      "description": "Reason: Campaign did not reach goal",
+      "timestamp": "2026-09-12T00:00:00.000Z",
+      "completed": true
+    }
+  ],
+  "created_at": "2026-09-01T12:00:00.000Z",
+  "updated_at": "2026-09-12T00:00:00.000Z"
+}
+```
+
+### `POST /api/contributions/:id/refund`
+
+Request or trigger an on-chain refund for an eligible contribution belonging to a failed campaign.
+
+Success response (`200`):
+
+```json
+{
+  "success": true,
+  "tx_hash": "b7263161...",
+  "refund_status": "completed"
+}
+```
+
+Error responses:
+
+- `400`: If campaign is not failed (`"Refunds are only available for failed campaigns"`).
+- `404`: If contribution does not exist.
+- `409`: If contribution has already been refunded.
+- `502`: If on-chain refund invocation fails.
 
 ### `GET /api/withdrawals/capabilities`
 
@@ -511,11 +598,17 @@ Public, permissive CORS, `Cache-Control: public, max-age=30`. This is the single
   "progress_percentage": 50,
   "contribution_url": "https://…/campaigns/…",
   "milestones": [
-    { "id": "m-1", "title": "Design", "release_percentage": 50, "sort_order": 0, "status": "released" }
+    {
+      "id": "m-1",
+      "title": "Design",
+      "release_percentage": 50,
+      "sort_order": 0,
+      "status": "released"
+    }
   ],
   "milestone_summary": { "total": 2, "released": 1, "approved": 0, "submitted": 0, "pending": 1 },
   "recent_backers": [{ "name": "Alice", "amount": 250 }],
-  "impact": { }
+  "impact": {}
 }
 ```
 
@@ -565,7 +658,6 @@ The backend also logs a **warning** every 5 minutes if any wallet is in that sta
 - withdrawal creator/platform approval flow
 - withdrawal denial paths (missing creator approval, insufficient signatures)
 
-
 ## Creator payout forecast and reserve breakdown
 
 Both endpoints require authentication and are scoped to the campaign's creator
@@ -604,10 +696,10 @@ reserve, available, scheduled_payouts[], generated_at.
 
 reserve is capped at balance and equals:
 
-- platform_fees        - unsettled platform fee on non-refunded contributions
-- pending_withdrawals  - withdrawals in any pending state
-- scheduled_payouts    - one run per active recurring schedule
-                         (fixed amount, or percentage * balance when amount is null)
+- platform_fees - unsettled platform fee on non-refunded contributions
+- pending_withdrawals - withdrawals in any pending state
+- scheduled_payouts - one run per active recurring schedule
+  (fixed amount, or percentage * balance when amount is null)
 
 unallocated_reserve = reserve - (fees + pending + scheduled), always >= 0; it is
 only non-zero when the balance cap kicked in.

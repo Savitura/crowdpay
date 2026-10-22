@@ -510,6 +510,14 @@ export const api = {
     const res = await apiClient.get(`/contributions/finalization/${txHash}`);
     return res.data;
   },
+  async getContributionRefundStatus(contributionId) {
+    const res = await apiClient.get(`/contributions/${contributionId}/refund-status`);
+    return res.data;
+  },
+  async requestContributionRefund(contributionId) {
+    const res = await apiClient.post(`/contributions/${contributionId}/refund`);
+    return res.data;
+  },
 
   // --- Subscriptions (Freighter support #821) ---
   async prepareSubscription(campaignId, { amountPerPeriod, asset, periodMonths, totalPeriods }) {

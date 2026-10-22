@@ -170,6 +170,18 @@ function BackedCampaignCard({ campaign, onRefundClaimed }) {
             <div style={{ fontSize: '0.82rem', color: 'var(--color-warning-text)' }}>
               Pending: {pendingRefunds.reduce((sum, c) => sum + c.amount, 0).toLocaleString()}{' '}
               {campaign.asset_type}
+              {pendingRefunds[0]?.estimated_time_text && (
+                <span
+                  style={{
+                    marginLeft: '0.4rem',
+                    fontSize: '0.78rem',
+                    color: 'var(--color-text-secondary)',
+                  }}
+                  role="status"
+                >
+                  · Est. completion: {pendingRefunds[0].estimated_time_text}
+                </span>
+              )}
             </div>
           )}
           {pendingRefunds.length > 0 && campaign.escrow_contract_id && (
@@ -234,6 +246,42 @@ function BackedCampaignCard({ campaign, onRefundClaimed }) {
                     Tx
                   </a>
                 </>
+              )}
+              {contribution.refund_status && (
+                <span
+                  style={{
+                    display: 'inline-block',
+                    marginLeft: '0.4rem',
+                    padding: '0.1rem 0.4rem',
+                    borderRadius: '4px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    background:
+                      contribution.refund_status === 'processed'
+                        ? 'var(--color-success-bg, #ecfdf5)'
+                        : 'var(--color-warning-bg, #fffbeb)',
+                    color:
+                      contribution.refund_status === 'processed'
+                        ? 'var(--color-success-text, #065f46)'
+                        : 'var(--color-warning-text, #92400e)',
+                  }}
+                  role="status"
+                  aria-label={`Refund status: ${contribution.refund_status}`}
+                >
+                  {contribution.refund_status === 'processed' ? 'Refunded' : 'Refund pending'}
+                </span>
+              )}
+              {contribution.estimated_time_text && contribution.refund_status !== 'processed' && (
+                <span
+                  style={{
+                    display: 'inline-block',
+                    marginLeft: '0.35rem',
+                    fontSize: '0.75rem',
+                    color: 'var(--color-text-hint)',
+                  }}
+                >
+                  (Est. completion: {contribution.estimated_time_text})
+                </span>
               )}
             </li>
           ))}

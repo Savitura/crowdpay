@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const { requireAuth } = require('../middleware/auth');
 const { contributionValidation, validateRequest } = require('../middleware/validation');
@@ -26,6 +26,8 @@ const { assertContributionPolicy } = require('../services/contributionPolicy');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const asyncHandler = require('../utils/asyncHandler');
+const sorobanService = require('../services/sorobanService');
+const contributionRefundStatusService = require('../services/contributionRefundStatusService');
 
 function mapContributionGateError(err, res) {
   if (err.statusCode === 403 && err.code === 'CONTRIBUTOR_REQUIREMENTS_NOT_MET') {
@@ -392,6 +394,91 @@ router.get(
     }
 
     return res.json({ diagnosis: report });
+  })
+);
+
+router.get(
+  '/:id/refund-status',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const status = await contributionRefundStatusService.getContributionRefundStatus(
+      id,
+      req.user.userId,
+      { isAdmin: req.user.role === 'admin' }
+    );
+    return res.json(status);
+  })
+);
+
+router.post(
+  '/:id/refund',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { rows: contribRows } = await db.query(
+      `SELECT c.id, c.campaign_id, c.sender_public_key, c.contract_refunded_at,
+              c.contract_refund_tx_hash, c.refunded,
+              COALESCE(camp.status, c.campaign_status) AS campaign_status,
+              COALESCE(camp.escrow_contract_id, c.escrow_contract_id) AS escrow_contract_id
+       FROM contributions c
+       LEFT JOIN campaigns camp ON camp.id = c.campaign_id
+       WHERE c.id = $1`,
+      [id]
+    );
+
+    const contrib = contribRows[0];
+    if (!contrib) {
+      return res.status(404).json({ error: 'Contribution not found' });
+    }
+
+    const campaignStatus = contrib.campaign_status;
+    if (campaignStatus !== 'failed') {
+      return res.status(400).json({
+        error: 'Refunds are only available for failed campaigns',
+        campaign_status: campaignStatus,
+        eligibility: {
+          eligible: false,
+          reason: `Campaign is currently ${campaignStatus}`,
+        },
+      });
+    }
+
+    if (contrib.contract_refunded_at || contrib.refunded) {
+      return res.status(409).json({
+        error: 'Contribution has already been refunded',
+        tx_hash: contrib.contract_refund_tx_hash || null,
+      });
+    }
+
+    let txHash;
+    try {
+      const result = await sorobanService.triggerRefund({
+        escrowContractId: contrib.escrow_contract_id,
+        contributorAddress: contrib.sender_public_key,
+      });
+      txHash =
+        typeof result === 'string' ? result : result?.hash || result?.txHash || 'refund-tx-hash';
+    } catch (err) {
+      logger.error('Soroban triggerRefund error', { error: err.message, contributionId: id });
+      return res.status(502).json({ error: err.message || 'On-chain refund failed' });
+    }
+
+    await db.query(
+      `UPDATE contributions
+       SET contract_refunded_at = NOW(),
+           contract_refund_tx_hash = $1,
+           refunded = TRUE,
+           refund_status = 'full'
+       WHERE id = $2`,
+      [txHash, id]
+    );
+
+    return res.status(200).json({
+      success: true,
+      tx_hash: txHash,
+      refund_status: 'completed',
+    });
   })
 );
 

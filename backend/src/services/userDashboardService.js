@@ -3,6 +3,7 @@
 const db = require('../config/database');
 const { TtlCache } = require('../utils/TtlCache');
 const { evaluateBadges } = require('./badgeService');
+const { calculateEstimatedCompletionTime } = require('./contributionRefundStatusService');
 
 // Cache per-user dashboard data for 60 seconds.
 // Key scheme: "campaigns:<userId>" and "contributions:<userId>"
@@ -246,6 +247,26 @@ async function getContributorDashboard(userId) {
       });
     }
 
+    const refundStatus = row.contract_refunded_at
+      ? 'processed'
+      : row.campaign_status === 'failed'
+        ? 'pending'
+        : null;
+    const est = calculateEstimatedCompletionTime({
+      status: row.contract_refunded_at
+        ? 'completed'
+        : row.campaign_status === 'failed'
+          ? 'eligible'
+          : 'not_requested',
+      stage: row.contract_refunded_at
+        ? 'settled'
+        : row.campaign_status === 'failed'
+          ? 'eligible'
+          : 'none',
+      createdAt: row.created_at,
+      deadline: row.deadline,
+    });
+
     const campaign = campaignsMap.get(row.campaign_id);
     campaign.contributed_amount += amount;
     campaign.contributions.push({
@@ -254,12 +275,10 @@ async function getContributorDashboard(userId) {
       asset: row.asset,
       tx_hash: row.tx_hash,
       created_at: row.created_at,
-      refund_status: row.contract_refunded_at
-        ? 'processed'
-        : row.campaign_status === 'failed'
-          ? 'pending'
-          : null,
-      refund_tx_hash: row.contract_refund_tx_hash,
+      refund_status: refundStatus,
+      refund_tx_hash: row.contract_refund_tx_hash || null,
+      estimated_completion_at: est.estimated_completion_at,
+      estimated_time_text: est.estimated_time_text,
     });
   }
 
