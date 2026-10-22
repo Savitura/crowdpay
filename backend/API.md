@@ -301,6 +301,102 @@ Success response (`200`):
 ]
 ```
 
+## Campaign Data Room API
+
+Secure campaign attachments and due diligence repository with role-based access control (`public`, `backer`, `viewer`, `editor`, `manager`, `owner`).
+
+### `GET /api/campaigns/:id/data-room/files`
+
+List data room attachments visible to the caller based on their resolved role.
+Supported query parameters:
+- `category` (optional): Filter by category (`pitch_deck`, `financials`, `legal`, `technical`, `diligence`, `governance`, `other`).
+- `search` (optional): Case-insensitive search on title, original filename, or description.
+- `limit` (optional, default `50`, max `100`): Results limit.
+- `offset` (optional, default `0`): Pagination offset.
+
+Success response (`200`):
+```json
+{
+  "files": [
+    {
+      "id": "22222222-2222-2222-2222-222222222222",
+      "campaign_id": "11111111-1111-1111-1111-111111111111",
+      "name": "Q3 2026 Audited Financials",
+      "original_filename": "q3_financials.pdf",
+      "file_url": "https://storage.crowdpay.org/campaigns/.../q3_financials.pdf",
+      "file_size": 1048576,
+      "mime_type": "application/pdf",
+      "category": "financials",
+      "access_level": "backer",
+      "description": "Audited quarterly report by independent accounting firm.",
+      "status": "active",
+      "can_manage": true,
+      "created_at": "2026-09-01T12:00:00.000Z",
+      "updated_at": "2026-09-01T12:00:00.000Z"
+    }
+  ],
+  "total": 1,
+  "user_role": "owner",
+  "can_upload": true,
+  "can_view_logs": true,
+  "categories_summary": {
+    "pitch_deck": 0,
+    "financials": 1,
+    "legal": 0,
+    "technical": 0,
+    "diligence": 0,
+    "governance": 0,
+    "other": 0
+  }
+}
+```
+
+### `POST /api/campaigns/:id/data-room/files`
+
+Upload or register a document attachment to the campaign data room. Requires `editor`, `manager`, `owner`, or `admin` role. Users cannot set an `access_level` higher than their own role.
+
+Supports `multipart/form-data` file uploads (up to 25MB) or JSON metadata registration for external links.
+
+Body parameters:
+- `name` (required): Document title.
+- `category` (optional, default `'other'`): Category tag.
+- `access_level` (optional, default `'backer'`): Minimum role required (`public`, `backer`, `viewer`, `editor`, `manager`, `owner`).
+- `file` (optional, multipart): Binary file upload.
+- `file_url` (optional, if JSON): External or storage URL.
+- `description` (optional): Additional notes or context.
+
+Success response (`201`):
+```json
+{
+  "id": "22222222-2222-2222-2222-222222222222",
+  "name": "Pitch Deck 2026",
+  "category": "pitch_deck",
+  "access_level": "backer",
+  "file_url": "https://...",
+  "can_manage": true
+}
+```
+
+### `GET /api/campaigns/:id/data-room/files/:fileId`
+
+Retrieve metadata for a specific data room document. Verifies role-based read permissions and logs a view event in the audit access trail.
+
+### `GET /api/campaigns/:id/data-room/files/:fileId/download`
+
+Retrieve download metadata and URL for an authorized document. Verifies permissions and logs a download event in the audit trail.
+
+### `PATCH /api/campaigns/:id/data-room/files/:fileId`
+
+Update document title, category, description, or access level. Restricted to document uploaders (for editors) or campaign managers/owners/admins.
+
+### `DELETE /api/campaigns/:id/data-room/files/:fileId`
+
+Soft-delete a document from the data room. Restricted to document uploaders (for editors) or campaign managers/owners/admins.
+
+### `GET /api/campaigns/:id/data-room/access-logs`
+
+Retrieve chronological audit access logs (views, downloads, uploads, updates, deletions) with user identity and IP tracking. Restricted to `manager`, `owner`, and `admin` roles.
+
 ### `GET /api/withdrawals/capabilities`
 
 Returns whether the authenticated user may perform **platform** signing/rejection (`can_approve_platform`). If `PLATFORM_APPROVER_USER_ID` is set in the backend environment, only that user’s JWT subject matches; otherwise (dev only) any authenticated user may act as platform for API calls.

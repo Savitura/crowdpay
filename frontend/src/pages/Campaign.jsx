@@ -208,6 +208,7 @@ import { getNetwork, signTransaction } from '@stellar/freighter-api';
 import { isConnected, getPublicKey } from '@stellar/freighter-api';
 const BackerInsightsCard = React.lazy(() => import('../components/BackerInsightsCard'));
 import CampaignComments from '../components/CampaignComments';
+import CampaignDataRoom from '../components/CampaignDataRoom';
 import FollowCampaignButton from '../components/FollowCampaignButton';
 import CampaignCommunicationPreferences from '../components/CampaignCommunicationPreferences';
 import OutcomeSurveyPanel from '../components/campaign/OutcomeSurveyPanel';
@@ -3022,6 +3023,10 @@ export default function Campaign() {
           />
         </article>
       ))}
+
+      <div style={{ marginTop: '2rem', marginBottom: '2rem' }} data-no-print>
+        <CampaignDataRoom campaignId={campaign.id} user={user} />
+      </div>
 
       <div style={{ marginTop: '2rem', marginBottom: '2rem' }} data-no-print>
         <CampaignComments campaignId={campaign.id} campaign={campaign} />

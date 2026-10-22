@@ -511,6 +511,42 @@ export const api = {
     return res.data;
   },
 
+  // --- Campaign Data Room (#1109) ---
+  async getCampaignDataRoomFiles(campaignId, params = {}) {
+    const res = await apiClient.get(`/campaigns/${campaignId}/data-room/files`, { params });
+    return res.data;
+  },
+  async getCampaignDataRoomFile(campaignId, fileId) {
+    const res = await apiClient.get(`/campaigns/${campaignId}/data-room/files/${fileId}`);
+    return res.data;
+  },
+  async uploadCampaignDataRoomFile(campaignId, data) {
+    const isFormData = typeof FormData !== 'undefined' && data instanceof FormData;
+    const res = await apiClient.post(`/campaigns/${campaignId}/data-room/files`, data, {
+      headers: isFormData ? { 'Content-Type': 'multipart/form-data' } : {},
+    });
+    return res.data;
+  },
+  async updateCampaignDataRoomFile(campaignId, fileId, updates) {
+    const res = await apiClient.patch(
+      `/campaigns/${campaignId}/data-room/files/${fileId}`,
+      updates
+    );
+    return res.data;
+  },
+  async deleteCampaignDataRoomFile(campaignId, fileId) {
+    const res = await apiClient.delete(`/campaigns/${campaignId}/data-room/files/${fileId}`);
+    return res.data;
+  },
+  async getCampaignDataRoomLogs(campaignId, params = {}) {
+    const res = await apiClient.get(`/campaigns/${campaignId}/data-room/access-logs`, { params });
+    return res.data;
+  },
+  async getCampaignDataRoomDownload(campaignId, fileId) {
+    const res = await apiClient.get(`/campaigns/${campaignId}/data-room/files/${fileId}/download`);
+    return res.data;
+  },
+
   // --- Subscriptions (Freighter support #821) ---
   async prepareSubscription(campaignId, { amountPerPeriod, asset, periodMonths, totalPeriods }) {
     const res = await apiClient.post(`/campaigns/${campaignId}/subscriptions/prepare`, {
