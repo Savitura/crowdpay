@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const { requireAuth } = require('../middleware/auth');
+const { refundAttemptLimiter } = require('../middleware/financialActionRateLimiter');
 const asyncHandler = require('../utils/asyncHandler');
 const service = require('../services/refundRequestService');
 
@@ -7,6 +8,7 @@ router.use(requireAuth);
 
 router.post(
   '/',
+  refundAttemptLimiter,
   asyncHandler(async (req, res) => {
     const { campaignId, contributionId, amount, reason } = req.body;
     const request = await service.createRequest({
@@ -53,6 +55,7 @@ router.post(
 
 router.post(
   '/:id/pay',
+  refundAttemptLimiter,
   asyncHandler(async (req, res) => {
     res.json(await service.payRequest(req.params.id, { actorId: req.user.userId }));
   })

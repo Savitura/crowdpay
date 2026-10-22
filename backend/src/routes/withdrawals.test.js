@@ -76,6 +76,9 @@ function buildApp({
   };
 
   const router = proxyquire('./withdrawals', {
+    '../middleware/financialActionRateLimiter': {
+      withdrawalAttemptLimiter: (_req, _res, next) => next(),
+    },
     '../services/referral': referralStub,
     '../config/database': {
       connect: async () => ({

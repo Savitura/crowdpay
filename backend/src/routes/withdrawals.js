@@ -3,6 +3,7 @@ const db = require('../config/database');
 const logger = require('../config/logger');
 const { requireAuth } = require('../middleware/auth');
 const { idempotency } = require('../middleware/idempotency');
+const { withdrawalAttemptLimiter } = require('../middleware/financialActionRateLimiter');
 const { sendAlert } = require('../services/alerting');
 const { withdrawalValidation, validateRequest } = require('../middleware/validation');
 const {
@@ -160,6 +161,7 @@ router.get('/capabilities', requireAuth, (req, res) => {
 router.post(
   '/request',
   requireAuth,
+  withdrawalAttemptLimiter,
   withdrawalValidation,
   validateRequest,
   asyncHandler(async (req, res) => {
@@ -191,6 +193,8 @@ router.post(
      *         description: Forbidden
      *       404:
      *         description: Campaign not found
+     *       429:
+     *         description: Too many withdrawal attempts; see the Retry-After header
      */
     const { campaign_id, destination_key, amount, evidence } = req.body;
 
@@ -386,6 +390,7 @@ router.post(
 router.post(
   '/:id/approve/creator',
   requireAuth,
+  withdrawalAttemptLimiter,
   asyncHandler(async (req, res) => {
     const { rows: requests } = await db.query(
       `SELECT wr.*, c.creator_id, c.wallet_public_key AS campaign_wallet_public_key, c.asset_type, c.status AS campaign_status

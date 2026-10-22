@@ -134,6 +134,22 @@ module.exports = {
   ADMIN_AUDIT_LOG_MAX_LIMIT: 1000,
 
   // --------------------------------------------------------------------------------------
+  // Financial action velocity limits (middleware/financialActionRateLimiter.js)
+  // --------------------------------------------------------------------------------------
+
+  /** Withdrawal request + creator approval attempts allowed per user per window. Overridable with WITHDRAWAL_ATTEMPT_LIMIT. */
+  WITHDRAWAL_ATTEMPT_LIMIT: 10,
+
+  /** Withdrawal attempt window in seconds (15 minutes). Overridable with WITHDRAWAL_ATTEMPT_WINDOW_SECONDS. */
+  WITHDRAWAL_ATTEMPT_WINDOW_SECONDS: 15 * 60,
+
+  /** Refund request, settlement and direct refund attempts allowed per user per window. Overridable with REFUND_ATTEMPT_LIMIT. */
+  REFUND_ATTEMPT_LIMIT: 20,
+
+  /** Refund attempt window in seconds (15 minutes). Overridable with REFUND_ATTEMPT_WINDOW_SECONDS. */
+  REFUND_ATTEMPT_WINDOW_SECONDS: 15 * 60,
+
+  // --------------------------------------------------------------------------------------
   // Impact summary
   // --------------------------------------------------------------------------------------
 
