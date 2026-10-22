@@ -58,6 +58,7 @@ const {
 } = require('../services/kycProvider');
 const { listCreatorCampaigns } = require('../services/userDashboardService');
 const { getTrendingCampaigns } = require('../services/trendingService');
+const { recordModerationAction } = require('../services/moderationAuditService');
 const { getRecommendedCampaigns } = require('../services/campaignRecommendationService');
 const {
   publishDraftCampaign,
@@ -3007,29 +3008,23 @@ router.patch(
       [newHidden, campaignId]
     );
 
-    // Log to admin_actions for audit trail
-    try {
-      await db.query(
-        `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, details)
-       VALUES ($1, $2, $3, $4, $5::jsonb)`,
-        [
-          req.user.userId,
-          newHidden ? 'campaign_hidden' : 'campaign_unhidden',
-          'campaign',
-          campaignId,
-          JSON.stringify({
-            campaign_title: campaign.title,
-            previous_is_hidden: campaign.is_hidden,
-            new_is_hidden: newHidden,
-          }),
-        ]
-      );
-    } catch (err) {
-      logger.warn('Failed to log visibility change to admin_actions', {
-        campaign_id: campaignId,
-        error: err.message,
-      });
-    }
+    // Log structured audit trail
+    await recordModerationAction({
+      req,
+      action: newHidden ? 'campaign.hidden' : 'campaign.unhidden',
+      actionType: newHidden ? 'campaign_hidden' : 'campaign_unhidden',
+      targetType: 'campaign',
+      targetId: campaignId,
+      reason: req.body?.reason || null,
+      before: { is_hidden: campaign.is_hidden, title: campaign.title },
+      after: { is_hidden: newHidden },
+      metadata: {
+        campaign_title: campaign.title,
+        previous_is_hidden: campaign.is_hidden,
+        new_is_hidden: newHidden,
+        reason: req.body?.reason || null,
+      },
+    });
 
     res.json({ is_hidden: updatedRows[0].is_hidden });
   })
