@@ -141,6 +141,7 @@ cd frontend && npm run dev   # http://localhost:5173
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string |
 | `JWT_SECRET` | Random 32+ char secret |
+| `STEP_UP_TTL_SECONDS` | Optional. Lifetime of step-up tokens required for payouts to a destination other than the caller's own wallet, in seconds (default `300`, clamped to 30–900). See `backend/API.md`. |
 | `STELLAR_NETWORK` | `testnet` or `mainnet` |
 | `STELLAR_HORIZON_URL` | Horizon endpoint URL |
 | `PLATFORM_SECRET_KEY` | Stellar secret key for the platform co-signer wallet |

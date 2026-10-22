@@ -21,9 +21,11 @@ function buildApp({
   queryImpl = async () => ({ rows: [] }),
   user = { userId: CREATOR_ID, role: 'creator' },
   lockState = { locked: false },
+  enforceStepUp = false,
 } = {}) {
   const calls = [];
   const notificationsCalled = [];
+  const securityEvents = [];
 
   const service = proxyquire('../services/payoutScheduleService', {
     '../config/database': {
@@ -72,6 +74,23 @@ function buildApp({
     },
   });
 
+  const stepUpMiddleware = enforceStepUp
+    ? proxyquire('../middleware/stepUp', {
+        '../config/database': {
+          query: async (text, params) => {
+            calls.push({ text, params });
+            return queryImpl(text, params);
+          },
+        },
+        '../config/logger': { info: () => {}, warn: () => {}, error: () => {} },
+        '../services/totpService': {
+          logAuditEvent: async (userId, eventType, _req, metadata) => {
+            securityEvents.push({ userId, eventType, metadata });
+          },
+        },
+      })
+    : { requirePayoutDestinationStepUp: () => (_req, _res, next) => next() };
+
   const router = proxyquire('./payoutSchedules', {
     '../config/database': {
       query: async (text, params) => {
@@ -79,6 +98,7 @@ function buildApp({
         return queryImpl(text, params);
       },
     },
+    '../middleware/stepUp': stepUpMiddleware,
     '../middleware/auth': {
       requireAuth: (req, _res, next) => {
         req.user = user;
@@ -92,7 +112,7 @@ function buildApp({
   app.use(express.json());
   app.use('/api/campaigns', router);
 
-  return { app, service, calls, notificationsCalled };
+  return { app, service, calls, notificationsCalled, securityEvents };
 }
 
 test('POST /api/campaigns/:id/payout-schedules creates a recurring payout schedule', async () => {
@@ -357,4 +377,113 @@ test('concurrent payout schedule runs create only one withdrawal request', async
   const firstResult = await firstRun;
   assert.equal(firstResult.length, 1);
   assert.equal(withdrawalCount, 1);
+});
+
+const { issueStepUpToken } = require('../services/stepUpService');
+
+const OTHER_DESTINATION = 'GASXEYHSSVN3WSHD4WSZ4O37HC2AG4JH2EB6UPHM6IXDXDRJRDJD4RZK';
+
+function stepUpQueryImpl({ walletPublicKey = 'GOWNWALLETNOTUSEDASDESTINATION' } = {}) {
+  return async (text, params) => {
+    if (text.includes('SELECT id, creator_id, asset_type, status FROM campaigns')) {
+      return {
+        rows: [{ id: CAMPAIGN_ID, creator_id: CREATOR_ID, asset_type: 'USDC', status: 'active' }],
+      };
+    }
+    if (text.includes('SELECT wallet_public_key FROM users')) {
+      return { rows: [{ wallet_public_key: walletPublicKey }] };
+    }
+    if (text.includes('INSERT INTO recurring_payout_schedules')) {
+      return {
+        rows: [{ id: 'sched-1', destination_key: params[5], cadence: params[6], status: 'active' }],
+      };
+    }
+    return { rows: [] };
+  };
+}
+
+const schedulePayload = {
+  amount: '500.00',
+  asset_type: 'USDC',
+  destination_key: DESTINATION_KEY,
+  cadence: 'monthly',
+};
+
+test('POST payout-schedules to a new destination requires step-up authentication', async () => {
+  const { app, calls, securityEvents } = buildApp({
+    enforceStepUp: true,
+    queryImpl: stepUpQueryImpl(),
+  });
+
+  const res = await request(app)
+    .post(`/api/campaigns/${CAMPAIGN_ID}/payout-schedules`)
+    .send(schedulePayload);
+
+  assert.equal(res.status, 403);
+  assert.equal(res.body.code, 'STEP_UP_REQUIRED');
+  assert.equal(res.body.purpose, 'payout_destination');
+  assert.equal(
+    calls.some(c => c.text.includes('INSERT INTO recurring_payout_schedules')),
+    false
+  );
+  assert.equal(securityEvents[0].eventType, 'step_up_rejected');
+  assert.equal(securityEvents[0].metadata.reason, 'missing');
+});
+
+test('POST payout-schedules succeeds with a step-up token bound to the destination', async () => {
+  const { app, securityEvents } = buildApp({
+    enforceStepUp: true,
+    queryImpl: stepUpQueryImpl(),
+  });
+  const { token } = issueStepUpToken({
+    userId: CREATOR_ID,
+    purpose: 'payout_destination',
+    destinationKey: DESTINATION_KEY,
+  });
+
+  const res = await request(app)
+    .post(`/api/campaigns/${CAMPAIGN_ID}/payout-schedules`)
+    .set('X-Step-Up-Token', token)
+    .send(schedulePayload);
+
+  assert.equal(res.status, 201);
+  assert.equal(res.body.destination_key, DESTINATION_KEY);
+  assert.equal(securityEvents[0].eventType, 'step_up_consumed');
+});
+
+test('POST payout-schedules rejects a step-up token issued for a different destination', async () => {
+  const { app, calls } = buildApp({
+    enforceStepUp: true,
+    queryImpl: stepUpQueryImpl(),
+  });
+  const { token } = issueStepUpToken({
+    userId: CREATOR_ID,
+    purpose: 'payout_destination',
+    destinationKey: OTHER_DESTINATION,
+  });
+
+  const res = await request(app)
+    .post(`/api/campaigns/${CAMPAIGN_ID}/payout-schedules`)
+    .set('X-Step-Up-Token', token)
+    .send(schedulePayload);
+
+  assert.equal(res.status, 403);
+  assert.equal(res.body.code, 'STEP_UP_INVALID');
+  assert.equal(
+    calls.some(c => c.text.includes('INSERT INTO recurring_payout_schedules')),
+    false
+  );
+});
+
+test("POST payout-schedules to the creator's own wallet does not require step-up", async () => {
+  const { app } = buildApp({
+    enforceStepUp: true,
+    queryImpl: stepUpQueryImpl({ walletPublicKey: DESTINATION_KEY }),
+  });
+
+  const res = await request(app)
+    .post(`/api/campaigns/${CAMPAIGN_ID}/payout-schedules`)
+    .send(schedulePayload);
+
+  assert.equal(res.status, 201);
 });
