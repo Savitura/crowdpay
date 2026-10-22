@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { equalSha256Hex } = require('../utils/constantTime');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const { createNotification } = require('./notifications');
@@ -46,19 +47,7 @@ function verifyWebhookSignature(secret, rawBody, headerSig) {
     .trim();
   const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
 
-  // timingSafeEqual throws on length mismatch, so guard first. Both sides are
-  // hex of a fixed-length digest, so an unequal length is already a mismatch.
-  const expectedBuf = Buffer.from(expected, 'hex');
-  let providedBuf;
-  try {
-    providedBuf = Buffer.from(provided, 'hex');
-  } catch {
-    return false;
-  }
-  if (expectedBuf.length !== providedBuf.length || providedBuf.length === 0) {
-    return false;
-  }
-  return crypto.timingSafeEqual(expectedBuf, providedBuf);
+  return equalSha256Hex(provided, expected);
 }
 
 /**

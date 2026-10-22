@@ -168,13 +168,9 @@ test('createApiKeyForUser stores bcrypt hash and returns raw key once', async ()
   // does before verifying it's a valid bcrypt hash of the raw key.
   const { withDecryptedIntegrationSecret } = require('./integrationSecrets');
   let decryptedHash;
-  await withDecryptedIntegrationSecret(
-    inserts[0][2],
-    { type: 'api_key', id: 'user-9' },
-    hash => {
-      decryptedHash = hash;
-    }
-  );
+  await withDecryptedIntegrationSecret(inserts[0][2], { type: 'api_key', id: 'user-9' }, hash => {
+    decryptedHash = hash;
+  });
   assert.match(decryptedHash, /^\$2[aby]\$/);
 
   const valid = await bcrypt.compare(created.api_key, decryptedHash);
@@ -182,4 +178,13 @@ test('createApiKeyForUser stores bcrypt hash and returns raw key once', async ()
 
   require.cache[require.resolve('../config/database')].exports = originalDb;
   delete require.cache[require.resolve(MODULE_PATH)];
+});
+
+test('verifyApiKeyHash preserves bcrypt compatibility and rejects incorrect or malformed hashes', async () => {
+  const { verifyApiKeyHash } = require(MODULE_PATH);
+  const hash = await bcrypt.hash('cpk_' + 'd'.repeat(64), 4);
+  assert.equal(await verifyApiKeyHash('cpk_' + 'd'.repeat(64), hash), true);
+  assert.equal(await verifyApiKeyHash('cpk_' + 'e'.repeat(64), hash), false);
+  assert.equal(await verifyApiKeyHash('key', hash + 'suffix'), false);
+  assert.equal(await verifyApiKeyHash('key', null), false);
 });

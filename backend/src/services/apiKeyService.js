@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const { equalFixedLength } = require('../utils/constantTime');
 const db = require('../config/database');
 const {
   encryptIntegrationSecret,
@@ -30,6 +31,15 @@ function getKeyPrefix(rawKey) {
 
 async function hashApiKey(rawKey) {
   return bcrypt.hash(rawKey, 10);
+}
+
+async function verifyApiKeyHash(rawKey, storedHash) {
+  if (typeof storedHash !== 'string' || !/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(storedHash)) {
+    return false;
+  }
+  // Reuse the stored salt/cost, then compare the complete fixed-size hash.
+  const computedHash = await bcrypt.hash(rawKey, storedHash);
+  return equalFixedLength(Buffer.from(computedHash), Buffer.from(storedHash));
 }
 
 function mapKeyRow(row) {
@@ -172,13 +182,13 @@ async function authenticateCpkApiKey(rawKey, requestMethod = 'GET') {
         { type: 'api_key', id: row.user_id },
         async decryptedHash => {
           if (decryptedHash.startsWith('$2')) {
-            valid = await bcrypt.compare(rawKey, decryptedHash);
+            valid = await verifyApiKeyHash(rawKey, decryptedHash);
           }
         }
       );
     } else if (row.key_hash.startsWith('$2')) {
       // Fallback for unmigrated keys
-      valid = await bcrypt.compare(rawKey, row.key_hash);
+      valid = await verifyApiKeyHash(rawKey, row.key_hash);
     }
 
     if (!valid) continue;
@@ -230,6 +240,7 @@ module.exports = {
   generateRawApiKey,
   getKeyPrefix,
   hashApiKey,
+  verifyApiKeyHash,
   normalizeScopes,
   mapKeyRow,
   listApiKeysForUser,

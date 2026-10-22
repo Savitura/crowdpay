@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { equalSha256Hex } = require('../utils/constantTime');
 const ff = require('./featureFlags');
 const logger = require('../config/logger');
 
@@ -275,13 +276,10 @@ function verifyPersonaWebhookSignature(rawBody, signatureHeader) {
     .update(`${timestamp}.${bodyStr}`)
     .digest('hex');
 
-  return signatures.some(sig => {
-    try {
-      return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
-    } catch {
-      return false;
-    }
-  });
+  // Evaluate every supplied rotation signature, even after a match.
+  let matched = 0;
+  for (const signature of signatures) matched |= Number(equalSha256Hex(signature, expected));
+  return matched !== 0;
 }
 
 module.exports = {
