@@ -10,6 +10,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const { parsePagination } = require('../utils/pagination');
 const { revokeAndCloseCampaignWallet } = require('../services/stellarService');
 const cache = require('../utils/cache');
+const { invalidateCampaignFacets } = require('../services/campaignFacetService');
 const stellar = require('../config/stellar');
 const logger = require('../config/logger');
 const { IMPERSONATION_TTL_SECONDS, ADMIN_AUDIT_LOG_MAX_LIMIT } = require('../config/constants');
@@ -240,6 +241,7 @@ router.patch(
     });
 
     cache.invalidatePrefix(`campaign:${id}`);
+    invalidateCampaignFacets();
 
     res.json({ campaign: updateResult.rows[0] });
   })
@@ -291,6 +293,7 @@ router.patch(
     });
 
     cache.invalidatePrefix(`campaign:${id}`);
+    invalidateCampaignFacets();
 
     res.json({ campaign: updateResult.rows[0] });
   })
@@ -338,6 +341,7 @@ router.delete(
     );
 
     cache.invalidatePrefix(`campaign:${id}`);
+    invalidateCampaignFacets();
 
     res.json({ campaign: updateResult.rows[0] });
   })
@@ -460,6 +464,8 @@ router.patch(
       'INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, details) VALUES ($1, $2, $3, $4, $5)',
       [req.user.userId, 'kyc_override', 'user', id, JSON.stringify({ kyc_status, reason })]
     );
+
+    invalidateCampaignFacets();
 
     res.json(updateResult.rows[0]);
   })
