@@ -5,6 +5,12 @@ import { getNetwork, signTransaction } from '@stellar/freighter-api';
 import { stellarExpertTxUrl } from '../config/stellar';
 import { useToast } from '../context/ToastContext';
 import RelativeTime from './RelativeTime';
+import {
+  validateMonetaryInput,
+  parseDecimal,
+  isValidDecimal,
+  compareDecimals,
+} from '../utils/decimal';
 
 const ELIGIBLE = ['active', 'funded'];
 
@@ -145,13 +151,21 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
 
   async function handleRequest(e) {
     e.preventDefault();
+    const amountCheck = validateMonetaryInput(form.amount, {
+      fieldName: 'Amount',
+      allowZero: false,
+    });
+    if (!amountCheck.isValid) {
+      setError(amountCheck.error);
+      return;
+    }
     setBusyId('new');
     setError('');
     try {
       await api.requestWithdrawal({
         campaign_id: campaign.id,
         destination_key: form.destination_key.trim(),
-        amount: form.amount.trim(),
+        amount: parseDecimal(form.amount),
         evidence: form.evidence.trim() ? [form.evidence.trim()] : [],
       });
       setForm({ destination_key: '', amount: '', evidence: '' });
@@ -192,25 +206,25 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
       if (!unsignedXdr) throw new Error('Missing unsigned transaction');
 
       const network = await getNetwork();
-    if (network?.error) throw new Error('Could not read Freighter network');
+      if (network?.error) throw new Error('Could not read Freighter network');
 
-    // Check if the transaction XDR is expired
-    if (unsignedXdr.timeBounds?.maxTime) {
-      const maxTime = Number(unsignedXdr.timeBounds.maxTime);
-      if (Math.floor(Date.now() / 1000) > maxTime) {
-        throw new Error('This transaction has expired. Please request a new withdrawal quote.');
+      // Check if the transaction XDR is expired
+      if (unsignedXdr.timeBounds?.maxTime) {
+        const maxTime = Number(unsignedXdr.timeBounds.maxTime);
+        if (Math.floor(Date.now() / 1000) > maxTime) {
+          throw new Error('This transaction has expired. Please request a new withdrawal quote.');
+        }
       }
-    }
 
-    const signed = await signTransaction(unsignedXdr, {
-      networkPassphrase: network?.networkPassphrase,
-      address: user?.wallet_public_key,
-    });
-    if (signed?.error) throw new Error(signed.error?.message || 'Freighter signing failed');
-    if (!signed?.signedTxXdr) throw new Error('Freighter did not return a signed transaction');
+      const signed = await signTransaction(unsignedXdr, {
+        networkPassphrase: network?.networkPassphrase,
+        address: user?.wallet_public_key,
+      });
+      if (signed?.error) throw new Error(signed.error?.message || 'Freighter signing failed');
+      if (!signed?.signedTxXdr) throw new Error('Freighter did not return a signed transaction');
 
-    await api.approveWithdrawalCreator(id, { signed_xdr: signed.signedTxXdr });
-    await refresh();
+      await api.approveWithdrawalCreator(id, { signed_xdr: signed.signedTxXdr });
+      await refresh();
     } catch (err) {
       if (err?.message && err.message.includes('expired')) {
         setError('This withdrawal has expired. Please request a new quote.');
@@ -512,24 +526,31 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
             required
             style={{ marginBottom: '0.75rem' }}
           />
-          {liveBalance !== null && Number(form.amount) > liveBalance && (
-            <p
-              className="alert alert--error"
-              style={{ fontSize: '0.82rem', marginBottom: '0.75rem' }}
-              role="alert"
-            >
-              Amount exceeds available balance
-            </p>
-          )}
+          {liveBalance !== null &&
+            isValidDecimal(form.amount, { allowZero: false }) &&
+            compareDecimals(form.amount, String(liveBalance)) > 0 && (
+              <p
+                className="alert alert--error"
+                style={{ fontSize: '0.82rem', marginBottom: '0.75rem' }}
+                role="alert"
+              >
+                Amount exceeds available balance
+              </p>
+            )}
           <button
             type="submit"
             className="btn-primary"
             disabled={
-              busyId === 'new' || (liveBalance !== null && Number(form.amount) > liveBalance)
+              busyId === 'new' ||
+              (liveBalance !== null &&
+                isValidDecimal(form.amount, { allowZero: false }) &&
+                compareDecimals(form.amount, String(liveBalance)) > 0)
             }
             style={{ width: '100%' }}
           >
-            {liveBalance !== null && Number(form.amount) > liveBalance
+            {liveBalance !== null &&
+            isValidDecimal(form.amount, { allowZero: false }) &&
+            compareDecimals(form.amount, String(liveBalance)) > 0
               ? 'Amount exceeds balance'
               : busyId === 'new'
                 ? 'Submitting…'

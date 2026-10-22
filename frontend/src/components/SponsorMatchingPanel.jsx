@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 import { useToast } from '../context/ToastContext';
 import { MatchProgressBar, SponsorBadgesRow } from './MatchProgressBar';
+import { validateMonetaryInput, parseDecimal } from '../utils/decimal';
 
 const SPONSORABLE_STATUSES = new Set(['active', 'funded', 'in_progress']);
 const MAX_MATCH_RATIO = 100;
@@ -89,10 +90,13 @@ export default function SponsorMatchingPanel({ campaignId, campaignStatus, user 
     event.preventDefault();
     setFormError('');
 
-    const amount = Number(pledgeAmount);
+    const amountCheck = validateMonetaryInput(pledgeAmount, {
+      fieldName: t('sponsorMatching.pledgeAmount'),
+      allowZero: false,
+    });
     const ratio = Number(matchRatio);
 
-    if (!Number.isFinite(amount) || amount <= 0) {
+    if (!amountCheck.isValid) {
       setFormError(t('sponsorMatching.invalidAmount'));
       return;
     }
@@ -105,7 +109,7 @@ export default function SponsorMatchingPanel({ campaignId, campaignStatus, user 
     try {
       await api.createSponsorMatchingPledge(campaignId, {
         match_ratio: ratio,
-        pledge_amount: String(amount),
+        pledge_amount: parseDecimal(pledgeAmount),
       });
       showToast?.(t('sponsorMatching.created'), 'success');
       resetForm();
