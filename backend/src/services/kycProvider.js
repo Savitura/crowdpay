@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const ff = require('./featureFlags');
 const logger = require('../config/logger');
+const { verifyHmacSha256 } = require('../utils/constantTime');
 
 function isKycRequiredForCampaigns() {
   return ff.isEnabled('kyc-required-for-campaigns');
@@ -270,18 +271,11 @@ function verifyPersonaWebhookSignature(rawBody, signatureHeader) {
   }
 
   const bodyStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody || '');
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(`${timestamp}.${bodyStr}`)
-    .digest('hex');
+  const signedPayload = `${timestamp}.${bodyStr}`;
 
-  return signatures.some(sig => {
-    try {
-      return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
-    } catch {
-      return false;
-    }
-  });
+  // Constant-time comparison of the expected digest against every candidate
+  // signature carried by the header (see utils/constantTime).
+  return signatures.some(sig => verifyHmacSha256(secret, signedPayload, sig, { prefix: '' }));
 }
 
 module.exports = {

@@ -29,6 +29,7 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
 ### Scope
 
 The following are in scope:
+
 - Backend API vulnerabilities
 - Smart contract security issues (Soroban contracts)
 - Authentication/authorization bypasses
@@ -52,3 +53,6 @@ The following are in scope:
 4. Validate and sanitize all user inputs
 5. Use parameterized queries to prevent SQL injection
 6. Keep dependencies updated
+7. Compare secrets, hashes and signatures in constant time — use the helpers in
+   `backend/src/utils/constantTime.js` instead of `===`/`!==` (see
+   [backend/docs/credential-verification.md](backend/docs/credential-verification.md))

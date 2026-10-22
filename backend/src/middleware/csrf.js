@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const logger = require('../config/logger');
+const { timingSafeEqualStrings } = require('../utils/constantTime');
 
 const CSRF_COOKIE_NAME = 'cp_csrf';
 const CSRF_HEADER_NAME = 'x-csrf-token';
@@ -134,8 +135,10 @@ function csrfProtection(req, res, next) {
     });
   }
 
-  // Validate: header token must match cookie token
-  if (!headerToken || headerToken !== cookieToken) {
+  // Validate: header token must match cookie token. The comparison is done in
+  // constant time so that a partially correct token cannot be refined by
+  // timing the response.
+  if (!headerToken || !timingSafeEqualStrings(headerToken, cookieToken)) {
     logger.warn('CSRF token mismatch', {
       method,
       path: requestPath,

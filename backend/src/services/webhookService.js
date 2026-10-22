@@ -1,8 +1,8 @@
-const crypto = require('crypto');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const { createNotification } = require('./notifications');
 const { server: horizonServer } = require('../config/stellar');
+const { verifyHmacSha256 } = require('../utils/constantTime');
 
 // Event types accepted on the inbound webhook endpoint (POST /api/webhooks/incoming/:id).
 // These are distinct from the OUTBOUND events in webhookDispatcher.js — inbound
@@ -36,29 +36,15 @@ class WebhookError extends Error {
  * Accepts an optional `sha256=` prefix on the header (GitHub/Stripe style).
  * `rawBody` must be the exact bytes that were signed (a Buffer or string).
  *
+ * The expected digest is computed with the server-side secret and compared
+ * with `crypto.timingSafeEqual` (see utils/constantTime), so a partially
+ * guessed signature cannot be refined by timing the response.
+ *
  * @returns {boolean} true iff the signature matches.
  */
 function verifyWebhookSignature(secret, rawBody, headerSig) {
   if (!secret || !headerSig) return false;
-
-  const provided = String(headerSig)
-    .replace(/^sha256=/i, '')
-    .trim();
-  const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-
-  // timingSafeEqual throws on length mismatch, so guard first. Both sides are
-  // hex of a fixed-length digest, so an unequal length is already a mismatch.
-  const expectedBuf = Buffer.from(expected, 'hex');
-  let providedBuf;
-  try {
-    providedBuf = Buffer.from(provided, 'hex');
-  } catch {
-    return false;
-  }
-  if (expectedBuf.length !== providedBuf.length || providedBuf.length === 0) {
-    return false;
-  }
-  return crypto.timingSafeEqual(expectedBuf, providedBuf);
+  return verifyHmacSha256(secret, rawBody, headerSig);
 }
 
 /**

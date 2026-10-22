@@ -6,11 +6,18 @@ const {
   withDecryptedIntegrationSecret,
   isEncryptedIntegrationSecret,
 } = require('./integrationSecrets');
+const { timingSafeEqualHex } = require('../utils/constantTime');
 
 const KEY_PREFIX_LENGTH = 12;
 const ALLOWED_SCOPES = new Set(['read', 'write', 'withdrawals', 'developer', 'full']);
 const DEFAULT_KEY_EXPIRY_DAYS = 90;
 const ROTATION_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// Stored API key hashes are either a bcrypt digest (`$2a$`/`$2b$`/`$2y$`) or a
+// hex SHA-256 digest. Anything else is treated as a mismatch — an
+// unrecognised hash format must never authenticate a key.
+const BCRYPT_HASH_PATTERN = /^\$2[a-z]?\$\d{2}\$/i;
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/i;
 
 function normalizeScopes(input) {
   if (!input || !Array.isArray(input) || !input.length) {
@@ -30,6 +37,43 @@ function getKeyPrefix(rawKey) {
 
 async function hashApiKey(rawKey) {
   return bcrypt.hash(rawKey, 10);
+}
+
+/**
+ * Verify a raw API key against its stored hash in constant time.
+ *
+ * Two stored formats are supported:
+ * - bcrypt digests — verified with `bcrypt.compare`, which compares the
+ *   derived key and the stored digest in constant time by construction.
+ * - hex SHA-256 digests — compared byte-for-byte with
+ *   `crypto.timingSafeEqual` so that a partially correct digest cannot be
+ *   refined by timing the request.
+ *
+ * Any other format fails closed: an unrecognised hash never authenticates.
+ *
+ * @param {string} rawKey - the key presented by the caller
+ * @param {string} storedHash - the hash persisted for that key
+ * @returns {Promise<boolean>} true iff the key matches the stored hash
+ */
+async function verifyApiKeyHash(rawKey, storedHash) {
+  if (typeof rawKey !== 'string' || !rawKey) return false;
+  if (typeof storedHash !== 'string' || !storedHash) return false;
+
+  if (BCRYPT_HASH_PATTERN.test(storedHash)) {
+    try {
+      return await bcrypt.compare(rawKey, storedHash);
+    } catch {
+      // A malformed bcrypt digest must fail closed, not surface as a 500.
+      return false;
+    }
+  }
+
+  if (SHA256_HEX_PATTERN.test(storedHash)) {
+    const expected = crypto.createHash('sha256').update(rawKey, 'utf8').digest('hex');
+    return timingSafeEqualHex(expected, storedHash);
+  }
+
+  return false;
 }
 
 function mapKeyRow(row) {
@@ -171,14 +215,11 @@ async function authenticateCpkApiKey(rawKey, requestMethod = 'GET') {
         row.key_hash,
         { type: 'api_key', id: row.user_id },
         async decryptedHash => {
-          if (decryptedHash.startsWith('$2')) {
-            valid = await bcrypt.compare(rawKey, decryptedHash);
-          }
+          valid = await verifyApiKeyHash(rawKey, decryptedHash);
         }
       );
-    } else if (row.key_hash.startsWith('$2')) {
-      // Fallback for unmigrated keys
-      valid = await bcrypt.compare(rawKey, row.key_hash);
+    } else {
+      valid = await verifyApiKeyHash(rawKey, row.key_hash);
     }
 
     if (!valid) continue;
@@ -232,6 +273,7 @@ module.exports = {
   hashApiKey,
   normalizeScopes,
   mapKeyRow,
+  verifyApiKeyHash,
   listApiKeysForUser,
   createApiKeyForUser,
   revokeApiKeyForUser,

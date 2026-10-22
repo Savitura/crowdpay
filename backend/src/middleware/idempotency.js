@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const db = require('../config/database');
 const logger = require('../config/logger');
+const { timingSafeEqualHex } = require('../utils/constantTime');
 
 const IDEMPOTENCY_TTL_SECONDS = 86_400;
 const IDEMPOTENCY_KEY_HEADER = 'idempotency-key';
@@ -76,7 +77,8 @@ function idempotency(scope, options = {}) {
           [actorId, scope, key]
         );
         const row = existing.rows[0];
-        if (row?.request_hash !== hash) {
+        // Compare the stored request digest in constant time.
+        if (!timingSafeEqualHex(row?.request_hash, hash)) {
           return res.status(409).json({
             error: 'The idempotency key was already used with a different request',
             code: 'IDEMPOTENCY_KEY_REUSED',

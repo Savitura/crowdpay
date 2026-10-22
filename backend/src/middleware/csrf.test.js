@@ -253,6 +253,19 @@ describe('CSRF middleware', () => {
       );
     });
 
+    it('rejects a header token that only shares a prefix with the cookie token', async () => {
+      req.cookies[CSRF_COOKIE_NAME] = 'cookie-token';
+      req.headers[CSRF_HEADER_NAME] = 'cookie-toke';
+      csrfProtection(req, res, () => {
+        assert.fail('next() should not be called for rejected request');
+      });
+      assert.strictEqual(res.statusCode, 403);
+      assert.strictEqual(
+        res.body.error,
+        'CSRF validation failed. Please refresh the page and try again.'
+      );
+    });
+
     it('rejects request with no CSRF cookie (and not API key)', async () => {
       req.cookies = {};
       req.headers[CSRF_HEADER_NAME] = 'some-header-token';

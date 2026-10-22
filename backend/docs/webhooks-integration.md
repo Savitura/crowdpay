@@ -4,12 +4,12 @@ CrowdPay can `POST` JSON payloads to your HTTPS URL when lifecycle events occur.
 
 ## Supported events
 
-| Event | When it fires |
-|-------|----------------|
-| `campaign.funded` | A campaign’s `raised_amount` reaches `target_amount` (detected when a contribution is indexed). |
-| `contribution.received` | A new contribution row is created from the ledger monitor. |
-| `milestone.approved` | A milestone is approved by the platform operator (`POST /api/milestones/:id/approve`). |
-| `withdrawal.completed` | A withdrawal is fully signed and submitted to Stellar (`status` becomes `submitted`). |
+| Event                   | When it fires                                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------------------------- |
+| `campaign.funded`       | A campaign’s `raised_amount` reaches `target_amount` (detected when a contribution is indexed). |
+| `contribution.received` | A new contribution row is created from the ledger monitor.                                      |
+| `milestone.approved`    | A milestone is approved by the platform operator (`POST /api/milestones/:id/approve`).          |
+| `withdrawal.completed`  | A withdrawal is fully signed and submitted to Stellar (`status` becomes `submitted`).           |
 
 Deliveries are attempted immediately and, on failure, retried **up to 5 times** with exponential backoff (1s, 2s, 4s, … capped at 30s). A background poller also picks up due retries every 5 seconds.
 
@@ -30,12 +30,15 @@ const crypto = require('crypto');
 
 function verifyCrowdPayWebhook(rawBodyBuffer, signatureHeader, secret) {
   if (!signatureHeader) return false;
-  
+
   // Extract all signature hashes (vX=... or sha256=...)
-  const signatures = signatureHeader.split(',').map(s => {
-    const parts = s.trim().split('=');
-    return parts.length === 2 ? parts[1] : null;
-  }).filter(Boolean);
+  const signatures = signatureHeader
+    .split(',')
+    .map(s => {
+      const parts = s.trim().split('=');
+      return parts.length === 2 ? parts[1] : null;
+    })
+    .filter(Boolean);
 
   if (signatures.length === 0) return false;
 
@@ -46,8 +49,10 @@ function verifyCrowdPayWebhook(rawBodyBuffer, signatureHeader, secret) {
   return signatures.some(sigHex => {
     try {
       const sigBuffer = Buffer.from(sigHex, 'hex');
-      return sigBuffer.length === expectedBuffer.length && 
-             crypto.timingSafeEqual(sigBuffer, expectedBuffer);
+      return (
+        sigBuffer.length === expectedBuffer.length &&
+        crypto.timingSafeEqual(sigBuffer, expectedBuffer)
+      );
     } catch {
       return false;
     }
@@ -56,6 +61,11 @@ function verifyCrowdPayWebhook(rawBodyBuffer, signatureHeader, secret) {
 ```
 
 Use the **raw** body string (before JSON parsing) so the signature matches what CrowdPay signed.
+
+CrowdPay verifies inbound webhook signatures in constant time: the expected
+HMAC-SHA256 digest of the exact signed bytes is compared with
+`crypto.timingSafeEqual`, so a partially guessed signature cannot be refined
+by timing the response. See [credential verification](./credential-verification.md).
 
 ## API keys (server-to-server)
 
@@ -70,3 +80,7 @@ Create keys with `POST /api/api-keys`. Send `Authorization: Bearer cp_live_<secr
 - `full` — equivalent to all of the above.
 
 Set `API_KEY_PEPPER` in production (falls back to `JWT_SECRET` only for local dev).
+
+Presented API keys are verified against the stored hash in constant time
+(bcrypt digests via `bcrypt.compare`, hex digests via `crypto.timingSafeEqual`).
+See [credential verification](./credential-verification.md).

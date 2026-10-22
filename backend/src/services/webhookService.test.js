@@ -82,6 +82,31 @@ test('verifyWebhookSignature rejects non-hex / empty / missing input', () => {
   assert.equal(svc.verifyWebhookSignature('', body, 'aa'), false);
 });
 
+test('verifyWebhookSignature accepts an upper-case hex signature', () => {
+  const { svc } = buildService();
+  const secret = 'whsec_abc';
+  const body = Buffer.from('{}');
+  const sig = crypto.createHmac('sha256', secret).update(body).digest('hex');
+  // Hex digests are case-insensitive, so a sender that upper-cases its digest
+  // still authenticates.
+  assert.equal(svc.verifyWebhookSignature(secret, body, sig.toUpperCase()), true);
+});
+
+test('verifyWebhookSignature rejects a signature computed over a different body', () => {
+  const { svc } = buildService();
+  const secret = 'whsec_abc';
+  const body = Buffer.from('{}');
+  const sig = crypto.createHmac('sha256', secret).update('{"other":true}').digest('hex');
+  assert.equal(svc.verifyWebhookSignature(secret, body, sig), false);
+});
+
+test('verifyWebhookSignature rejects a signature computed with another secret', () => {
+  const { svc } = buildService();
+  const body = Buffer.from('{}');
+  const sig = crypto.createHmac('sha256', 'other-secret').update(body).digest('hex');
+  assert.equal(svc.verifyWebhookSignature('whsec_abc', body, sig), false);
+});
+
 // --- routing / validation ---------------------------------------------------
 
 test('processIncomingWebhook rejects a payload without a string type', async () => {
