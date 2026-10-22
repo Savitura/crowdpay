@@ -8,6 +8,62 @@ const actualStellarService = require('../services/stellarService');
 
 const TESTNET_PASSPHRASE = Networks.TESTNET;
 
+const CAMPAIGN_ID = '11111111-1111-1111-1111-111111111111';
+const EVIDENCE = [{ type: 'link', url: 'https://example.test/invoice' }];
+
+/**
+ * In-memory stand-in for the `idempotency_keys` table so the durable
+ * idempotency middleware can be exercised without a database (#1098).
+ */
+function createIdempotencyStore() {
+  const rows = new Map();
+  const identity = (actorId, scope, key) => `${actorId}:${scope}:${key}`;
+
+  return {
+    rows,
+    async handle(text, params) {
+      if (text.includes('INSERT INTO idempotency_keys')) {
+        const [actorId, scope, key, requestHash, expiresAt] = params;
+        const id = identity(actorId, scope, key);
+        const existing = rows.get(id);
+        // Mirrors `ON CONFLICT ... WHERE idempotency_keys.expires_at <= NOW()`:
+        // a live record blocks the claim, an expired one is taken over.
+        if (existing && new Date(existing.expires_at).getTime() > Date.now()) {
+          return { rows: [] };
+        }
+        const row = {
+          actor_id: actorId,
+          scope,
+          key,
+          request_hash: requestHash,
+          status: 'processing',
+          response_status: null,
+          response_body: null,
+          expires_at: expiresAt,
+        };
+        rows.set(id, row);
+        return { rows: [row] };
+      }
+      if (text.includes('SELECT status, response_status')) {
+        const [actorId, scope, key] = params;
+        const row = rows.get(identity(actorId, scope, key));
+        return { rows: row ? [row] : [] };
+      }
+      if (text.includes('UPDATE idempotency_keys')) {
+        const [status, responseStatus, responseBody, actorId, scope, key] = params;
+        const row = rows.get(identity(actorId, scope, key));
+        if (row) {
+          row.status = status;
+          row.response_status = responseStatus;
+          row.response_body = JSON.parse(responseBody);
+        }
+        return { rows: [] };
+      }
+      return null;
+    },
+  };
+}
+
 function buildApp({
   queryImpl,
   stellarImpl,
@@ -75,14 +131,28 @@ function buildApp({
     ...referralImpl,
   };
 
+  // The idempotency middleware talks to the database directly, so it gets its
+  // own stub that is backed by the in-memory `idempotency_keys` store (#1098).
+  const idempotencyStore = createIdempotencyStore();
+  const dbQuery = async (text, params) => {
+    const handled = await idempotencyStore.handle(text, params);
+    if (handled) return handled;
+    if (typeof queryImpl !== 'function') return { rows: [] };
+    return queryImpl(text, params);
+  };
+  const idempotencyModule = proxyquire('../middleware/idempotency', {
+    '../config/database': { query: dbQuery },
+    '../config/logger': { error: () => {}, warn: () => {}, info: () => {} },
+  });
+
   const router = proxyquire('./withdrawals', {
     '../services/referral': referralStub,
     '../config/database': {
       connect: async () => ({
-        query: queryImpl,
+        query: dbQuery,
         release: () => {},
       }),
-      query: queryImpl,
+      query: dbQuery,
     },
     '../services/stellarService': stellarStub,
     '../services/walletSecrets': {
@@ -102,6 +172,7 @@ function buildApp({
           next();
         },
     },
+    '../middleware/idempotency': idempotencyModule,
   });
 
   const app = express();
@@ -110,6 +181,8 @@ function buildApp({
 
   return {
     app,
+    idempotencyStore,
+    idempotencyModule,
     cleanup: () => {
       if (prevApprover === undefined) delete process.env.PLATFORM_APPROVER_USER_ID;
       else process.env.PLATFORM_APPROVER_USER_ID = prevApprover;
@@ -197,6 +270,7 @@ test('POST /api/withdrawals/request creates pending request and logs event', asy
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: EVIDENCE,
     });
 
   cleanup();
@@ -206,7 +280,7 @@ test('POST /api/withdrawals/request creates pending request and logs event', asy
   assert.ok(calls.some(c => c.includes('INSERT INTO stellar_transactions')));
 });
 
-test('POST /api/withdrawals/request rejects an invalid Stellar public key with 422', async () => {
+test('POST /api/withdrawals/request rejects an invalid Stellar public key with 400', async () => {
   const { app, cleanup } = buildApp({
     queryImpl: async text => {
       if (text.includes('FROM campaigns WHERE id')) {
@@ -226,7 +300,7 @@ test('POST /api/withdrawals/request rejects an invalid Stellar public key with 4
     });
 
   cleanup();
-  assert.equal(response.status, 422);
+  assert.equal(response.status, 400);
   assert.match(response.body.error.message, /destination_key must be a valid Stellar public key/);
 });
 
@@ -248,6 +322,7 @@ test('POST /api/withdrawals/request returns 400 for failed campaigns', async () 
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: EVIDENCE,
     });
 
   cleanup();
@@ -273,6 +348,7 @@ test('POST /api/withdrawals/request blocks when campaign not active or funded', 
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: EVIDENCE,
     });
 
   cleanup();
@@ -299,6 +375,7 @@ test('POST /api/withdrawals/request blocks duplicate pending', async () => {
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: EVIDENCE,
     });
 
   cleanup();
@@ -332,6 +409,7 @@ test('POST /api/withdrawals/request denies invalid multisig config', async () =>
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: EVIDENCE,
     });
 
   cleanup();
@@ -912,6 +990,7 @@ test('POST /api/withdrawals/request splits the payout between the creator and re
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '1000.0000000',
+      evidence: EVIDENCE,
     });
 
   cleanup();
@@ -964,6 +1043,7 @@ test('POST /api/withdrawals/request rejects a withdrawal smaller than the commis
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '50.0000000',
+      evidence: EVIDENCE,
     });
 
   cleanup();
@@ -1019,6 +1099,244 @@ test('POST /api/withdrawals/request sums referral commissions in exact stroops',
   cleanup();
   assert.equal(response.status, 201);
   assert.equal(builtWith.amount, '0.7000000');
+});
+
+/**
+ * Query stub for the creator withdrawal request path. It records the
+ * `withdrawal_requests` insert so the tests can assert on the persisted
+ * idempotency key, and it can be seeded with a withdrawal that already used
+ * the key to exercise the durable replay (#1098).
+ */
+function withdrawalRequestQuery(captures = {}) {
+  return async (text, params) => {
+    if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [] };
+    // Durable replay lookup for a withdrawal that already used the key.
+    if (text.includes('FROM withdrawal_requests') && text.includes('idempotency_actor_id')) {
+      return { rows: captures.existingWithdrawal ? [captures.existingWithdrawal] : [] };
+    }
+    if (text.includes('FROM campaigns WHERE id')) return { rows: [campaignRow()] };
+    if (text.includes('FROM withdrawal_requests') && text.includes("status = 'pending'")) {
+      return { rows: [] };
+    }
+    if (text.includes('FROM disputes')) return { rows: [] };
+    if (text.includes('wallet_public_key FROM users')) {
+      return { rows: [{ wallet_public_key: 'GCREATOR' }] };
+    }
+    if (text.includes('FROM contributions') && text.includes('platform_fee_amount')) {
+      return { rows: [{ total_fees: '0.0000000' }] };
+    }
+    if (text.includes('INSERT INTO withdrawal_requests')) {
+      captures.withdrawalInsert = params;
+      captures.withdrawalInserts = (captures.withdrawalInserts || 0) + 1;
+      return {
+        rows: [
+          {
+            id: 'w-1',
+            status: 'pending',
+            creator_signed: false,
+            platform_signed: false,
+            amount: params[2],
+          },
+        ],
+      };
+    }
+    if (text.includes('INSERT INTO withdrawal_approval_events')) return { rows: [] };
+    if (text.includes('INSERT INTO stellar_transactions')) return { rows: [{ id: 'stellar-1' }] };
+    return { rows: [] };
+  };
+}
+
+const WITHDRAWAL_REQUEST_BODY = {
+  campaign_id: CAMPAIGN_ID,
+  destination_key: VALID_DESTINATION,
+  amount: '1000.0000000',
+  evidence: EVIDENCE,
+};
+
+test('POST /api/withdrawals/request stores the idempotency key with the withdrawal', async () => {
+  const captures = {};
+  const { app, cleanup } = buildApp({ queryImpl: withdrawalRequestQuery(captures) });
+
+  const response = await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .send({ ...WITHDRAWAL_REQUEST_BODY, idempotency_key: 'withdrawal-key-1' });
+
+  cleanup();
+  assert.equal(response.status, 201);
+  assert.equal(captures.withdrawalInserts, 1);
+  assert.equal(captures.withdrawalInsert[6], 'creator-1');
+  assert.equal(captures.withdrawalInsert[7], 'withdrawal-key-1');
+});
+
+test('POST /api/withdrawals/request replays the original response for a repeated key', async () => {
+  const captures = {};
+  const { app, cleanup } = buildApp({ queryImpl: withdrawalRequestQuery(captures) });
+
+  const first = await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .send({ ...WITHDRAWAL_REQUEST_BODY, idempotency_key: 'withdrawal-key-2' });
+  // The middleware persists the response asynchronously.
+  await new Promise(resolve => setTimeout(resolve, 10));
+
+  const second = await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .send({ ...WITHDRAWAL_REQUEST_BODY, idempotency_key: 'withdrawal-key-2' });
+
+  cleanup();
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 201);
+  assert.equal(second.headers['idempotency-replay'], 'true');
+  assert.equal(captures.withdrawalInserts, 1);
+  assert.deepEqual(second.body.id, first.body.id);
+});
+
+test('POST /api/withdrawals/request accepts the key through the Idempotency-Key header', async () => {
+  const captures = {};
+  const { app, cleanup } = buildApp({ queryImpl: withdrawalRequestQuery(captures) });
+
+  const response = await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .set('Idempotency-Key', 'withdrawal-key-3')
+    .send(WITHDRAWAL_REQUEST_BODY);
+
+  cleanup();
+  assert.equal(response.status, 201);
+  assert.equal(captures.withdrawalInsert[7], 'withdrawal-key-3');
+});
+
+test('POST /api/withdrawals/request rejects a key reused with a different payload', async () => {
+  const captures = {};
+  const { app, cleanup } = buildApp({ queryImpl: withdrawalRequestQuery(captures) });
+
+  await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .send({ ...WITHDRAWAL_REQUEST_BODY, idempotency_key: 'withdrawal-key-4' });
+  await new Promise(resolve => setTimeout(resolve, 10));
+
+  const response = await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .send({
+      ...WITHDRAWAL_REQUEST_BODY,
+      amount: '900.0000000',
+      idempotency_key: 'withdrawal-key-4',
+    });
+
+  cleanup();
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'IDEMPOTENCY_KEY_REUSED');
+  assert.equal(captures.withdrawalInserts, 1);
+});
+
+test('POST /api/withdrawals/request rejects a key that is still in flight', async () => {
+  const captures = {};
+  const { app, cleanup, idempotencyModule, idempotencyStore } = buildApp({
+    queryImpl: withdrawalRequestQuery(captures),
+  });
+
+  const requestHash = idempotencyModule.requestHash(
+    { method: 'POST', originalUrl: '/api/withdrawals/request', body: WITHDRAWAL_REQUEST_BODY },
+    'idempotency_key'
+  );
+  idempotencyStore.rows.set('creator-1:withdrawal:create:withdrawal-key-5', {
+    actor_id: 'creator-1',
+    scope: 'withdrawal:create',
+    key: 'withdrawal-key-5',
+    request_hash: requestHash,
+    status: 'processing',
+    response_status: null,
+    response_body: null,
+    expires_at: new Date(Date.now() + 60_000),
+  });
+
+  const response = await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .send({ ...WITHDRAWAL_REQUEST_BODY, idempotency_key: 'withdrawal-key-5' });
+
+  cleanup();
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'IDEMPOTENCY_CONFLICT');
+  assert.equal(captures.withdrawalInserts, undefined);
+});
+
+test('POST /api/withdrawals/request resolves a late retry to the existing withdrawal', async () => {
+  const captures = {
+    existingWithdrawal: {
+      id: 'w-existing',
+      campaign_id: CAMPAIGN_ID,
+      requested_by: 'creator-1',
+      amount: '1000.0000000',
+      destination_key: VALID_DESTINATION,
+      status: 'pending',
+      creator_signed: false,
+      platform_signed: false,
+      evidence: EVIDENCE,
+    },
+  };
+  const { app, cleanup } = buildApp({ queryImpl: withdrawalRequestQuery(captures) });
+
+  const response = await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .send({ ...WITHDRAWAL_REQUEST_BODY, idempotency_key: 'withdrawal-key-6' });
+
+  cleanup();
+  assert.equal(response.status, 200);
+  assert.equal(response.body.id, 'w-existing');
+  assert.equal(response.body.idempotent_replay, true);
+  assert.equal(captures.withdrawalInserts, undefined);
+});
+
+test('POST /api/withdrawals/request rejects a late retry that changes the payload', async () => {
+  const captures = {
+    existingWithdrawal: {
+      id: 'w-existing',
+      campaign_id: CAMPAIGN_ID,
+      requested_by: 'creator-1',
+      amount: '1000.0000000',
+      destination_key: VALID_DESTINATION,
+      status: 'pending',
+      creator_signed: false,
+      platform_signed: false,
+      evidence: EVIDENCE,
+    },
+  };
+  const { app, cleanup } = buildApp({ queryImpl: withdrawalRequestQuery(captures) });
+
+  const response = await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .send({
+      ...WITHDRAWAL_REQUEST_BODY,
+      amount: '900.0000000',
+      idempotency_key: 'withdrawal-key-7',
+    });
+
+  cleanup();
+  assert.equal(response.status, 409);
+  assert.equal(response.body.code, 'IDEMPOTENCY_KEY_REUSED');
+  assert.equal(captures.withdrawalInserts, undefined);
+});
+
+test('POST /api/withdrawals/request still creates a withdrawal without an idempotency key', async () => {
+  const captures = {};
+  const { app, cleanup } = buildApp({ queryImpl: withdrawalRequestQuery(captures) });
+
+  const response = await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .send(WITHDRAWAL_REQUEST_BODY);
+
+  cleanup();
+  assert.equal(response.status, 201);
+  assert.equal(captures.withdrawalInsert[6], null);
+  assert.equal(captures.withdrawalInsert[7], null);
 });
 
 test('POST /api/withdrawals/:id/approve/platform settles the commissions it submitted', async () => {
@@ -1913,6 +2231,7 @@ test('POST /api/withdrawals/request calculates and persists creator_share and co
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '1000.0000000',
+      evidence: EVIDENCE,
     });
 
   cleanup();

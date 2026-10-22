@@ -390,6 +390,15 @@ const withdrawalValidation = [
         throw new Error('destination_key must be a valid Stellar public key');
       }
     }),
+  // Optional idempotency key for creator withdrawal requests (#1098). The
+  // same format as `contribution:create`: 1-255 printable ASCII characters
+  // without whitespace.
+  body('idempotency_key')
+    .optional({ nullable: true })
+    .isString()
+    .withMessage('idempotency_key must be a string')
+    .matches(/^[\x21-\x7e]{1,255}$/)
+    .withMessage('idempotency_key must be 1-255 printable ASCII characters without whitespace'),
 ];
 
 const createAnnouncementValidation = [

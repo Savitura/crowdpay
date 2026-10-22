@@ -90,6 +90,8 @@ Dual-signature (creator + platform) fund withdrawal requests.
 | status | TEXT | pending / on_hold / submitted / failed / denied |
 | denial_reason | TEXT | |
 | tx_hash | TEXT | |
+| idempotency_actor_id | UUID FK → users | nullable, creator that owns the idempotency key (#1098) |
+| idempotency_key | TEXT | nullable, unique per actor (#1098) |
 | created_at | TIMESTAMPTZ | |
 
 ### withdrawal_approval_events

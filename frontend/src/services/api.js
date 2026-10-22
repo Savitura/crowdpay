@@ -705,4 +705,51 @@ export const api = {
 
   getOutcomeSurveyEvents: (campaignId) =>
     apiClient.get(`/campaigns/${campaignId}/outcome-survey/events`).then((r) => r.data),
+
+  // --- Creator withdrawals (#1098) ---
+  // The withdrawal client methods were dropped when the API client was
+  // rewritten (#744), which left the creator withdrawal screen unable to talk
+  // to the backend. They are restored here, and the request path now carries an
+  // idempotency key so a retried request cannot open a second withdrawal.
+  getWithdrawalCapabilities: () => apiClient.get('/withdrawals/capabilities').then((r) => r.data),
+
+  // The list endpoint answers with `{ data, total, limit, offset }`; callers
+  // expect the rows.
+  listWithdrawals: (campaignId) =>
+    apiClient
+      .get(`/withdrawals/campaign/${campaignId}`)
+      .then((r) => (Array.isArray(r.data) ? r.data : r.data?.data || [])),
+
+  getWithdrawal: (id) => apiClient.get(`/withdrawals/${id}`).then((r) => r.data),
+
+  getWithdrawalEvents: (id) => apiClient.get(`/withdrawals/${id}/events`).then((r) => r.data),
+
+  // `idempotency_key` is optional; when present the backend treats a repeated
+  // request with the same key as the same withdrawal.
+  requestWithdrawal: (payload) =>
+    apiClient.post('/withdrawals/request', payload).then((r) => r.data),
+
+  approveWithdrawalCreator: (id, body) =>
+    apiClient.post(`/withdrawals/${id}/approve/creator`, body || {}).then((r) => r.data),
+
+  approveWithdrawalPlatform: (id) =>
+    apiClient.post(`/withdrawals/${id}/approve/platform`, {}).then((r) => r.data),
+
+  cancelWithdrawal: (id, body) =>
+    apiClient.post(`/withdrawals/${id}/cancel`, body || {}).then((r) => r.data),
+
+  rejectWithdrawal: (id, body) =>
+    apiClient.post(`/withdrawals/${id}/reject`, body || {}).then((r) => r.data),
+
+  // The balance endpoint answers with a list of `{ asset_type, balance }`;
+  // callers expect a map keyed by asset.
+  getCampaignBalance: (campaignId) =>
+    apiClient
+      .get(`/campaigns/${campaignId}/balance`)
+      .then((r) =>
+        (Array.isArray(r.data) ? r.data : []).reduce(
+          (acc, row) => ({ ...acc, [row.asset_type]: row.balance }),
+          {}
+        )
+      ),
 };
