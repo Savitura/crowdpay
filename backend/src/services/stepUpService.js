@@ -30,18 +30,14 @@ function getSigningKey() {
 function issueStepUpToken({ userId, purpose, destinationKey }) {
   if (!STEP_UP_PURPOSES.has(purpose)) throw new Error(`Unsupported step-up purpose: ${purpose}`);
   const ttlSeconds = getStepUpTtlSeconds();
-  const token = jwt.sign(
-    { purpose, destination_key: destinationKey },
-    getSigningKey(),
-    {
-      algorithm: 'HS256',
-      subject: String(userId),
-      audience: STEP_UP_AUDIENCE,
-      issuer: getIssuer(),
-      expiresIn: ttlSeconds,
-      jwtid: crypto.randomUUID(),
-    }
-  );
+  const token = jwt.sign({ purpose, destination_key: destinationKey }, getSigningKey(), {
+    algorithm: 'HS256',
+    subject: String(userId),
+    audience: STEP_UP_AUDIENCE,
+    issuer: getIssuer(),
+    expiresIn: ttlSeconds,
+    jwtid: crypto.randomUUID(),
+  });
   return {
     token,
     expiresIn: ttlSeconds,
