@@ -91,6 +91,17 @@ async function releaseMigrationLock(client, lockKey = MIGRATION_ADVISORY_LOCK_KE
   return rows && rows[0] ? rows[0].unlocked : true;
 }
 
+function assertMigrationOrdering(files = listUpMigrationFilenames()) {
+  for (let i = 1; i < files.length; i++) {
+    if (files[i - 1] >= files[i]) {
+      throw new Error(
+        `Migration ordering violation: '${files[i - 1]}' is not strictly before '${files[i]}'`
+      );
+    }
+  }
+  return true;
+}
+
 module.exports = {
   MIGRATIONS_DIR,
   DOWN_SUFFIX,
@@ -108,4 +119,6 @@ module.exports = {
   listAllMigrationFilenames,
   validateMigrationFiles,
   loadApplied,
+  assertMigrationOrdering,
 };
+

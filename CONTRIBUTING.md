@@ -136,7 +136,7 @@ CrowdPay uses Stellar Claimable Balance schedules as its single canonical recurr
 
 - **Backend**: follow the patterns in `src/routes/` and `src/services/`; 2-space indent; single quotes; no semicolons debate — match what's already there
 - **Frontend**: functional components only; follow the existing page/component structure
-- **Database**: schema changes go in a new `db/migrations/` file — never edit `schema.sql` as part of a feature change. A maintainer may separately refresh `schema.sql` when it has drifted from the migration-built schema (column set, types, defaults or constraints).
+- **Database**: schema changes go in a new `db/migrations/` file — never edit `schema.sql` as part of a feature change. Migrations are strictly forward-only and ordered lexicographically by UTC timestamp prefix. See [`docs/database-migrations.md`](docs/database-migrations.md) for ordering rules, rollback limits, and recovery runbooks. A maintainer may separately refresh `schema.sql` when it has drifted from the migration-built schema (column set, types, defaults or constraints).
 - **Comments**: only add one if the *why* is genuinely non-obvious. Don't describe what the code does
 - **No extra files**: don't add `.md` docs, `NOTES.md`, `TODO.md`, config files, or example scripts unless the issue asks for them
 

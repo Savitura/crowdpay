@@ -174,10 +174,16 @@ async function runStatus() {
   }
 }
 
-async function runDown() {
-  console.error('[migrate:down] Rollback is not supported due to lack of down migration files.');
-  process.exitCode = 1;
+async function runDown(providedClient) {
+  const msg = '[migrate:down] Rollback is not supported due to lack of down migration files.';
+  console.error(msg);
+  if (!providedClient) {
+    process.exitCode = 1;
+  } else {
+    throw new Error(msg);
+  }
 }
+
 
 async function main() {
   switch (COMMAND) {
