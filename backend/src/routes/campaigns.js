@@ -3,6 +3,7 @@ const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const { ipKeyGenerator } = rateLimit;
 const { impactStatsLimiter } = require('../middleware/rateLimiter');
+const { refundAttemptLimiter } = require('../middleware/financialActionRateLimiter');
 const Sentry = require('@sentry/node');
 const db = require('../config/database');
 const logger = require('../config/logger');
@@ -3570,6 +3571,7 @@ router.get(
 router.post(
   '/:id/refunds',
   requireAuth,
+  refundAttemptLimiter,
   asyncHandler(async (req, res) => {
     const campaign = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [
       req.params.id,

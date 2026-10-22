@@ -163,6 +163,8 @@ cd frontend && npm run dev   # http://localhost:5173
 | `UNLEASH_ENVIRONMENT` | Unleash environment (default: `development`) |
 | `LAUNCHDARKLY_SDK_KEY` | LaunchDarkly SDK key (required for LaunchDarkly adapter) |
 | `RATE_LIMIT_BYPASS_ACCOUNTS` | Comma-separated Stellar addresses (G...) that bypass the contribution rate limiter. **Only for test accounts in non-production.** Adding accounts here allows unlimited contribution requests — a security risk if misused. |
+| `WITHDRAWAL_ATTEMPT_LIMIT` / `WITHDRAWAL_ATTEMPT_WINDOW_SECONDS` | Withdrawal attempts allowed per user per window (defaults `10` per `900` s). See [Withdrawal and refund attempt limits](#withdrawal-and-refund-attempt-limits). |
+| `REFUND_ATTEMPT_LIMIT` / `REFUND_ATTEMPT_WINDOW_SECONDS` | Refund attempts allowed per user per window (defaults `20` per `900` s). |
 
 The frontend runs locally without an `.env`: Vite proxies `/api` to `http://localhost:3001` and Stellar explorer links default to testnet. Use `frontend/.env.example` when you need to override those defaults or configure optional integrations.
 
@@ -288,6 +290,17 @@ The 2-of-2 multisig only gives two-party control when the two keys are held by t
 - **Custodial creators** have their wallet secret stored encrypted on the backend, next to the platform key. For these campaigns the backend can produce *both* signatures, so the multisig does **not** protect against a backend compromise or a malicious admin.
 
 To bound that exposure, every server-side path that signs as a custodial creator (creator withdrawal approval, platform milestone release, scheduled milestone auto-release, and contract-treasury withdrawal requests) refuses amounts above `CUSTODIAL_WITHDRAWAL_LIMIT` (default `1000` units of the campaign asset) with `403 NON_CUSTODIAL_SIGNATURE_REQUIRED`; an auto-release above the limit falls back to manual review. Larger withdrawals require a Freighter creator. Refunds to contributors are exempt, since they return funds to where they came from. The limit caps what the application will sign; it is not a cryptographic guarantee, since anyone with full access to the server's key material can still sign directly. Creators raising significant amounts should use Freighter.
+
+#### Withdrawal and refund attempt limits
+
+Money-moving endpoints are throttled per authenticated user by `middleware/financialActionRateLimiter.js`, which uses the same Redis fixed-window counter as the contribution limiter. The limiter runs after `requireAuth` and before validation or any database, Stellar or wallet-key work, and every attempt counts, including ones the handler later rejects.
+
+| Bucket | Endpoints | Default |
+|---|---|---|
+| `withdrawal` | `POST /api/withdrawals/request`, `POST /api/withdrawals/:id/approve/creator` | 10 per 15 min (`WITHDRAWAL_ATTEMPT_LIMIT`, `WITHDRAWAL_ATTEMPT_WINDOW_SECONDS`) |
+| `refund` | `POST /api/refund-requests`, `POST /api/refund-requests/:id/pay`, `POST /api/campaigns/:id/refunds` | 20 per 15 min (`REFUND_ATTEMPT_LIMIT`, `REFUND_ATTEMPT_WINDOW_SECONDS`) |
+
+Over the limit the API returns `429` with a `Retry-After` header (seconds until the window resets) and the contribution limiter's body: `{ "error": "Too Many Requests", "message": "...", "retry_after": <seconds> }`. Successful responses are unchanged; clients should treat `429` on these endpoints as retryable after `Retry-After`. Reads, cancel/reject, refund review and platform-approver submission are not limited by this. If Redis is unavailable the limiter fails open and logs an error, like the contribution limiter; authorization, idempotency and `CUSTODIAL_WITHDRAWAL_LIMIT` still apply. `RATE_LIMIT_BYPASS_ACCOUNTS` does not apply to these buckets.
 
 **Escrow**: Milestone-gated releases run through the escrow and milestones contracts in `contracts/soroban/`, but only in **contract mode** — when `SOROBAN_ENABLED=true` and `ESCROW_CONTRACT_ID` / `MILESTONES_CONTRACT_ID` (or the WASM hashes) are configured. Without those, `sorobanService.js` falls back to the classic 2-of-2 multisig path above, and milestone approval is enforced by the backend rather than by a contract. Deployed testnet contract IDs are listed in [Deployed testnet contracts](#deployed-testnet-contracts); there is nothing to list for mainnet yet.
 
