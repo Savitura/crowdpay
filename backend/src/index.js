@@ -1,3 +1,10 @@
+// `npm run dev` and `npm start` read backend/.env, as the migration runner does.
+// Variables already set in the environment win. Tests that require the app
+// are left alone.
+if (require.main === module) {
+  require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+}
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');

@@ -115,12 +115,19 @@ docker compose up
 | Backend  | http://localhost:3001 |
 | API docs | http://localhost:3001/api/docs |
 
-The database schema is applied automatically. Hot-reload is active for both processes.
+The `backend` service applies pending migrations, then starts the API with hot reload; the background workers run inside the same process (see [Web server and background workers](#web-server-and-background-workers)). The frontend also reloads on change.
+
+To run the background workers in their own container instead:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.worker.yml up
+```
 
 ### Without Docker
 
 ```bash
-# Prerequisites: Node.js 20+, PostgreSQL 14+
+# Prerequisites: Node.js 20+, PostgreSQL 14+, Redis 7
+# (the backend uses redis://localhost:6379 unless REDIS_URL is set)
 
 cd backend && npm install && cp .env.example .env
 # Fill in .env (see Environment Variables below)
@@ -128,12 +135,42 @@ npm run migrate
 
 cd ../frontend && npm install
 # Optional: copy frontend defaults before overriding API, Stellar, Firebase, or Sentry settings
-lp .env.example .env
+cp .env.example .env
 
 # Two terminals:
-cd backend  && npm run dev   # http://localhost:3001
+cd backend  && npm run dev   # API on http://localhost:3001, plus the background workers
 cd frontend && npm run dev   # http://localhost:5173
 ```
+
+### Web server and background workers
+
+The backend has two parts: the web server (`src/index.js`, the Express API) and the background workers (`src/worker.js`: the Horizon ledger monitor, the webhook retry poller, recurring contributions, the health collector and the scheduled jobs). `npm run dev` and `npm start` run both in one process: the server listens on `PORT` (default `3001`), then starts the workers. That is the default for local development and for the production images.
+
+To run them as two processes, for example to restart the workers without restarting the API, make sure PostgreSQL and Redis are up and `npm run migrate` has run (the worker does not migrate), then start the web server first and the worker second, each in its own terminal:
+
+```bash
+# Terminal 1: web server only, API on http://localhost:3001
+cd backend && WORKER_ENABLED=false npm run dev
+
+# Terminal 2: background workers only, no HTTP port
+cd backend && npm run dev:worker
+```
+
+In PowerShell, set the variable with `$env:WORKER_ENABLED='false'` before `npm run dev`. `npm start` and `npm run worker` start the same pair without hot reload.
+
+Both processes read `backend/.env`, and a variable already set in the shell takes precedence over the file. Set `WORKER_ENABLED=false` for the web server only, never in `backend/.env`: the worker reads the same file and exits with an error when it is set. If the web server runs without it, every job runs twice. The worker opens no port, so `PORT` only matters to the web server. The per-job switches (`ENABLE_LEDGER_MONITOR`, `ENABLE_WEBHOOK_POLLER`, `ENABLE_HEALTH_COLLECTOR` and the cron feature flags such as `ENABLE_CAMPAIGN_STATUS_CRON`) apply to whichever process runs the workers.
+
+To check that both are running:
+
+- Web server: `curl http://localhost:3001/health/live` answers `{"status":"ok",...}`, and its log shows `Server running on port 3001` followed by `worker: disabled via configuration or test environment`.
+- Worker: its log shows `worker: running as a standalone process, no HTTP server`, `worker: bootstrapping background lifecycle`, then one `worker: starting <job> (interval <ms>ms)` line per enabled job, such as `worker: starting campaign-status-cron (interval 3600000ms)`.
+- Only the worker logs `worker: starting` lines. If the web server logs them too, `WORKER_ENABLED=false` did not reach it.
+
+Ctrl+C (or `SIGTERM`) stops either process; the worker stops its scheduled jobs before it exits.
+
+Live campaign updates (`GET /api/campaigns/:id/stream`, used by the campaign page) are pushed by the process that receives the Horizon payment stream. When the workers run on their own, the web server only follows the payments of campaigns created or published through it since it started, so the campaign page may not show a new contribution until it is reloaded, even though the worker has recorded it. Keep the single process when you work on live updates.
+
+With Docker, `docker compose -f docker-compose.yml -f docker-compose.worker.yml up` does the same: it sets `WORKER_ENABLED=false` on `backend` and adds a `worker` service, built from the same `builder` stage, that runs `npm run dev:worker` once `backend` answers `/health/live`. Follow it with `docker compose logs -f worker`.
 
 ### Environment Variables
 
@@ -218,6 +255,8 @@ npm run rotate-wallet-secrets:confirm --prefix backend
 |---|---|
 | `npm run dev` | Start development server with hot reload |
 | `npm start` | Start production server |
+| `npm run dev:worker` | Start the background workers on their own, with hot reload (see [Web server and background workers](#web-server-and-background-workers)) |
+| `npm run worker` | Start the background workers on their own |
 | `npm run lint` | Lint backend code |
 | `npm run lint:fix` | Lint and auto-fix backend code |
 | `npm run format:check` | Check backend formatting with Prettier |
