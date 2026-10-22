@@ -14,7 +14,7 @@ async function withServer(handler, fn) {
   }
 }
 
-function buildDispatcher({ deliveryRow, campaignDeliveryRow }) {
+function buildDispatcher({ deliveryRow, campaignDeliveryRow, safeFetchModule }) {
   const updates = [];
   const query = async (text, params) => {
     // Atomic claim (#838): the claim UPDATE returns the row to deliver.
@@ -41,11 +41,14 @@ function buildDispatcher({ deliveryRow, campaignDeliveryRow }) {
     return { rows: [] };
   };
 
-  const dispatcher = proxyquire('./webhookDispatcher', {
+  const stubs = {
     '../config/database': { query },
     '../config/logger': { error: () => {}, warn: () => {}, info: () => {} },
     './emailService': { sendEmail: async () => {} },
-  });
+  };
+  if (safeFetchModule) stubs['../utils/safeFetch'] = safeFetchModule;
+
+  const dispatcher = proxyquire('./webhookDispatcher', stubs);
 
   return { dispatcher, updates };
 }
@@ -78,6 +81,23 @@ function baseCampaignDeliveryRow(url, overrides = {}) {
     backoff_strategy: null,
     ...overrides,
   };
+}
+
+function buildSafeFetchWithMockedDns(dnsLookupImpl) {
+  let lookupCalls = 0;
+  const ssrfGuard = proxyquire('../utils/ssrfGuard', {
+    dns: {
+      promises: {
+        lookup: async (...args) => {
+          lookupCalls += 1;
+          return dnsLookupImpl(...args);
+        },
+      },
+    },
+    '../config/logger': { warn: () => {}, error: () => {}, info: () => {} },
+  });
+  const safeFetchModule = proxyquire('../utils/safeFetch', { './ssrfGuard': ssrfGuard });
+  return { safeFetchModule, getLookupCalls: () => lookupCalls };
 }
 
 test('processDelivery delivers to a real endpoint end-to-end through the real SSRF guard and pinned fetch', async () => {
@@ -206,4 +226,42 @@ test('processCampaignWebhookDelivery fails closed (never connects) for a deliver
   const failed = updates.find(u => /status = 'failed'/.test(u.text));
   assert.ok(failed);
   assert.match(failed.params[2], /SSRF guard:.*private\/internal/);
+});
+
+test('processCampaignWebhookDelivery delivers to a hostname endpoint through the pinned lookup', async () => {
+  await withServer(
+    (req, res) => {
+      res.writeHead(200);
+      res.end('ok');
+    },
+    async (_baseUrl, port) => {
+      const { dispatcher, updates } = buildDispatcher({
+        campaignDeliveryRow: baseCampaignDeliveryRow(`http://localhost:${port}/hook`),
+      });
+
+      await dispatcher.processCampaignWebhookDelivery('campaign-delivery-1');
+
+      assert.ok(
+        updates.find(u => /status = 'delivered'/.test(u.text)),
+        'hostname deliveries must connect to the validated pinned address, not fail during lookup'
+      );
+    }
+  );
+});
+
+test('processCampaignWebhookDelivery fails closed when a campaign hostname resolves to a private address', async () => {
+  const { safeFetchModule, getLookupCalls } = buildSafeFetchWithMockedDns(async () => [
+    { address: '169.254.169.254', family: 4 },
+  ]);
+  const { dispatcher, updates } = buildDispatcher({
+    campaignDeliveryRow: baseCampaignDeliveryRow('https://rebind.campaign.test/hook'),
+    safeFetchModule,
+  });
+
+  await dispatcher.processCampaignWebhookDelivery('campaign-delivery-1');
+
+  const failed = updates.find(u => /status = 'failed'/.test(u.text));
+  assert.ok(failed);
+  assert.match(failed.params[2], /SSRF guard:.*private\/internal/);
+  assert.equal(getLookupCalls(), 1, 'DNS must be resolved once before the connection is pinned');
 });

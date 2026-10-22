@@ -17,6 +17,32 @@ class SsrfBlockedError extends Error {
 }
 
 /**
+ * Build the custom lookup used by the pinned request.
+ *
+ * Node calls a custom `lookup` in one of two shapes: when happy-eyeballs /
+ * auto-family-selection is active (the default from Node 20 onwards) it passes
+ * `{ all: true }` and expects an array of address records; otherwise it expects
+ * a single `(address, family)` pair. Returning the wrong shape makes Node throw
+ * `ERR_INVALID_IP_ADDRESS` instead of connecting, so the pin never takes effect.
+ * Honouring both shapes keeps the socket bound to the address that was
+ * validated by `resolveSafeConnectTarget`.
+ *
+ * @param {string} address validated IPv4/IPv6 address to connect to
+ * @param {number|string} family address family (4 or 6)
+ * @returns {(hostname: string, options: object, callback: Function) => void}
+ */
+function pinnedLookup(address, family) {
+  const pinnedFamily = Number(family) || 4;
+  return (_hostname, options, callback) => {
+    if (options && options.all) {
+      callback(null, [{ address, family: pinnedFamily }]);
+      return;
+    }
+    callback(null, address, pinnedFamily);
+  };
+}
+
+/**
  * Issues a single HTTP(S) request pinned to `resolved.pinnedAddress` — the
  * connection is opened to that address regardless of what the hostname
  * resolves to at socket-open time, closing the DNS-rebinding window between
@@ -38,8 +64,7 @@ function performPinnedRequest(urlString, resolved, { method, headers, body, time
       path: `${u.pathname}${u.search}`,
       headers: { ...headers, Host: u.host },
       timeout: timeoutMs,
-      lookup: (_hostname, _options, callback) =>
-        callback(null, resolved.pinnedAddress, resolved.family || 4),
+      lookup: pinnedLookup(resolved.pinnedAddress, resolved.family || 4),
     };
     if (isHttps) {
       requestOptions.servername = u.hostname;
@@ -114,4 +139,4 @@ async function safeFetch(urlString, options = {}) {
   throw new SsrfBlockedError(`too many redirects (max ${maxRedirects})`);
 }
 
-module.exports = { safeFetch, SsrfBlockedError };
+module.exports = { safeFetch, SsrfBlockedError, pinnedLookup };

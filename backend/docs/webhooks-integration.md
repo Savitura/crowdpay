@@ -70,3 +70,24 @@ Create keys with `POST /api/api-keys`. Send `Authorization: Bearer cp_live_<secr
 - `full` — equivalent to all of the above.
 
 Set `API_KEY_PEPPER` in production (falls back to `JWT_SECRET` only for local dev).
+
+## SSRF and DNS-rebinding protection
+
+Outbound deliveries — user webhooks and campaign webhooks alike — are sent through
+the SSRF-safe fetch in `src/utils/safeFetch.js`. For every attempt and every
+redirect hop, CrowdPay:
+
+1. resolves the hostname exactly once and validates **every** A/AAAA record returned,
+2. rejects private, loopback, link-local, carrier-grade NAT, multicast, and reserved
+   IPv4/IPv6 ranges, plus known cloud-metadata hostnames,
+3. opens the socket to the validated IP address with a pinned lookup instead of
+   resolving the hostname again at connect time, so a DNS answer that changes between
+   validation and connection (DNS rebinding) cannot redirect the request,
+4. preserves the original hostname for the HTTP `Host` header and, for HTTPS, the TLS
+   SNI/servername, so virtual hosting and certificate verification behave normally,
+5. re-runs steps 1-4 for every 3xx `Location` target and never follows a redirect to a
+   blocked address.
+
+A delivery blocked by the guard is marked `failed` and recorded in the dead-letter
+queue; it is not retried. Campaign webhooks share this delivery path, so no separate
+API or client change is required.
