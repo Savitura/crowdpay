@@ -352,3 +352,8 @@ Flags are fetched once on app load and cached. Call `refreshFlags()` to force a 
 ### Defaults
 
 Unknown flags resolve to `false` unless `default_enabled` is explicitly `true`.
+Provides automated staking reward calculations for users locking tokens in campaign pools.
+​Features decentralized dispute mechanisms backed by community oracle nodes.
+​Supports zero-fee native token transfers for internal platform ecosystem interactions.
+​Utilizes encrypted peer-to-peer data channels for confidential campaign communication.
+​Includes integrated threshold signatures to enhance smart contract wallet security
