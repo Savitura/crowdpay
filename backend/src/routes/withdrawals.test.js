@@ -2017,3 +2017,35 @@ test('POST /api/withdrawals/:id/approve/platform finalization logs creator share
   assert.equal(creatorShareEvent.metadata.creator_share, 5);
   assert.equal(creatorShareEvent.metadata.creator_public_key, 'GCREATOR_WALLET');
 });
+
+
+test('platform cannot sign or submit until the snapshotted team quorum is met', async () => {
+  let signed = false;
+  let submitted = false;
+  const calls = [];
+  const { app, cleanup } = buildApp({
+    userId: 'platform-admin', role: 'admin',
+    queryImpl: async (sql) => {
+      calls.push(sql);
+      if (sql.includes('SELECT role, is_admin')) return { rows: [{ role: 'admin' }] };
+      if (sql.includes('FROM withdrawal_requests wr')) return { rows: [{
+        id: 'w-team', campaign_id: 'campaign', creator_id: 'creator', requested_by: 'creator',
+        status: 'pending', creator_signed: true, platform_signed: false, team_approvals_required: 1,
+      }] };
+      if (sql.includes('FROM campaign_members')) return { rows: [{ id: 'member', user_id: 'other-owner' }] };
+      return { rows: [] };
+    },
+    stellarImpl: {
+      signTransactionXdr: () => { signed = true; return 'signed'; },
+      submitSignedWithdrawal: async () => { submitted = true; return 'hash'; },
+    },
+  });
+  try {
+    const res = await request(app).post('/api/withdrawals/w-team/approve/platform').send({});
+    assert.equal(res.status, 409);
+    assert.match(res.body.error, /Team approval required/);
+    assert.equal(signed, false);
+    assert.equal(submitted, false);
+    assert.ok(calls.includes('ROLLBACK'));
+  } finally { cleanup(); }
+});

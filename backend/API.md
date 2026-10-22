@@ -618,3 +618,51 @@ Deterministic projection, not a guarantee. Each month consumes the next run of
 each active schedule, capping a payout at the remaining projected balance.
 projected_total_payout is the sum across the horizon. No new funds, fees, or
 refunds are assumed.
+
+
+## Creator team withdrawal approval policies
+
+Run `npm run migrate` before deploying the backend, then `npm run verify-schema`.
+The additive migration defaults every campaign and existing withdrawal to zero required
+team approvals, preserving existing APIs and the creator/platform signature flow.
+Creator team approvals are application-level consent, not additional Stellar signatures.
+They apply to newly requested **manual withdrawals**; contributor refunds and milestone
+release flows retain their existing authorization. No new environment variables are needed.
+
+Authenticated endpoints (UUID path parameters; cookie/CSRF or bearer authentication):
+
+| Method | Path | Result |
+| --- | --- | --- |
+| GET | `/api/withdrawals/campaign/:campaignId/approval-policy` | `required_approvals`, `eligible_other_owners`, `can_manage`, `can_approve` |
+| PUT | `/api/withdrawals/campaign/:campaignId/approval-policy` | Body `{ "required_approvals": 0..10 }`; only the campaign creator may change it |
+| GET | `/api/withdrawals/:id/team-approvals` | `required_approvals`, `approvals`, `satisfied`, `approved_by_me`, `can_approve` |
+| POST | `/api/withdrawals/:id/team-approvals` | Approve the exact stored request; returns the same progress object; repeat approval is idempotent |
+
+Policy and approval reads are limited to the creator and accepted owner-role team members.
+Managers, editors, viewers, unaccepted invitees and unrelated admins receive 403. Invalid
+parameters return 400; missing resources return 404; insufficient eligible owners, expired
+or closed requests and unmet approval quorum return 409. The existing platform approval
+endpoint (including its alias) returns 409 before signing/submission if the quorum is unmet.
+
+Each request snapshots the policy at creation. Later policy reductions do not change
+pending requests. The requester cannot count toward the quorum, and each other owner
+counts once. Removal/demotion invalidates that member's vote; reinvitation requires a
+new approval. A team can invite replacement owners to fulfill an existing requirement,
+or cancel an unsigned request through the existing cancel flow. Signed requests use the
+existing platform rejection flow; never lower a stored request's quorum administratively.
+Membership locks serialize revocation with the platform's authorization transaction.
+
+The campaign withdrawal screen lets the creator configure the policy and lets accepted
+owners review the amount, destination and evidence before approving. Refresh the panel
+after another owner votes. Policy changes and votes are audit logged without wallet keys,
+XDRs or signatures. Approval identities are retained privately for audit; the progress API
+returns counts and the current user's own approval state, not other members' identities.
+
+Manual check: invite another owner and accept their invitation; set `required_approvals`
+to 1; create a manual withdrawal and sign as creator. Platform approval must return 409.
+Approve via the other owner's team-approvals endpoint, then platform approval proceeds
+through its existing validation/signature checks. Lowering the campaign policy to 0
+before that vote must still leave this request blocked. Requests created with 0 continue
+through the original flow. The down migration refuses rollback while gated pending or
+approved requests exist; finish/reject them first. Rollback deletes approval records, so
+retain the audit export required by your operational retention policy before rollback.

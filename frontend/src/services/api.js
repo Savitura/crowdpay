@@ -112,12 +112,17 @@ export function retryQueuedRequests() {
 function normalizeError(error) {
   if (error?.response?.data?.error) {
     const e = error.response.data.error;
-    return { status: error.response.status, message: e.message, code: e.code, fields: e.fields };
+    return { status: error.response.status, message: typeof e === 'string' ? e : e.message, code: e.code, fields: e.fields };
   }
   return { status: error?.response?.status || 0, message: error.message || 'Network error' };
 }
 
 export const api = {
+  getWithdrawalTeamPolicy: (id, token) => apiClient.get(`/withdrawals/campaign/${id}/approval-policy`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
+  setWithdrawalTeamPolicy: (id, required_approvals, token) => apiClient.put(`/withdrawals/campaign/${id}/approval-policy`, { required_approvals }, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
+  listTeamWithdrawalRequests: (id, token) => apiClient.get(`/withdrawals/campaign/${id}?limit=100`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
+  getWithdrawalTeamApprovals: (id, token) => apiClient.get(`/withdrawals/${id}/team-approvals`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
+  approveWithdrawalTeam: (id, token) => apiClient.post(`/withdrawals/${id}/team-approvals`, {}, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.data),
   async getMe() {
     const res = await apiClient.get('/users/me');
     return res.data;

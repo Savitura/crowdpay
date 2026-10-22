@@ -198,6 +198,7 @@ import WithdrawalHistoryTimeline from '../components/WithdrawalHistoryTimeline';
 import MilestoneTracker from '../components/MilestoneTracker';
 import MilestoneVotePanel from '../components/MilestoneVotePanel';
 import WithdrawalsSection from '../components/WithdrawalsSection';
+import WithdrawalTeamApprovals from '../components/WithdrawalTeamApprovals';
 import CampaignDetailSkeleton from '../components/skeletons/CampaignDetailSkeleton';
 import ContributionListSkeleton from '../components/skeletons/ContributionListSkeleton';
 import VerificationBadge from '../components/VerificationBadge';
@@ -2455,6 +2456,7 @@ export default function Campaign() {
 
       {token && (
         <div id="withdrawals" data-no-print>
+          <WithdrawalTeamApprovals campaignId={campaign.id} token={token} assetType={campaign.asset_type} />
           <WithdrawalsSection
             campaign={campaign}
             milestones={milestones}

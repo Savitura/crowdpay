@@ -1,4 +1,6 @@
 const router = require('express').Router();
+const { param } = require('express-validator');
+const { campaignPolicy, teamApproval, assertTeamApproved, insertWithdrawalRequest } = require('../services/withdrawalTeamApproval');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const { requireAuth } = require('../middleware/auth');
@@ -156,6 +158,166 @@ async function assertWithdrawalAccess(req, campaignId) {
 router.get('/capabilities', requireAuth, (req, res) => {
   res.json({ can_approve_platform: canPerformPlatformSignature(req.user.userId) });
 });
+
+/**
+ * @openapi
+ * /api/withdrawals/campaign/{campaignId}/approval-policy:
+ *   get:
+ *     tags: [Withdrawals]
+ *     summary: Read creator team approval policy
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: campaignId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Policy (zero disables team approval)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 required_approvals: { type: integer }
+ *                 eligible_other_owners: { type: integer }
+ *                 can_manage: { type: boolean }
+ *                 can_approve: { type: boolean }
+ *       400: { description: Invalid input }
+ *       401: { description: Authentication required }
+ *       403: { description: Not an eligible owner or requester cannot approve }
+ *       404: { description: Resource not found }
+ *       409: { description: Insufficient owners or request cannot accept approvals }
+ *   put:
+ *     tags: [Withdrawals]
+ *     summary: Set policy for future withdrawals (campaign creator only)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: campaignId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [required_approvals]
+ *             properties:
+ *               required_approvals: { type: integer, minimum: 0, maximum: 10 }
+ *     responses:
+ *       200:
+ *         description: Policy (zero disables team approval)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 required_approvals: { type: integer }
+ *                 eligible_other_owners: { type: integer }
+ *                 can_manage: { type: boolean }
+ *                 can_approve: { type: boolean }
+ *       400: { description: Invalid input }
+ *       401: { description: Authentication required }
+ *       403: { description: Not an eligible owner or requester cannot approve }
+ *       404: { description: Resource not found }
+ *       409: { description: Insufficient owners or request cannot accept approvals }
+ * /api/withdrawals/{id}/team-approvals:
+ *   get:
+ *     tags: [Withdrawals]
+ *     summary: Read withdrawal team approval progress
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Progress; approvals never replace the creator or platform signature
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 required_approvals: { type: integer }
+ *                 approvals: { type: integer }
+ *                 satisfied: { type: boolean }
+ *                 approved_by_me: { type: boolean }
+ *                 can_approve: { type: boolean }
+ *       400: { description: Invalid input }
+ *       401: { description: Authentication required }
+ *       403: { description: Not an eligible owner or requester cannot approve }
+ *       404: { description: Resource not found }
+ *       409: { description: Insufficient owners or request cannot accept approvals }
+ *   post:
+ *     tags: [Withdrawals]
+ *     summary: Record approval from another accepted campaign owner
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Progress; approvals never replace the creator or platform signature
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 required_approvals: { type: integer }
+ *                 approvals: { type: integer }
+ *                 satisfied: { type: boolean }
+ *                 approved_by_me: { type: boolean }
+ *                 can_approve: { type: boolean }
+ *       400: { description: Invalid input }
+ *       401: { description: Authentication required }
+ *       403: { description: Not an eligible owner or requester cannot approve }
+ *       404: { description: Resource not found }
+ *       409: { description: Insufficient owners or request cannot accept approvals }
+ */
+const policyHandler = (fn) => asyncHandler(async (req, res) => {
+  try {
+    res.json(await withTransaction(client => fn(client, req), db));
+  } catch (err) {
+    if (err.code === 'withdrawal_team_approval') {
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
+    throw err;
+  }
+});
+const campaignIdValidation = [param('campaignId').isUUID(), validateRequest];
+const withdrawalIdValidation = [param('id').isUUID(), validateRequest];
+
+router.get('/campaign/:campaignId/approval-policy', requireAuth, campaignIdValidation,
+  policyHandler((client, req) => campaignPolicy(client, req.params.campaignId, req.user.userId)));
+router.put('/campaign/:campaignId/approval-policy', requireAuth, campaignIdValidation,
+  policyHandler(async (client, req) => {
+    if (req.body?.required_approvals === undefined) {
+      const err = new Error('required_approvals is required');
+      err.code = 'withdrawal_team_approval';
+      err.status = 400;
+      throw err;
+    }
+    const policy = await campaignPolicy(client, req.params.campaignId, req.user.userId, req.body.required_approvals);
+    await logAuditEvent({ actorId: req.user.userId, action: 'payout.team_policy_updated',
+      resourceType: 'campaign', resourceId: req.params.campaignId,
+      after: { required_approvals: policy.required_approvals }, client, req });
+    return policy;
+  }));
+router.get('/:id/team-approvals', requireAuth, withdrawalIdValidation,
+  policyHandler((client, req) => teamApproval(client, req.params.id, req.user.userId)));
+router.post('/:id/team-approvals', requireAuth, withdrawalIdValidation,
+  policyHandler(async (client, req) => {
+    const result = await teamApproval(client, req.params.id, req.user.userId, true);
+    await logAuditEvent({ actorId: req.user.userId, action: 'payout.team_approved',
+      resourceType: 'withdrawal', resourceId: req.params.id,
+      after: { approvals: result.approvals, required_approvals: result.required_approvals }, client, req });
+    return result;
+  }));
 
 router.post(
   '/request',
@@ -326,15 +488,12 @@ router.post(
 
     try {
       const withdrawal = await withTransaction(async client => {
-        const { rows } = await client.query(
-          `INSERT INTO withdrawal_requests
-         (campaign_id, requested_by, amount, destination_key, unsigned_xdr, creator_signed, platform_signed, evidence)
-       VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, $6)
-       RETURNING *`,
-          [campaign_id, req.user.userId, amount, destination_key, xdr, JSON.stringify(evidence)]
-        );
+        const row = await insertWithdrawalRequest(client, {
+          campaignId: campaign_id, requestedBy: req.user.userId, amount,
+          destinationKey: destination_key, xdr, evidence,
+        });
         await logWithdrawalEvent(client, {
-          withdrawalRequestId: rows[0].id,
+          withdrawalRequestId: row.id,
           actorUserId: req.user.userId,
           action: 'requested',
           note: null,
@@ -348,7 +507,7 @@ router.post(
         });
         await insertWithdrawalPendingSignatures(client, {
           campaignId: campaign_id,
-          withdrawalRequestId: rows[0].id,
+          withdrawalRequestId: row.id,
           userId: req.user.userId,
           unsignedXdr: xdr,
           metadata: {
@@ -367,7 +526,7 @@ router.post(
             })),
           },
         });
-        return rows[0];
+        return row;
       }, db);
       res.status(201).json({
         ...withdrawal,
@@ -582,6 +741,8 @@ const platformApproveHandler = asyncHandler(async (req, res) => {
       return res.status(410).json({ error: 'Withdrawal XDR has expired' });
     }
 
+    await assertTeamApproved(client, requestRow);
+
     // Fetch creator's public key for signature validation
     const { rows: creatorUserRows } = await client.query(
       'SELECT wallet_public_key FROM users WHERE id = $1',
@@ -650,6 +811,9 @@ const platformApproveHandler = asyncHandler(async (req, res) => {
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.code === 'withdrawal_team_approval') {
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
     logger.error('Platform approval failed', { withdrawal_id: req.params.id, error: err.message });
     return res.status(500).json({ error: 'Failed to process withdrawal approval' });
   } finally {
@@ -1138,7 +1302,7 @@ router.get(
 
     const { rows } = await db.query(
       `SELECT id, campaign_id, requested_by, amount, destination_key, creator_signed,
-            platform_signed, status, denial_reason, tx_hash, created_at, evidence
+            platform_signed, status, denial_reason, tx_hash, created_at, evidence, team_approvals_required
      FROM withdrawal_requests
      WHERE campaign_id = $1
      ORDER BY created_at DESC
