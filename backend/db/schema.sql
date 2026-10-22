@@ -316,6 +316,7 @@ CREATE TABLE webhook_deliveries (
   last_error            TEXT,
   next_retry_at         TIMESTAMPTZ,
   delivered_at          TIMESTAMPTZ,
+  latency_ms            INT,
   created_at            TIMESTAMPTZ DEFAULT NOW(),
   updated_at            TIMESTAMPTZ DEFAULT NOW()
 );

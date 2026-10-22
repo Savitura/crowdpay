@@ -77,6 +77,7 @@ app.use('/api/campaigns', require('./routes/campaigns'));
 app.use('/api/campaigns', require('./routes/campaignUpdates'));
 app.use('/api/campaigns', require('./routes/translations'));
 app.use('/api/campaigns', require('./routes/campaignRequirements'));
+app.use('/api/campaigns', require('./routes/campaignWebhooks'));
 // Sponsor matching pledges live under the campaign they fund; the user-scoped
 // pledge list is served from /api/user/sponsor-matches.
 app.use('/api/campaigns', require('./routes/sponsorMatching').campaignRouter);

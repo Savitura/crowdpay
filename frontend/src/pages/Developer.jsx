@@ -22,6 +22,14 @@ export default function Developer() {
   const [keys, setKeys] = useState([]);
   const [hooks, setHooks] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
+  const [deliveryTotal, setDeliveryTotal] = useState(0);
+  const [deliveryPage, setDeliveryPage] = useState(1);
+  const [deliveryLimit, setDeliveryLimit] = useState(25);
+  const [deliveryStatusFilter, setDeliveryStatusFilter] = useState('all');
+  const [deliveryHookFilter, setDeliveryHookFilter] = useState('all');
+  const [testingHookId, setTestingHookId] = useState(null);
+  const [replayingDeliveryId, setReplayingDeliveryId] = useState(null);
+  const [inspectDelivery, setInspectDelivery] = useState(null);
   const [credentialsActivity, setCredentialsActivity] = useState([]);
   const [error, setError] = useState('');
   const [newKeyLabel, setNewKeyLabel] = useState('Integration');
@@ -47,17 +55,91 @@ export default function Developer() {
       const [k, h, d, a] = await Promise.all([
         api.listApiKeys(),
         api.listWebhooks(),
-        api.listWebhookDeliveries({ limit: 80 }),
+        api.listWebhookDeliveries({ limit: deliveryLimit, offset: 0, paginate: true }),
         api.getCredentialActivity(),
       ]);
-      setKeys(k);
-      setHooks(h);
-      setDeliveries(d);
+      setKeys(Array.isArray(k) ? k : []);
+      setHooks(Array.isArray(h) ? h : []);
+      if (Array.isArray(d)) {
+        setDeliveries(d);
+        setDeliveryTotal(d.length);
+      } else {
+        setDeliveries(d.deliveries || d.items || []);
+        setDeliveryTotal(d.total || 0);
+      }
+      setDeliveryPage(1);
       setCredentialsActivity(a);
     } catch (e) {
       setError(e.message || 'Failed to load');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadDeliveries(
+    page = deliveryPage,
+    status = deliveryStatusFilter,
+    hookId = deliveryHookFilter,
+    limit = deliveryLimit
+  ) {
+    try {
+      const params = {
+        limit,
+        offset: (page - 1) * limit,
+        paginate: true,
+      };
+      if (status && status !== 'all') params.status = status;
+      if (hookId && hookId !== 'all') params.webhook_id = hookId;
+      const d = await api.listWebhookDeliveries(params);
+      if (Array.isArray(d)) {
+        setDeliveries(d);
+        setDeliveryTotal(d.length);
+      } else {
+        setDeliveries(d.deliveries || d.items || []);
+        setDeliveryTotal(d.total || 0);
+      }
+      setDeliveryPage(page);
+    } catch (e) {
+      toast?.(e.message || 'Failed to load deliveries', 'error');
+    }
+  }
+
+  async function sendTestEvent(hookId, eventType) {
+    setTestingHookId(hookId);
+    try {
+      const res = await api.sendWebhookTestEvent(
+        hookId,
+        eventType ? { event_type: eventType } : {}
+      );
+      if (res.success) {
+        toast?.(
+          `Test event delivered! Status: ${res.delivery?.response_status || 200} (${res.latency_ms || 0}ms)`,
+          'success'
+        );
+      } else {
+        toast?.(
+          `Test event failed: ${res.delivery?.last_error || 'Error'} (${res.latency_ms || 0}ms)`,
+          'error'
+        );
+      }
+      await loadDeliveries(1);
+    } catch (err) {
+      toast?.(err.message || 'Failed to send test event', 'error');
+    } finally {
+      setTestingHookId(null);
+    }
+  }
+
+  async function replayDelivery(deliveryId) {
+    setReplayingDeliveryId(deliveryId);
+    try {
+      await api.replayWebhookDelivery(deliveryId);
+      toast?.('Replay queued successfully', 'success');
+      await loadDeliveries();
+    } catch (err) {
+      toast?.(err.message || 'Failed to replay delivery', 'error');
+    } finally {
+      setReplayingDeliveryId(null);
     }
   }
 
@@ -571,7 +653,7 @@ export default function Developer() {
             </tr>
           </thead>
           <tbody>
-            {keys
+            {(keys || [])
               .filter((k) => !k.revoked_at)
               .map((k) => (
                 <tr key={k.id} style={{ borderBottom: '1px solid var(--color-border-lighter)' }}>
@@ -666,7 +748,7 @@ export default function Developer() {
           </button>
         </form>
         <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-          {hooks
+          {(hooks || [])
             .filter((h) => !h.revoked_at)
             .map((h) => (
               <li
@@ -686,7 +768,16 @@ export default function Developer() {
                     {(h.events || []).join(', ')} · {h.secret_hint}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}
+                    disabled={testingHookId === h.id}
+                    onClick={() => sendTestEvent(h.id, h.events?.[0])}
+                  >
+                    {testingHookId === h.id ? 'Testing…' : 'Send test event'}
+                  </button>
                   <button
                     type="button"
                     className="btn-secondary"
@@ -709,45 +800,405 @@ export default function Developer() {
         </ul>
       </section>
 
-      <section>
-        <h2 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.75rem' }}>
-          Webhook delivery log
-        </h2>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-            <thead>
-              <tr
-                style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border-light)' }}
+      <section style={{ marginBottom: '2.5rem' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '0.75rem',
+            flexWrap: 'wrap',
+            gap: '0.5rem',
+          }}
+        >
+          <h2 style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0 }}>Webhook delivery log</h2>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            <label
+              style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+            >
+              Endpoint:
+              <select
+                value={deliveryHookFilter}
+                onChange={(e) => {
+                  setDeliveryHookFilter(e.target.value);
+                  loadDeliveries(1, deliveryStatusFilter, e.target.value);
+                }}
+                style={{ padding: '0.25rem 0.5rem', fontSize: '0.82rem' }}
               >
-                <th style={{ padding: '0.35rem' }}>Time</th>
-                <th>Event</th>
-                <th>Status</th>
-                <th>HTTP</th>
-                <th>Attempts</th>
-                <th>Error</th>
-              </tr>
-            </thead>
-            <tbody>
-              {deliveries.map((d) => (
-                <tr key={d.id} style={{ borderBottom: '1px solid var(--color-border-lightest)' }}>
-                  <td style={{ padding: '0.35rem', whiteSpace: 'nowrap' }}>
-                    {new Date(d.created_at).toLocaleString()}
-                  </td>
-                  <td>{d.event_type}</td>
-                  <td>{d.status}</td>
-                  <td>{d.response_status ?? '—'}</td>
-                  <td>{d.attempt_count}</td>
-                  <td
-                    style={{ maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                    title={d.last_error || ''}
-                  >
-                    {d.last_error || '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                <option value="all">All endpoints</option>
+                {hooks.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.url}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label
+              style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+            >
+              Status:
+              <select
+                value={deliveryStatusFilter}
+                onChange={(e) => {
+                  setDeliveryStatusFilter(e.target.value);
+                  loadDeliveries(1, e.target.value, deliveryHookFilter);
+                }}
+                style={{ padding: '0.25rem 0.5rem', fontSize: '0.82rem' }}
+              >
+                <option value="all">All statuses</option>
+                <option value="delivered">Delivered</option>
+                <option value="failed">Failed</option>
+                <option value="retrying">Retrying</option>
+                <option value="pending">Pending</option>
+              </select>
+            </label>
+            <label
+              style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+            >
+              Per page:
+              <select
+                value={deliveryLimit}
+                onChange={(e) => {
+                  const newLimit = parseInt(e.target.value, 10);
+                  setDeliveryLimit(newLimit);
+                  loadDeliveries(1, deliveryStatusFilter, deliveryHookFilter, newLimit);
+                }}
+                style={{ padding: '0.25rem 0.5rem', fontSize: '0.82rem' }}
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{ padding: '0.25rem 0.6rem', fontSize: '0.82rem' }}
+              onClick={() => loadDeliveries()}
+            >
+              Refresh
+            </button>
+          </div>
         </div>
+
+        {deliveries.length === 0 ? (
+          <p style={{ color: 'var(--color-text-hint)', fontSize: '0.85rem' }}>
+            No webhook deliveries recorded.
+          </p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+              <thead>
+                <tr
+                  style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border-light)' }}
+                >
+                  <th style={{ padding: '0.35rem' }}>Time</th>
+                  <th>Event</th>
+                  <th>Status</th>
+                  <th>HTTP</th>
+                  <th>Latency</th>
+                  <th>Attempts</th>
+                  <th>Error</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deliveries.map((d) => (
+                  <tr key={d.id} style={{ borderBottom: '1px solid var(--color-border-lightest)' }}>
+                    <td style={{ padding: '0.35rem', whiteSpace: 'nowrap' }}>
+                      {new Date(d.created_at).toLocaleString()}
+                    </td>
+                    <td>{d.event_type}</td>
+                    <td>
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          padding: '0.15rem 0.45rem',
+                          borderRadius: 4,
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          background:
+                            d.status === 'delivered'
+                              ? 'rgba(46, 160, 67, 0.15)'
+                              : d.status === 'failed'
+                                ? 'rgba(218, 54, 51, 0.15)'
+                                : 'rgba(210, 153, 34, 0.15)',
+                          color:
+                            d.status === 'delivered'
+                              ? '#2ea043'
+                              : d.status === 'failed'
+                                ? '#da3633'
+                                : '#d29922',
+                        }}
+                      >
+                        {d.status}
+                      </span>
+                    </td>
+                    <td>{d.response_status ?? '—'}</td>
+                    <td>
+                      {d.latency_ms !== null && d.latency_ms !== undefined
+                        ? `${d.latency_ms} ms`
+                        : '—'}
+                    </td>
+                    <td>{d.attempt_count}</td>
+                    <td
+                      style={{
+                        maxWidth: '180px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={d.last_error || ''}
+                    >
+                      {d.last_error || '—'}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{
+                          padding: '0.15rem 0.45rem',
+                          fontSize: '0.75rem',
+                          marginRight: '0.35rem',
+                        }}
+                        onClick={() => setInspectDelivery(d)}
+                      >
+                        Inspect
+                      </button>
+                      {(d.status === 'failed' || d.status === 'retrying') && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ padding: '0.15rem 0.45rem', fontSize: '0.75rem' }}
+                          disabled={replayingDeliveryId === d.id}
+                          onClick={() => replayDelivery(d.id)}
+                        >
+                          {replayingDeliveryId === d.id ? 'Replaying…' : 'Replay'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {deliveryTotal > deliveryLimit && (
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginTop: '1rem',
+              fontSize: '0.82rem',
+              color: 'var(--color-text-hint)',
+            }}
+          >
+            <span>
+              Showing {(deliveryPage - 1) * deliveryLimit + 1}–
+              {Math.min(deliveryPage * deliveryLimit, deliveryTotal)} of {deliveryTotal} deliveries
+            </span>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem' }}
+                disabled={deliveryPage <= 1}
+                onClick={() => loadDeliveries(deliveryPage - 1)}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem' }}
+                disabled={deliveryPage * deliveryLimit >= deliveryTotal}
+                onClick={() => loadDeliveries(deliveryPage + 1)}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+
+        {inspectDelivery && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(0, 0, 0, 0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1000,
+              padding: '1rem',
+            }}
+            onClick={() => setInspectDelivery(null)}
+          >
+            <div
+              style={{
+                background: 'var(--color-bg, #fff)',
+                color: 'var(--color-text, #000)',
+                borderRadius: 8,
+                maxWidth: '650px',
+                width: '100%',
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                padding: '1.25rem',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '1rem',
+                }}
+              >
+                <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Delivery Details</h3>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}
+                  onClick={() => setInspectDelivery(null)}
+                >
+                  Close
+                </button>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '0.5rem',
+                  fontSize: '0.85rem',
+                  marginBottom: '1rem',
+                }}
+              >
+                <div>
+                  <strong>Event:</strong> {inspectDelivery.event_type}
+                </div>
+                <div>
+                  <strong>Status:</strong> {inspectDelivery.status}
+                </div>
+                <div>
+                  <strong>HTTP Status:</strong> {inspectDelivery.response_status ?? '—'}
+                </div>
+                <div>
+                  <strong>Latency:</strong>{' '}
+                  {inspectDelivery.latency_ms ? `${inspectDelivery.latency_ms} ms` : '—'}
+                </div>
+                <div>
+                  <strong>Attempts:</strong> {inspectDelivery.attempt_count}
+                </div>
+                <div>
+                  <strong>Created:</strong> {new Date(inspectDelivery.created_at).toLocaleString()}
+                </div>
+                <div style={{ gridColumn: 'span 2' }}>
+                  <strong>Webhook URL:</strong> {inspectDelivery.webhook_url || '—'}
+                </div>
+              </div>
+
+              {inspectDelivery.last_error && (
+                <div style={{ marginBottom: '1rem' }}>
+                  <strong>Error:</strong>
+                  <pre
+                    style={{
+                      margin: '0.25rem 0 0',
+                      padding: '0.5rem',
+                      background: 'rgba(218, 54, 51, 0.1)',
+                      color: '#da3633',
+                      borderRadius: 4,
+                      fontSize: '0.8rem',
+                      whiteSpace: 'pre-wrap',
+                    }}
+                  >
+                    {inspectDelivery.last_error}
+                  </pre>
+                </div>
+              )}
+
+              {inspectDelivery.response_body_snippet && (
+                <div style={{ marginBottom: '1rem' }}>
+                  <strong>Response snippet:</strong>
+                  <pre
+                    style={{
+                      margin: '0.25rem 0 0',
+                      padding: '0.5rem',
+                      background: 'var(--color-bg-secondary, #f6f8fa)',
+                      borderRadius: 4,
+                      fontSize: '0.8rem',
+                      whiteSpace: 'pre-wrap',
+                      maxHeight: '150px',
+                      overflowY: 'auto',
+                    }}
+                  >
+                    {inspectDelivery.response_body_snippet}
+                  </pre>
+                </div>
+              )}
+
+              <div style={{ marginBottom: '1rem' }}>
+                <div
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                >
+                  <strong>Payload:</strong>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{ padding: '0.2rem 0.4rem', fontSize: '0.75rem' }}
+                    onClick={() => {
+                      navigator.clipboard?.writeText(
+                        JSON.stringify(inspectDelivery.payload, null, 2)
+                      );
+                      toast?.('Payload copied to clipboard', 'success');
+                    }}
+                  >
+                    Copy JSON
+                  </button>
+                </div>
+                <pre
+                  style={{
+                    margin: '0.25rem 0 0',
+                    padding: '0.5rem',
+                    background: 'var(--color-bg-secondary, #f6f8fa)',
+                    borderRadius: 4,
+                    fontSize: '0.8rem',
+                    whiteSpace: 'pre-wrap',
+                    maxHeight: '200px',
+                    overflowY: 'auto',
+                  }}
+                >
+                  {JSON.stringify(inspectDelivery.payload, null, 2)}
+                </pre>
+              </div>
+
+              {(inspectDelivery.status === 'failed' || inspectDelivery.status === 'retrying') && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                    disabled={replayingDeliveryId === inspectDelivery.id}
+                    onClick={async () => {
+                      await replayDelivery(inspectDelivery.id);
+                      setInspectDelivery(null);
+                    }}
+                  >
+                    {replayingDeliveryId === inspectDelivery.id ? 'Replaying…' : 'Replay Delivery'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </section>
 
       <section>

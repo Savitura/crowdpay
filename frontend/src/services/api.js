@@ -580,6 +580,44 @@ export const api = {
     const res = await apiClient.get('/webhooks/deliveries', { params });
     return res.data;
   },
+  async sendWebhookTestEvent(id, data = {}) {
+    const res = await apiClient.post(`/webhooks/${id}/test`, data);
+    return res.data;
+  },
+  async getWebhookDeliveries(id, params) {
+    const res = await apiClient.get(`/webhooks/${id}/deliveries`, { params });
+    return res.data;
+  },
+  async getWebhookDeliveryDetails(deliveryId) {
+    const res = await apiClient.get(`/webhooks/deliveries/${deliveryId}`);
+    return res.data;
+  },
+  async replayWebhookDelivery(deliveryId) {
+    const res = await apiClient.post(`/webhooks/deliveries/${deliveryId}/replay`);
+    return res.data;
+  },
+  async listCampaignWebhooks(campaignId) {
+    const res = await apiClient.get(`/campaigns/${campaignId}/webhooks`);
+    return res.data;
+  },
+  async createCampaignWebhook(campaignId, data) {
+    const res = await apiClient.post(`/campaigns/${campaignId}/webhooks`, data);
+    return res.data;
+  },
+  async deleteCampaignWebhook(campaignId, webhookId) {
+    const res = await apiClient.delete(`/campaigns/${campaignId}/webhooks/${webhookId}`);
+    return res.data;
+  },
+  async sendCampaignWebhookTestEvent(campaignId, webhookId, data = {}) {
+    const res = await apiClient.post(`/campaigns/${campaignId}/webhooks/${webhookId}/test`, data);
+    return res.data;
+  },
+  async getCampaignWebhookDeliveries(campaignId, webhookId, params) {
+    const res = await apiClient.get(`/campaigns/${campaignId}/webhooks/${webhookId}/deliveries`, {
+      params,
+    });
+    return res.data;
+  },
 
   // --- Governance (#801: mutating calls moved onto the shared client so the
   // CSRF header is attached and session cookies are used instead of a

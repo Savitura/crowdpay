@@ -99,6 +99,58 @@ Response includes `redirect_url` or `session_token`, plus the updated user. Pers
 
 KYC provider callback. Updates the matched user to `verified` or `rejected` from provider status. The campaign creation gate is controlled by `KYC_REQUIRED_FOR_CAMPAIGNS` and defaults to enabled; set it to `false` for testnet/dev.
 
+### `POST /api/webhooks`
+
+Authenticated user endpoint (`developer` or `full` scope). Registers a webhook URL for lifecycle events (`campaign.funded`, `contribution.received`, `milestone.approved`, `withdrawal.completed`). Returns endpoint details and single-reveal signing secret.
+
+### `GET /api/webhooks`
+
+Lists active webhooks owned by the authenticated user with masked `secret_hint`.
+
+### `DELETE /api/webhooks/:id`
+
+Revokes a registered webhook endpoint.
+
+### `POST /api/webhooks/:id/rotate`
+
+Rotates a webhook signing secret with an optional `grace_period_hours` (default 24h, 1–72h).
+
+### `POST /api/webhooks/:id/test`
+
+Dispatches a synthetic test event through the live delivery pipeline for endpoint verification and latency measurement. Body accepts optional `{ event_type: "contribution.received" }`. Returns delivery status, HTTP response code, and latency in milliseconds.
+
+### `GET /api/webhooks/deliveries`
+
+Lists webhook delivery logs. Supports query parameters `limit` (1–200, default 50), `offset` (default 0), `page` (1-based), `webhook_id`, `status` (`pending`, `delivering`, `delivered`, `failed`, `retrying`), and `event_type`. Returns paginated envelope with `total`, `page`, `limit`, `offset`, and `deliveries` when `paginate=true` or pagination parameters are passed.
+
+### `GET /api/webhooks/:id/deliveries`
+
+Returns paginated delivery history scoped strictly to webhook `:id`.
+
+### `GET /api/webhooks/deliveries/:id`
+
+Returns detailed delivery object, payload, response snippet, and individual attempt timestamps and latencies.
+
+### `POST /api/webhooks/deliveries/:id/replay`
+
+Replays a failed or retrying delivery attempt.
+
+### `POST /api/campaigns/:id/webhooks`
+
+Registers a campaign-scoped webhook for contribution events. Authenticated to campaign owner/manager.
+
+### `GET /api/campaigns/:id/webhooks`
+
+Lists webhooks for a campaign.
+
+### `POST /api/campaigns/:id/webhooks/:wid/test`
+
+Dispatches a test event for a campaign webhook.
+
+### `GET /api/campaigns/:id/webhooks/:wid/deliveries`
+
+Returns paginated delivery history for a campaign webhook.
+
 ### `POST /api/campaigns`
 
 Authenticated creator/admin endpoint. The user must have `email_verified=true`. Additionally, when `KYC_REQUIRED_FOR_CAMPAIGNS` is not `false`, the user must have `kyc_status=verified`; otherwise the API returns `403` with `code=KYC_REQUIRED` or `code=EMAIL_NOT_VERIFIED`.
