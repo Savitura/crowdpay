@@ -1,3 +1,4 @@
+const { assertBeneficiaryAllowed } = require('./payoutBeneficiaries');
 const dayjs = require('dayjs');
 const db = require('../config/database');
 const logger = require('../config/logger');
@@ -76,6 +77,8 @@ async function createPayoutSchedule({
     err.statusCode = 422;
     throw err;
   }
+
+  await assertBeneficiaryAllowed(db, campaignId, destinationKey);
 
   const start = startDate ? new Date(startDate) : new Date();
   if (isNaN(start.getTime())) {
@@ -332,6 +335,8 @@ async function processDuePayoutSchedules() {
 
           continue;
         }
+
+        await assertBeneficiaryAllowed(db, schedule.campaign_id, schedule.destination_key);
 
         // 3. Compute fees, commissions, and unsigned transaction XDR
         const { rows: feeRows } = await db.query(
