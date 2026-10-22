@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const totpService = require('../services/totpService');
+const stepUpService = require('../services/stepUpService');
 const { Keypair } = require('@stellar/stellar-sdk');
 const db = require('../config/database');
 const logger = require('../config/logger');
@@ -127,6 +128,18 @@ const totpChallengeEmailLimiter = rateLimit({
   legacyHeaders: false,
   skip: () => isTest,
   keyGenerator: req => String((req.body?.email || '').trim().toLowerCase()),
+});
+
+// Per-account: 5 step-up attempts per 15 minutes. TOTP failures additionally
+// count toward the shared consecutive-failure lockout below.
+const stepUpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isTest ? 100000 : 5,
+  message: { error: 'Too many re-authentication attempts, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => isTest,
+  keyGenerator: req => String(req.user?.userId || ''),
 });
 
 const TOTP_MAX_CONSECUTIVE_FAILURES = 10;
@@ -677,6 +690,178 @@ router.post(
         kyc_completed_at: user.kyc_completed_at,
         kyc_required_for_campaigns: isKycRequiredForCampaigns(),
       },
+    });
+  })
+);
+
+function isValidStellarPublicKey(value) {
+  try {
+    Keypair.fromPublicKey(value);
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+/**
+ * @openapi
+ * /api/auth/step-up:
+ *   post:
+ *     tags: [Users]
+ *     summary: Re-authenticate to obtain a short-lived step-up token
+ *     description: >
+ *       Verifies the caller's password (and TOTP or backup code when 2FA is
+ *       enabled) and returns a step-up token bound to the user, purpose and
+ *       destination. Send it in the X-Step-Up-Token header on payout
+ *       destination changes.
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [password, destination_key]
+ *             properties:
+ *               password: { type: string }
+ *               code: { type: string, description: TOTP or backup code (required when 2FA is enabled) }
+ *               purpose: { type: string, enum: [payout_destination] }
+ *               destination_key: { type: string }
+ *     responses:
+ *       200:
+ *         description: Step-up token issued
+ *       400:
+ *         description: Missing or invalid fields, or 2FA code required
+ *       401:
+ *         description: Invalid password or 2FA code
+ *       403:
+ *         description: Not available while impersonating
+ *       423:
+ *         description: Too many failed 2FA attempts
+ */
+router.post(
+  '/step-up',
+  requireAuth,
+  stepUpLimiter,
+  asyncHandler(async (req, res) => {
+    if (req.auth?.impersonated || req.impersonation) {
+      return res.status(403).json({
+        error: 'Step-up authentication is not available while impersonating a user',
+        code: 'STEP_UP_FORBIDDEN',
+      });
+    }
+
+    const {
+      password,
+      code,
+      purpose = stepUpService.PAYOUT_DESTINATION_PURPOSE,
+      destination_key: destinationKey,
+    } = req.body || {};
+
+    if (!stepUpService.STEP_UP_PURPOSES.has(purpose)) {
+      return res.status(400).json({ error: 'Unsupported step-up purpose' });
+    }
+    if (!password || typeof password !== 'string') {
+      return res.status(400).json({ error: 'Password is required' });
+    }
+    if (typeof destinationKey !== 'string' || !isValidStellarPublicKey(destinationKey)) {
+      return res.status(400).json({ error: 'destination_key must be a valid Stellar public key' });
+    }
+
+    const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);
+    if (!rows.length) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const user = rows[0];
+    const auditContext = { purpose, destination_key: destinationKey };
+
+    if (user.totp_locked_until && new Date(user.totp_locked_until) > new Date()) {
+      await totpService.logAuditEvent(user.id, 'step_up_failed', req, {
+        ...auditContext,
+        reason: 'locked',
+      });
+      return res.status(423).json({
+        error: 'Too many failed 2FA attempts. Try again later.',
+        code: 'STEP_UP_LOCKED',
+      });
+    }
+
+    if (!user.password_hash || !(await bcrypt.compare(password, user.password_hash))) {
+      await totpService.logAuditEvent(user.id, 'step_up_failed', req, {
+        ...auditContext,
+        reason: 'invalid_password',
+      });
+      return res.status(401).json({ error: 'Invalid credentials', code: 'STEP_UP_FAILED' });
+    }
+
+    let method = 'password';
+    if (user.totp_enabled) {
+      if (!code || typeof code !== 'string') {
+        return res.status(400).json({
+          error: '2FA code is required',
+          code: 'STEP_UP_TOTP_REQUIRED',
+        });
+      }
+
+      let codeValid = false;
+      if (code.length === 6) {
+        codeValid = totpService.verifyTotp(user.totp_secret, code);
+        method = 'password+totp';
+      } else if (user.backup_codes && user.backup_codes.length > 0) {
+        const result = await totpService.verifyBackupCode(user.backup_codes, code);
+        if (result.valid) {
+          codeValid = true;
+          await totpService.removeBackupCode(user.id, user.backup_codes, result.index);
+        }
+        method = 'password+backup_code';
+      }
+
+      if (!codeValid) {
+        const failedAttempts = (user.totp_failed_attempts || 0) + 1;
+        const lockingOut = failedAttempts >= TOTP_MAX_CONSECUTIVE_FAILURES;
+        await db.query(
+          'UPDATE users SET totp_failed_attempts = $1, totp_locked_until = $2 WHERE id = $3',
+          [
+            lockingOut ? 0 : failedAttempts,
+            lockingOut ? new Date(Date.now() + TOTP_LOCKOUT_MS) : null,
+            user.id,
+          ]
+        );
+        await totpService.logAuditEvent(user.id, 'step_up_failed', req, {
+          ...auditContext,
+          reason: 'invalid_2fa_code',
+          consecutiveFailures: failedAttempts,
+          lockedOut: lockingOut,
+        });
+        return res.status(401).json({ error: 'Invalid 2FA code', code: 'STEP_UP_FAILED' });
+      }
+
+      if (user.totp_failed_attempts) {
+        await db.query(
+          'UPDATE users SET totp_failed_attempts = 0, totp_locked_until = NULL WHERE id = $1',
+          [user.id]
+        );
+      }
+    }
+
+    const { token, expiresIn, expiresAt } = stepUpService.issueStepUpToken({
+      userId: user.id,
+      purpose,
+      destinationKey,
+    });
+    await totpService.logAuditEvent(user.id, 'step_up_succeeded', req, {
+      ...auditContext,
+      method,
+    });
+
+    res.json({
+      step_up_token: token,
+      expires_in: expiresIn,
+      expires_at: expiresAt,
+      purpose,
+      destination_key: destinationKey,
+      header: 'X-Step-Up-Token',
     });
   })
 );
