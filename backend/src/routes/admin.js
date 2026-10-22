@@ -24,7 +24,8 @@ const {
   processDelivery,
   processCampaignWebhookDelivery,
 } = require('../services/webhookDispatcher');
-const { logAuditEvent } = require('../services/auditService');
+const { logAuditEvent, sanitizeMetadata } = require('../services/auditService');
+const { recordModerationAction } = require('../services/moderationAuditService');
 
 async function recordPrivilegedAudit(payload) {
   try {
@@ -55,10 +56,19 @@ router.post(
       return res.status(403).json({ error: 'Not currently impersonating' });
     }
 
-    await db.query(
-      'INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id) VALUES ($1, $2, $3, $4)',
-      [req.impersonation.adminUserId, 'impersonate_end', 'user', req.impersonation.targetUserId]
-    );
+    await recordModerationAction({
+      req,
+      client: db,
+      actorId: req.impersonation.adminUserId,
+      action: 'admin.impersonate_end',
+      actionType: 'impersonate_end',
+      targetType: 'user',
+      targetId: req.impersonation.targetUserId,
+      metadata: {
+        target_user_id: req.impersonation.targetUserId,
+        admin_user_id: req.impersonation.adminUserId,
+      },
+    });
 
     res.clearCookie(IMPERSONATION_TOKEN_COOKIE_NAME, {
       httpOnly: true,
@@ -217,26 +227,27 @@ router.patch(
       return res.status(404).json({ error: 'Campaign not found' });
     }
 
+    const campaign = campaignResult.rows[0];
+
     const updateResult = await db.query(
       `UPDATE campaigns SET status = 'suspended', suspended_reason = $2, suspended_at = NOW() 
      WHERE id = $1 RETURNING id, title, status, created_at`,
       [id, reason]
     );
 
-    await db.query(
-      'INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, details) VALUES ($1, $2, $3, $4, $5)',
-      [req.user.userId, 'suspend', 'campaign', id, JSON.stringify({ reason })]
-    );
+    const updatedCampaign = updateResult.rows[0] || {};
 
-    await recordPrivilegedAudit({
-      actorId: req.user.userId,
-      action: 'campaign.suspended',
-      resourceType: 'campaign',
-      resourceId: id,
-      before: { status: campaignResult.rows[0].status },
-      after: { status: updateResult.rows[0].status, suspended_reason: reason || null },
-      metadata: { reason: reason || null },
+    await recordModerationAction({
       req,
+      client: db,
+      action: 'campaign.suspended',
+      actionType: 'suspend',
+      targetType: 'campaign',
+      targetId: id,
+      reason: reason || null,
+      before: { status: campaign.status, title: campaign.title || updatedCampaign.title },
+      after: { status: updatedCampaign.status || 'suspended', suspended_reason: reason || null },
+      metadata: { reason: reason || null, campaign_title: updatedCampaign.title || campaign.title },
     });
 
     cache.invalidatePrefix(`campaign:${id}`);
@@ -255,6 +266,7 @@ router.patch(
   '/campaigns/:id/restore',
   asyncHandler(async (req, res) => {
     const { id } = req.params;
+    const { reason } = req.body || {};
 
     const campaignResult = await db.query(
       'SELECT id, status FROM campaigns WHERE id = $1 AND deleted_at IS NULL',
@@ -265,7 +277,9 @@ router.patch(
       return res.status(404).json({ error: 'Campaign not found' });
     }
 
-    if (campaignResult.rows[0].status !== 'suspended') {
+    const campaign = campaignResult.rows[0];
+
+    if (campaign.status !== 'suspended') {
       return res.status(400).json({ error: 'Campaign is not suspended' });
     }
 
@@ -275,19 +289,19 @@ router.patch(
       [id]
     );
 
-    await db.query(
-      'INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id) VALUES ($1, $2, $3, $4)',
-      [req.user.userId, 'restore', 'campaign', id]
-    );
+    const updatedCampaign = updateResult.rows[0] || {};
 
-    await recordPrivilegedAudit({
-      actorId: req.user.userId,
-      action: 'campaign.restored',
-      resourceType: 'campaign',
-      resourceId: id,
-      before: { status: campaignResult.rows[0].status },
-      after: { status: updateResult.rows[0].status },
+    await recordModerationAction({
       req,
+      client: db,
+      action: 'campaign.restored',
+      actionType: 'restore',
+      targetType: 'campaign',
+      targetId: id,
+      reason: reason || null,
+      before: { status: campaign.status, title: campaign.title || updatedCampaign.title },
+      after: { status: updatedCampaign.status || 'active' },
+      metadata: { campaign_title: updatedCampaign.title || campaign.title, reason: reason || null },
     });
 
     cache.invalidatePrefix(`campaign:${id}`);
@@ -332,10 +346,30 @@ router.delete(
       [id, reason]
     );
 
-    await db.query(
-      'INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, details) VALUES ($1, $2, $3, $4, $5)',
-      [req.user.userId, 'delete', 'campaign', id, JSON.stringify({ reason })]
-    );
+    const updatedCampaign = updateResult.rows[0] || {};
+
+    await recordModerationAction({
+      req,
+      client: db,
+      action: 'campaign.deleted',
+      actionType: 'delete',
+      targetType: 'campaign',
+      targetId: id,
+      reason: reason || null,
+      before: {
+        status: campaign.status,
+        title: campaign.title,
+        creator_id: campaign.creator_id,
+        wallet_public_key: campaign.wallet_public_key || null,
+      },
+      after: { deleted_at: updatedCampaign.deleted_at, deletion_reason: reason || null },
+      metadata: {
+        reason: reason || null,
+        campaign_title: campaign.title,
+        creator_id: campaign.creator_id,
+        wallet_revoked: Boolean(campaign.wallet_public_key),
+      },
+    });
 
     cache.invalidatePrefix(`campaign:${id}`);
 
@@ -386,15 +420,27 @@ router.patch(
       return res.status(404).json({ error: 'User not found' });
     }
 
+    const targetUser = userResult.rows[0];
+
     const updateResult = await db.query(
       'UPDATE users SET is_banned = true, banned_reason = $2, banned_at = NOW() WHERE id = $1 RETURNING id, email, is_banned',
       [id, reason]
     );
 
-    await db.query(
-      'INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, details) VALUES ($1, $2, $3, $4, $5)',
-      [req.user.userId, 'ban', 'user', id, JSON.stringify({ reason })]
-    );
+    const updatedUser = updateResult.rows[0] || {};
+
+    await recordModerationAction({
+      req,
+      client: db,
+      action: 'user.banned',
+      actionType: 'ban',
+      targetType: 'user',
+      targetId: id,
+      reason,
+      before: { is_banned: targetUser.is_banned, email: targetUser.email, role: targetUser.role },
+      after: { is_banned: true, banned_reason: reason },
+      metadata: { reason, target_user_email: targetUser.email, role: targetUser.role },
+    });
 
     res.json({ user: updateResult.rows[0] });
   })
@@ -410,6 +456,7 @@ router.patch(
   '/users/:id/unban',
   asyncHandler(async (req, res) => {
     const { id } = req.params;
+    const { reason } = req.body || {};
 
     const userResult = await db.query('SELECT id, email, is_banned FROM users WHERE id = $1', [id]);
 
@@ -417,15 +464,29 @@ router.patch(
       return res.status(404).json({ error: 'User not found' });
     }
 
+    const targetUser = userResult.rows[0];
+
     const updateResult = await db.query(
       'UPDATE users SET is_banned = false, banned_reason = NULL, banned_at = NULL WHERE id = $1 RETURNING id, email, is_banned',
       [id]
     );
 
-    await db.query(
-      'INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id) VALUES ($1, $2, $3, $4)',
-      [req.user.userId, 'unban', 'user', id]
-    );
+    await recordModerationAction({
+      req,
+      client: db,
+      action: 'user.unbanned',
+      actionType: 'unban',
+      targetType: 'user',
+      targetId: id,
+      reason: reason || null,
+      before: {
+        is_banned: targetUser.is_banned,
+        banned_reason: targetUser.banned_reason,
+        email: targetUser.email,
+      },
+      after: { is_banned: false },
+      metadata: { reason: reason || null, target_user_email: targetUser.email },
+    });
 
     res.json({ user: updateResult.rows[0] });
   })
@@ -451,15 +512,33 @@ router.patch(
       return res.status(404).json({ error: 'User not found' });
     }
 
+    const targetUser = userResult.rows[0];
+
     const updateResult = await db.query(
       'UPDATE users SET kyc_status = $2, kyc_completed_at = NOW() WHERE id = $1 RETURNING id, email, name, kyc_status, kyc_completed_at',
       [id, kyc_status]
     );
 
-    await db.query(
-      'INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, details) VALUES ($1, $2, $3, $4, $5)',
-      [req.user.userId, 'kyc_override', 'user', id, JSON.stringify({ kyc_status, reason })]
-    );
+    const updatedUser = updateResult.rows[0] || {};
+
+    await recordModerationAction({
+      req,
+      client: db,
+      action: 'user.kyc_override',
+      actionType: 'kyc_override',
+      targetType: 'user',
+      targetId: id,
+      reason: reason || null,
+      before: { kyc_status: targetUser.kyc_status, email: targetUser.email },
+      after: { kyc_status, kyc_completed_at: updatedUser.kyc_completed_at },
+      metadata: {
+        kyc_status,
+        reason: reason || null,
+        target_user_email: targetUser.email,
+        previous_status: targetUser.kyc_status,
+        new_status: kyc_status,
+      },
+    });
 
     res.json(updateResult.rows[0]);
   })
@@ -479,19 +558,53 @@ router.get(
       max: ADMIN_AUDIT_LOG_MAX_LIMIT,
     });
 
-    const countResult = await db.query('SELECT COUNT(*) FROM admin_actions');
+    const conditions = [];
+    const params = [];
+
+    if (req.query.action_type) {
+      params.push(req.query.action_type);
+      conditions.push(`a.action_type = $${params.length}`);
+    }
+
+    if (req.query.target_type) {
+      params.push(req.query.target_type);
+      conditions.push(`a.target_type = $${params.length}`);
+    }
+
+    if (req.query.target_id) {
+      params.push(req.query.target_id);
+      conditions.push(`a.target_id::text = $${params.length}`);
+    }
+
+    if (req.query.admin_user_id) {
+      params.push(req.query.admin_user_id);
+      conditions.push(`a.admin_user_id::text = $${params.length}`);
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const countResult = await db.query(
+      `SELECT COUNT(*) FROM admin_actions a ${whereClause}`,
+      params
+    );
 
     const dataResult = await db.query(
       `SELECT a.id, a.admin_user_id, u.email as admin_email, a.action_type, a.target_type, a.target_id, a.details, a.created_at
      FROM admin_actions a
      LEFT JOIN users u ON a.admin_user_id = u.id
+     ${whereClause}
      ORDER BY a.created_at DESC
-     LIMIT $1 OFFSET $2`,
-      [limit, offset]
+     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
     );
 
+    const sanitizedActions = dataResult.rows.map(row => ({
+      ...row,
+      details: row.details ? sanitizeMetadata(row.details) : row.details,
+    }));
+
     res.json({
-      actions: dataResult.rows,
+      actions: sanitizedActions,
       total: parseInt(countResult.rows[0]?.count || '0', 10),
       limit,
       offset,
@@ -696,6 +809,7 @@ router.post(
   '/impersonate/:userId',
   asyncHandler(async (req, res) => {
     const { userId } = req.params;
+    const { reason } = req.body || {};
 
     const userResult = await db.query(
       'SELECT id, email, name, role, is_admin, is_banned FROM users WHERE id = $1',
@@ -721,10 +835,23 @@ router.post(
       { expiresIn: IMPERSONATION_TTL_SECONDS }
     );
 
-    await db.query(
-      'INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id) VALUES ($1, $2, $3, $4)',
-      [req.user.userId, 'impersonate_start', 'user', targetUser.id]
-    );
+    await recordModerationAction({
+      req,
+      client: db,
+      action: 'admin.impersonate_start',
+      actionType: 'impersonate_start',
+      targetType: 'user',
+      targetId: targetUser.id,
+      reason: reason || null,
+      before: { is_impersonated: false },
+      after: { is_impersonated: true },
+      metadata: {
+        target_email: targetUser.email,
+        target_role: targetUser.role,
+        reason: reason || null,
+        expires_in: IMPERSONATION_TTL_SECONDS,
+      },
+    });
 
     res.cookie(IMPERSONATION_TOKEN_COOKIE_NAME, token, {
       httpOnly: true,
@@ -769,13 +896,25 @@ router.post(
   '/fraud/contributions/:id/resolve',
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { resolution } = req.body;
+    const { resolution, reason } = req.body || {};
     const adminUserId = req.user.userId;
 
     const updated = await resolveFlaggedContribution({
       contributionId: id,
       resolution,
       adminUserId,
+    });
+
+    await recordModerationAction({
+      req,
+      client: db,
+      action: 'fraud.contribution_resolved',
+      actionType: 'fraud_resolution',
+      targetType: 'contribution',
+      targetId: id,
+      reason: reason || null,
+      after: { resolution, status: updated?.status },
+      metadata: { resolution, contribution_id: id, reason: reason || null },
     });
 
     res.json({ success: true, contribution: updated });
