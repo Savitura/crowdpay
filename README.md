@@ -64,10 +64,10 @@ CrowdPay uses a strict SQL migration runner located in `backend/db/`. All migrat
 - Check migration status: `npm run migrate:status` (lists all migrations, including unsupported formats with explicit states)
 - Bootstrap schema and run migrations: `npm run migrate:fresh`
 
-To add a migration, create the next timestamped `.sql` file in
-`backend/db/migrations/`, include a reversible `.down.sql` when rollback is
-supported, and run `npm run migrate` followed by `npm run verify-schema` against
-a scratch database before committing it.
+For full details on lexicographical ordering, advisory lock concurrency control, rollback limits (forward-only migrations), and failure/restore recovery procedures, see the **[Database Migrations Guide](docs/database-migrations.md)**.
+
+To add a migration, create the next timestamped `.sql` file in `backend/db/migrations/` (following UTC `YYYYMMDD_*` prefixing) and run `npm run migrate` followed by `npm run verify-schema` against a scratch database before committing it. Schema changes are strictly forward-only.
+
 
 ## Project Structure
 

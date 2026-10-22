@@ -105,7 +105,7 @@ psql "$DATABASE_URL" -c 'SELECT filename, applied_at FROM schema_migrations ORDE
 
 For a **new production database**, use `npm run migrate` only. Do **not** run `npm run migrate:fresh`: it first loads the current `db/schema.sql` snapshot and then replays historical migrations, and is intended only for local development workflows. Likewise, do not edit `schema_migrations` to skip a migration; restore from a tested backup or resolve the failed migration deliberately.
 
-Before every production migration: take a verified backup, test the migration against a recent restored copy, review lock/statement impact, and schedule a maintenance window for potentially locking changes. The migration system has no automatic down migrations. Roll back application code only when the prior version is compatible with the migrated schema; otherwise restore the database according to the recovery procedure below.
+Before every production migration: take a verified backup, test the migration against a recent restored copy, review lock/statement impact, and schedule a maintenance window for potentially locking changes. The migration system has no automatic down migrations. Roll back application code only when the prior version is compatible with the migrated schema; otherwise restore the database according to the recovery procedure below and in the **[Database Migrations Guide](database-migrations.md)**.
 
 `db/seed.sql` is demo data with placeholder wallet secrets and test accounts. **Never run it in production.** Create production users, campaigns, and configuration through the application and approved operational processes.
 
