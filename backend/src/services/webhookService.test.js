@@ -530,3 +530,13 @@ test('milestone decision returns 404 when the milestone does not belong to the o
     e => e.status === 404
   );
 });
+
+test('verifyWebhookSignature rejects suffixes silently truncated by hex decoding', () => {
+  const { svc } = buildService();
+  const body = Buffer.from('{}');
+  const signature = crypto.createHmac('sha256', 'secret').update(body).digest('hex');
+  for (const suffix of ['z', 'zz', '0', ' ' + 'zz']) {
+    assert.equal(svc.verifyWebhookSignature('secret', body, signature + suffix), false);
+  }
+  assert.equal(svc.verifyWebhookSignature('secret', body, signature.toUpperCase()), true);
+});
