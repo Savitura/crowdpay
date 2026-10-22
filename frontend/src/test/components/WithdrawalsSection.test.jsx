@@ -48,13 +48,62 @@ describe('WithdrawalsSection', () => {
     await userEvent.click(screen.getByRole('button', { name: /Submit request/i }));
 
     await waitFor(() =>
-      expect(api.requestWithdrawal).toHaveBeenCalledWith({
-        campaign_id: 'campaign-1',
-        destination_key: 'GDEST12345',
-        amount: '200',
-        evidence: ['https://example.com/receipt'],
-      })
+      expect(api.requestWithdrawal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          campaign_id: 'campaign-1',
+          destination_key: 'GDEST12345',
+          amount: '200',
+          evidence: ['https://example.com/receipt'],
+        })
+      )
     );
+    // The request carries an idempotency key so a retry cannot open a second
+    // withdrawal (#1098).
+    const submitted = api.requestWithdrawal.mock.calls[0][0];
+    expect(submitted.idempotency_key).toEqual(expect.any(String));
+    expect(submitted.idempotency_key.length).toBeGreaterThan(0);
     expect(onReleased).toHaveBeenCalled();
+  });
+
+  it('reuses the same idempotency key when the same request is retried', async () => {
+    const campaign = {
+      id: 'campaign-1',
+      creator_id: 'user-1',
+      status: 'active',
+      asset_type: 'USDC',
+    };
+    const user = { id: 'user-1', role: 'creator', wallet_public_key: 'GABCDEF' };
+
+    api.getWithdrawalCapabilities.mockResolvedValue({ can_approve_platform: false });
+    api.listWithdrawals.mockResolvedValue([]);
+    api.getCampaignBalance.mockResolvedValue({ USDC: '250' });
+    api.requestWithdrawal.mockClear();
+    api.requestWithdrawal
+      .mockRejectedValueOnce(new Error('Network error'))
+      .mockResolvedValueOnce({});
+
+    renderWithProviders(
+      <WithdrawalsSection
+        campaign={campaign}
+        milestones={[]}
+        user={user}
+        token="test-token"
+        onReleased={vi.fn()}
+      />
+    );
+
+    await screen.findByText(/Available on-chain:/i);
+    await userEvent.type(screen.getByLabelText(/Destination address/i), 'GDEST12345');
+    await userEvent.type(screen.getByLabelText(/Amount \(USDC\)/i), '200');
+    await userEvent.type(screen.getByLabelText(/Evidence/i), 'https://example.com/receipt');
+    await userEvent.click(screen.getByRole('button', { name: /Submit request/i }));
+
+    await waitFor(() => expect(api.requestWithdrawal).toHaveBeenCalledTimes(1));
+    await screen.findByText(/Network error/i);
+    await userEvent.click(screen.getByRole('button', { name: /Submit request/i }));
+
+    await waitFor(() => expect(api.requestWithdrawal).toHaveBeenCalledTimes(2));
+    const [first, second] = api.requestWithdrawal.mock.calls.map((call) => call[0]);
+    expect(second.idempotency_key).toBe(first.idempotency_key);
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 import { getNetwork, signTransaction } from '@stellar/freighter-api';
@@ -7,6 +7,16 @@ import { useToast } from '../context/ToastContext';
 import RelativeTime from './RelativeTime';
 
 const ELIGIBLE = ['active', 'funded'];
+
+// A withdrawal request can be retried (double click, flaky network, reload),
+// so it carries an idempotency key: the backend answers a repeated request
+// with the original withdrawal instead of opening a second one (#1098).
+function createIdempotencyKey() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `wd-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 function statusLabel(row, isExpired) {
   if (isExpired) return 'Expired — please re-request';
@@ -52,6 +62,11 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
   const [rejectingId, setRejectingId] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
   const [confirmingSignId, setConfirmingSignId] = useState(null);
+  // Idempotency key of the withdrawal request that is currently being
+  // submitted. It is reused while the payload stays the same, so a retry is
+  // answered with the original withdrawal (#1098).
+  const idempotencyKeyRef = useRef(null);
+  const idempotencyFingerprintRef = useRef('');
 
   const isCreator = user?.id && campaign.creator_id === user.id;
   const isAdmin = user?.role === 'admin';
@@ -143,17 +158,38 @@ export default function WithdrawalsSection({ campaign, milestones = [], user, to
     }
   }
 
+  function withdrawalIdempotencyKey(payload) {
+    const fingerprint = JSON.stringify([
+      payload.campaign_id,
+      payload.destination_key,
+      payload.amount,
+      payload.evidence,
+    ]);
+    if (!idempotencyKeyRef.current || idempotencyFingerprintRef.current !== fingerprint) {
+      idempotencyKeyRef.current = createIdempotencyKey();
+      idempotencyFingerprintRef.current = fingerprint;
+    }
+    return idempotencyKeyRef.current;
+  }
+
   async function handleRequest(e) {
     e.preventDefault();
     setBusyId('new');
     setError('');
+    const payload = {
+      campaign_id: campaign.id,
+      destination_key: form.destination_key.trim(),
+      amount: form.amount.trim(),
+      evidence: form.evidence.trim() ? [form.evidence.trim()] : [],
+    };
     try {
       await api.requestWithdrawal({
-        campaign_id: campaign.id,
-        destination_key: form.destination_key.trim(),
-        amount: form.amount.trim(),
-        evidence: form.evidence.trim() ? [form.evidence.trim()] : [],
+        ...payload,
+        idempotency_key: withdrawalIdempotencyKey(payload),
       });
+      // The withdrawal exists now: the next request needs a fresh key.
+      idempotencyKeyRef.current = null;
+      idempotencyFingerprintRef.current = '';
       setForm({ destination_key: '', amount: '', evidence: '' });
       await refresh();
       onReleased?.();

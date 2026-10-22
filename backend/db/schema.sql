@@ -399,6 +399,17 @@ ALTER TABLE withdrawal_requests
 
 CREATE INDEX withdrawal_requests_milestone_idx ON withdrawal_requests (milestone_id);
 
+-- Durable idempotency guard for creator withdrawal requests (#1098). The
+-- migration path creates the same columns for installations bootstrapped
+-- before this definition.
+ALTER TABLE withdrawal_requests
+  ADD COLUMN idempotency_actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN idempotency_key TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS withdrawal_requests_actor_idempotency_idx
+  ON withdrawal_requests (idempotency_actor_id, idempotency_key)
+  WHERE idempotency_actor_id IS NOT NULL AND idempotency_key IS NOT NULL;
+
 CREATE TABLE anchor_deposits (
   id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id                     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

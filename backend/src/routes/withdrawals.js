@@ -57,6 +57,73 @@ async function recordPayoutAudit(payload) {
 
 const ALLOWED_CAMPAIGN_STATUS_FOR_REQUEST = ['active', 'funded'];
 
+// Scope of the durable idempotency record for creator withdrawal requests
+// (#1098). It matches the `contribution:create` convention so both creator
+// facing money endpoints behave the same way.
+const WITHDRAWAL_IDEMPOTENCY_SCOPE = 'withdrawal:create';
+
+// Columns persisted on a withdrawal so a replayed request can be answered
+// with the original row instead of creating a second withdrawal.
+const WITHDRAWAL_REPLAY_COLUMNS = `
+  id, campaign_id, requested_by, amount, destination_key, status, creator_signed,
+  platform_signed, denial_reason, tx_hash, created_at, evidence`;
+
+/**
+ * Find the withdrawal that was created with an idempotency key (#1098).
+ * The key is scoped to the actor, matching `idempotency_keys`.
+ */
+async function findWithdrawalByIdempotencyKey(actorId, key) {
+  const { rows } = await db.query(
+    `SELECT ${WITHDRAWAL_REPLAY_COLUMNS}
+       FROM withdrawal_requests
+      WHERE idempotency_actor_id = $1 AND idempotency_key = $2`,
+    [actorId, key]
+  );
+  return rows[0] || null;
+}
+
+/** Whether two withdrawal payloads describe the same logical request. */
+function isSameWithdrawalRequest(existing, { campaign_id, destination_key, amount }) {
+  if (existing.campaign_id !== campaign_id) return false;
+  if (existing.destination_key !== destination_key) return false;
+  try {
+    return toStroops(existing.amount) === toStroops(amount);
+  } catch (_err) {
+    return String(existing.amount) === String(amount);
+  }
+}
+
+/**
+ * Evidence is required for every withdrawal request. The check runs before the
+ * idempotency key is claimed so a request that is missing evidence never burns
+ * the key: the creator can fix the payload and retry with the same key.
+ */
+function requireWithdrawalEvidence(req, res, next) {
+  const { evidence } = req.body || {};
+  if (!evidence || !Array.isArray(evidence) || evidence.length === 0) {
+    return res.status(400).json({
+      error: 'Evidence array (receipts, invoices, or links) is required for withdrawals',
+    });
+  }
+  return next();
+}
+
+/**
+ * Answer a replayed withdrawal request (#1098).
+ *
+ * A key that is reused with a different payload is a client bug, so it is
+ * rejected with the same status and code the idempotency middleware uses.
+ */
+function sendWithdrawalReplay(res, existing, payload) {
+  if (!isSameWithdrawalRequest(existing, payload)) {
+    return res.status(409).json({
+      error: 'The idempotency key was already used with a different request',
+      code: 'IDEMPOTENCY_KEY_REUSED',
+    });
+  }
+  return res.status(200).json({ ...existing, idempotent_replay: true });
+}
+
 function frontendBaseUrl() {
   return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
 }
@@ -162,6 +229,10 @@ router.post(
   requireAuth,
   withdrawalValidation,
   validateRequest,
+  // The key is claimed after validation so a rejected request never burns it:
+  // the creator can correct the payload and retry with the same key.
+  requireWithdrawalEvidence,
+  idempotency(WITHDRAWAL_IDEMPOTENCY_SCOPE, { bodyField: 'idempotency_key' }),
   asyncHandler(async (req, res) => {
     /**
      * @openapi
@@ -171,34 +242,58 @@ router.post(
      *     summary: Create a pending withdrawal request
      *     security:
      *       - bearerAuth: []
+     *     parameters:
+     *       - in: header
+     *         name: Idempotency-Key
+     *         required: false
+     *         description: >
+     *           Client generated key (1-255 printable ASCII characters, no
+     *           whitespace) that makes the request safe to retry. When both
+     *           the header and the body field are sent they must match.
+     *         schema: { type: string }
      *     requestBody:
      *       required: true
      *       content:
      *         application/json:
      *           schema:
      *             type: object
-     *             required: [campaign_id, destination_key, amount]
+     *             required: [campaign_id, destination_key, amount, evidence]
      *             properties:
      *               campaign_id: { type: string }
      *               destination_key: { type: string }
      *               amount: { type: string }
+     *               evidence:
+     *                 type: array
+     *                 description: Receipts, invoices, or links that support the payout.
+     *               idempotency_key:
+     *                 type: string
+     *                 description: Body alternative to the Idempotency-Key header.
      *     responses:
      *       201:
      *         description: Created
+     *       200:
+     *         description: >
+     *           The idempotency key already created a withdrawal. The original
+     *           withdrawal is returned with `idempotent_replay: true`.
+     *       400:
+     *         description: Invalid payload or missing withdrawal evidence
      *       401:
      *         description: Unauthorized
      *       403:
      *         description: Forbidden
      *       404:
      *         description: Campaign not found
+     *       409:
+     *         description: >
+     *           Idempotency conflict - the key is already in flight
+     *           (IDEMPOTENCY_CONFLICT) or was reused with a different payload
+     *           (IDEMPOTENCY_KEY_REUSED).
      */
     const { campaign_id, destination_key, amount, evidence } = req.body;
-
-    if (!evidence || !Array.isArray(evidence) || evidence.length === 0) {
-      return res.status(400).json({
-        error: 'Evidence array (receipts, invoices, or links) is required for withdrawals',
-      });
-    }
+    // `req.idempotencyKey` is set by the idempotency middleware for both the
+    // `Idempotency-Key` header and the `idempotency_key` body field.
+    const idempotencyKey = req.idempotencyKey || null;
+    const idempotencyActorId = idempotencyKey ? req.user.userId : null;
 
     const { rows: campaigns } = await db.query(
       `SELECT id, creator_id, wallet_public_key, asset_type, status,
@@ -213,6 +308,19 @@ router.post(
     if (!isOwner) {
       return res.status(403).json({ error: 'Only campaign owners can request withdrawals' });
     }
+
+    // Durable replay (#1098). The HTTP-level idempotency record expires after
+    // 24 hours, so the key is also stored on the withdrawal row: a retry that
+    // arrives later resolves to the withdrawal that already exists instead of
+    // opening a second one. It runs before the eligibility checks so a retry
+    // still resolves after the campaign moved on (e.g. to `completed`).
+    if (idempotencyKey) {
+      const existing = await findWithdrawalByIdempotencyKey(idempotencyActorId, idempotencyKey);
+      if (existing) {
+        return sendWithdrawalReplay(res, existing, { campaign_id, destination_key, amount });
+      }
+    }
+
     if (campaign.milestone_count > 0) {
       return res.status(409).json({
         error:
@@ -328,10 +436,19 @@ router.post(
       const withdrawal = await withTransaction(async client => {
         const { rows } = await client.query(
           `INSERT INTO withdrawal_requests
-         (campaign_id, requested_by, amount, destination_key, unsigned_xdr, creator_signed, platform_signed, evidence)
-       VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, $6)
+         (campaign_id, requested_by, amount, destination_key, unsigned_xdr, creator_signed, platform_signed, evidence, idempotency_actor_id, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, $6, $7, $8)
        RETURNING *`,
-          [campaign_id, req.user.userId, amount, destination_key, xdr, JSON.stringify(evidence)]
+          [
+            campaign_id,
+            req.user.userId,
+            amount,
+            destination_key,
+            xdr,
+            JSON.stringify(evidence),
+            idempotencyActorId,
+            idempotencyKey,
+          ]
         );
         await logWithdrawalEvent(client, {
           withdrawalRequestId: rows[0].id,
@@ -377,6 +494,16 @@ router.post(
         referral_commissions: payableCommissions,
       });
     } catch (err) {
+      // Two retries of the same key can race past the replay lookup above.
+      // The unique index on (idempotency_actor_id, idempotency_key) keeps a
+      // single withdrawal for the key, so the loser answers with the row the
+      // winner created instead of failing the creator.
+      if (idempotencyKey && err.code === '23505') {
+        const existing = await findWithdrawalByIdempotencyKey(idempotencyActorId, idempotencyKey);
+        if (existing) {
+          return sendWithdrawalReplay(res, existing, { campaign_id, destination_key, amount });
+        }
+      }
       logger.error('Withdrawal request creation failed', { error: err.message, campaign_id });
       res.status(500).json({ error: 'Could not create withdrawal request' });
     }

@@ -314,6 +314,8 @@ Body:
 - `campaign_id` (required)
 - `destination_key` (required)
 - `amount` (required)
+- `evidence` (required) — receipts, invoices, or links
+- `idempotency_key` (optional) — see [Idempotency keys](#idempotency-keys-for-withdrawal-requests)
 
 Returns `201` with withdrawal request (`creator_signed=false`, `platform_signed=false`, `status=pending`).
 
@@ -321,9 +323,29 @@ Appends an audit row to `withdrawal_approval_events` with action `requested`.
 
 Errors:
 
+- `400` invalid payload or missing evidence
 - `403` not the campaign creator
-- `409` campaign status not eligible, or duplicate pending withdrawal
+- `409` campaign status not eligible, duplicate pending withdrawal, or idempotency conflict
 - `422` multisig configuration invalid
+
+#### Idempotency keys for withdrawal requests
+
+The endpoint accepts an idempotency key through the `Idempotency-Key` header, the
+`idempotency_key` body field, or both (when both are sent they must match). The key
+must be 1-255 printable ASCII characters without whitespace. Keys are scoped to the
+authenticated creator.
+
+- A repeated request with the same key and the same payload replays the original
+  response with `Idempotency-Replay: true` and never opens a second withdrawal.
+- The key is stored on the withdrawal itself, so a retry that arrives after the
+  24 hour replay window still resolves to the original withdrawal. That response is
+  `200` and carries `idempotent_replay: true`.
+- A key that is reused with a different payload is rejected with `409` and code
+  `IDEMPOTENCY_KEY_REUSED`; a key whose request is still in flight is rejected with
+  `409` and code `IDEMPOTENCY_CONFLICT`.
+- An invalid key is rejected with `400` and code `INVALID_IDEMPOTENCY_KEY`.
+
+Requests without a key keep working exactly as before.
 
 ### `POST /api/withdrawals/:id/approve/creator`
 
