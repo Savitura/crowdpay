@@ -55,6 +55,55 @@ function isEmailConfigured() {
 }
 
 /**
+ * Verify connectivity and credentials with the email transport provider.
+ * Returns a promise that resolves when the transporter is verified or emails are disabled.
+ */
+function verifyEmailTransport() {
+  if (emailsDisabled) {
+    return Promise.resolve({ disabled: true });
+  }
+  if (!transporter) {
+    const err = new Error('Email transport is not configured');
+    err.code = 'NOT_CONFIGURED';
+    return Promise.reject(err);
+  }
+  if (typeof transporter.verify !== 'function') {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    try {
+      const maybePromise = transporter.verify((err, success) => {
+        if (settled) return;
+        settled = true;
+        if (err) reject(err);
+        else resolve(success);
+      });
+      if (maybePromise && typeof maybePromise.then === 'function') {
+        maybePromise
+          .then(res => {
+            if (!settled) {
+              settled = true;
+              resolve(res);
+            }
+          })
+          .catch(err => {
+            if (!settled) {
+              settled = true;
+              reject(err);
+            }
+          });
+      }
+    } catch (err) {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    }
+  });
+}
+
+/**
  * Sends an email asynchronously.
  */
 async function sendEmail({ to, subject, text, html }) {
@@ -652,6 +701,7 @@ async function sendCommentReplyEmail({ to, commentId, ...params }) {
 module.exports = {
   sendEmail,
   isEmailConfigured,
+  verifyEmailTransport,
   sendIdempotent,
   isUnsubscribed,
   isCampaignUpdateUnsubscribed,
