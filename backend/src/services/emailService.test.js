@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const proxyquire = require('proxyquire').noCallThru();
 const { buildUnsubscribeUrl, verifyUnsubscribeToken } = require('../utils/unsubscribeToken');
 
-function buildService({ queryImpl, logger } = {}) {
+function buildService({ queryImpl, logger, verifyImpl } = {}) {
   const sent = [];
   const dedupeKeys = new Set();
   const db = {
@@ -36,6 +36,12 @@ function buildService({ queryImpl, logger } = {}) {
       sendMail: async mail => {
         sent.push(mail);
       },
+      verify:
+        verifyImpl ||
+        (cb => {
+          if (typeof cb === 'function') cb(null, true);
+          return Promise.resolve(true);
+        }),
     }),
   };
 
@@ -195,5 +201,63 @@ test('configured: isEmailConfigured is true and sendIdempotent still dedupes', a
     assert.equal(sent.length, 1);
   } finally {
     delete process.env.SMTP_HOST;
+  }
+});
+
+test('verifyEmailTransport: verifies successfully when transport connects', async () => {
+  process.env.SMTP_HOST = 'smtp.test';
+  try {
+    const { service } = buildService({
+      verifyImpl: cb => {
+        if (typeof cb === 'function') cb(null, true);
+        return Promise.resolve(true);
+      },
+    });
+    const result = await service.verifyEmailTransport();
+    assert.ok(result);
+  } finally {
+    delete process.env.SMTP_HOST;
+  }
+});
+
+test('verifyEmailTransport: throws when transport connection fails', async () => {
+  process.env.SMTP_HOST = 'smtp.test';
+  try {
+    const { service } = buildService({
+      verifyImpl: cb => {
+        const err = new Error('SMTP connection refused');
+        if (typeof cb === 'function') cb(err);
+        return Promise.reject(err);
+      },
+    });
+    await assert.rejects(async () => {
+      await service.verifyEmailTransport();
+    }, /SMTP connection refused/);
+  } finally {
+    delete process.env.SMTP_HOST;
+  }
+});
+
+test('verifyEmailTransport: rejects when email is unconfigured', async () => {
+  const service = proxyquire('./emailService', {
+    nodemailer: { createTransport: () => ({ sendMail: async () => {} }) },
+    '../config/database': { query: async () => ({ rows: [] }) },
+  });
+  await assert.rejects(async () => {
+    await service.verifyEmailTransport();
+  }, /Email transport is not configured/);
+});
+
+test('verifyEmailTransport: returns disabled: true when emailsDisabled is true', async () => {
+  process.env.DISABLE_EMAILS = 'true';
+  try {
+    const service = proxyquire('./emailService', {
+      nodemailer: { createTransport: () => ({ sendMail: async () => {} }) },
+      '../config/database': { query: async () => ({ rows: [] }) },
+    });
+    const result = await service.verifyEmailTransport();
+    assert.deepEqual(result, { disabled: true });
+  } finally {
+    delete process.env.DISABLE_EMAILS;
   }
 });
