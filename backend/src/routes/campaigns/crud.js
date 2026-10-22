@@ -45,6 +45,10 @@ function createCrudRouter(deps = {}) {
     deps.campaignFacetService || require('../../services/campaignFacetService');
   const invalidateCampaignFacets =
     deps.invalidateCampaignFacets || campaignFacetService.invalidateCampaignFacets;
+  const moderationAuditService =
+    deps.moderationAuditService || require('../../services/moderationAuditService');
+  const recordModerationAction =
+    deps.recordModerationAction || moderationAuditService.recordModerationAction;
   const helpers = deps.helpers || require('./helpers')(deps);
 
   const { requireAuth, requireRole, optionalAuth } = auth;
@@ -1610,29 +1614,23 @@ If your target is reached, you can request a withdrawal. Otherwise, contribution
         [newHidden, campaignId]
       );
 
-      // Log to admin_actions for audit trail
-      try {
-        await db.query(
-          `INSERT INTO admin_actions (admin_user_id, action_type, target_type, target_id, details)
-       VALUES ($1, $2, $3, $4, $5::jsonb)`,
-          [
-            req.user.userId,
-            newHidden ? 'campaign_hidden' : 'campaign_unhidden',
-            'campaign',
-            campaignId,
-            JSON.stringify({
-              campaign_title: campaign.title,
-              previous_is_hidden: campaign.is_hidden,
-              new_is_hidden: newHidden,
-            }),
-          ]
-        );
-      } catch (err) {
-        logger.warn('Failed to log visibility change to admin_actions', {
-          campaign_id: campaignId,
-          error: err.message,
-        });
-      }
+      // Log structured audit trail
+      await recordModerationAction({
+        req,
+        action: newHidden ? 'campaign.hidden' : 'campaign.unhidden',
+        actionType: newHidden ? 'campaign_hidden' : 'campaign_unhidden',
+        targetType: 'campaign',
+        targetId: campaignId,
+        reason: req.body?.reason || null,
+        before: { is_hidden: campaign.is_hidden, title: campaign.title },
+        after: { is_hidden: newHidden },
+        metadata: {
+          campaign_title: campaign.title,
+          previous_is_hidden: campaign.is_hidden,
+          new_is_hidden: newHidden,
+          reason: req.body?.reason || null,
+        },
+      });
 
       cache.invalidate(`campaigns:id:${campaignId}`);
       cache.invalidatePrefix('campaigns:list:');

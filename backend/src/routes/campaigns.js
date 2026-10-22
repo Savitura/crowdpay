@@ -31,6 +31,7 @@ const webhookDispatcher = require('../services/webhookDispatcher');
 const emailService = require('../services/emailService');
 const draftVersionService = require('../services/campaignDraftVersionService');
 const campaignFacetService = require('../services/campaignFacetService');
+const moderationAuditService = require('../services/moderationAuditService');
 
 const createCampaignsRouter = require('./campaigns/index');
 
@@ -65,6 +66,7 @@ const deps = {
   emailService,
   draftVersionService,
   campaignFacetService,
+  moderationAuditService,
 };
 
 const router = createCampaignsRouter(deps);
