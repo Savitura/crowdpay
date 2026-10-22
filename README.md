@@ -137,25 +137,33 @@ cd frontend && npm run dev   # http://localhost:5173
 
 ### Environment Variables
 
+The backend checks its configuration when it starts (`validateEnv()` in `backend/src/config/env.js`) and exits when a rule fails. Variables marked **Required** must be set. `backend/.env.example` sets all of them; replace the values it marks GENERATE before the first start. [docs/environment.md](docs/environment.md) lists every rule.
+
 | Variable | Description |
 |---|---|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `JWT_SECRET` | Random 32+ char secret |
-| `STELLAR_NETWORK` | `testnet` or `mainnet` |
-| `STELLAR_HORIZON_URL` | Horizon endpoint URL |
-| `PLATFORM_SECRET_KEY` | Stellar secret key for the platform co-signer wallet |
+| `DATABASE_URL` | **Required.** PostgreSQL connection string |
+| `JWT_SECRET` | **Required.** Random 32+ char secret |
+| `JWT_ISSUER` / `JWT_AUDIENCE` | **Required.** Issuer and audience claims of session tokens (template values: `https://crowdpay.io` and `crowdpay-api`) |
+| `API_KEY_PEPPER` | **Required.** Random secret that must differ from `JWT_SECRET`; also the default device fingerprint pepper |
+| `STELLAR_NETWORK` | **Required.** `testnet` or `mainnet` |
+| `STELLAR_HORIZON_URL` | **Required.** Horizon endpoint URL |
+| `PLATFORM_SECRET_KEY` | **Required.** Stellar secret key (`S...`, 56 characters) for the platform co-signer wallet |
+| `ARBITRATOR_SECRET_KEY` | **Required.** Stellar secret key (`S...`, 56 characters) for the platform arbitrator account |
+| `OPS_API_KEY` | **Required.** API key for the `/api/ops` endpoints |
+| `UNSUBSCRIBE_SECRET` / `IMPACT_SIGNING_SECRET` | **Required.** HMAC secrets for email unsubscribe tokens and impact seals |
 | `CUSTODIAL_WITHDRAWAL_LIMIT` | Largest withdrawal (asset units, default `1000`) the server will sign with a custodial creator key. Larger payouts need a Freighter creator. See [Custodial vs. non-custodial creators](#custodial-vs-non-custodial-creators). |
 | `USDC_ISSUER` | USDC issuer (`GBBD47...` on testnet) |
 | `NGN_ISSUER` | Optional. When set, `config/stellar.js` registers an `NGN` (`credit_alphanum4`) asset alongside USDC |
 | `SOROBAN_ENABLED` | `true` to run campaigns through the contracts instead of the classic multisig wallet. Requires one of the two configurations below |
 | `ESCROW_CONTRACT_ID` / `MILESTONES_CONTRACT_ID` | **env mode** — both must be set together. Re-uses the given instances for every campaign, so it suits a single demo campaign (see [Deployed testnet contracts](#deployed-testnet-contracts)) |
 | `ESCROW_WASM_HASH` / `MILESTONES_WASM_HASH` | **deploy mode** — deploys a fresh escrow and milestones instance per campaign from WASM already installed on the network |
-| `WALLET_ENCRYPTION_KEY` | Base64 or hex-encoded 32-byte encryption key used by backend wallet recovery |
-| `WALLET_SECRET_LOCAL_KEK` | Base64-encoded 32-byte key-encryption key for stored secrets |
+| `WALLET_ENCRYPTION_KEY` | **Required.** Base64 or hex-encoded 32-byte encryption key used by backend wallet recovery |
+| `WALLET_SECRET_LOCAL_KEK` | Base64 or hex-encoded 32-byte key-encryption key for stored wallet secrets. Checked at startup while `WALLET_SECRET_PROVIDER` is `local` (the default outside production) |
+| `WALLET_SECRET_PROVIDER` | `local` or `aws-kms`. In production the server refuses to start unless it is `aws-kms` (the production default) with `AWS_REGION`, `WALLET_SECRET_KMS_KEY_ID`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` set |
 | `FRONTEND_URL` | Allowed CORS origin (dev: `http://localhost:5173`) |
 | `SMTP_HOST` / `EMAIL_SERVICE_API_KEY` | Email delivery. **Required in production** — boot fails without one of them unless `DISABLE_EMAILS=true` is set as an explicit opt-out (which logs a warning). Optional in dev. `/health` reports `email: "ready" \| "unconfigured"`. |
 | `PERSONA_API_KEY` / `PERSONA_TEMPLATE_ID` | KYC provider (optional in dev) |
-| `AWS_ACCESS_KEY_ID` + S3 vars | Image uploads (optional in dev) |
+| `STORAGE_BUCKET` / `STORAGE_ENDPOINT` + `STORAGE_*` | Image uploads (optional in dev). Set `STORAGE_BUCKET` and `STORAGE_ENDPOINT` together or not at all |
 | `FEATURE_FLAG_PROVIDER` | Feature flag backend: `env` (default), `unleash`, or `launchdarkly` |
 | `UNLEASH_API_URL` | Unleash API URL (required for Unleash adapter) |
 | `UNLEASH_API_TOKEN` | Unleash API token (required for Unleash adapter) |
