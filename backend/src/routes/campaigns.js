@@ -20,6 +20,7 @@ const {
 } = require('../services/stellarService');
 const { sendAlert } = require('../services/alerting');
 const cache = require('../utils/cache');
+const { getCampaignFacets, invalidateCampaignFacets } = require('../services/campaignFacetService');
 const withTransaction = require('../utils/withTransaction');
 const { resolveCampaignLanguage } = require('../utils/campaignLocale');
 const { Keypair } = require('@stellar/stellar-sdk');
@@ -559,55 +560,23 @@ router.get(
 router.get(
   '/facets',
   asyncHandler(async (req, res) => {
-    const baseWhere = `
-    c.deleted_at IS NULL
-    AND c.is_flagged_duplicate = FALSE
-    AND c.is_hidden = FALSE
-    AND c.status = 'active'
-  `;
+    const forceRefresh = req.query.refresh === 'true';
+    const facets = await getCampaignFacets({ client: db, forceRefresh });
+    res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=30');
+    res.json(facets);
+  })
+);
 
-    const [categories, assets, countries, funding, verified] = await Promise.all([
-      db.query(
-        `SELECT category, COUNT(*)::int AS count
-       FROM campaigns c
-       WHERE ${baseWhere} AND category IS NOT NULL
-       GROUP BY category ORDER BY count DESC`
-      ),
-      db.query(
-        `SELECT asset_type, COUNT(*)::int AS count
-       FROM campaigns c
-       WHERE ${baseWhere}
-       GROUP BY asset_type ORDER BY count DESC`
-      ),
-      db.query(
-        `SELECT country, COUNT(*)::int AS count
-       FROM campaigns c
-       WHERE ${baseWhere} AND country IS NOT NULL
-       GROUP BY country ORDER BY count DESC`
-      ),
-      db.query(
-        `SELECT COALESCE(MIN(raised_amount), 0)::numeric AS min_funding,
-              COALESCE(MAX(raised_amount), 0)::numeric AS max_funding
-       FROM campaigns c
-       WHERE ${baseWhere}`
-      ),
-      db.query(
-        `SELECT COUNT(*)::int AS count
-       FROM campaigns c
-       JOIN users u ON u.id = c.creator_id
-       WHERE ${baseWhere} AND u.kyc_status = 'verified'`
-      ),
-    ]);
-
+// POST /campaigns/facets/invalidate — Explicitly clear cached discovery facet data
+router.post(
+  '/facets/invalidate',
+  requireAuth,
+  requireRole('admin', 'creator'),
+  asyncHandler(async (req, res) => {
+    const result = invalidateCampaignFacets();
     res.json({
-      categories: categories.rows,
-      assets: assets.rows,
-      countries: countries.rows,
-      funding: {
-        min: Number(funding.rows[0]?.min_funding || 0),
-        max: Number(funding.rows[0]?.max_funding || 0),
-      },
-      verified_creators: verified.rows[0]?.count || 0,
+      message: 'Campaign facets cache invalidated',
+      ...result,
     });
   })
 );
@@ -1219,6 +1188,7 @@ router.delete(
     logger.info('Campaign deleted by owner', { campaignId: id, userId: req.user.userId });
     cache.invalidate(`campaigns:id:${id}`);
     cache.invalidatePrefix('campaigns:list:');
+    invalidateCampaignFacets();
     res.json({ message: 'Campaign deleted', campaign: updated[0] });
   })
 );
@@ -2395,6 +2365,7 @@ router.post(
     }
 
     watchCampaignWallet(campaign.id, walletPublicKey);
+    invalidateCampaignFacets();
 
     // The creation response is the campaign row the creator just wrote: never
     // echo internal columns (content_fingerprint, fraud_*, wallet key) back.
@@ -2663,6 +2634,7 @@ router.patch(
     // campaign title after a rename (#733).
     cache.invalidate(`campaigns:id:${campaignId}`);
     cache.invalidatePrefix('campaigns:list:');
+    invalidateCampaignFacets();
 
     // Enumerate the public columns instead of returning the raw row so editing
     // a campaign can never hand the creator the fraud/duplicate internals.
@@ -3030,6 +3002,10 @@ router.patch(
         error: err.message,
       });
     }
+
+    cache.invalidate(`campaigns:id:${campaignId}`);
+    cache.invalidatePrefix('campaigns:list:');
+    invalidateCampaignFacets();
 
     res.json({ is_hidden: updatedRows[0].is_hidden });
   })
