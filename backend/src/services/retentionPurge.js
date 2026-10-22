@@ -6,6 +6,7 @@ const DEFAULT_RETENTION_DAYS = {
   WEBHOOK_DELIVERIES: 90,
   CAMPAIGN_WEBHOOK_DELIVERIES: 90,
   WEBHOOKS: 365,
+  PUSH_SUBSCRIPTIONS: 90,
 };
 
 async function purgeKycData({ retentionDays = DEFAULT_RETENTION_DAYS.KYC } = {}) {
@@ -22,7 +23,9 @@ async function purgeKycData({ retentionDays = DEFAULT_RETENTION_DAYS.KYC } = {})
   return rows.length;
 }
 
-async function purgeWebhookDeliveries({ retentionDays = DEFAULT_RETENTION_DAYS.WEBHOOK_DELIVERIES } = {}) {
+async function purgeWebhookDeliveries({
+  retentionDays = DEFAULT_RETENTION_DAYS.WEBHOOK_DELIVERIES,
+} = {}) {
   const { rows } = await db.query(
     `DELETE FROM webhook_deliveries
      WHERE expires_at < NOW()::timestamp
@@ -31,12 +34,17 @@ async function purgeWebhookDeliveries({ retentionDays = DEFAULT_RETENTION_DAYS.W
      RETURNING id, event_type, webhook_id`
   );
   if (rows.length) {
-    logger.info('retention: purged expired webhook deliveries', { deleted: rows.length, retentionDays });
+    logger.info('retention: purged expired webhook deliveries', {
+      deleted: rows.length,
+      retentionDays,
+    });
   }
   return rows.length;
 }
 
-async function purgeCampaignWebhookDeliveries({ retentionDays = DEFAULT_RETENTION_DAYS.CAMPAIGN_WEBHOOK_DELIVERIES } = {}) {
+async function purgeCampaignWebhookDeliveries({
+  retentionDays = DEFAULT_RETENTION_DAYS.CAMPAIGN_WEBHOOK_DELIVERIES,
+} = {}) {
   const { rows } = await db.query(
     `DELETE FROM campaign_webhook_deliveries
      WHERE expires_at < NOW()::timestamp
@@ -45,7 +53,10 @@ async function purgeCampaignWebhookDeliveries({ retentionDays = DEFAULT_RETENTIO
      RETURNING id, event, campaign_id`
   );
   if (rows.length) {
-    logger.info('retention: purged expired campaign webhook deliveries', { deleted: rows.length, retentionDays });
+    logger.info('retention: purged expired campaign webhook deliveries', {
+      deleted: rows.length,
+      retentionDays,
+    });
   }
   return rows.length;
 }
@@ -64,9 +75,27 @@ async function purgeWebhooks({ retentionDays = DEFAULT_RETENTION_DAYS.WEBHOOKS }
   return rows.length;
 }
 
+async function purgeExpiredPushSubscriptions({
+  retentionDays = DEFAULT_RETENTION_DAYS.PUSH_SUBSCRIPTIONS,
+} = {}) {
+  const { rows } = await db.query(
+    `DELETE FROM push_subscriptions
+     WHERE updated_at < NOW() - ($1::text || ' days')::interval
+     RETURNING id, user_id`,
+    [String(retentionDays)]
+  );
+  if (rows.length) {
+    logger.info('retention: purged expired push subscriptions', {
+      deleted: rows.length,
+      retentionDays,
+    });
+  }
+  return rows.length;
+}
+
 /**
  * Run all purge jobs.
- * @returns {Promise<{kyc: number, webhookDeliveries: number, campaignWebhookDeliveries: number, webhooks: number}>}
+ * @returns {Promise<{kyc: number, webhookDeliveries: number, campaignWebhookDeliveries: number, webhooks: number, pushSubscriptions: number}>}
  */
 async function runAllPurges() {
   const results = {
@@ -74,6 +103,7 @@ async function runAllPurges() {
     webhookDeliveries: await purgeWebhookDeliveries(),
     campaignWebhookDeliveries: await purgeCampaignWebhookDeliveries(),
     webhooks: await purgeWebhooks(),
+    pushSubscriptions: await purgeExpiredPushSubscriptions(),
   };
   logger.info('retention: completed all purge runs', results);
   return results;
@@ -84,6 +114,7 @@ module.exports = {
   purgeWebhookDeliveries,
   purgeCampaignWebhookDeliveries,
   purgeWebhooks,
+  purgeExpiredPushSubscriptions,
   runAllPurges,
   DEFAULT_RETENTION_DAYS,
 };
