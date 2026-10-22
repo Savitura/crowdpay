@@ -30,6 +30,7 @@ const walletService = require('../services/walletService');
 const webhookDispatcher = require('../services/webhookDispatcher');
 const emailService = require('../services/emailService');
 const draftVersionService = require('../services/campaignDraftVersionService');
+const campaignFacetService = require('../services/campaignFacetService');
 
 const createCampaignsRouter = require('./campaigns/index');
 
@@ -63,6 +64,7 @@ const deps = {
   webhookDispatcher,
   emailService,
   draftVersionService,
+  campaignFacetService,
 };
 
 const router = createCampaignsRouter(deps);

@@ -41,6 +41,10 @@ function createCrudRouter(deps = {}) {
   const webhookDispatcher = deps.webhookDispatcher || require('../../services/webhookDispatcher');
   const emailService = deps.emailService || require('../../services/emailService');
   const alerting = deps.alerting || require('../../services/alerting');
+  const campaignFacetService =
+    deps.campaignFacetService || require('../../services/campaignFacetService');
+  const invalidateCampaignFacets =
+    deps.invalidateCampaignFacets || campaignFacetService.invalidateCampaignFacets;
   const helpers = deps.helpers || require('./helpers')(deps);
 
   const { requireAuth, requireRole, optionalAuth } = auth;
@@ -385,6 +389,7 @@ function createCrudRouter(deps = {}) {
       logger.info('Campaign deleted by owner', { campaignId: id, userId: req.user.userId });
       cache.invalidate(`campaigns:id:${id}`);
       cache.invalidatePrefix('campaigns:list:');
+      invalidateCampaignFacets();
       res.json({ message: 'Campaign deleted', campaign: updated[0] });
     })
   );
@@ -1274,6 +1279,7 @@ If your target is reached, you can request a withdrawal. Otherwise, contribution
       }
 
       watchCampaignWallet(campaign.id, walletPublicKey);
+      invalidateCampaignFacets();
 
       // The creation response is the campaign row the creator just wrote: never
       // echo internal columns (content_fingerprint, fraud_*, wallet key) back.
@@ -1490,6 +1496,7 @@ If your target is reached, you can request a withdrawal. Otherwise, contribution
       // campaign title after a rename (#733).
       cache.invalidate(`campaigns:id:${campaignId}`);
       cache.invalidatePrefix('campaigns:list:');
+      invalidateCampaignFacets();
 
       // Enumerate the public columns instead of returning the raw row so editing
       // a campaign can never hand the creator the fraud/duplicate internals.
@@ -1626,6 +1633,10 @@ If your target is reached, you can request a withdrawal. Otherwise, contribution
           error: err.message,
         });
       }
+
+      cache.invalidate(`campaigns:id:${campaignId}`);
+      cache.invalidatePrefix('campaigns:list:');
+      invalidateCampaignFacets();
 
       res.json({ is_hidden: updatedRows[0].is_hidden });
     })
