@@ -12,6 +12,13 @@ import { getDeviceFingerprint } from '../lib/deviceFingerprint';
 import { stellarExpertTxUrl } from '../config/stellar';
 import KycPrompt from './KycPrompt';
 import { useExchangeRate } from '../hooks/useExchangeRate';
+import {
+  validateMonetaryInput,
+  isValidDecimal,
+  compareDecimals,
+  addDecimals,
+  calculateFeeAndNet,
+} from '../utils/decimal';
 
 const SEND_OPTIONS = [
   { value: 'XLM', label: 'XLM', hint: 'Native Stellar' },
@@ -92,15 +99,19 @@ function friendlyFreighterError(err, fallback) {
 }
 
 function matchTier(tiers, amount) {
-  if (!tiers || !Array.isArray(tiers) || !amount) return null;
-  const numAmount = parseFloat(amount);
-  if (isNaN(numAmount)) return null;
+  if (!tiers || !Array.isArray(tiers) || !amount || !isValidDecimal(amount, { allowZero: false }))
+    return null;
 
-  const eligible = tiers.filter((t) => numAmount >= parseFloat(t.min_amount) && !t.sold_out);
+  const eligible = tiers.filter(
+    (t) =>
+      isValidDecimal(t.min_amount, { allowZero: true }) &&
+      compareDecimals(amount, t.min_amount) >= 0 &&
+      !t.sold_out
+  );
 
   if (eligible.length === 0) return null;
 
-  eligible.sort((a, b) => parseFloat(b.min_amount) - parseFloat(a.min_amount));
+  eligible.sort((a, b) => compareDecimals(b.min_amount, a.min_amount));
   return eligible[0];
 }
 
@@ -223,7 +234,12 @@ export default function ContributeModal({
   }, []);
 
   const fetchQuote = useCallback(async () => {
-    if (!isPathPayment || !effectiveSendAsset || !destAmount || Number(destAmount) <= 0) {
+    if (
+      !isPathPayment ||
+      !effectiveSendAsset ||
+      !destAmount ||
+      !isValidDecimal(destAmount, { allowZero: false })
+    ) {
       setQuote(null);
       setQuoteError('');
       return;
@@ -601,29 +617,38 @@ export default function ContributeModal({
       setError('A valid quote is required before submitting.');
       return;
     }
-    if (!destAmount || Number(destAmount) <= 0) {
-      setError('Enter an amount greater than zero.');
+    const amountCheck = validateMonetaryInput(destAmount, {
+      fieldName: 'Contribution amount',
+      allowZero: false,
+    });
+    if (!amountCheck.isValid) {
+      setError(
+        amountCheck.error === 'Contribution amount is required.' ||
+          amountCheck.error === 'Contribution amount must be greater than zero.'
+          ? 'Enter an amount greater than zero.'
+          : amountCheck.error
+      );
       return;
     }
 
-    const amountNum = Number(destAmount);
-    if (campaign.min_contribution && amountNum < Number(campaign.min_contribution)) {
+    if (campaign.min_contribution && compareDecimals(destAmount, campaign.min_contribution) < 0) {
       setError(`Minimum contribution is ${campaign.min_contribution} ${campaign.asset_type}`);
       return;
     }
-    if (campaign.max_contribution && amountNum > Number(campaign.max_contribution)) {
+    if (campaign.max_contribution && compareDecimals(destAmount, campaign.max_contribution) > 0) {
       setError(`Maximum contribution is ${campaign.max_contribution} ${campaign.asset_type}`);
       return;
     }
     if (campaign.max_per_user) {
-      const existingSum = user?.wallet_public_key
+      const existingSumStr = user?.wallet_public_key
         ? existingContributions
             .filter((c) => c.sender_public_key === user.wallet_public_key)
-            .reduce((sum, c) => sum + Number(c.amount), 0)
-        : 0;
-      if (existingSum + amountNum > Number(campaign.max_per_user)) {
+            .reduce((sum, c) => addDecimals(sum, c.amount || '0'), '0')
+        : '0';
+      const totalContributed = addDecimals(existingSumStr, destAmount);
+      if (compareDecimals(totalContributed, campaign.max_per_user) > 0) {
         setError(
-          `You have already contributed ${existingSum} ${campaign.asset_type}. The per-contributor limit is ${campaign.max_per_user}.`
+          `You have already contributed ${existingSumStr} ${campaign.asset_type}. The per-contributor limit is ${campaign.max_per_user}.`
         );
         return;
       }
@@ -684,10 +709,14 @@ export default function ContributeModal({
       if (err?.message === SIGNING_CANCELLED) {
         setError('Signing cancelled. Nothing was sent — you can start the payment again.');
       } else if (err?.message && err.message.includes('expired')) {
-        setError('This transaction has expired. Click "Rebuild quote" to generate a new quote, or refresh the page.');
+        setError(
+          'This transaction has expired. Click "Rebuild quote" to generate a new quote, or refresh the page.'
+        );
         setRebuildRequested(true);
       } else if (err?.message && err.message.includes('network')) {
-        setError('Network mismatch detected. Please switch your wallet to the correct network and try again.');
+        setError(
+          'Network mismatch detected. Please switch your wallet to the correct network and try again.'
+        );
       } else {
         setError(
           paymentMethod === 'freighter'
@@ -1141,21 +1170,20 @@ export default function ContributeModal({
                 </div>
               )}
 
-              {feeBps > 0 && destAmount && Number(destAmount) > 0 && (
+              {feeBps > 0 && isValidDecimal(destAmount, { allowZero: false }) && (
                 <div
                   className="alert alert--info"
                   style={{ marginTop: '0.85rem', fontSize: '0.875rem' }}
                   role="status"
                 >
                   {(() => {
-                    const feeAmt = ((Number(destAmount) * feeBps) / 10000).toFixed(7);
-                    const netAmt = (Number(destAmount) - Number(feeAmt)).toFixed(7);
+                    const { feeAmount, netAmount } = calculateFeeAndNet(destAmount, feeBps);
                     return (
                       <>
-                        <strong>Platform fee:</strong> {feeBps / 100}% = {feeAmt}{' '}
+                        <strong>Platform fee:</strong> {feeBps / 100}% = {feeAmount}{' '}
                         {campaign.asset_type} — campaign receives{' '}
                         <strong>
-                          {netAmt} {campaign.asset_type}
+                          {netAmount} {campaign.asset_type}
                         </strong>
                       </>
                     );
