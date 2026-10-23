@@ -171,12 +171,24 @@ Generate a 32-byte key:
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
-### Wallet secret key rotation
+### Wallet secret key rotation & versioning (zero-downtime)
 
-- `WALLET_SECRET_LOCAL_KEK` and `WALLET_ENCRYPTION_KEY` must remain stable across process restarts. If either key is changed while encrypted wallet secrets still exist, those secrets become unrecoverable.
-- For local secret storage, generate the keys once and keep them in a secure secret store or deployment environment.
-- To rotate keys safely, decrypt existing secrets with the current key and re-encrypt them with the new key before switching the environment to use the new value.
-- In production, using `WALLET_SECRET_PROVIDER=aws-kms` is the recommended approach because AWS KMS can manage key lifecycle without direct key material rotation in the app.
+- Secrets can be decrypted seamlessly during key rotation without downtime by providing previous key(s) in fallback environment variables:
+  - `WALLET_ENCRYPTION_KEY_FALLBACKS`: Comma-separated previous keys used by `walletService`.
+  - `WALLET_SECRET_LOCAL_KEK_FALLBACKS`: Comma-separated previous local KEKs used by `walletSecrets`.
+  - `INTEGRATION_SECRET_LOCAL_KEK_FALLBACKS`: Comma-separated previous local KEKs used by `integrationSecrets`.
+- Key versioning (`enc:v1:...` and `cpws:v1:...`) ensures version tracking across ciphertexts.
+- **Zero-downtime rotation workflow**:
+  1. Generate a new 32-byte key/KEK.
+  2. Set the new key as active (`WALLET_ENCRYPTION_KEY` / `WALLET_SECRET_LOCAL_KEK`) and add the previous key to the corresponding fallback variable (`WALLET_ENCRYPTION_KEY_FALLBACKS` / `WALLET_SECRET_LOCAL_KEK_FALLBACKS`).
+  3. Deploy the application — all existing secrets continue to decrypt without interruption.
+  4. Run background re-encryption to migrate stored secrets to the new active key:
+     ```bash
+     npm run reencrypt-wallet-secrets:dry-run --prefix backend
+     npm run reencrypt-wallet-secrets:confirm --prefix backend
+     ```
+  5. Once re-encryption completes, safely remove the fallback key from the environment.
+- In production, using `WALLET_SECRET_PROVIDER=aws-kms` is recommended for managed key lifecycle and automatic rotation.
 
 Generate a platform keypair:
 ```bash
@@ -188,14 +200,16 @@ Fund it on testnet:
 curl "https://friendbot.stellar.org?addr=<PLATFORM_PUBLIC_KEY>"
 ```
 
-### Wallet secret rotation (destructive operation)
+### Wallet secret rotation scripts
 
 ```bash
-# Dry run - simulate without making changes
+# Migrate legacy plaintext secrets to encrypted envelopes (dry run / confirm)
 npm run rotate-wallet-secrets:dry-run --prefix backend
-
-# Confirm and execute rotation (requires explicit --confirm flag)
 npm run rotate-wallet-secrets:confirm --prefix backend
+
+# Re-encrypt existing stored secrets with the active key (dry run / confirm)
+npm run reencrypt-wallet-secrets:dry-run --prefix backend
+npm run reencrypt-wallet-secrets:confirm --prefix backend
 ```
 
 ---

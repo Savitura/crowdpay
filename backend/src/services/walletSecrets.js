@@ -16,10 +16,10 @@ function getConfiguredProvider() {
   return isProduction() ? AWS_KMS_PROVIDER : LOCAL_PROVIDER;
 }
 
-function decodeKeyMaterial(value) {
+function decodeKeyMaterial(value, envVar = 'WALLET_SECRET_LOCAL_KEK') {
   const input = String(value || '').trim();
   if (!input) {
-    throw new Error('WALLET_SECRET_LOCAL_KEK must be set for local wallet-secret encryption');
+    throw new Error(`${envVar} must be set for local wallet-secret encryption`);
   }
 
   if (/^[0-9a-fA-F]{64}$/.test(input)) {
@@ -29,8 +29,27 @@ function decodeKeyMaterial(value) {
   try {
     return Buffer.from(input, 'base64');
   } catch (_err) {
-    throw new Error('WALLET_SECRET_LOCAL_KEK must be base64 or hex encoded');
+    throw new Error(`${envVar} must be base64 or hex encoded`);
   }
+}
+
+function parseFallbackKeks(rawValue) {
+  if (!rawValue) return [];
+  const entries = String(rawValue)
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const keys = [];
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    const key = decodeKeyMaterial(entry, `WALLET_SECRET_LOCAL_KEK_FALLBACKS[${i}]`);
+    if (key.length !== 32) {
+      throw new Error(`WALLET_SECRET_LOCAL_KEK_FALLBACKS[${i}] must decode to exactly 32 bytes`);
+    }
+    keys.push(key);
+  }
+  return keys;
 }
 
 function getLocalKek() {
@@ -39,6 +58,16 @@ function getLocalKek() {
     throw new Error('WALLET_SECRET_LOCAL_KEK must decode to exactly 32 bytes');
   }
   return key;
+}
+
+function getLocalKekRing() {
+  const activeKey = getLocalKek();
+  const rawFallbacks = process.env.WALLET_SECRET_LOCAL_KEK_FALLBACKS;
+  const fallbackKeys = parseFallbackKeks(rawFallbacks);
+  return {
+    activeKey,
+    allKeys: [activeKey, ...fallbackKeys],
+  };
 }
 
 function buildEncryptionContext({ userId, walletPublicKey }) {
@@ -151,13 +180,29 @@ function localEnvelopeEncrypt(secretBuffer, context) {
 
 function localEnvelopeDecrypt(envelope) {
   const aad = Buffer.from(JSON.stringify(envelope.context || {}), 'utf8');
-  const dataKey = decryptAesGcm({
-    ciphertext: b64ToBuffer(envelope.wrapped_key),
-    key: getLocalKek(),
-    iv: b64ToBuffer(envelope.wrapped_key_iv),
-    aad,
-    tag: b64ToBuffer(envelope.wrapped_key_tag),
-  });
+  const { allKeys } = getLocalKekRing();
+
+  let dataKey;
+  let lastError;
+
+  for (const kek of allKeys) {
+    try {
+      dataKey = decryptAesGcm({
+        ciphertext: b64ToBuffer(envelope.wrapped_key),
+        key: kek,
+        iv: b64ToBuffer(envelope.wrapped_key_iv),
+        aad,
+        tag: b64ToBuffer(envelope.wrapped_key_tag),
+      });
+      break;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (!dataKey) {
+    throw lastError || new Error('Failed to unwrap data key with configured KEKs');
+  }
 
   try {
     return decryptAesGcm({
@@ -376,7 +421,7 @@ function validateWalletSecretConfig() {
   }
 
   if (provider === LOCAL_PROVIDER) {
-    getLocalKek();
+    getLocalKekRing();
     return;
   }
 
@@ -521,6 +566,103 @@ async function assertNoLegacyPlaintextUserWalletSecrets({ runner = db } = {}) {
   }
 }
 
+async function needsReencryption(secret, contextInput = {}) {
+  if (!isEncryptedWalletSecret(secret)) return false;
+  const envelope = parseEnvelope(secret);
+  if (!envelope) return false;
+
+  const provider = getConfiguredProvider();
+  if (provider === LOCAL_PROVIDER) {
+    if (envelope.provider !== LOCAL_PROVIDER) return true;
+    const { activeKey } = getLocalKekRing();
+    const aad = Buffer.from(JSON.stringify(envelope.context || {}), 'utf8');
+    try {
+      decryptAesGcm({
+        ciphertext: b64ToBuffer(envelope.wrapped_key),
+        key: activeKey,
+        iv: b64ToBuffer(envelope.wrapped_key_iv),
+        aad,
+        tag: b64ToBuffer(envelope.wrapped_key_tag),
+      });
+      return false;
+    } catch (_err) {
+      return true;
+    }
+  }
+
+  if (provider === AWS_KMS_PROVIDER) {
+    if (envelope.provider !== AWS_KMS_PROVIDER) return true;
+    if (
+      process.env.WALLET_SECRET_KMS_KEY_ID &&
+      envelope.kms_key_id &&
+      envelope.kms_key_id !== process.env.WALLET_SECRET_KMS_KEY_ID
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function reencryptWalletSecret(secret, contextInput = {}) {
+  const secretBuffer = await decryptWalletSecretToBuffer(secret, contextInput);
+  try {
+    const context = buildEncryptionContext(contextInput);
+    const envelope = await encryptWithProvider(secretBuffer, context);
+    return encodeEnvelope(envelope);
+  } finally {
+    secretBuffer.fill(0);
+  }
+}
+
+async function reencryptAllUserWalletSecrets({ runner = db, dryRun = false } = {}) {
+  const { rows } = await runner.query(
+    'SELECT id, wallet_public_key, wallet_secret_encrypted FROM users ORDER BY created_at ASC, id ASC'
+  );
+
+  let reencrypted = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  for (const row of rows) {
+    if (!isEncryptedWalletSecret(row.wallet_secret_encrypted)) {
+      skipped += 1;
+      continue;
+    }
+
+    const context = {
+      userId: row.id,
+      walletPublicKey: row.wallet_public_key,
+    };
+
+    const needs = await needsReencryption(row.wallet_secret_encrypted, context);
+    if (!needs) {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      const updated = await reencryptWalletSecret(row.wallet_secret_encrypted, context);
+      if (!dryRun) {
+        await runner.query('UPDATE users SET wallet_secret_encrypted = $1 WHERE id = $2', [
+          updated,
+          row.id,
+        ]);
+      }
+      reencrypted += 1;
+    } catch (err) {
+      errors += 1;
+    }
+  }
+
+  return {
+    total: rows.length,
+    reencrypted,
+    skipped,
+    errors,
+  };
+}
+
 module.exports = {
   assertNoLegacyPlaintextUserWalletSecrets,
   countLegacyPlaintextUserWalletSecrets,
@@ -529,7 +671,11 @@ module.exports = {
   getConfiguredProvider,
   isEncryptedWalletSecret,
   isLegacyPlaintextWalletSecret,
+  needsReencryption,
+  reencryptWalletSecret,
+  reencryptAllUserWalletSecrets,
   rotateLegacyUserWalletSecrets,
   validateWalletSecretConfig,
   withDecryptedWalletSecret,
 };
+

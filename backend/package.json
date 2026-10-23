@@ -21,7 +21,9 @@
     "deploy-contracts": "node src/scripts/deployContracts.js",
     "rotate-wallet-secrets": "node src/scripts/rotateWalletSecrets.js",
     "rotate-wallet-secrets:dry-run": "node src/scripts/rotateWalletSecrets.js --dry-run",
-    "rotate-wallet-secrets:confirm": "node src/scripts/rotateWalletSecrets.js --confirm"
+    "rotate-wallet-secrets:confirm": "node src/scripts/rotateWalletSecrets.js --confirm",
+    "reencrypt-wallet-secrets:dry-run": "node src/scripts/rotateWalletSecrets.js --reencrypt --dry-run",
+    "reencrypt-wallet-secrets:confirm": "node src/scripts/rotateWalletSecrets.js --reencrypt --confirm"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.410.0",

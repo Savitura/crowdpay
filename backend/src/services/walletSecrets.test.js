@@ -94,3 +94,86 @@ test('rotateLegacyUserWalletSecrets rewrites only plaintext rows', async t => {
     delete process.env.WALLET_SECRET_LOCAL_KEK;
   });
 });
+
+test('zero-downtime KEK rotation: secrets encrypted under previous KEK decrypt seamlessly via fallback KEK', async t => {
+  process.env.NODE_ENV = 'test';
+  process.env.WALLET_SECRET_PROVIDER = 'local';
+
+  const OLD_KEK = Buffer.alloc(32, 1).toString('base64');
+  const NEW_KEK = Buffer.alloc(32, 2).toString('base64');
+
+  // 1. Encrypt with old KEK
+  process.env.WALLET_SECRET_LOCAL_KEK = OLD_KEK;
+  delete process.env.WALLET_SECRET_LOCAL_KEK_FALLBACKS;
+  delete require.cache[require.resolve(MODULE_PATH)];
+  let walletSecrets = require(MODULE_PATH);
+
+  const encryptedUnderOldKek = await walletSecrets.encryptWalletSecret(VALID_SECRET, {
+    userId: 'user-rot-1',
+    walletPublicKey: 'GABC123',
+  });
+
+  // 2. Rotate to NEW_KEK with OLD_KEK in fallbacks
+  process.env.WALLET_SECRET_LOCAL_KEK = NEW_KEK;
+  process.env.WALLET_SECRET_LOCAL_KEK_FALLBACKS = OLD_KEK;
+  delete require.cache[require.resolve(MODULE_PATH)];
+  walletSecrets = require(MODULE_PATH);
+
+  // Decryption should succeed using fallback KEK
+  const decrypted = await walletSecrets.withDecryptedWalletSecret(
+    encryptedUnderOldKek,
+    { userId: 'user-rot-1', walletPublicKey: 'GABC123' },
+    async secret => secret
+  );
+  assert.equal(decrypted, VALID_SECRET);
+
+  // Verify needsReencryption is true
+  const needsReenc = await walletSecrets.needsReencryption(encryptedUnderOldKek, {
+    userId: 'user-rot-1',
+    walletPublicKey: 'GABC123',
+  });
+  assert.equal(needsReenc, true);
+
+  // 3. Re-encrypt under active KEK
+  const reencrypted = await walletSecrets.reencryptWalletSecret(encryptedUnderOldKek, {
+    userId: 'user-rot-1',
+    walletPublicKey: 'GABC123',
+  });
+
+  assert.equal(
+    await walletSecrets.needsReencryption(reencrypted, {
+      userId: 'user-rot-1',
+      walletPublicKey: 'GABC123',
+    }),
+    false
+  );
+
+  // 4. Drop fallback KEK: reencrypted decrypts fine, old un-reencrypted fails
+  delete process.env.WALLET_SECRET_LOCAL_KEK_FALLBACKS;
+  delete require.cache[require.resolve(MODULE_PATH)];
+  walletSecrets = require(MODULE_PATH);
+
+  const decryptedAfterDrop = await walletSecrets.withDecryptedWalletSecret(
+    reencrypted,
+    { userId: 'user-rot-1', walletPublicKey: 'GABC123' },
+    async secret => secret
+  );
+  assert.equal(decryptedAfterDrop, VALID_SECRET);
+
+  await assert.rejects(
+    async () => {
+      await walletSecrets.withDecryptedWalletSecret(
+        encryptedUnderOldKek,
+        { userId: 'user-rot-1', walletPublicKey: 'GABC123' },
+        async secret => secret
+      );
+    }
+  );
+
+  t.after(() => {
+    delete process.env.WALLET_SECRET_PROVIDER;
+    delete process.env.WALLET_SECRET_LOCAL_KEK;
+    delete process.env.WALLET_SECRET_LOCAL_KEK_FALLBACKS;
+  });
+});
+
