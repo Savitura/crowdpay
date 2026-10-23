@@ -212,6 +212,7 @@ import FollowCampaignButton from '../components/FollowCampaignButton';
 import CampaignCommunicationPreferences from '../components/CampaignCommunicationPreferences';
 import OutcomeSurveyPanel from '../components/campaign/OutcomeSurveyPanel';
 import OutcomeSurveyEditor from '../components/campaign/OutcomeSurveyEditor';
+import DisasterReliefPanel from '../components/campaign/DisasterReliefPanel';
 import PoolManager from '../components/PoolManager';
 import SponsorMatchingPanel from '../components/SponsorMatchingPanel';
 import LanguageToggle from '../components/LanguageToggle';
@@ -3025,6 +3026,11 @@ export default function Campaign() {
 
       <div style={{ marginTop: '2rem', marginBottom: '2rem' }} data-no-print>
         <CampaignComments campaignId={campaign.id} campaign={campaign} />
+        <DisasterReliefPanel
+          campaignId={campaign.id}
+          canManage={canManageTeam}
+          isAdmin={user?.role === 'admin'}
+        />
       </div>
 
       {/* Beneficiary outcome survey (#960) and per-campaign communication

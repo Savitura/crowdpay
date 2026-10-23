@@ -7,9 +7,11 @@ In development, browse the interactive API docs at `GET /api/docs`.
 ## Important Notes
 
 ### Timestamps
+
 All timestamps (like campaign deadlines) **must be in ISO 8601 format with a UTC timezone indicator (Z suffix)**, e.g., `2026-12-31T23:59:59.999Z`. The server will treat all timestamps as UTC for validation and storage.
 
 ### Public API lifecycle
+
 `GET /api/v1/changelog` returns the v1 changelog without authentication. To announce a sunset, configure both `PUBLIC_API_DEPRECATION_DATE` and `PUBLIC_API_SUNSET_DATE` as ISO 8601 timestamps, with the sunset later than the deprecation date. The v1 API will then include the RFC 9745 `Deprecation` header, the HTTP-date `Sunset` header, and a `Link` to the changelog on every response. Leave either variable unset to avoid announcing a deprecation.
 
 ## Recurring contribution architecture
@@ -17,6 +19,7 @@ All timestamps (like campaign deadlines) **must be in ISO 8601 format with a UTC
 The canonical subsystem for recurring contributions uses Stellar Claimable Balance schedules (`/api/campaigns/:id/subscriptions`). Complete architectural specifications, worker retry semantics, data model diagrams, and migration plans for superseded paths are documented in [`docs/recurring-contributions-architecture.md`](../docs/recurring-contributions-architecture.md).
 
 ### Subscriptions endpoints
+
 - `POST /api/campaigns/:id/subscriptions` - Enable a recurring pledge on a campaign.
 - `POST /api/campaigns/:id/subscriptions/prepare` - Prepare unsigned XDR for Freighter signing.
 - `POST /api/campaigns/:id/subscriptions/submit` - Submit signed XDR from Freighter.
@@ -56,21 +59,21 @@ The archive includes the scopes below. It never includes password hashes,
 wallet secret ciphertext, API key hashes, device fingerprints, session IP
 addresses/user agents, or any row belonging to another user.
 
-| Scope | Contents |
-|---|---|
-| `profile` | Account id, email, name, role, wallet public key, created timestamp |
-| `creator_campaigns` | Campaigns created by the caller |
-| `creator_milestones` | Milestones belonging to the caller's campaigns |
-| `campaign_updates` | Updates authored by the caller |
-| `contributions` | Contributions sent from the caller's wallet |
-| `notification_preferences` | Account-level notification settings |
-| `category_follows` | Followed campaign categories |
-| `notifications` | In-app notifications addressed to the caller |
-| `referrals` | Referral links created by the caller |
-| `disputes` | Disputes raised by the caller |
-| `subscriptions` | Recurring contribution records |
-| `credentials` | API-key metadata (never the key hash or secret) |
-| `sessions` | Session id/timestamps and coarse region only |
+| Scope                      | Contents                                                            |
+| -------------------------- | ------------------------------------------------------------------- |
+| `profile`                  | Account id, email, name, role, wallet public key, created timestamp |
+| `creator_campaigns`        | Campaigns created by the caller                                     |
+| `creator_milestones`       | Milestones belonging to the caller's campaigns                      |
+| `campaign_updates`         | Updates authored by the caller                                      |
+| `contributions`            | Contributions sent from the caller's wallet                         |
+| `notification_preferences` | Account-level notification settings                                 |
+| `category_follows`         | Followed campaign categories                                        |
+| `notifications`            | In-app notifications addressed to the caller                        |
+| `referrals`                | Referral links created by the caller                                |
+| `disputes`                 | Disputes raised by the caller                                       |
+| `subscriptions`            | Recurring contribution records                                      |
+| `credentials`              | API-key metadata (never the key hash or secret)                     |
+| `sessions`                 | Session id/timestamps and coarse region only                        |
 
 Export requests and downloads are written to the append-only `audit_logs`
 table as `user_data_export_requested` and `user_data_export_downloaded`.
@@ -80,6 +83,7 @@ table as `user_data_export_requested` and `user_data_export_downloaded`.
 Public. Validates a verification token and marks the associated user's email as verified.
 
 Query params:
+
 - `token` (required): The UUID token sent via email.
 
 Returns `200` on success or `400/410` if the token is invalid or expired (> 24 hours).
@@ -119,6 +123,7 @@ Gift notifications are written to a database-backed outbox in the same
 transaction that records the confirmed contribution. Email delivery retries
 with exponential backoff; registered recipients also receive an in-app
 notification. Gift data is not added to the public contribution response.
+
 - `dest_asset` (required): `XLM` or `USDC`
 - `dest_amount` (required): amount the campaign should receive
 
@@ -511,11 +516,17 @@ Public, permissive CORS, `Cache-Control: public, max-age=30`. This is the single
   "progress_percentage": 50,
   "contribution_url": "https://…/campaigns/…",
   "milestones": [
-    { "id": "m-1", "title": "Design", "release_percentage": 50, "sort_order": 0, "status": "released" }
+    {
+      "id": "m-1",
+      "title": "Design",
+      "release_percentage": 50,
+      "sort_order": 0,
+      "status": "released"
+    }
   ],
   "milestone_summary": { "total": 2, "released": 1, "approved": 0, "submitted": 0, "pending": 1 },
   "recent_backers": [{ "name": "Alice", "amount": 250 }],
-  "impact": { }
+  "impact": {}
 }
 ```
 
@@ -565,7 +576,6 @@ The backend also logs a **warning** every 5 minutes if any wallet is in that sta
 - withdrawal creator/platform approval flow
 - withdrawal denial paths (missing creator approval, insufficient signatures)
 
-
 ## Creator payout forecast and reserve breakdown
 
 Both endpoints require authentication and are scoped to the campaign's creator
@@ -604,10 +614,10 @@ reserve, available, scheduled_payouts[], generated_at.
 
 reserve is capped at balance and equals:
 
-- platform_fees        - unsettled platform fee on non-refunded contributions
-- pending_withdrawals  - withdrawals in any pending state
-- scheduled_payouts    - one run per active recurring schedule
-                         (fixed amount, or percentage * balance when amount is null)
+- platform_fees - unsettled platform fee on non-refunded contributions
+- pending_withdrawals - withdrawals in any pending state
+- scheduled_payouts - one run per active recurring schedule
+  (fixed amount, or percentage * balance when amount is null)
 
 unallocated_reserve = reserve - (fees + pending + scheduled), always >= 0; it is
 only non-zero when the balance cap kicked in.
@@ -618,3 +628,16 @@ Deterministic projection, not a guarantee. Each month consumes the next run of
 each active schedule, capping a payout at the remaining projected balance.
 projected_total_payout is the sum across the horizon. No new funds, fees, or
 refunds are assumed.
+
+## Disaster-Relief Campaign Mode & Rapid Verification
+
+Mounted under `/api/campaigns`:
+
+- `GET /api/campaigns/disaster-relief/queue` — Admin-only prioritized rapid verification queue (`?status=pending_review`), ordered by severity (`catastrophic`, `critical`, `urgent`, `watch`) and submission age, with 4-hour SLA metrics.
+- `GET /api/campaigns/:campaignId/disaster-relief` — Contextual read. Public callers receive `{ disaster_relief: null }` until the dossier is `verified` or `revoked`, with `emergency_contact` and reviewer notes redacted. Campaign owners, accepted managers, and admins receive the full dossier and `sla` telemetry across all states.
+- `POST /api/campaigns/:campaignId/disaster-relief` — Campaign creator/manager/admin creates a `draft` disaster-relief dossier.
+- `PUT /api/campaigns/:campaignId/disaster-relief` — Campaign creator/manager/admin updates a `draft` or `changes_requested` dossier.
+- `POST /api/campaigns/:campaignId/disaster-relief/submit` — Submits a dossier with at least one HTTPS evidence item and an emergency contact into `pending_review` (rate-limited).
+- `POST /api/campaigns/:campaignId/disaster-relief/review` — Admin records a rapid verification decision (`verified`, `changes_requested`, or `rejected`), optional `verification_badge`, and `rapid_disbursement_enabled`.
+- `POST /api/campaigns/:campaignId/disaster-relief/revoke` — Admin revokes a `verified` dossier with a required `reason` and disables rapid disbursement.
+- `GET /api/campaigns/:campaignId/disaster-relief/events` — Returns the ordered lifecycle audit trail for the campaign's disaster-relief dossier.
