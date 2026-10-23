@@ -487,7 +487,7 @@ router.get(
 
     const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     const countQuery = `SELECT COUNT(*)::int AS total FROM campaigns c JOIN users u ON u.id = c.creator_id ${whereClause}`;
-    const countResult = await db.query(countQuery, params);
+    const countResult = await runBudgetedQuery('campaigns:list:count', countQuery, params);
     const total = countResult.rows[0]?.total || 0;
 
     const sortExpressions = {
