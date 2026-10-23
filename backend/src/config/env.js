@@ -19,6 +19,16 @@ const REQUIRED = [
 ];
 const STORAGE_VARS = ['STORAGE_BUCKET', 'STORAGE_ENDPOINT'];
 
+// Campaign discovery query budget and slow-query logging defaults.
+// DISCOVERY_QUERY_TIMEOUT_MS: max wall time allowed for a discovery query before it is aborted.
+// DISCOVERY_QUERY_MAX_ROWS: max rows a single discovery query may return.
+// DISCOVERY_SLOW_QUERY_MS: queries exceeding this duration are logged as slow.
+const DISCOVERY_DEFAULTS = {
+  DISCOVERY_QUERY_TIMEOUT_MS: 2000,
+  DISCOVERY_QUERY_MAX_ROWS: 100,
+  DISCOVERY_SLOW_QUERY_MS: 500,
+};
+
 function getMissingConfig() {
   const missing = REQUIRED.filter(key => !process.env[key]);
   const storageConfigured = STORAGE_VARS.some(key => !!process.env[key]);
@@ -34,6 +44,20 @@ function getMissingConfig() {
     missing.push('SMTP_HOST|EMAIL_SERVICE_API_KEY');
   }
   return [...new Set(missing)];
+}
+
+function getDiscoveryQueryConfig() {
+  const read = (key) => {
+    const raw = process.env[key];
+    if (raw === undefined || raw === '') return DISCOVERY_DEFAULTS[key];
+    const n = Number(raw);
+    return Number.isInteger(n) && n > 0 ? n : DISCOVERY_DEFAULTS[key];
+  };
+  return {
+    timeoutMs: read('DISCOVERY_QUERY_TIMEOUT_MS'),
+    maxRows: read('DISCOVERY_QUERY_MAX_ROWS'),
+    slowQueryMs: read('DISCOVERY_SLOW_QUERY_MS'),
+  };
 }
 
 function validateEnv() {
@@ -88,6 +112,18 @@ function validateEnv() {
       errors.push(
         `PORT must be an integer between 1 and 65535 (received: ${JSON.stringify(portRaw)})`
       );
+    }
+  }
+
+  for (const key of Object.keys(DISCOVERY_DEFAULTS)) {
+    const raw = process.env[key];
+    if (raw !== undefined && raw !== '') {
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n <= 0) {
+        errors.push(
+          `${key} must be a positive integer (received: ${JSON.stringify(raw)})`
+        );
+      }
     }
   }
 
@@ -161,4 +197,10 @@ function validateEnv() {
   }
 }
 
-module.exports = { validateEnv, getMissingConfig, REQUIRED };
+module.exports = {
+  validateEnv,
+  getMissingConfig,
+  getDiscoveryQueryConfig,
+  DISCOVERY_DEFAULTS,
+  REQUIRED,
+};

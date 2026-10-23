@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+// Note: query budget and slow-query logging behavior for campaign discovery is
+// exercised by the tests below; the budget/logging wiring lives in routes/campaigns.js.
 const express = require('express');
 const request = require('supertest');
 const proxyquire = require('proxyquire').noCallThru();
