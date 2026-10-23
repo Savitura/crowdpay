@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const { requireAuth } = require('../middleware/auth');
 const { contributionValidation, validateRequest } = require('../middleware/validation');
@@ -10,6 +10,7 @@ const embedTokenService = require('../services/embedTokenService');
 const { verifyEmbedToken } = require('../services/embedTokenJwtService');
 const pathPaymentPreviewService = require('../services/pathPaymentPreview');
 const contributionDiagnostics = require('../services/contributionDiagnostics');
+const contributionReceiptService = require('../services/contributionReceiptService');
 const { resolveReferralLink } = require('../services/referral');
 const { getReferralCodeFromRequest } = require('../services/referralService');
 const {
@@ -26,6 +27,10 @@ const { assertContributionPolicy } = require('../services/contributionPolicy');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const asyncHandler = require('../utils/asyncHandler');
+
+function getUserDashboardService() {
+  return require('../services/userDashboardService');
+}
 
 function mapContributionGateError(err, res) {
   if (err.statusCode === 403 && err.code === 'CONTRIBUTOR_REQUIREMENTS_NOT_MET') {
@@ -307,6 +312,95 @@ router.post(
 );
 
 router.get(
+  '/mine',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { listUserContributions } = getUserDashboardService();
+    const rows = await listUserContributions(req.user.userId);
+    if (rows === null) return res.status(404).json({ error: 'User not found' });
+    return res.json(rows);
+  })
+);
+
+router.get(
+  '/dashboard',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { getContributorDashboard } = getUserDashboardService();
+    const data = await getContributorDashboard(req.user.userId);
+    if (data === null) return res.status(404).json({ error: 'User not found' });
+    return res.json(data);
+  })
+);
+
+router.get(
+  '/dashboard/export.csv',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { getContributorDashboardCsv } = getUserDashboardService();
+    const csv = await getContributorDashboardCsv(req.user.userId);
+    if (csv === null) return res.status(404).json({ error: 'User not found' });
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="contributions.csv"');
+    return res.send(csv);
+  })
+);
+
+router.get(
+  '/tax-receipts',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const receipts = await contributionReceiptService.listUserReceipts(req.user.userId, {
+      dbClient: db,
+    });
+    return res.json({ receipts });
+  })
+);
+
+router.get(
+  '/tax-receipts/download',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const receipts = await contributionReceiptService.listUserReceipts(req.user.userId, {
+      dbClient: db,
+    });
+    if (!receipts.length) {
+      return res.status(404).json({ error: 'No contribution receipts found' });
+    }
+
+    const pdf = await contributionReceiptService.generateReceiptPdfBuffer(receipts);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${contributionReceiptService.taxReceiptFilename(receipts)}"`
+    );
+    return res.send(pdf);
+  })
+);
+
+router.get(
+  '/tax-receipts/:id/download',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const receipts = await contributionReceiptService.listUserReceipts(req.user.userId, {
+      contributionId: req.params.id,
+      dbClient: db,
+    });
+    if (!receipts.length) {
+      return res.status(404).json({ error: 'Tax receipt not found' });
+    }
+
+    const pdf = await contributionReceiptService.generateReceiptPdfBuffer(receipts);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${contributionReceiptService.taxReceiptFilename(receipts)}"`
+    );
+    return res.send(pdf);
+  })
+);
+
+router.get(
   '/campaign/:campaignId',
   requireAuth,
   asyncHandler(async (req, res) => {
@@ -346,6 +440,88 @@ function isContributionViewer(req, contribution, campaignCreatorId) {
   }
   return false;
 }
+
+async function resolveAuthorizedReceipt(req, contributionId) {
+  let receipt;
+  try {
+    receipt = await contributionReceiptService.getReceiptData(contributionId, {
+      dbClient: db,
+      redactPii: false,
+    });
+  } catch (err) {
+    if (err.statusCode) {
+      return {
+        errorStatus: err.statusCode,
+        errorBody: { error: err.message, ...(err.code ? { code: err.code } : {}) },
+      };
+    }
+    throw err;
+  }
+
+  const userId = req.user?.userId;
+  const isAdmin = req.user?.role === 'admin';
+  const isCreator = Boolean(userId && receipt.campaign_creator_id === userId);
+  let isContributor = Boolean(
+    (userId && receipt.contributor_user_id === userId) ||
+      (req.user?.walletPublicKey && receipt.sender_public_key === req.user.walletPublicKey)
+  );
+
+  if (!isContributor && !isAdmin && !isCreator && userId && !req.user?.walletPublicKey) {
+    const { rows: userRows } = await db.query(
+      'SELECT wallet_public_key FROM users WHERE id = $1',
+      [userId]
+    );
+    const walletPublicKey = userRows[0]?.wallet_public_key;
+    if (walletPublicKey && receipt.sender_public_key === walletPublicKey) {
+      isContributor = true;
+    }
+  }
+
+  if (!isContributor && !isCreator && !isAdmin) {
+    return {
+      errorStatus: 403,
+      errorBody: { error: 'Not authorized to view this receipt' },
+    };
+  }
+
+  const finalReceipt =
+    isCreator && !isContributor && !isAdmin
+      ? contributionReceiptService.redactReceiptForViewer(receipt)
+      : receipt;
+
+  return { receipt: finalReceipt };
+}
+
+router.get(
+  '/:id/receipt',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const resolved = await resolveAuthorizedReceipt(req, req.params.id);
+    if (resolved.errorStatus) {
+      return res.status(resolved.errorStatus).json(resolved.errorBody);
+    }
+    return res.json({ receipt: resolved.receipt });
+  })
+);
+
+router.get(
+  '/:id/receipt/pdf',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const resolved = await resolveAuthorizedReceipt(req, req.params.id);
+    if (resolved.errorStatus) {
+      return res.status(resolved.errorStatus).json(resolved.errorBody);
+    }
+
+    const pdf = await contributionReceiptService.generateReceiptPdfBuffer([resolved.receipt]);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${contributionReceiptService.taxReceiptFilename([resolved.receipt])}"`
+    );
+    return res.send(pdf);
+  })
+);
 
 router.get(
   '/:id/diagnosis',

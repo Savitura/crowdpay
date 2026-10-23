@@ -705,4 +705,36 @@ export const api = {
 
   getOutcomeSurveyEvents: (campaignId) =>
     apiClient.get(`/campaigns/${campaignId}/outcome-survey/events`).then((r) => r.data),
+  getContributorDashboard: () => apiClient.get('/contributions/dashboard').then((r) => r.data),
+  exportContributionsCsv: async () => {
+    const res = await apiClient.get('/contributions/dashboard/export.csv', { responseType: 'blob' });
+    const disposition = res.headers['content-disposition'] || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    return { blob: res.data, filename: match && match[1] ? match[1] : 'contributions.csv' };
+  },
+  getTaxReceipts: () => apiClient.get('/contributions/tax-receipts').then((r) => r.data),
+  downloadTaxReceiptsPdf: async () => {
+    const res = await apiClient.get('/contributions/tax-receipts/download', { responseType: 'blob' });
+    const disposition = res.headers['content-disposition'] || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    return { blob: res.data, filename: match && match[1] ? match[1] : 'crowdpay-tax-receipts.pdf' };
+  },
+  downloadTaxReceiptPdf: async (contributionId) => {
+    const res = await apiClient.get('/contributions/tax-receipts/' + contributionId + '/download', { responseType: 'blob' });
+    const disposition = res.headers['content-disposition'] || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    return { blob: res.data, filename: match && match[1] ? match[1] : 'crowdpay-tax-receipt-' + contributionId + '.pdf' };
+  },
+  getContributionReceipt: (contributionId) =>
+    apiClient.get('/contributions/' + contributionId + '/receipt').then((r) => r.data),
+  downloadContributionReceiptPdf: async (contributionId) => {
+    const res = await apiClient.get('/contributions/' + contributionId + '/receipt/pdf', { responseType: 'blob' });
+    const disposition = res.headers['content-disposition'] || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    return { blob: res.data, filename: match && match[1] ? match[1] : 'crowdpay-tax-receipt-' + contributionId + '.pdf' };
+  },
+  requestContributionRefund: (contributionId, payload = {}) =>
+    apiClient.post('/contributions/' + contributionId + '/refund', payload).then((r) => r.data),
+  getFavorites: () =>
+    apiClient.get('/users/me/favorites').then((r) => r.data?.favorites || r.data || []),
 };

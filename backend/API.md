@@ -618,3 +618,14 @@ Deterministic projection, not a guarantee. Each month consumes the next run of
 each active schedule, capping a payout at the remaining projected balance.
 projected_total_payout is the sum across the horizon. No new funds, fees, or
 refunds are assumed.
+
+
+## Contributor receipts with verifiable Stellar transaction references
+
+Full schema, privacy rules, and verification details are documented in [`docs/contributor-receipts.md`](../docs/contributor-receipts.md).
+
+- `GET /api/contributions/tax-receipts` — Authenticated. Lists the caller's verifiable contribution receipts with on-chain `verification` metadata (`tx_hash`, `network`, `network_passphrase`, `explorer_url`, `horizon_tx_url`, `sender_public_key`, `destination_public_key`, `memo`, `ledger_sequence`, `paging_token`).
+- `GET /api/contributions/tax-receipts/download` — Authenticated. Downloads a combined PDF receipt for all of the caller's verifiable contributions (`404` when none exist).
+- `GET /api/contributions/tax-receipts/:id/download` — Authenticated. Downloads a PDF receipt for a single contribution owned by the caller (`404` when not found).
+- `GET /api/contributions/:id/receipt` — Authenticated. Returns `{ receipt }` for the contributor, campaign creator (with contributor email redacted and anonymous/amount-only privacy enforced), or platform admin. Returns `403` for unauthorized callers, `404` when missing, and `422` (`code: "UNVERIFIABLE_TRANSACTION"`) when the contribution lacks a verifiable Stellar transaction hash.
+- `GET /api/contributions/:id/receipt/pdf` — Authenticated. Downloads the PDF receipt for an authorized viewer (`contributor`, `campaign creator`, or `admin`).
