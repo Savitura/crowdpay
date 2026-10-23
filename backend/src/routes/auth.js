@@ -23,6 +23,7 @@ const {
   checkLoginAnomalies,
 } = require('../services/sessionService');
 const asyncHandler = require('../utils/asyncHandler');
+const withTransaction = require('../utils/withTransaction');
 const {
   registerValidation,
   loginValidation,
@@ -965,6 +966,17 @@ router.post(
   })
 );
 
+/**
+ * Reset password using a single-use token.
+ * Validates and consumes the reset token, updates the user's password hash,
+ * and revokes all active refresh tokens in a single atomic database transaction.
+ *
+ * Security considerations:
+ * - Single-use token: The token record is atomically selected with row-level locking
+ *   (FOR UPDATE) and marked as used (`used_at = NOW()`), preventing race conditions and replay attacks.
+ * - Transactional integrity: If any operation (password update or session revocation) fails,
+ *   the entire transaction rolls back, preventing inconsistent states.
+ */
 router.post(
   '/reset-password',
   loginLimiter,
@@ -973,37 +985,48 @@ router.post(
   asyncHandler(async (req, res) => {
     const { token, password } = req.body;
     const tokenHash = hashToken(token);
+    const passwordHash = await bcrypt.hash(password, 10);
 
-    const { rows } = await db.query(
-      `SELECT prt.id, prt.user_id
-       FROM password_reset_tokens prt
-       WHERE prt.token_hash = $1
-         AND prt.used_at IS NULL
-         AND prt.expires_at > NOW()`,
-      [tokenHash]
-    );
+    const resetSuccess = await withTransaction(async client => {
+      const { rows } = await client.query(
+        `UPDATE password_reset_tokens SET used_at = NOW()
+         WHERE id = (
+           SELECT prt.id
+           FROM password_reset_tokens prt
+           WHERE prt.token_hash = $1
+             AND prt.used_at IS NULL
+             AND prt.expires_at > NOW()
+           LIMIT 1
+           FOR UPDATE
+         )
+         RETURNING id, user_id`,
+        [tokenHash]
+      );
 
-    if (!rows.length) {
+      if (!rows.length) {
+        return false;
+      }
+
+      const resetToken = rows[0];
+
+      await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [
+        passwordHash,
+        resetToken.user_id,
+      ]);
+      await client.query(
+        `UPDATE refresh_tokens SET revoked_at = NOW()
+         WHERE user_id = $1 AND revoked_at IS NULL`,
+        [resetToken.user_id]
+      );
+
+      return true;
+    }, db);
+
+    if (!resetSuccess) {
       return res.status(400).json({
         error: 'Invalid or expired reset link. Please request a new one.',
       });
     }
-
-    const resetToken = rows[0];
-    const passwordHash = await bcrypt.hash(password, 10);
-
-    await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [
-      passwordHash,
-      resetToken.user_id,
-    ]);
-    await db.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1', [
-      resetToken.id,
-    ]);
-    await db.query(
-      `UPDATE refresh_tokens SET revoked_at = NOW()
-       WHERE user_id = $1 AND revoked_at IS NULL`,
-      [resetToken.user_id]
-    );
 
     res.json({ message: 'Password reset successfully' });
   })

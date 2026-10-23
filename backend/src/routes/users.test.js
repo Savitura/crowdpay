@@ -25,7 +25,10 @@ function buildApp({ queryImpl, stellarImpl, sendEmailImpl, bcryptImpl } = {}) {
         }),
       },
     },
-    '../config/database': { query: queryImpl },
+    '../config/database': {
+      query: queryImpl,
+      connect: async () => ({ query: queryImpl, release: () => {} }),
+    },
     '../services/stellarService': stellarStub,
     '../services/walletSecrets': {
       encryptWalletSecret: async secret => `cpws:v1:${secret.slice(0, 8)}`,
@@ -218,14 +221,15 @@ test('POST /api/auth/reset-password updates password and revokes refresh tokens'
   let revokedRefresh = false;
   const { app } = buildApp({
     queryImpl: async text => {
+      if (text.includes('UPDATE password_reset_tokens SET used_at')) {
+        markedUsed = true;
+        return { rows: [{ id: 'prt-1', user_id: 'user-1' }] };
+      }
       if (text.includes('FROM password_reset_tokens prt')) {
         return { rows: [{ id: 'prt-1', user_id: 'user-1' }] };
       }
       if (text.includes('UPDATE users SET password_hash')) {
         updatedPassword = true;
-      }
-      if (text.includes('UPDATE password_reset_tokens SET used_at')) {
-        markedUsed = true;
       }
       if (text.includes('UPDATE refresh_tokens SET revoked_at')) {
         revokedRefresh = true;

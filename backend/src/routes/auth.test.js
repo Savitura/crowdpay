@@ -122,11 +122,11 @@ function buildApp({
           }
           return { rows: [] };
         }
-        if (sql.includes('SELECT prt.id, prt.user_id')) {
+        if (sql.includes('SELECT prt.id, prt.user_id') || sql.includes('UPDATE password_reset_tokens')) {
           if (params && params[0] === hashToken(VALID_RESET_TOKEN)) {
-            return { rows: [{ id: 99, user_id: USER_ID }] };
+            return { rows: [{ id: 99, user_id: USER_ID }], rowCount: 1 };
           }
-          return { rows: [] };
+          return { rows: [], rowCount: 0 };
         }
         if (sql.includes('SELECT id FROM refresh_tokens WHERE token_hash')) {
           return { rows: [{ id: 100 }] };
@@ -150,7 +150,10 @@ function buildApp({
       };
 
   const router = proxyquire('./auth', {
-    '../config/database': { query: queryImpl },
+    '../config/database': {
+      query: queryImpl,
+      connect: async () => ({ query: queryImpl, release: async () => {} }),
+    },
     '../config/logger': { error: () => {}, warn: () => {}, info: () => {} },
     '../services/totpService': totpService,
     '../services/stellarService': {
@@ -1024,6 +1027,59 @@ test('POST /api/auth/reset-password validates the new password', async () => {
     .send({ token: VALID_RESET_TOKEN, password: 'weak' });
 
   assert.equal(res.status, 400);
+});
+
+test('POST /api/auth/reset-password prevents reuse of already-used token', async () => {
+  let used = false;
+  const { app } = buildApp({
+    queryImplOverride: async (sql, params) => {
+      if (sql.includes('UPDATE password_reset_tokens')) {
+        if (!used && params && params[0] === hashToken(VALID_RESET_TOKEN)) {
+          used = true;
+          return { rows: [{ id: 99, user_id: USER_ID }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }
+      return { rows: [] };
+    },
+  });
+
+  // First consumption succeeds
+  const firstRes = await request(app)
+    .post('/api/auth/reset-password')
+    .send({ token: VALID_RESET_TOKEN, password: 'NewPassword1' });
+  assert.equal(firstRes.status, 200);
+
+  // Second attempt with the exact same token fails because it is single-use
+  const secondRes = await request(app)
+    .post('/api/auth/reset-password')
+    .send({ token: VALID_RESET_TOKEN, password: 'AnotherPassword2' });
+  assert.equal(secondRes.status, 400);
+  assert.deepEqual(secondRes.body, {
+    error: 'Invalid or expired reset link. Please request a new one.',
+  });
+});
+
+test('POST /api/auth/reset-password rolls back when an update step fails within the transaction', async () => {
+  const { app, calls } = buildApp({
+    queryImplOverride: async sql => {
+      if (sql.includes('UPDATE password_reset_tokens')) {
+        return { rows: [{ id: 99, user_id: USER_ID }], rowCount: 1 };
+      }
+      if (sql.includes('UPDATE users SET password_hash')) {
+        throw new Error('Database connection failure during password update');
+      }
+      return { rows: [] };
+    },
+  });
+
+  const res = await request(app)
+    .post('/api/auth/reset-password')
+    .send({ token: VALID_RESET_TOKEN, password: 'NewPassword1' });
+
+  assert.equal(res.status, 500);
+  const rollbackCalled = calls.db.some(q => q.sql === 'ROLLBACK');
+  assert.ok(rollbackCalled, 'ROLLBACK must be executed when error occurs in transaction');
 });
 
 // ---------------------------------------------------------------------------
