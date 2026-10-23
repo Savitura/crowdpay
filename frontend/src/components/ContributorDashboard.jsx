@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../services/api';
-import { stellarExpertTxUrl } from '../config/stellar';
+import { horizonTxUrl, stellarExpertTxUrl } from '../config/stellar';
 import CampaignStatusBadge from './CampaignStatusBadge';
 import { BadgeChip } from './ContributorBadges';
 import { useToast } from '../context/ToastContext';
@@ -25,6 +25,7 @@ function milestoneStatusColor(status) {
 function BackedCampaignCard({ campaign, onRefundClaimed }) {
   const toast = useToast();
   const [claimingId, setClaimingId] = useState(null);
+  const [downloadingReceiptId, setDownloadingReceiptId] = useState(null);
   const [error, setError] = useState('');
 
   const pct =
@@ -47,6 +48,26 @@ function BackedCampaignCard({ campaign, onRefundClaimed }) {
       setError(err.message || 'Could not claim refund');
     } finally {
       setClaimingId(null);
+    }
+  }
+
+  async function downloadReceipt(contributionId) {
+    setDownloadingReceiptId(contributionId);
+    setError('');
+    try {
+      const { blob, filename } = await api.downloadContributionReceiptPdf(contributionId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || 'Could not download receipt');
+    } finally {
+      setDownloadingReceiptId(null);
     }
   }
 
@@ -233,6 +254,31 @@ function BackedCampaignCard({ campaign, onRefundClaimed }) {
                   >
                     Tx
                   </a>
+                  {' · '}
+                  <a
+                    href={horizonTxUrl(contribution.tx_hash)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: 'var(--color-accent)' }}
+                  >
+                    Horizon
+                  </a>
+                  {contribution.id && (
+                    <>
+                      {' · '}
+                      <button
+                        type="button"
+                        onClick={() => downloadReceipt(contribution.id)}
+                        disabled={downloadingReceiptId === contribution.id}
+                        style={{
+                          fontSize: '0.76rem',
+                          padding: '0.1rem 0.4rem',
+                        }}
+                      >
+                        {downloadingReceiptId === contribution.id ? 'Preparing…' : 'Receipt PDF'}
+                      </button>
+                    </>
+                  )}
                 </>
               )}
             </li>
