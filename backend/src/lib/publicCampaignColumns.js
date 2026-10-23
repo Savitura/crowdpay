@@ -93,6 +93,11 @@ const CAMPAIGN_TABLE_COLUMNS = [
  * - `refund_xdr`: raw unsigned refund transaction.
  * - `migration_in_progress` / `contract_deployment_error`: internal state and
  *   provider diagnostics.
+ *
+ * Risk disclosures are the exception: they are contributor-facing content and
+ * must reach clients so backers can review and acknowledge them before
+ * contributing. They are stored as a JSON array of disclosure objects
+ * (`{ id, title, body, required }`) and are validated on write.
  */
 const INTERNAL_CAMPAIGN_COLUMNS = [
   'content_fingerprint',
@@ -106,6 +111,46 @@ const INTERNAL_CAMPAIGN_COLUMNS = [
   'search_vector',
   'wallet_secret_encrypted',
 ];
+
+/**
+ * Campaign risk disclosures surfaced to contributors.
+ *
+ * Each entry is `{ id, title, body, required }`. `required` disclosures must be
+ * acknowledged by a contributor before their contribution is accepted; the
+ * acknowledgement itself is recorded per-contributor (see
+ * `campaign_risk_acknowledgements`) and is never exposed on the campaign row.
+ */
+const RISK_DISCLOSURE_FIELDS = ['id', 'title', 'body', 'required'];
+
+/**
+ * Normalise a raw `risk_disclosures` column value into a safe array of
+ * disclosure objects. Accepts a JSON string (as returned by some drivers) or an
+ * already-parsed array. Unknown fields are dropped and malformed entries are
+ * skipped so a bad row cannot break serialisation.
+ */
+function normalizeRiskDisclosures(value) {
+  let parsed = value;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch (_err) {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  const disclosures = [];
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== 'object') continue;
+    const disclosure = {};
+    for (const field of RISK_DISCLOSURE_FIELDS) {
+      if (entry[field] !== undefined) disclosure[field] = entry[field];
+    }
+    if (typeof disclosure.id !== 'string' || !disclosure.id) continue;
+    disclosure.required = disclosure.required === true;
+    disclosures.push(disclosure);
+  }
+  return disclosures;
+}
 
 const PUBLIC_CAMPAIGN_COLUMNS = CAMPAIGN_TABLE_COLUMNS.filter(
   column => !INTERNAL_CAMPAIGN_COLUMNS.includes(column)
@@ -136,6 +181,9 @@ function stripInternalCampaignFields(row) {
   for (const column of INTERNAL_CAMPAIGN_COLUMNS) {
     delete clean[column];
   }
+  if ('risk_disclosures' in clean) {
+    clean.risk_disclosures = normalizeRiskDisclosures(clean.risk_disclosures);
+  }
   return clean;
 }
 
@@ -144,6 +192,8 @@ module.exports = {
   INTERNAL_CAMPAIGN_COLUMNS,
   PUBLIC_CAMPAIGN_COLUMNS,
   PUBLIC_CAMPAIGN_SELECT,
+  RISK_DISCLOSURE_FIELDS,
+  normalizeRiskDisclosures,
   publicCampaignColumnList,
   stripInternalCampaignFields,
 };

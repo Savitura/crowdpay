@@ -23,6 +23,7 @@ const { assertUserKycVerified } = require('../services/kycService');
 const { parsePagination, paginatedResponse } = require('../utils/pagination');
 const { assertContributorMeetsRequirements } = require('../services/contributorIdentityService');
 const { assertContributionPolicy } = require('../services/contributionPolicy');
+const campaignRiskDisclosureService = require('../services/campaignRiskDisclosureService');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const asyncHandler = require('../utils/asyncHandler');
@@ -67,6 +68,71 @@ async function resolveContributorWallet(req) {
   };
 }
 
+async function assertRiskDisclosureAcknowledged({
+  campaignId,
+  userId,
+  acknowledged,
+  disclosureVersion,
+  client = db,
+}) {
+  const required = await campaignRiskDisclosureService.getActiveDisclosure(campaignId, client);
+  if (!required) {
+    return null;
+  }
+
+  if (acknowledged !== true) {
+    const err = new Error('Campaign risk disclosure must be acknowledged before contributing');
+    err.statusCode = 428;
+    err.code = 'RISK_DISCLOSURE_ACKNOWLEDGEMENT_REQUIRED';
+    err.disclosure = campaignRiskDisclosureService.serializeDisclosure(required);
+    throw err;
+  }
+
+  if (
+    disclosureVersion != null &&
+    String(disclosureVersion) !== String(required.version)
+  ) {
+    const err = new Error('Risk disclosure version is outdated; reload the campaign and review the current disclosure');
+    err.statusCode = 409;
+    err.code = 'RISK_DISCLOSURE_VERSION_MISMATCH';
+    err.disclosure = campaignRiskDisclosureService.serializeDisclosure(required);
+    throw err;
+  }
+
+  return campaignRiskDisclosureService.recordAcknowledgement({
+    campaignId,
+    userId,
+    disclosureId: required.id,
+    disclosureVersion: required.version,
+    client,
+  });
+}
+
+router.get(
+  '/risk-disclosure/:campaignId',
+  asyncHandler(async (req, res) => {
+    const { campaignId } = req.params;
+    const { rows: campaignRows } = await db.query('SELECT id FROM campaigns WHERE id = $1', [
+      campaignId,
+    ]);
+    if (!campaignRows[0]) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const disclosure = await campaignRiskDisclosureService.getActiveDisclosure(
+      campaignId,
+      db
+    );
+    return res.json({
+      campaign_id: campaignId,
+      disclosure: disclosure
+        ? campaignRiskDisclosureService.serializeDisclosure(disclosure)
+        : null,
+      acknowledgement_required: Boolean(disclosure),
+    });
+  })
+);
+
 router.post(
   '/',
   requireAuth,
@@ -85,6 +151,8 @@ router.post(
       selected_path_index,
       idempotency_key,
       gift,
+      risk_disclosure_acknowledged,
+      risk_disclosure_version,
     } = req.body;
     const userId = req.user.userId;
 
@@ -135,8 +203,21 @@ router.post(
 
     const client = await db.connect();
     let result;
+    let riskAcknowledgement;
     try {
       await client.query('BEGIN');
+
+      // Record the contributor's acknowledgement of the campaign risk
+      // disclosure in the same transaction as the contribution so the two
+      // cannot di verge. This also blocks contributions when a disclosure
+      // is required but not acknowledged.
+      riskAcknowledgement = await assertRiskDisclosureAcknowledged({
+        campaignId: campaign_id,
+        userId,
+        acknowledged: risk_disclosure_acknowledged,
+        disclosureVersion: risk_disclosure_version,
+        client,
+      });
 
       if (tier_id) {
         const reserved = await reserveTierSlot(client, {
@@ -191,13 +272,27 @@ router.post(
         referralLinkId: referralLink?.id,
         tierId: tier_id,
         previewPath,
-        idempotencyKey: req.idempotencyKey || idempotency_key,
+        idompotencyKey: req.idempotencyKey || idempotency_key,
         client,
       });
 
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
+      if (err.code === 'RISK_DISCLOSURE_ACKNOWLEDGEMENT_REQUIRED') {
+        return res.status(428).json({
+          error: err.message,
+          code: err.code,
+          disclosure: err.disclosure,
+        });
+      }
+      if (err.code === 'RISK_DISCLOSURE_VERSION_MISMATCH') {
+        return res.status(409).json({
+          error: err.message,
+          code: err.code,
+          disclosure: err.disclosure,
+        });
+      }
       throw err;
     } finally {
       client.release();
@@ -211,6 +306,8 @@ router.post(
       platform_fee_amount: result.platformFeeAmount ?? result.platform_fee_amount ?? 0,
       preview_validated: Boolean(previewPath),
       diagnosis: result.flowMetadata?.diagnosis || contributionDiagnostics.STATUS_PENDING,
+      risk_disclosure_acknowledged: Boolean(riskAcknowledgement),
+      risk_disclosure_version: riskAcknowledgment?.disclosure_version || null,
     });
   })
 );
@@ -221,7 +318,7 @@ router.post(
   contributionValidation,
   validateRequest,
   asyncHandler(async (req, res) => {
-    const { campaign_id, amount, send_asset, embed_token } = req.body;
+    const { campaign_id, amount, send_asset, embed_token, risk_disclosure_acknowledged, risk_disclosure_version } = req.body;
     if (!embed_token) {
       return res.status(401).json({ error: 'Embed token required' });
     }
@@ -231,7 +328,7 @@ router.post(
      * First verify token format and signature/expiry via JWT service.
      */
     const jwtPayload = verifyEmbedToken(embed_token);
-    if (!jwtPayload || jwtPayload.sub !== campaign_id) {
+    if (!jwtPayload || typeof jwtPayload.sub !== 'string' || jwtPayload.sub !== String(campaign_id)) {
       return res.status(401).json({ error: 'Invalid or expired embed token' });
     }
     /*
@@ -286,15 +383,51 @@ router.post(
       return res.status(err.statusCode || 400).json({ error: err.message });
     }
 
-    const result = await contributionService.submitCustodialContribution({
-      campaign,
-      campaignId: campaign_id,
-      userId,
-      walletPublicKey: user.wallet_public_key,
-      walletSecretEncrypted: user.wallet_secret_encrypted,
-      amount,
-      sendAsset: send_asset || campaign.asset_type,
-    });
+    const client = await db.connect();
+    let result;
+    let riskAcknowledgment;
+    try {
+      await client.query('BEGIN');
+      riskAcknowledgment = await assertRiskDisclosureAcknowledged({
+        campaignId: campaign_id,
+        userId,
+        acknowledged: risk_disclosure_acknowledged,
+        disclosureVersion: risk_disclosure_version,
+        client,
+      });
+
+      result = await contributionService.submitCustodialContribution({
+        campaign,
+        campaignId: campaign_id,
+        userId,
+        walletPublicKey: user.wallet_public_key,
+        walletSecretEncrypted: user.wallet_secret_encrypted,
+        amount,
+        sendAsset: send_asset || campaign.asset_type,
+        client,
+      });
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      if (err.code === 'RISK_DISCLOSURE_ACKNOWLEDGEMENT_REQUIRED') {
+        return res.status(428).json({
+          error: err.message,
+          code: err.code,
+          disclosure: err.disclosure,
+        });
+      }
+      if (err.code === 'RISK_DISCLOSURE_VERSION_MISMATCH') {
+        return res.status(409).json({
+          error: err.message,
+          code: err.code,
+          disclosure: err.disclosure,
+        });
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
 
     return res.status(202).json({
       success: true,
@@ -302,6 +435,8 @@ router.post(
       contract_mode: Boolean(campaign.escrow_contract_id),
       conversion_quote: result.conversionQuote || null,
       platform_fee_amount: result.platformFeeAmount ?? result.platform_fee_amount ?? 0,
+      risk_disclosure_acknowledged: Boolean(riskAcknowledgement),
+      risk_disclosure_version: riskAcknowledgment?.disclosure_version || null,
     });
   })
 );
@@ -334,64 +469,7 @@ router.get(
       offset
     );
 
-    return res.json({ contributions, total, limit, offset });
-  })
-);
-
-function isContributionViewer(req, contribution, campaignCreatorId) {
-  if (req.user?.role === 'admin') return true;
-  if (campaignCreatorId === req.user?.userId) return true;
-  if (req.user?.walletPublicKey && contribution.sender_public_key === req.user.walletPublicKey) {
-    return true;
-  }
-  return false;
-}
-
-router.get(
-  '/:id/diagnosis',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const { id } = req.params;
-
-    const { rows } = await db.query(
-      `SELECT c.id, c.campaign_id, c.sender_public_key, c.payment_type, c.path_hops,
-              c.effective_rate, c.slippage_bps, c.send_max, c.retry_count, c.diagnosis, c.tx_hash,
-              st.metadata AS metadata
-       FROM contributions c
-       LEFT JOIN stellar_transactions st ON st.tx_hash = c.tx_hash AND st.kind = 'contribution'
-       WHERE c.id = $1`,
-      [id]
-    );
-    const contribution = rows[0];
-    if (!contribution) {
-      return res.status(404).json({ error: 'Contribution not found' });
-    }
-
-    const { rows: campaignRows } = await db.query(
-      'SELECT creator_id FROM campaigns WHERE id = $1',
-      [contribution.campaign_id]
-    );
-    if (!isContributionViewer(req, contribution, campaignRows[0]?.creator_id)) {
-      return res.status(403).json({ error: 'Not authorized to view this contribution' });
-    }
-
-    const metadata = contribution.metadata || {};
-    const report = await contributionDiagnostics.diagnoseContribution({
-      contribution,
-      metadata,
-      txHash: contribution.tx_hash,
-    });
-
-    // Persist a status change (e.g. pending -> failed) so the stored diagnosis
-    // stays actionable without re-hitting Horizon on every list read.
-    if (report.status && report.status !== contribution.diagnosis) {
-      await db.query('UPDATE contributions SET diagnosis = $1 WHERE id = $2', [
-        report.status,
-        contribution.id,
-      ]);
-    }
-
-    return res.json({ diagnosis: report });
+    return res.json({ contributions, total });
   })
 );
 
