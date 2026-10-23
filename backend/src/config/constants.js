@@ -140,3 +140,13 @@ module.exports = {
   /** Cache TTL for public campaign impact stats (seconds). */
   IMPACT_CACHE_TTL_SECONDS: 60,
 };
+
+// --------------------------------------------------------------------------------------
+// Campaign discovery query budgets & slow-query logging
+// --------------------------------------------------------------------------------------
+
+/** Hard upper bound on rows a single campaign discovery query may return. */
+module.exports.DISCOVERY_QUERY_MAX_ROWS = 100;
+
+/** Campaign discovery queries exceeding this wall-clock duration (ms) are logged as slow. */
+module.exports.DISCOVERY_SLOW_QUERY_THRESHOLD_MS = 500;

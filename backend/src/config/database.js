@@ -49,6 +49,26 @@ function parseNonNegativeInt(name, value, defaultValue) {
 
 const POOL_MAX = parsePositiveInt('DB_POOL_MAX', process.env.DB_POOL_MAX, 10);
 
+/**
+ * Per-query budget in milliseconds. Queries exceeding this are logged as slow.
+ * Set DB_SLOW_QUERY_MS=0 to disable slow-query logging.
+ */
+const SLOW_QUERY_MS = parseNonNegativeInt(
+  'DB_SLOW_QUERY_MS',
+  process.env.DB_SLOW_QUERY_MS,
+  500
+);
+
+/**
+ * Hard statement timeout (ms) applied server-side to bound query budgets.
+ * Set DB_STATEMENT_TIMEOUT_MS=0 to disable.
+ */
+const STATEMENT_TIMEOUT_MS = parseNonNegativeInt(
+  'DB_STATEMENT_TIMEOUT_MS',
+  process.env.DB_STATEMENT_TIMEOUT_MS,
+  0
+);
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: POOL_MAX,
@@ -58,6 +78,7 @@ const pool = new Pool({
     process.env.DB_CONNECTION_TIMEOUT_MS,
     5000
   ),
+  ...(STATEMENT_TIMEOUT_MS > 0 ? { statement_timeout: STATEMENT_TIMEOUT_MS } : {}),
 });
 
 const WAITING_THRESHOLD = parseNonNegativeInt(
@@ -79,6 +100,68 @@ pool.on('connect', () => {
     });
   }
 });
+
+/**
+ * Wraps pool.query so that any query exceeding SLOW_QUERY_MS is logged.
+ * Only the query text prefix and duration are logged; parameter values are
+ * never logged to avoid leaking personal or campaign data.
+ */
+const originalQuery = pool.query.bind(pool);
+
+function describeQuery(text) {
+  if (typeof text !== 'string') {
+    return '<non-text query>';
+  }
+  return text.replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+pool.query = function timedQuery(...args) {
+  if (SLOW_QUERY_MS <= 0) {
+    return originalQuery(...args);
+  }
+
+  const start = process.hrtime.bigint();
+  const text = typeof args[0] === 'string' ? args[0] : args[0] && args[0].text;
+  const logSlow = () => {
+    const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
+    if (elapsedMs > SLOW_QUERY_MS) {
+      logger.warn('Slow database query exceeded budget', {
+        durationMs: Math.round(elapsedMs),
+        budgetMs: SLOW_QUERY_MS,
+        query: describeQuery(text),
+      });
+    }
+  };
+
+  const result = originalQuery(...args);
+
+  // Callback-style invocation: wrap the callback so timing is recorded.
+  if (typeof args[args.length - 1] === 'function') {
+    const cbIndex = args.length - 1;
+    const cb = args[cbIndex];
+    args[cbIndex] = function wrappedCallback(...cbArgs) {
+      logSlow();
+      return cb.apply(this, cbArgs);
+    };
+    return originalQuery(...args);
+  }
+
+  // Promise-style invocation.
+  if (result && typeof result.then === 'function') {
+    return result.then(
+      res => {
+        logSlow();
+        return res;
+      },
+      err => {
+        logSlow();
+        throw err;
+      }
+    );
+  }
+
+  return result;
+};
 
 function getPoolMetrics() {
   const total = pool.totalCount;
@@ -104,3 +187,5 @@ function getPoolMetrics() {
 module.exports = pool;
 module.exports.getPoolMetrics = getPoolMetrics;
 module.exports.poolMax = POOL_MAX;
+module.exports.slowQueryMs = SLOW_QUERY_MS;
+module.exports.statementTimeoutMs = STATEMENT_TIMEOUT_MS;
