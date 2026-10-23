@@ -1,3 +1,4 @@
+
 const router = require('express').Router();
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
@@ -117,6 +118,7 @@ const {
 } = require('../services/campaignReportService');
 const { streamCampaignReportPdf, reportFilename } = require('../services/campaignReportPdf');
 const { generateCampaignOgImage } = require('../services/ogImageService');
+const { listBudgetLineItems, replaceBudgetLineItems } = require('../services/campaignBudgetService');
 
 const crypto = require('crypto');
 
@@ -892,6 +894,90 @@ router.post(
     }
   })
 );
+
+// ── Campaign budget line items with planned-versus-actual reporting ─────────
+
+/**
+ * GET /api/campaigns/:id/budget-line-items
+ * Returns the campaign's budget line items with planned vs. actual totals.
+ * Public read; internal cost notes are only included for campaign members.
+ */
+router.get(
+  '/:id/budget-line-items',
+  optionalAuth,
+  asyncHandler(async (req, res) => {
+    const { rows: campaignRows } = await db.query(
+      'SELECT id, target_amount, asset_type, creator_id FROM campaigns WHERE id = $1 AND deleted_at IS NULL',
+      [req.params.id]
+    );
+    if (!campaignRows.length) return res.status(404).json({ error: 'Campaign not found' });
+
+    let includeInternal = false;
+    if (req.user && req.user.userId) {
+      const role = await resolveUserCampaignRole(
+        req.params.id,
+        req.user.userId,
+        req.user.role === 'admin'
+      );
+      includeInternal = Boolean(role);
+    }
+
+    const report = await listBudgetLineItems(req.params.id, { includeInternal });
+    res.json(report);
+  })
+);
+
+/**
+ * PUT /api/campaigns/:id/budget-line-items
+ * Replaces the campaign's budget line items (owner/manager only). The sum of
+ * planned amounts must not exceed the campaign target amount.
+ */
+router.put(
+  '/:id/budget-line-items',
+  requireAuth,
+  requireCampaignMember('owner', 'manager'),
+  asyncHandler(async (req, res) => {
+    const { items } = req.body || {};
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ error: 'items must be an array' });
+    }
+
+    try {
+      const saved = await replaceBudgetLineItems(req.params.id, items, {
+        actorId: req.user.userId,
+      });
+      res.status(200).json(saved);
+    } catch (err) {
+      if (err.statusCode === 400 || err.statusCode === 422) {
+        return res.status(err.statusCode).json({ error: err.message, code: err.code });
+      }
+      if (err.statusCode === 404) {
+        return res.status(404).json({ error: err.message });
+      }
+      logger.error('[campaigns] budget line items update failed', {
+        campaign_id: req.params.id,
+        error: err.message,
+      });
+      res.status(500).json({ error: 'Could not save budget line items' });
+    }
+  })
+);
+
+/**
+ * GET /api/campaigns/:id/budget-line-items/report
+ * Planned-versus-actual report for campaign members (owner/manager/editor/viewer).
+ */
+router.get(
+  '/:id/budget-line-items/report',
+  requireAuth,
+  requireCampaignMember('owner', 'manager', 'editor', 'viewer'),
+  asyncHandler(async (req, res) => {
+    const report = await listBudgetLineItems(req.params.id, { includeInternal: true });
+    if (!report) return res.status(404).json({ error: 'Campaign not found' });
+    res.json(report);
+  })
+);
+
 router.get(
   '/trending',
   asyncHandler(async (req, res) => {

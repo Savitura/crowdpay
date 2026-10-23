@@ -5,6 +5,7 @@ const {
   getCampaignVelocity,
   updateCampaignVelocityAlertThreshold,
 } = require('../services/velocityService');
+const { getCampaignBudgetReport } = require('../services/budgetService');
 const db = require('../config/database');
 
 async function requireCampaignCreatorOrMember(req, res, next) {
@@ -39,6 +40,20 @@ router.patch(
     const result = await updateCampaignVelocityAlertThreshold(req.params.campaignId, threshold);
     res.json(result);
   })
+);
+
+// Planned-versus-actual budget report for a campaign, exposed adjuacent to
+// the existing creator analytics endpoints.
+const budgetReportHandler = asyncHandler(async (req, res) => {
+  const report = await getCampaignBudgetReport(req.params.campaignId);
+  res.json(report);
+});
+
+router.get(
+  '/campaigns/:campaignId/budget/report',
+  requireAuth,
+  requireCampaignCreatorOrMember,
+  budgetReportHandler
 );
 
 module.exports = router;

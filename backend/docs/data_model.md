@@ -371,6 +371,43 @@ The `campaign_translations` table allows creators to provide campaign descriptio
 Locale normalization, API behavior, and operational limits are documented in
 [`campaign-localization.md`](campaign-localization.md).
 
+## Campaign Budget Line Items (#603)
+
+The `campaign_budget_line_items` table lets creators break a campaign's budget
+into planned line items (category, planned amount) and track actual spend
+against each. Planned-versus-actual reporting is derived by aggregating
+`actual_amount` per line item and comparing it to `planned_amount`.
+
+| Column          | Type            | Description                                          |
+|-----------------|-----------------|------------------------------------------------------|
+| id              | UUID (PK)       | Unique line item identifier                          |
+| campaign_id     | UUID (FK)       | Reference to campaigns (CASCADE)                     |
+| category        | TEXT            | Budget category (e.g. marketing, production)         |
+| label           | TEXT            | Human-readable line item name                        |
+| planned_amount  | NUMERIC(20,7)   | Planned budget for this line item (>= 0)             |
+| actual_amount   | NUMERIC(20,7)   | Actual spend recorded for this line item (>= 0)      |
+| asset           | TEXT            | XLM / USDC                                           |
+| notes           | TEXT            | Optional creator notes                               |
+| sort_order      | INT             | Display order                                        |
+| created_at      | TIMESTAMPTZ     | Creation timestamp                                   |
+| updated_at      | TIMESTAMPTZ     | Last update timestamp (auto via trigger)             |
+
+**Indexes:**
+- `idx_campaign_budget_line_items_campaign` on `campaign_id`
+
+**Constraints:**
+- `planned_amount >= 0` and `actual_amount >= 0` (CHECK constraints).
+- `asset` restricted to the campaign's supported asset set.
+
+### Planned-versus-actual reporting
+
+For a campaign, the reporting endpoint returns each line item with its
+`planned_amount`, `actual_amount`, and the derived `variance`
+(`planned_amount - actual_amount`), plus campaign-level totals. Line items are
+scoped to the owning campaign; requests for a campaign the caller cannot access
+return `404` to avoid leaking existence. Amounts are returned as strings to
+preserve NUMERIC precision and avoid floating-point drift.
+
 ## Feature Flags (#800)
 
 The `feature_flags` table backs the runtime flag endpoints in
