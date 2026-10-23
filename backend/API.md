@@ -618,3 +618,64 @@ Deterministic projection, not a guarantee. Each month consumes the next run of
 each active schedule, capping a payout at the remaining projected balance.
 projected_total_payout is the sum across the horizon. No new funds, fees, or
 refunds are assumed.
+
+## Exchange rates & multi-currency display
+
+Public endpoints providing timestamped exchange rates backed by cached live provider sources and fallbacks. Used across campaign goal and contribution views to display approximate local currency amounts (such as NGN / Naira).
+
+### GET /api/rates
+
+Query parameters:
+
+| name   | type   | default | description |
+| ------ | ------ | ------- | ----------- |
+| target | string | `NGN`   | Target fiat/local currency code (e.g., `NGN`). |
+
+Success response (`200`):
+
+```json
+{
+  "base": "USD",
+  "target": "NGN",
+  "rates": {
+    "USDC": 1600,
+    "USD": 1600,
+    "XLM": 160
+  },
+  "approximate": true,
+  "source": "coingecko",
+  "timestamp": 1729668000000
+}
+```
+
+### GET /api/rates/ngn
+
+Alias for `GET /api/rates?target=NGN`.
+
+### GET /api/rates/estimate
+
+Convert a specific cryptocurrency amount into the target currency.
+
+Query parameters:
+
+| name   | type    | default  | description |
+| ------ | ------- | -------- | ----------- |
+| amount | numeric | required | Amount to convert. |
+| asset  | string  | `USDC`   | Source asset (`USDC`, `XLM`). |
+
+Success response (`200`):
+
+```json
+{
+  "amount": 160000,
+  "original_amount": 100,
+  "asset": "USDC",
+  "target": "NGN",
+  "rate": 1600,
+  "approximate": true
+}
+```
+
+Errors:
+- `400` Valid numeric amount is required.
+
