@@ -18,7 +18,18 @@ import {
 } from '../lib/onboarding';
 import { getRecentlyViewedIds } from '../lib/recentlyViewed';
 
-const STATUS_OPTIONS = ['', 'active', 'funded', 'closed', 'failed'];
+const STATUS_OPTIONS = [
+  '',
+  'active',
+  'funded',
+  'in_progress',
+  'completed',
+  'closed',
+  'withdrawn',
+  'failed',
+  'refunded',
+  'disputed',
+];
 const ASSET_OPTIONS = ['', 'USDC', 'XLM'];
 const SORT_OPTIONS = [
   { value: 'newest', key: 'home.newest', labelKey: 'home.newest' },
@@ -423,13 +434,22 @@ export default function Home() {
             onChange={(e) => setFilters({ status: e.target.value })}
             style={styles.filterInput}
           >
-            {STATUS_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option === ''
-                  ? t('home.anyStatus')
-                  : t(`home.status${option[0].toUpperCase()}${option.slice(1)}`)}
-              </option>
-            ))}
+            {STATUS_OPTIONS.map((option) => {
+              if (option === '') {
+                return (
+                  <option key={option} value={option}>
+                    {t('home.anyStatus')}
+                  </option>
+                );
+              }
+              const camelCaseOption = option.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+              const key = `home.status${camelCaseOption[0].toUpperCase()}${camelCaseOption.slice(1)}`;
+              return (
+                <option key={option} value={option}>
+                  {t(key)}
+                </option>
+              );
+            })}
           </select>
         </label>
         <label style={styles.filterItem}>

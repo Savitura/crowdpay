@@ -166,6 +166,13 @@
     "statusFunded": "Financé",
     "statusClosed": "Fermé",
     "statusFailed": "Échoué",
+    "statusDraft": "Brouillon",
+    "statusDisputed": "Contesté",
+    "statusRefunded": "Remboursé",
+    "statusInProgress": "En cours",
+    "statusCompleted": "Terminé",
+    "statusWithdrawn": "Retiré",
+    "statusSuspended": "Suspendu",
     "assetLabel": "Actif",
     "sortLabel": "Trier par",
     "anyStatus": "N'importe quel statut",
@@ -533,8 +540,13 @@
     "goalReached": "Objectif atteint",
     "campaignEnded": "Campagne terminée",
     "campaignClosed": "Campagne fermée",
+    "refunded": "Remboursé",
     "draft": "Brouillon",
-    "disputed": "Litige en cours"
+    "disputed": "Litige en cours",
+    "inProgress": "En cours",
+    "completed": "Terminée",
+    "withdrawn": "Retirée",
+    "suspended": "Suspendue"
   },
   "dashboard": {
     "contributors": "Contributeurs",

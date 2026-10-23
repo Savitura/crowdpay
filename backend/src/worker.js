@@ -30,6 +30,97 @@ const { runRestoreVerification } = require('./services/restoreVerification');
 
 let intervals = [];
 let isShuttingDown = false;
+let inFlightTasks = new Set();
+let drainResolvers = [];
+const activeLeases = new Map(); // leaseToken -> { kind, deliveryId }
+const WORKER_DRAIN_TIMEOUT_MS = parseInt(process.env.WORKER_DRAIN_TIMEOUT_MS, 10) || 10_000;
+
+function trackTask(promise) {
+  inFlightTasks.add(promise);
+  const cleanup = () => {
+    inFlightTasks.delete(promise);
+    if (inFlightTasks.size === 0) {
+      while (drainResolvers.length > 0) {
+        const resolve = drainResolvers.shift();
+        resolve();
+      }
+    }
+  };
+  promise.then(cleanup, cleanup);
+  return promise;
+}
+
+function registerLease(leaseToken, metadata) {
+  if (leaseToken) {
+    activeLeases.set(leaseToken, metadata);
+  }
+}
+
+function releaseLease(leaseToken) {
+  if (leaseToken) {
+    activeLeases.delete(leaseToken);
+  }
+}
+
+async function handoffActiveLeases() {
+  if (activeLeases.size === 0) return 0;
+  logger.info(`worker: handing off ${activeLeases.size} active leases`);
+  let handedOffCount = 0;
+
+  for (const [leaseToken, info] of Array.from(activeLeases.entries())) {
+    try {
+      if (info && info.kind && info.deliveryId) {
+        const table = info.kind === 'campaign' ? 'campaign_webhook_deliveries' : 'webhook_deliveries';
+        await db.query(
+          `UPDATE ${table}
+           SET status = 'retrying',
+               lease_token = NULL,
+               lease_expires_at = NULL,
+               next_retry_at = NOW(),
+               updated_at = NOW()
+           WHERE id = $1 AND lease_token = $2 AND status = 'delivering'`,
+          [info.deliveryId, leaseToken]
+        );
+        handedOffCount++;
+      } else if (info && info.type === 'milestone_auto_release' && info.attemptId) {
+        await db.query(
+          `UPDATE milestone_auto_release_attempts
+           SET lease_until = NULL, updated_at = NOW()
+           WHERE id = $1 AND lease_until IS NOT NULL`,
+          [info.attemptId]
+        );
+        handedOffCount++;
+      }
+    } catch (err) {
+      logger.error('worker: failed to hand off lease', { leaseToken, error: err.message });
+    } finally {
+      activeLeases.delete(leaseToken);
+    }
+  }
+
+  return handedOffCount;
+}
+
+async function waitForInFlightTasks(timeoutMs = WORKER_DRAIN_TIMEOUT_MS) {
+  if (inFlightTasks.size === 0) return;
+  logger.info(`worker: draining ${inFlightTasks.size} in-flight background task(s) (timeout ${timeoutMs}ms)`);
+
+  let timer;
+  const timeoutPromise = new Promise(resolve => {
+    timer = setTimeout(() => {
+      logger.warn(`worker: drain timeout reached (${timeoutMs}ms) with ${inFlightTasks.size} tasks still active`);
+      resolve();
+    }, timeoutMs);
+    if (typeof timer.unref === 'function') timer.unref();
+  });
+
+  const drainPromise = new Promise(resolve => {
+    drainResolvers.push(resolve);
+  });
+
+  await Promise.race([drainPromise, timeoutPromise]);
+  if (timer) clearTimeout(timer);
+}
 
 const SCHEDULED_PROCESSOR_FLAGS = [
   'campaign-status-cron',
@@ -86,18 +177,22 @@ function startInterval(name, fn, intervalMs, featureFlagKey = null) {
 
   logger.info(`worker: starting ${name} (interval ${intervalMs}ms)`);
 
-  // Run immediately then schedule
-  Promise.resolve(fn()).catch(err => {
-    logger.error(`worker: ${name} failed on initial run`, { error: err.message });
-  });
-
-  const timer = setInterval(async () => {
+  const runTask = () => {
     if (isShuttingDown) return;
-    try {
-      await fn();
-    } catch (err) {
-      logger.error(`worker: ${name} failed`, { error: err.message });
-    }
+    const taskPromise = Promise.resolve()
+      .then(() => fn())
+      .catch(err => {
+        logger.error(`worker: ${name} failed`, { error: err.message });
+      });
+    trackTask(taskPromise);
+    return taskPromise;
+  };
+
+  // Run immediately then schedule
+  runTask();
+
+  const timer = setInterval(() => {
+    runTask();
   }, intervalMs);
 
   intervals.push(timer);
@@ -234,7 +329,7 @@ async function startBackgroundWorkers() {
   );
 }
 
-async function stopBackgroundWorkers() {
+async function stopBackgroundWorkers({ drainTimeoutMs = WORKER_DRAIN_TIMEOUT_MS } = {}) {
   logger.info('worker: stopping background lifecycle');
   isShuttingDown = true;
 
@@ -253,14 +348,37 @@ async function stopBackgroundWorkers() {
   } catch (err) {
     logger.error('worker: error stopping sub-workers', { error: err.message });
   }
+
+  // Gracefully drain in-flight background tasks
+  await waitForInFlightTasks(drainTimeoutMs);
+
+  // Hand off any active leases held by this worker
+  const handedOff = await handoffActiveLeases();
+  logger.info('worker: background lifecycle stopped', { handedOffLeases: handedOff });
 }
 
 function isWorkerRunning() {
-  return !isShuttingDown && intervals.length > 0;
+  return !isShuttingDown && (intervals.length > 0 || inFlightTasks.size > 0);
+}
+
+function getInFlightCount() {
+  return inFlightTasks.size;
+}
+
+function getActiveLeaseCount() {
+  return activeLeases.size;
 }
 
 module.exports = {
   startBackgroundWorkers,
   stopBackgroundWorkers,
   isWorkerRunning,
+  trackTask,
+  registerLease,
+  releaseLease,
+  handoffActiveLeases,
+  waitForInFlightTasks,
+  getInFlightCount,
+  getActiveLeaseCount,
+  WORKER_DRAIN_TIMEOUT_MS,
 };

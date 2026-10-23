@@ -14,6 +14,8 @@ const {
   withdrawalValidation,
   createAnnouncementValidation,
   announcementIdValidation,
+  getCampaignsValidation,
+  VALID_CAMPAIGN_STATUSES,
 } = require('../middleware/validation');
 
 async function runValidation(validations, body = {}, query = {}, params = {}) {
@@ -354,4 +356,18 @@ test('createCampaign validation rejects a target_amount with more than 7 decimal
   });
   assert.equal(result.ok, false);
   assert.ok(result.errors.some(e => e.path === 'target_amount'));
+});
+
+test('getCampaigns validation accepts all standardized campaign statuses', async () => {
+  for (const status of VALID_CAMPAIGN_STATUSES) {
+    const result = await runValidation(getCampaignsValidation, {}, { status });
+    assert.equal(result.ok, true, `status "${status}" should be accepted`);
+  }
+});
+
+test('getCampaigns validation rejects invalid campaign status', async () => {
+  const result = await runValidation(getCampaignsValidation, {}, { status: 'invalid_status_value' });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some(e => e.path === 'status'));
+  assert.match(result.errors.find(e => e.path === 'status').msg, /status must be one of:/);
 });

@@ -5,7 +5,19 @@ const { stripHtml, sanitizeRichText } = require('../lib/sanitize');
 const { isValidAmount, STROOP_DECIMALS } = require('../utils/stroops');
 
 const SUPPORTED_ASSETS = getSupportedAssetCodes();
-const VALID_CAMPAIGN_STATUSES = ['active', 'funded', 'closed', 'failed'];
+const VALID_CAMPAIGN_STATUSES = [
+  'draft',
+  'active',
+  'funded',
+  'in_progress',
+  'completed',
+  'closed',
+  'withdrawn',
+  'failed',
+  'refunded',
+  'disputed',
+  'suspended',
+];
 const VALID_ORDER_BY = [
   'newest',
   'ending_soon',
@@ -579,4 +591,5 @@ module.exports = {
   isUuid,
   blankToNull,
   CAMPAIGN_UPDATE_BODY_MAX_LENGTH,
+  VALID_CAMPAIGN_STATUSES,
 };

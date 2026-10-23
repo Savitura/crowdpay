@@ -387,7 +387,9 @@ router.get(
      *     parameters:
      *       - in: query
      *         name: status
-     *         schema: { type: string }
+     *         schema:
+     *           type: string
+     *           enum: [draft, active, funded, in_progress, completed, closed, withdrawn, failed, refunded, disputed, suspended]
      *       - in: query
      *         name: asset
      *         schema: { type: string }

@@ -34,7 +34,7 @@ erDiagram
         NUMERIC raised_amount
         TEXT asset_type "XLM | USDC"
         TEXT wallet_public_key "UNIQUE"
-        TEXT status "active | funded | closed | withdrawn"
+        TEXT status "draft | active | funded | in_progress | completed | closed | withdrawn | failed | refunded | disputed | suspended"
         DATE deadline
         TIMESTAMPTZ created_at
     }

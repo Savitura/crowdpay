@@ -152,6 +152,13 @@
     "statusFunded": "Funded",
     "statusClosed": "Closed",
     "statusFailed": "Failed",
+    "statusDraft": "Draft",
+    "statusDisputed": "Disputed",
+    "statusRefunded": "Refunded",
+    "statusInProgress": "In Progress",
+    "statusCompleted": "Completed",
+    "statusWithdrawn": "Withdrawn",
+    "statusSuspended": "Suspended",
     "assetLabel": "Asset",
     "sortLabel": "Sort by",
     "anyStatus": "Any status",
@@ -519,8 +526,13 @@
     "goalReached": "Goal reached",
     "campaignEnded": "Campaign ended",
     "campaignClosed": "Campaign closed",
+    "refunded": "Refunded",
     "draft": "Draft",
-    "disputed": "Dispute in progress"
+    "disputed": "Dispute in progress",
+    "inProgress": "In progress",
+    "completed": "Completed",
+    "withdrawn": "Withdrawn",
+    "suspended": "Suspended"
   },
   "dashboard": {
     "title": "Dashboard",

@@ -31,6 +31,26 @@ const LABELS = {
     bg: 'var(--color-error-bg)',
     color: 'var(--color-error-text)',
   },
+  in_progress: {
+    key: 'campaignStatus.inProgress',
+    bg: 'var(--color-info-bg, #eff6ff)',
+    color: 'var(--color-info-text, #1d4ed8)',
+  },
+  completed: {
+    key: 'campaignStatus.completed',
+    bg: 'var(--color-success-bg)',
+    color: 'var(--color-success-text)',
+  },
+  withdrawn: {
+    key: 'campaignStatus.withdrawn',
+    bg: 'var(--color-surface)',
+    color: 'var(--color-text-secondary)',
+  },
+  suspended: {
+    key: 'campaignStatus.suspended',
+    bg: 'var(--color-error-bg)',
+    color: 'var(--color-error-text)',
+  },
 };
 
 export default function CampaignStatusBadge({ status }) {

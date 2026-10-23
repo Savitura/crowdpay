@@ -54,6 +54,23 @@ describe('CampaignCard', () => {
     expect(screen.getByText('Campaign ended')).toBeInTheDocument();
   });
 
+  it('shows appropriate status badges for newly standardized campaign statuses', () => {
+    const statuses = [
+      { status: 'refunded', text: 'Refunded' },
+      { status: 'draft', text: 'Draft' },
+      { status: 'disputed', text: 'Dispute in progress' },
+      { status: 'in_progress', text: 'In progress' },
+      { status: 'completed', text: 'Completed' },
+      { status: 'withdrawn', text: 'Withdrawn' },
+      { status: 'suspended', text: 'Suspended' },
+    ];
+    for (const { status, text } of statuses) {
+      const { unmount } = renderCard({ ...baseCampaign, status });
+      expect(screen.getByText(text)).toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it('does not render trending badge when recentContributions is 0 or missing', () => {
     renderCard({ ...baseCampaign });
     expect(screen.queryByText(/in 48h/)).toBeNull();
