@@ -7,6 +7,22 @@
 -- - Webhook subscriptions: 365 days after revocation
 --
 -- Legal hold: a hold prevents purging of associated records with auditability.
+--
+-- Retention data for sessions, audit logs, and notifications is documented below
+-- as a reference for operators. Those tables are not altered by this migration.
+--
+-- Retention reference (sessions, audit logs, notifications):
+-- - Sessions: purge once expired or revoked; retained no longer than the
+--   session lifetime plus a short grace period for security investigation.
+-- - Audit logs: retained for 365 days by default. Audit logs are append-only
+--   and are only purged by the retention job after the period has elapsed and
+--   no legal hold is active.
+-- - Notifications: retained for 90 days by default, after which they are purged
+--   unless a legal hold applies.
+--
+-- Privacy/security note: purge jobs must remove personal data (KYC fields,
+-- webhook payloads containing user identifiers) before or with the record, and
+-- purge actions should themselves be logged.
 
 DO $$
 BEGIN

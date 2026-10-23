@@ -10,11 +10,35 @@ const {
 const asyncHandler = require('../utils/asyncHandler');
 
 /**
+ * Data retention periods for session-related data.
+ *
+ * - Sessions: active sessions are listed while valid. Revoked or expired
+ *   sessions are retained for 30 days after revocation/expiry for audit and
+ *   support purposes, then permanently purged.
+ * - Login alerts: retained for 90 days from creation, regardless of
+ *   acknowledgement status, then purged.
+ * - Login attempts: retained for 90 days from attempt time, then purged.
+ *
+ * Notes for operators:
+ * - Purge jobs are expected to enforce these windows (see sessionService).
+ * - Changing these values is a policy change; update this document and the
+ *   privacy policy together.
+ * - Retention applies to personal data (IP-derived location, device info);
+ *   deletion on account closure is handled separately by the account service.
+ */
+const RETENTION = Object.freeze({
+  sessionsAfterEndDays: 30,
+  loginAlertsDays: 90,
+  loginAttemptsDays: 90,
+});
+
+/**
  * @openapi
  * /api/auth/sessions:
  *   get:
  *     tags: [Users]
  *     summary: List active sessions for current user
+ *     description: Returns currently active sessions only. Ended sessions are retained for 30 days for audit purposes and are not returned here.
  *     security: [{ bearerAuth: [] }]
  *     responses:
  *       200:
@@ -51,6 +75,7 @@ router.get(
  *   delete:
  *     tags: [Users]
  *     summary: Revoke a specific session
+ *     description: Revoked sessions are retained for 30 days after revocation, then purged.
  *     security: [{ bearerAuth: [] }]
  *     parameters:
  *       - in: path
@@ -87,6 +112,7 @@ router.delete(
  *   get:
  *     tags: [Users]
  *     summary: List login alerts for current user
+ *     description: Login alerts are retained for 90 days from creation, then purged.
  *     security: [{ bearerAuth: [] }]
  *     parameters:
  *       - in: query
@@ -143,6 +169,7 @@ router.post(
  *   get:
  *     tags: [Users]
  *     summary: List login attempts for current user
+ *     description: Login attempts are retained for 90 days, then purged.
  *     security: [{ bearerAuth: [] }]
  *     responses:
  *       200:
@@ -158,3 +185,4 @@ router.get(
 );
 
 module.exports = router;
+module.exports.RETENTION = RETENTION;

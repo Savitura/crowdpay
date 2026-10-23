@@ -134,6 +134,12 @@ Per-campaign-wallet Horizon streaming cursor position, used for health monitorin
 ### refresh_tokens
 JWT refresh token storage for session renewal.
 
+**Retention:**
+- Expired tokens (`expires_at` in the past) are eligible for hard deletion after 30 days.
+- Revoked tokens (`revoked_at` set) are eligible for hard deletion after 30 days from revocation.
+- Deletion is performed by a scheduled cleanup job; the `token_hash` is never reversible, so no raw secrets persist beyond this window.
+- Deleting a `refresh_tokens` row cascades to its linked `user_sessions` row via the `refresh_token_id` relationship.
+
 | Column | Type | Notes |
 |---|---|---|
 | id | UUID PK | |
@@ -145,6 +151,12 @@ JWT refresh token storage for session renewal.
 
 ### user_sessions
 Active session tracking per device, linked 1:1 to a refresh token.
+
+**Retention:**
+- Active sessions are retained for as long as their linked refresh token is valid.
+- Revoked sessions (`revoked_at` set) are retained for 90 days for security review, then hard deleted.
+- Sessions whose `last_seen_at` is older than 180 days are treated as stale and deleted, even if not explicitly revoked.
+- `ip_address`, `user_agent`, and location fields are personal data; they are removed together with the row and are not copied into long-lived analytics tables.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -159,6 +171,11 @@ Active session tracking per device, linked 1:1 to a refresh token.
 
 ### login_attempts
 Every login attempt (success or failure), used for anomaly detection.
+
+**Retention:**
+- Login attempts are retained for 90 days, after which they are hard deleted.
+- Records referenced by an open `login_alerts` row are retained until that alert is acknowledged, then purged with the normal 90-day window.
+- `email`, `ip_address`, and location fields are personal data; access is restricted to security and support roles, and the data is never exported to third-party analytics.
 
 | Column | Type | Notes |
 |---|---|---|
