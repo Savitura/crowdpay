@@ -705,4 +705,29 @@ export const api = {
 
   getOutcomeSurveyEvents: (campaignId) =>
     apiClient.get(`/campaigns/${campaignId}/outcome-survey/events`).then((r) => r.data),
+
+  // --- Disaster-relief campaign mode & rapid verification ---
+  getDisasterRelief: (campaignId) =>
+    apiClient.get(`/campaigns/${campaignId}/disaster-relief`).then((r) => r.data),
+
+  createDisasterRelief: (campaignId, payload) =>
+    apiClient.post(`/campaigns/${campaignId}/disaster-relief`, payload).then((r) => r.data),
+
+  updateDisasterRelief: (campaignId, payload) =>
+    apiClient.put(`/campaigns/${campaignId}/disaster-relief`, payload).then((r) => r.data),
+
+  submitDisasterRelief: (campaignId) =>
+    apiClient.post(`/campaigns/${campaignId}/disaster-relief/submit`).then((r) => r.data),
+
+  reviewDisasterRelief: (campaignId, payload) =>
+    apiClient.post(`/campaigns/${campaignId}/disaster-relief/review`, payload).then((r) => r.data),
+
+  revokeDisasterRelief: (campaignId, payload) =>
+    apiClient.post(`/campaigns/${campaignId}/disaster-relief/revoke`, payload).then((r) => r.data),
+
+  getDisasterReliefEvents: (campaignId) =>
+    apiClient.get(`/campaigns/${campaignId}/disaster-relief/events`).then((r) => r.data),
+
+  getDisasterReliefQueue: (params = {}) =>
+    apiClient.get('/campaigns/disaster-relief/queue', { params }).then((r) => r.data),
 };
