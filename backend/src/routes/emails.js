@@ -4,6 +4,37 @@ const { verifyUnsubscribeToken } = require('../utils/unsubscribeToken');
 const { isUuid } = require('../utils/validation');
 const asyncHandler = require('../utils/asyncHandler');
 
+// Maps incoming unsubscribe category names to the notification_preferences column they control.
+const CATEGORY_TO_PREFERENCE_COLUMN = {
+  campaign_update: 'campaign_updates',
+  campaign_updates: 'campaign_updates',
+  weekly_digest: 'marketing',
+  category_digest: 'category_digest',
+  refund: 'refunds',
+  refunds: 'refunds',
+  dispute: 'disputes',
+  disputes: 'disputes',
+  milestone: 'milestones',
+  milestones: 'milestones',
+  marketing: 'marketing',
+};
+
+// Delivery channel partitions. Each category is routed to a dedicated queue
+// so high-volume channels (e.g. campaign updates) do not starve transactional
+// messages such as refunds and disputes.
+const CHANNEL_PARTITIONS = {
+  campaign_updates: 'notifications.campaign_updates',
+  marketing: 'notifications.marketing',
+  category_digest: 'notifications.marketing',
+  refunds: 'notifications.transactional',
+  disputes: 'notifications.transactional',
+  milestones: 'notifications.transactional',
+};
+
+function resolveChannelPartition(preferenceColumn) {
+  return CHANNEL_PARTITIONS[preferenceColumn] || 'notifications.default';
+}
+
 router.get(
   '/unsubscribe',
   asyncHandler(async (req, res) => {
@@ -49,23 +80,9 @@ router.get(
     ]);
 
     if (users.length > 0) {
-      let mappedCategory = category;
-      if (category === 'campaign_update') mappedCategory = 'campaign_updates';
-      else if (category === 'weekly_digest') mappedCategory = 'marketing';
-      else if (category === 'category_digest') mappedCategory = 'category_digest';
-      else if (category === 'refund') mappedCategory = 'refunds';
-      else if (category === 'dispute') mappedCategory = 'disputes';
-      else if (category === 'milestone') mappedCategory = 'milestones';
+      const mappedCategory = CATEGORY_TO_PREFERENCE_COLUMN[category];
 
-      const validCategories = [
-        'campaign_updates',
-        'refunds',
-        'disputes',
-        'milestones',
-        'marketing',
-        'category_digest',
-      ];
-      if (validCategories.includes(mappedCategory)) {
+      if (mappedCategory) {
         // category_digest arrives via the 20260930 migration; fall back to
         // the marketing switch on databases that have not migrated yet.
         let targetColumn = mappedCategory;
@@ -90,6 +107,10 @@ router.get(
             [users[0].id]
           );
         }
+
+        // Record which delivery partition this opt-out affects so downstream
+        // dispatchers can drain/skip the correct channel queue.
+        res.locals.channelPartition = resolveChannelPartition(targetColumn);
       }
     }
 
@@ -106,3 +127,5 @@ router.get(
 );
 
 module.exports = router;
+module.exports.CHANNEL_PARTITIONS = CHANNEL_PARTITIONS;
+module.exports.resolveChannelPartition = resolveChannelPartition;

@@ -100,6 +100,22 @@ test('POST /push-subscriptions stores an FCM token for the authenticated user', 
   assert.ok(calls.some(call => call.text.includes('INSERT INTO notification_channel_settings')));
 });
 
+test('PUT /preferences rejects an unknown channel and does not write', async () => {
+  const calls = [];
+  const app = buildApp(async (text, params) => {
+    calls.push({ text, params });
+    return { rows: [] };
+  });
+
+  const res = await request(app)
+    .put('/api/notifications/preferences')
+    .send({ event_type: 'campaign_update', channel: 'carrier_pigeon', enabled: true });
+
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /channel/);
+  assert.equal(calls.filter(c => c.text.includes('INSERT INTO notification_preferences')).length, 0);
+});
+
 test('POST /push-subscriptions rejects an invalid token', async () => {
   const app = buildApp(async () => ({ rows: [] }));
   const res = await request(app).post('/api/notifications/push-subscriptions').send({ token: '' });
