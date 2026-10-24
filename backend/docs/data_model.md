@@ -406,3 +406,7 @@ columns. See `backend/db/verify-schema-convergence.js`.
 | created_at   | TIMESTAMPTZ      | Creation timestamp                       |
 
 **Partial index:** `api_keys_user_active_idx ON api_keys (user_id) WHERE revoked_at IS NULL`.
+
+## Monetary and Stellar Amount Columns
+
+For the authoritative data dictionary specifying exact numeric column definitions, precision, scale, stroop alignment, bounds, and rounding rules for all monetary columns, see [`docs/monetary-data-dictionary.md`](../../docs/monetary-data-dictionary.md). Machine-readable definitions and runtime validators are available in `backend/src/lib/monetaryDataDictionary.js`.
