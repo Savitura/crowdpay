@@ -18,7 +18,7 @@
     "@sentry/react": "^10.55.0",
     "@stellar/freighter-api": "^4.1.0",
     "axios": "^1.7.9",
-    "dompurify": "^3.4.16",
+    "dompurify": "^3.4.17",
     "easymde": "^2.18.0",
     "firebase": "^12.19.0",
     "i18next": "^25.3.2",
@@ -49,6 +49,7 @@
     "vitest": "^3.1.4"
   },
   "overrides": {
-    "@grpc/grpc-js": "1.14.5"
+    "@grpc/grpc-js": "1.14.5",
+    "follow-redirects": ">=1.16.2"
   }
 }

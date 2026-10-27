@@ -8,17 +8,14 @@
  * and alerts maintainers on failure without exposing backup contents.
  */
 
+const path = require('path');
+const fs = require('fs');
 const db = require('../config/database');
-const { compareSnapshots } = require('../db/verify-schema-convergence');
-const { saveDraft, listVersions, getVersion } = require('../src/services/campaignDraftVersionService');
+const { listVersions, restoreVersion } = require('./campaignDraftVersionService');
 const logger = require('../config/logger');
 
 const VERIFICATION_REASON = 'scheduled-restore-verification';
 const MAX_VERSIONS_TO_CHECK = 5;
-const SCHEMA_FILE = path.join(__dirname, '..', 'db', 'schema.sql');
-
-const path = require('path');
-const fs = require('fs');
 
 function isIsolationRunner(runner) {
   return runner && runner.config && runner.config.isolation;
@@ -79,7 +76,6 @@ async function runRestoreVerification({ runner = db } = {}) {
           `DELETE FROM campaign_draft_versions WHERE campaign_id = $1 AND version = $2`,
           [version.campaign_id, restored.draftVersion]
         );
-
       } catch (err) {
         // Log failure without exposing backup contents
         recordErrors.push({
@@ -112,7 +108,6 @@ async function runRestoreVerification({ runner = db } = {}) {
       schemaErrors,
       recordErrors,
     };
-
   } catch (err) {
     logger.error('verification: scheduled restore verification crashed', {
       error: err.message,
@@ -143,16 +138,18 @@ async function verifySchemaConvergence(runner) {
     SELECT table_name FROM information_schema.tables
     WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
   `);
-  const actualTables = new Set(rows.map((r) => r.table_name.toLowerCase()));
+  const actualTables = new Set(rows.map(r => r.table_name.toLowerCase()));
 
   // Find missing tables
-  const missing = [...tablesInSchema].filter((t) => !actualTables.has(t));
+  const missing = [...tablesInSchema].filter(t => !actualTables.has(t));
   if (missing.length > 0) {
     return [`Schema tables missing from DB: ${missing.join(', ')}`];
   }
 
   // Check for extra tables (could be from extensions or other sources)
-  const extra = [...actualTables].filter((t) => !tablesInSchema.has(t) && !t.startsWith('pg_') && t !== 'schema_migrations');
+  const extra = [...actualTables].filter(
+    t => !tablesInSchema.has(t) && !t.startsWith('pg_') && t !== 'schema_migrations'
+  );
   if (extra.length > 0) {
     return [`Schema has unexpected tables: ${extra.join(', ')}`];
   }
@@ -192,14 +189,14 @@ async function validateRecordsAfterRestore(campaignId, runner) {
 
     // Check that indexes are still valid by querying with indexed columns
     try {
-      await runner.query(
-        `SELECT id, campaign_id FROM contributions WHERE campaign_id = $1`,
-        [campaignId]
-      );
+      await runner.query(`SELECT id, campaign_id FROM contributions WHERE campaign_id = $1`, [
+        campaignId,
+      ]);
     } catch (idxErr) {
-      errors.push(`Index validation failed for contributions on campaign ${campaignId}: ${idxErr.message}`);
+      errors.push(
+        `Index validation failed for contributions on campaign ${campaignId}: ${idxErr.message}`
+      );
     }
-
   } catch (err) {
     errors.push(`Record validation error: ${err.message}`);
   }

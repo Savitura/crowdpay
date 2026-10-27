@@ -133,7 +133,7 @@ fn test_contribute_rejects_negative_amount() {
     let contributor = Address::generate(&env);
 
     let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &token_id, &1000, &10000, &milestones);
+    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &Address::generate(&env), &token_id, &1000, &10000, &milestones);
 
     token_admin.mock_all_auths().mint(&contributor, &100);
     client.mock_all_auths().contribute(&contributor, &-1);
