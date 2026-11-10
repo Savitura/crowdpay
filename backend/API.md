@@ -4,6 +4,8 @@
 
 In development, browse the interactive API docs at `GET /api/docs`.
 
+Campaign risk disclosures are documented under [Campaign risk disclosures](#campaign-risk-disclosures) below.
+
 ## Important Notes
 
 ### Timestamps
@@ -11,6 +13,8 @@ All timestamps (like campaign deadlines) **must be in ISO 8601 format with a UTC
 
 ### Public API lifecycle
 `GET /api/v1/changelog` returns the v1 changelog without authentication. To announce a sunset, configure both `PUBLIC_API_DEPRECATION_DATE` and `PUBLIC_API_SUNSET_DATE` as ISO 8601 timestamps, with the sunset later than the deprecation date. The v1 API will then include the RFC 9745 `Deprecation` header, the HTTP-date `Sunset` header, and a `Link` to the changelog on every response. Leave either variable unset to avoid announcing a deprecation.
+
+## Campaign risk disclosures
 
 ## Recurring contribution architecture
 
@@ -103,6 +107,8 @@ KYC provider callback. Updates the matched user to `verified` or `rejected` from
 
 Authenticated creator/admin endpoint. The user must have `email_verified=true`. Additionally, when `KYC_REQUIRED_FOR_CAMPAIGNS` is not `false`, the user must have `kyc_status=verified`; otherwise the API returns `403` with `code=KYC_REQUIRED` or `code=EMAIL_NOT_VERIFIED`.
 
+Campaigns may declare risk disclosures via `risk_disclosures` (array of `{ id, title, body, severity }` where `severity` is one of `low`, `medium`, `high`). Disclosures are returned on `GET /api/campaigns/:id` and on the public widget payload under `risk_disclosures`. Contributors must acknowledge every active disclosure before a contribution is accepted; see `POST /api/contributions` below.
+
 ### `GET /api/contributions/quote`
 
 Get a DEX quote before submitting a conversion contribution.
@@ -151,6 +157,7 @@ Body:
 - `campaign_id` (required)
 - `amount` (required): amount the campaign must receive in campaign asset
 - `send_asset` (required): `XLM` or `USDC`
+- `acknowledged_disclosure_ids` (required when the campaign has active risk disclosures): array of disclosure `id` values the contributor has read and accepted. Missing or unknown ids return `422` with `code=DISCLOSURE_ACK_REQUIRED` or `code=DISCLOSURE_ACK_UNKNOWN`.
 
 Success response (`202`):
 
@@ -187,6 +194,7 @@ Body:
 - `amount` (required): amount the campaign must receive in campaign asset
 - `send_asset` (required): `XLM` or `USDC`
 - `sender_public_key` (required): contributor wallet public key from Freighter
+- `acknowledged_disclosure_ids` (required when the campaign has active risk disclosures): same semantics as `POST /api/contributions`. Acknowledgements are bound into the returned `prepare_token` so `/submit-signed` cannot bypass them.
 
 Success response (`200`):
 
@@ -234,6 +242,7 @@ Validation performed before submission:
 - signed transaction source account must match `sender_public_key`
 - signed transaction body hash must match the prepared unsigned XDR exactly
 - signed transaction must contain a valid signature for the contributor public key
+- the `prepare_token` must carry acknowledgements for every active disclosure on the campaign; otherwise `422` with `code=DISCLOSURE_ACK_REQUIRED`
 
 Errors:
 
@@ -509,6 +518,9 @@ Public, permissive CORS, `Cache-Control: public, max-age=30`. This is the single
   "contributor_count": 25,
   "days_remaining": 10,
   "progress_percentage": 50,
+  "risk_disclosures": [
+    { "id": "rd-1", "title": "Market risk", "body": "Returns are not guaranteed.", "severity": "medium" }
+  ],
   "contribution_url": "https://…/campaigns/…",
   "milestones": [
     { "id": "m-1", "title": "Design", "release_percentage": 50, "sort_order": 0, "status": "released" }
@@ -524,6 +536,7 @@ Privacy and safety notes:
 - Only public summary fields are returned — no creator or contributor identifiers, wallet addresses, emails, or transaction hashes.
 - Hidden and soft-deleted campaigns return `404`.
 - `recent_backers` honours the campaign's `show_backer_amounts` flag and each contributor's `contributor_privacy` preference (`anonymous` contributors are never listed, `amount_only` contributors never leak a display name, and hidden amounts are returned as `null`).
+- `risk_disclosures` contains only the disclosure `id`, `title`, `body`, and `severity` — no author identifiers or internal notes.
 - `GET /api/embed/:campaignId/stats` remains available for backwards compatibility but is not used by the widget.
 
 ## Auditability and traceability
@@ -542,6 +555,8 @@ Privacy and safety notes:
 - Milestone-based releases reuse the same multisig withdrawal machinery, but the release is triggered from platform approval after the creator has submitted evidence and a payout destination.
 
 - Anchor-assisted contributions persist `anchor_id` and `anchor_transaction_id` on the final `contributions` row for support and reconciliation.
+
+- Contributor disclosure acknowledgements are stored on the `contributions` row as `acknowledged_disclosure_ids` (JSON array) and appended to `audit_logs` as `campaign_disclosure_acknowledged` with the campaign id, contribution id, and acknowledged ids for traceability.
 
 ## Ledger monitor health
 
@@ -564,6 +579,8 @@ The backend also logs a **warning** every 5 minutes if any wallet is in that sta
 - withdrawal request creation with multisig validation
 - withdrawal creator/platform approval flow
 - withdrawal denial paths (missing creator approval, insufficient signatures)
+- contribution rejected with `422 DISCLOSURE_ACK_REQUIRED` when active disclosures are not acknowledged
+- contribution accepted when all active disclosure ids are acknowledged, with acknowledgements persisted on the contribution row
 
 
 ## Creator payout forecast and reserve breakdown

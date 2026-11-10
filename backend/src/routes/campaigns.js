@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const router = require('express').Router();
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
@@ -117,8 +118,6 @@ const {
 } = require('../services/campaignReportService');
 const { streamCampaignReportPdf, reportFilename } = require('../services/campaignReportPdf');
 const { generateCampaignOgImage } = require('../services/ogImageService');
-
-const crypto = require('crypto');
 
 const IMPACT_CACHE_TTL_MS = 60_000;
 
@@ -2117,6 +2116,7 @@ router.post(
       template_id,
       category,
       country,
+      risk_disclosure_acknowledged,
     } = req.body;
     const normalizedCountry =
       typeof country === 'string' && country.trim() ? country.trim().slice(0, 80) : null;
@@ -2126,6 +2126,13 @@ router.post(
       normalizedMilestones = normalizeMilestonesInput(milestones);
     } catch (err) {
       return res.status(400).json({ error: err.message });
+    }
+
+    if (risk_disclosure_acknowledged !== true) {
+      return res.status(400).json({
+        error: 'You must acknowledge the campaign risk disclosures before creating a campaign.',
+        code: 'RISK_DISCLOSURE_REQUIRED',
+      });
     }
 
     // Reward tiers are optional. Validate up front (asset must match the campaign).
@@ -2293,6 +2300,7 @@ router.post(
           min_contribution, max_contribution, escrow_contract_id, milestones_contract_id, platform_fee_bps,
           contract_address, contract_deployed_at, content_fingerprint, is_flagged_duplicate,
           contract_deployment_status, contract_deployment_error, last_deployment_attempt_at, template_id, category, country,
+          risk_disclosure_acknowledged_at,
           status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
        RETURNING ${publicCampaignColumnList('')}`,
@@ -2319,6 +2327,7 @@ router.post(
           template_id || null,
           category || null,
           normalizedCountry,
+          new Date(),
           campaignStatus,
         ]
       );
@@ -2399,6 +2408,46 @@ router.post(
     // The creation response is the campaign row the creator just wrote: never
     // echo internal columns (content_fingerprint, fraud_*, wallet key) back.
     res.status(201).json(stripInternalCampaignFields(campaign));
+  })
+);
+
+// GET /campaigns/:id/risk-disclosures — public risk disclosure text for a campaign
+router.get(
+  '/:id/risk-disclosures',
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT id, risk_disclosure_acknowledged_at
+       FROM campaigns
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Campaign not found' });
+
+    res.json({
+      disclosures: [
+        {
+          id: 'no_guarantee',
+          title: 'No guarantee of returns',
+          body: 'Contributions are not investments. You may not receive any financial return, reward, or product.',
+        },
+        {
+          id: 'delivery_risk',
+          title: 'Delivery risk',
+          body: 'Creators may fail to deliver rewards or complete the project on time or at all.',
+        },
+        {
+          id: 'refund_policy',
+          title: 'Refund policy',
+          body: 'Refunds are only available if the campaign fails to reach its funding goal, subject to platform terms.',
+        },
+        {
+          id: 'platform_role',
+          title: 'Platform role',
+          body: 'The platform facilitates contributions but is not responsible for creator performance.',
+        },
+      ],
+      acknowledged_at: rows[0].risk_disclosure_acknowledged_at,
+    });
   })
 );
 

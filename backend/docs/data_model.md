@@ -2,6 +2,8 @@
 
 This document outlines the core foundational data models for CrowdPay: Users, Campaigns, and Contributions.
 
+Campaign risk disclosures and contributor acknowledgements are documented in the [Campaign Risk Disclosures](#campaign-risk-disclosures) section below.
+
 ## Entities
 
 - **Users**: Represents the platform users, including campaign creators.
@@ -406,3 +408,46 @@ columns. See `backend/db/verify-schema-convergence.js`.
 | created_at   | TIMESTAMPTZ      | Creation timestamp                       |
 
 **Partial index:** `api_keys_user_active_idx ON api_keys (user_id) WHERE revoked_at IS NULL`.
+
+## Campaign Risk Disclosures
+
+Campaigns may publish risk disclosures that contributors must acknowledge before contributing. Disclosures are versioned so that edits do not silently invalidate prior acknowledgements; each acknowledgement records the exact disclosure version the contributor accepted.
+
+### `campaign_risk_disclosures`
+
+| Column       | Type            | Description                                         |
+|--------------|-----------------|-----------------------------------------------------|
+| id           | UUID (PK)       | Unique disclosure identifier                        |
+| campaign_id  | UUID (FK)       | Reference to campaigns (CASCADE)                    |
+| version      | INTEGER         | Monotonically increasing per campaign               |
+| content      | TEXT            | Disclosure body shown to contributors               |
+| required     | BOOLEAN         | Whether acknowledgement is required to contribute   |
+| created_by   | UUID (FK)       | User who published this version                     |
+| created_at   | TIMESTAMPTZ     | Publication timestamp                               |
+
+**Unique constraint:** `(campaign_id, version)` — one row per version per campaign.
+
+**Index:** `idx_campaign_risk_disclosures_campaign` on `campaign_id`.
+
+### `campaign_risk_acknowledgements`
+
+| Column        | Type            | Description                                          |
+|---------------|-----------------|------------------------------------------------------|
+| id            | UUID (PK)       | Unique acknowledgement identifier                    |
+| disclosure_id | UUID (FK)       | Reference to campaign_risk_disclosures (CASCADE)     |
+| campaign_id   | UUID (FK)       | Denormalized campaign reference for query efficiency |
+| user_id       | UUID (FK)       | Contributor who acknowledged (CASCADE)               |
+| ip_address    | INET            | Source IP at acknowledgement time                    |
+| user_agent    | TEXT            | Client user agent at acknowledgement time            |
+| acknowledged_at | TIMESTAMPTZ   | When the contributor accepted the disclosure         |
+
+**Unique constraint:** `(disclosure_id, user_id)` — a contributor acknowledges each version at most once.
+
+**Index:** `idx_campaign_risk_acknowledgements_campaign_user` on `(campaign_id, user_id)`.
+
+### Behaviour
+
+1. Creators publish a disclosure for a campaign; publishing a new version supersedes prior versions for the "current" check but does not delete historical acknowledgements.
+2. When a campaign has a `required` current disclosure, the contribution endpoint rejects requests from contributors who have not acknowledged that exact version (HTTP 409 with a machine-readable code).
+3. Acknowledgements are immutable; they are never updated or deleted except via cascade when the parent campaign or user is removed.
+4. Acknowledgement records capture `ip_address` and `user_agent` for auditability and are treated as personal data subject to the platform's retention policy.
