@@ -77,6 +77,10 @@ function buildApp({
 
   const router = proxyquire('./withdrawals', {
     '../services/referral': referralStub,
+    // Step-up enforcement is covered in middleware/stepUp.test.js and payoutSchedules.test.js.
+    '../middleware/stepUp': {
+      requirePayoutDestinationStepUp: () => (_req, _res, next) => next(),
+    },
     '../config/database': {
       connect: async () => ({
         query: queryImpl,

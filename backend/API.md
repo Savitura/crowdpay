@@ -305,6 +305,77 @@ Success response (`200`):
 
 Returns whether the authenticated user may perform **platform** signing/rejection (`can_approve_platform`). If `PLATFORM_APPROVER_USER_ID` is set in the backend environment, only that user’s JWT subject matches; otherwise (dev only) any authenticated user may act as platform for API calls.
 
+### Step-up authentication for payout destinations
+
+Any request that directs funds to a Stellar address **other than the caller's own
+account wallet** (`users.wallet_public_key`) requires a fresh step-up token. This
+applies to:
+
+- `POST /api/withdrawals/request` (`destination_key`)
+- `POST /api/milestones/:id/submit` (`destination_key`)
+- `POST /api/campaigns/:id/payout-schedules` (`destination_key`)
+
+Payouts to the caller's own wallet are unchanged and need no extra step. Step-up
+cannot be performed or satisfied while an admin is impersonating a user.
+
+#### `POST /api/auth/step-up`
+
+Re-authenticates the signed-in user and returns a short-lived token bound to the
+user, the purpose, and the exact destination.
+
+Body:
+
+- `password` (required): the account password
+- `code` (required when 2FA is enabled): 6-digit TOTP code or a backup code (backup codes are consumed)
+- `destination_key` (required): the Stellar public key that will receive funds
+- `purpose` (optional): `payout_destination` (default and only supported value)
+
+Success (`200`):
+
+```json
+{
+  "step_up_token": "eyJ...",
+  "expires_in": 300,
+  "expires_at": "2026-10-22T12:05:00.000Z",
+  "purpose": "payout_destination",
+  "destination_key": "GASX...",
+  "header": "X-Step-Up-Token"
+}
+```
+
+Errors:
+
+- `400` missing password, invalid `destination_key`, unsupported `purpose`, or `code: STEP_UP_TOTP_REQUIRED` when 2FA is enabled and no code was sent
+- `401` `code: STEP_UP_FAILED` — wrong password or 2FA code. 2FA failures share the login lockout counter (10 consecutive failures lock 2FA for 15 minutes)
+- `403` `code: STEP_UP_FORBIDDEN` — impersonated session
+- `423` `code: STEP_UP_LOCKED` — 2FA is temporarily locked
+- `429` too many attempts (5 per account per 15 minutes)
+
+#### Using the token
+
+Send the token in the `X-Step-Up-Token` header on the payout request. The
+destination in the request body must match the token's `destination_key`.
+Tokens expire after `STEP_UP_TTL_SECONDS` (default `300`, clamped to 30–900)
+and can be reused for the same destination until they expire. Requests
+without a valid token are rejected **before** any payout state changes:
+
+| Status | `code` | Meaning |
+| --- | --- | --- |
+| `403` | `STEP_UP_REQUIRED` | No token sent (or impersonated session) — prompt the user to re-authenticate |
+| `403` | `STEP_UP_EXPIRED` | Token expired — re-authenticate again |
+| `403` | `STEP_UP_INVALID` | Token tampered with, or issued for a different user or destination |
+
+Each rejection body also includes `"purpose": "payout_destination"`.
+
+Step-up attempts and checks are written to `security_audit_log` as
+`step_up_succeeded`, `step_up_failed`, `step_up_rejected`, and
+`step_up_consumed`, with the destination, the route action, and the token ID
+(`jti`). Passwords, codes, and tokens are never logged.
+
+API-key clients: an API key can still request payouts to the owner's wallet. To pay
+any other address, the client must call `POST /api/auth/step-up` with the account
+password (and 2FA code) and send the resulting token, exactly like a browser session.
+
 ### `POST /api/withdrawals/request`
 
 Create a pending withdrawal request (creator only). Verifies multisig on the campaign wallet, ensures the campaign is `active` or `funded`, and rejects if another `pending` withdrawal already exists for the same campaign.
@@ -322,6 +393,7 @@ Appends an audit row to `withdrawal_approval_events` with action `requested`.
 Errors:
 
 - `403` not the campaign creator
+- `403` `STEP_UP_REQUIRED` / `STEP_UP_EXPIRED` / `STEP_UP_INVALID` — `destination_key` is not the caller's wallet and no valid `X-Step-Up-Token` was sent (see [Step-up authentication](#step-up-authentication-for-payout-destinations))
 - `409` campaign status not eligible, or duplicate pending withdrawal
 - `422` multisig configuration invalid
 
@@ -408,6 +480,7 @@ Body:
 Errors:
 
 - `403` caller is not the campaign creator
+- `403` `STEP_UP_REQUIRED` / `STEP_UP_EXPIRED` / `STEP_UP_INVALID` — `destination_key` is not the caller's wallet and no valid `X-Step-Up-Token` was sent (see [Step-up authentication](#step-up-authentication-for-payout-destinations))
 - `409` campaign is not yet in a releaseable state, or milestone is already released
 - `400` destination key is invalid
 

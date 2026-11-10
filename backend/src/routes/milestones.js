@@ -5,6 +5,7 @@ const db = require('../config/database');
 const logger = require('../config/logger');
 const { MILESTONE_LIMIT, MILESTONE_EVIDENCE_MAX_FILE_SIZE } = require('../config/constants');
 const { requireAuth } = require('../middleware/auth');
+const { requirePayoutDestinationStepUp } = require('../middleware/stepUp');
 const { sendAlert } = require('../services/alerting');
 const {
   buildWithdrawalTransaction,
@@ -319,6 +320,7 @@ router.post(
 router.post(
   '/:id/submit',
   requireAuth,
+  requirePayoutDestinationStepUp({ action: 'milestone_destination_submitted' }),
   asyncHandler(async (req, res) => {
     const {
       evidence_url: evidenceUrl,

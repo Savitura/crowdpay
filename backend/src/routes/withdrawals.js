@@ -3,6 +3,7 @@ const db = require('../config/database');
 const logger = require('../config/logger');
 const { requireAuth } = require('../middleware/auth');
 const { idempotency } = require('../middleware/idempotency');
+const { requirePayoutDestinationStepUp } = require('../middleware/stepUp');
 const { sendAlert } = require('../services/alerting');
 const { withdrawalValidation, validateRequest } = require('../middleware/validation');
 const {
@@ -162,6 +163,7 @@ router.post(
   requireAuth,
   withdrawalValidation,
   validateRequest,
+  requirePayoutDestinationStepUp({ action: 'withdrawal_request' }),
   asyncHandler(async (req, res) => {
     /**
      * @openapi

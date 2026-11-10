@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const db = require('../config/database');
 const { requireAuth } = require('../middleware/auth');
+const { requirePayoutDestinationStepUp } = require('../middleware/stepUp');
 const asyncHandler = require('../utils/asyncHandler');
 const {
   createPayoutSchedule,
@@ -44,6 +45,7 @@ router.post(
   '/:id/payout-schedules',
   requireAuth,
   requireCampaignOwner,
+  requirePayoutDestinationStepUp({ action: 'payout_schedule_created' }),
   asyncHandler(async (req, res) => {
     const {
       amount,
