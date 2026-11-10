@@ -1,3 +1,10 @@
+// Notification retention:
+// - Rows in `notifications` are retained until removed by the scheduled
+//   cleanup job (see backend/src/jobs). This route never deletes notifications.
+// - GET / returns at most the 20 most recent notifications per user; older
+//   rows remain in storage but are not exposed through this endpoint.
+// - Channel settings and push subscriptions are retained until the user
+//   changes or removes them; see the DELETE /push-subscriptions endpoint.
 const router = require('express').Router();
 const db = require('../config/database');
 const { requireAuth } = require('../middleware/auth');

@@ -1,3 +1,12 @@
+// Retention periods (documented per issue: sessions, audit logs, notifications):
+//   - Sessions: active sessions are retained until revoked or expired by the session service;
+//     revoked sessions are removed from listings immediately.
+//   - Login alerts / login attempts (audit logs): retained for the period configured in the
+//     session service; acknowledged alerts remain queryable via acknowledged=true.
+//   - Notifications: derived from login alerts and follow the same retention as alerts.
+// These periods are enforced by backend/src/services/sessionService; this test file verifies
+// the route-level contract only.
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -78,6 +87,15 @@ test('DELETE /api/sessions/:id revokes the session', async () => {
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, { ok: true });
   assert.deepEqual(calls.revokeArgs, ['s1', USER_ID]);
+});
+
+test('DELETE /api/sessions/:id returns 404 for an expired or unknown session', async () => {
+  const { app } = buildApp({ sessionService: { revokeUserSession: async () => false } });
+
+  const res = await request(app).delete('/api/sessions/sessions/does-not-exist');
+
+  assert.equal(res.status, 404);
+  assert.deepEqual(res.body, { error: 'Session not found or already revoked' });
 });
 
 test('DELETE /api/sessions/:id returns 404 when session has already been revoked', async () => {
