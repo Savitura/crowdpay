@@ -81,6 +81,29 @@ module.exports = {
   LEDGER_MONITOR_RECONNECT_DELAY_MS: 5_000,
 
   // --------------------------------------------------------------------------------------
+  // Notification delivery queues
+  // --------------------------------------------------------------------------------------
+
+  /**
+   * Channels that receive notification deliveries. Each channel gets its own
+   * queue partition so that high-volume traffic on one channel (e.g. email
+   * bulk sends) cannot starve latency-sensitive channels (e.g. in-app, push).
+   */
+  NOTIFICATION_CHANNELS: ['email', 'push', 'in_app', 'sms', 'webhook'],
+
+  /**
+   * Queue name prefix per channel. Final queue name is
+   * `${NOTIFICATION_QUEUE_PREFIX}${channel}` (e.g. `notifications:email`).
+   */
+  NOTIFICATION_QUEUE_PREFIX: 'notifications:',
+
+  /** Number of worker concurrency slots per notification channel partition. */
+  NOTIFICATION_CHANNEL_CONCURRENCY: 5,
+
+  /** Maximum delivery attempts per notification before it is moved to the dead-letter queue. */
+  NOTIFICATION_MAX_DELIVERY_ATTEMPTS: 5,
+
+  // --------------------------------------------------------------------------------------
   // Soroban contract amounts
   // --------------------------------------------------------------------------------------
 

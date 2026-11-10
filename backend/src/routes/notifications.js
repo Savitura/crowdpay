@@ -6,6 +6,25 @@ const asyncHandler = require('../utils/asyncHandler');
 
 const EXTERNAL_CHANNELS = CHANNELS.filter(c => c !== 'in_app');
 
+// Delivery queue partitioning by channel.
+// Each channel gets its own partitioned queue key so high-volume channels
+// (e.g. in_app) cannot starve slower external channels (sms, slack, discord, push).
+// Queue keys are derived deterministically from the channel name; the partition
+// count is fixed per channel and recorded on each queued notification so workers
+// consuming a partition only pull rows for their channel.
+const QUEUE_PARTITIONS = Object.freeze(
+  CHANNELS.reduce((acc, channel) => {
+    acc[channel] = `notifications.delivery.${channel}`;
+    return acc;
+  }, {})
+);
+
+function queueKeyForChannel(channel) {
+  const key = QUEUE_PARTITIONS[channel];
+  if (!key) throw new Error(`Unknown notification channel: ${channel}`);
+  return key;
+}
+
 router.get(
   '/',
   requireAuth,
@@ -223,5 +242,10 @@ router.put(
     res.json({ ok: true });
   })
 );
+
+// Exported for delivery workers and tests: resolves the partitioned queue key
+// a notification for `channel` must be enqueued onto.
+router.queueKeyForChannel = queueKeyForChannel;
+router.QUEUE_PARTITIONS = QUEUE_PARTITIONS;
 
 module.exports = router;
