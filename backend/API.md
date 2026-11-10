@@ -12,6 +12,70 @@ All timestamps (like campaign deadlines) **must be in ISO 8601 format with a UTC
 ### Public API lifecycle
 `GET /api/v1/changelog` returns the v1 changelog without authentication. To announce a sunset, configure both `PUBLIC_API_DEPRECATION_DATE` and `PUBLIC_API_SUNSET_DATE` as ISO 8601 timestamps, with the sunset later than the deprecation date. The v1 API will then include the RFC 9745 `Deprecation` header, the HTTP-date `Sunset` header, and a `Link` to the changelog on every response. Leave either variable unset to avoid announcing a deprecation.
 
+
+## Background-worker ownership and asynchronous operations
+
+The HTTP API and background processors are started by the same backend entry point
+(`src/index.js`), but they have different responsibilities. API handlers validate
+requests and persist state; processors run scheduled or retry work. The current
+deployment does **not** expose a separate worker HTTP API or a generic job-status
+endpoint. Do not infer that a request is complete merely because it was accepted
+with `202 Accepted`.
+
+### Worker lifecycle and deployment
+
+- Starting `npm start` (or `npm run dev`) starts the HTTP server and then calls
+  `startBackgroundWorkers()`. The worker lifecycle is part of that backend
+  process; it is not a separately launched `worker` command.
+- `WORKER_ENABLED=false` disables background processors while leaving the HTTP
+  server available. Workers are also disabled when `NODE_ENV=test`.
+- Direct processors can be disabled with `ENABLE_LEDGER_MONITOR=false`,
+  `ENABLE_WEBHOOK_POLLER=false`,
+  `ENABLE_RECURRING_CONTRIBUTIONS_WORKER=false`,
+  `ENABLE_SUBSCRIPTION_CLAIM_WORKER=false`, and
+  `ENABLE_HEALTH_COLLECTOR=false`. Scheduled processors are controlled by
+  their feature flags: `campaign-status-cron`, `reconciliation-cron`,
+  `scheduled-publish-cron`, `contract-deployment-retry-cron`,
+  `weekly-digest-cron`, `deadline-reminder-cron`,
+  `scheduled-campaign-updates-cron`, `recurring-payout-schedules-cron`,
+  `milestone-auto-release-cron`, `retention-purge-cron`, and
+  `restore-verification-cron`.
+- Production startup fails if every processor is disabled. Check backend startup
+  logs for processor startup/skip messages and errors; a successful HTTP health
+  response alone does not prove every background processor is running.
+- On `SIGTERM` or `SIGINT`, the backend stops managed intervals and calls
+  available sub-worker stop functions before closing the HTTP server.
+
+### How clients should handle asynchronous responses
+
+A `202 Accepted` response means the server accepted the request; it does not
+mean the underlying work succeeded. Follow the resource-specific status endpoint
+or returned resource state documented for that operation. Do not poll an
+undocumented generic job endpoint, assume completion timing, or automatically
+resubmit a non-idempotent operation just because processing is still pending.
+
+For user data exports:
+
+1. `POST /api/users/me/exports` creates an export record and returns `202`
+   with `id`, `status` (initially `pending`), and `created_at`. A second
+   request while the caller already has a pending export returns `409`.
+2. `GET /api/users/me/exports` is the supported way to check the caller's
+   export status. Treat `pending`, `completed`, and `failed` as distinct
+   outcomes; a failed export must not be treated as downloadable.
+3. Only call `GET /api/users/me/exports/:id/download` after the matching
+   resource is `completed`. The ID is scoped to the authenticated caller;
+   another user's or unknown export returns `404`. A not-yet-ready export
+   returns `400`, and an expired archive returns `410`.
+4. Completed archives expire after 24 hours and signed download URLs expire
+   after one hour. Do not cache or share signed URLs as permanent links.
+
+**Operational note:** user data export generation is currently invoked by the
+authenticated API handler as an in-process asynchronous task; it is not persisted
+as a job for `src/worker.js` to claim. If the API process exits during generation,
+the client should inspect the export status and request a new export if the
+previous one failed. This differs from scheduled/retry processors owned by the
+background-worker lifecycle.
+
 ## Recurring contribution architecture
 
 The canonical subsystem for recurring contributions uses Stellar Claimable Balance schedules (`/api/campaigns/:id/subscriptions`). Complete architectural specifications, worker retry semantics, data model diagrams, and migration plans for superseded paths are documented in [`docs/recurring-contributions-architecture.md`](../docs/recurring-contributions-architecture.md).
