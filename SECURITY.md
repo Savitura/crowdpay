@@ -52,3 +52,13 @@ The following are in scope:
 4. Validate and sanitize all user inputs
 5. Use parameterized queries to prevent SQL injection
 6. Keep dependencies updated
+
+## Secret Scanning and Push Protection
+
+CI (job `secret-hygiene`) runs `node scripts/secret-scan.js --tracked` on every push and pull request. It fails the build when a tracked file contains a Stellar secret seed, AWS access key, GitHub/Slack token, Stripe live key or PEM private key. Findings report only `file:line` and the rule name, never the value.
+
+- Reviewed false positive: add `secret-scan:allow` in a comment on the same line, or list a path prefix in `.secret-scan-allowlist`.
+- If a real secret is flagged, remove it, rotate it (it stays in git history), and load it from the secret manager.
+- Maintainers should also enable GitHub **Secret scanning** and **Push protection** (Settings > Code security) so secrets are blocked before they reach the remote; the CI check is the backstop for contributors and forks.
+- Run locally: `node scripts/secret-scan.js`.
+
