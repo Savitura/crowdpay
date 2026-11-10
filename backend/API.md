@@ -4,6 +4,22 @@
 
 In development, browse the interactive API docs at `GET /api/docs`.
 
+## Query budgets and slow-query logging (campaign discovery)
+
+Campaign discovery endpoints enforce a per-request query budget and emit a structured log entry for any query that exceeds the slow-query threshold.
+
+- `QUERY_BUDGET_MAX_ROWS` (default `100`): maximum rows a discovery query may return. Requests that ask for more are clamped to this value and the response includes `"budget_clamped": true`.
+- `QUERY_BUDGET_TIMEOUT_MS` (default `2000`): statement timeout applied to discovery queries. A query exceeding it is cancelled and the endpoint returns `503` with `code=QUERY_BUDGET_EXCEEDED`.
+- `SLOW_QUERY_THRESHOLD_MS` (default `500`): queries taking longer than this are logged at `warn` level with event `slow_query`, the query name, duration in milliseconds, row count, and the request id. Query parameters are logged only as shape (no values) to avoid leaking user input.
+
+Compatibility: response shapes are unchanged. The only additive field is `budget_clamped` on list responses. Clients that ignore unknown fields are unaffected; no migration is required.
+
+Operational and privacy notes: slow-query log entries contain no contributor identifiers, wallet addresses, or emails. Set `SLOW_QUERY_THRESHOLD_MS=0` to disable slow-query logging in environments where log volume is a concern. Timeouts and clamps are enforced server-side only and cannot be overridden by clients.
+
+Errors:
+
+- `503` `QUERY_BUDGET_EXCEEDED` discovery query exceeded `QUERY_BUDGET_TIMEOUT_MS`; retry with narrower filters.
+
 ## Important Notes
 
 ### Timestamps
