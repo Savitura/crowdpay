@@ -1,12 +1,24 @@
 const router = require('express').Router();
+const db = require('../config/database');
 const { requireAuth } = require('../middleware/auth');
+const { createVelocityLimit } = require('../middleware/velocityLimit');
 const asyncHandler = require('../utils/asyncHandler');
 const service = require('../services/refundRequestService');
 
 router.use(requireAuth);
 
+// Rolling-window velocity guard for refund attempts (#1126). Counts rows the
+// contributor created in `refund_requests`, so it survives restarts and is
+// shared across API instances.
+const refundVelocityLimit = createVelocityLimit({
+  kind: 'refund',
+  actorId: req => req.user?.userId,
+  query: (text, params) => db.query(text, params),
+});
+
 router.post(
   '/',
+  refundVelocityLimit,
   asyncHandler(async (req, res) => {
     const { campaignId, contributionId, amount, reason } = req.body;
     const request = await service.createRequest({
