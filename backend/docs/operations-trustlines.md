@@ -12,7 +12,7 @@ CrowdPay hides trustline and reserve mechanics from contributors. The backend en
    Registration **always** returns `201` with a token even if Horizon is temporarily unavailable; failures are logged as `[users] Background Stellar funding/trustlines failed`.
 
 2. **Contribution (`POST /api/contributions`)**  
-   Before building or submitting a payment, the route **awaits** `ensureCustodialAccountFundedAndTrusted`. That repeats the same checks so a user who registered during an outage or before new assets were added still succeeds without manual trustline work. If setup fails, the API responds **`503`** with:  
+   Before building or submitting a payment, the route **awaits** `ensureCustodialAccountFundedAndTrusted`. That repeats the same checks so a user who registered during an outage or before new assets were added still succeeds without manual trustline work. If setup fails, the API responds **`503`*** with:  
    `Wallet setup is still completing; please retry in a few seconds.`
 
 3. **Campaign wallet creation (`createCampaignWallet` in `stellarService`)**  
@@ -42,3 +42,18 @@ CrowdPay hides trustline and reserve mechanics from contributors. The backend en
 ## What end users do
 
 Nothing. The product does not expose trustline or reserve steps in onboarding or contribution flows.
+
+## Tamper-evident audit event hashes
+
+Financial audit events are hashed so tampering with the audit trail can be detected. This applies to events written by the custodial funding and trustline routines described above.
+
+- Every financial audit event records a deterministic SHA-256 hash over its canonicalized content (event type, actor, amount, asset, account ids, timestamp, and the previous event hash).
+- The hash chain is append-only: each event includes the prior event's hash, so editing or removing any record breaks verification of all later events.
+- Hashes are stored alongside the event and exposed on the audit trail read endpoints for external verification; the existing API/UI response shape is preserved with the hash fields added as additive properties.
+- Verification is available to operators to detect tampering; a mismatch is reported as a security incident and requires review of the affected audit segment.
+
+## Security and privacy notes
+
+- Audit hashes are derived from event content already stored by the backend; no additional personally identifiable information is introduced.
+- Hash computation is server-side and deterministic, so existing audit records can be verified without requiring access to secrets.
+- No new public endpoints are added; hash fields are only returned to callers already authorized to read the audit trail.
