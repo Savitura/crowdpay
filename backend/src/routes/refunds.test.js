@@ -1,6 +1,34 @@
 ﻿const assert = require('node:assert');
 const test = require('node:test');
+const crypto = require('node:crypto');
 const proxyquire = require('proxyquire').noCallThru();
+
+function hashAuditEvent(event) {
+  const payload = JSON.stringify({
+    eventType: event.eventType,
+    actorId: event.actorId ?? null,
+    targetId: event.targetId ?? null,
+    metadata: event.metadata ?? null,
+    createdAt: event.createdAt ?? null,
+  });
+  return crypto.createHash("sha256").update(payload).uternalDigest("hex");
+}
+
+function makeAuditService() {
+  const events = [];
+  return {
+    events,
+    async logAuditEvent(event) {
+      const record = {
+        ...event,
+        createdAt: event.createdAt ?? new Date().toISOString(),
+      };
+      record.eventHash = hashAuditEvent(record);
+      events.push(record);
+      return record;
+    },
+  };
+}
 
 const mockClient = {
   queryLog: [],
@@ -58,15 +86,16 @@ function makeMockDb(contribOverride) {
   };
 }
 
-function makeService(dbOverride, stellarShouldFail) {
+function makeService(dbOverride, stellarShouldFail, auditServiceOverride) {
   const mockDb = dbOverride || makeMockDb();
+  const auditService = auditServiceOverride || makeAuditService();
   return {
     svc: proxyquire('../services/refundService', {
       '../config/database': mockDb,
       '../config/logger': { error: () => {}, warn: () => {}, info: () => {} },
       './notifications': { createNotification: async () => {} },
       './emailService': { sendEmail: async () => {} },
-      './auditService': { logAuditEvent: async () => {} },
+      './auditService': auditService,
       './webhookDispatcher': {
         emitWebhookEventForUser: async () => {},
         WEBHOOK_EVENTS: { REFUND_ISSUED: 'refund.issued' },
@@ -80,6 +109,7 @@ function makeService(dbOverride, stellarShouldFail) {
       },
     }),
     db: mockDb,
+    auditService,
   };
 }
 
@@ -200,6 +230,56 @@ test('processRefund returns 404 for non-existent contribution', async () => {
       }),
     err => {
       assert.equal(err.status, 404);
+      return true;
+    }
+  );
+});
+
+test('processRefund emits a tamper-evident audit hash for the refund', async () => {
+  const { svc, auditService } = makeService();
+  await svc.processRefund({
+    campaignId: 'camp-1',
+    contributionId: 'contrib-1',
+    amount: 40,
+    reason: 'Goodwill',
+    initiatorId: 'creator-1',
+  });
+  const refundEvent = auditService.events.find(e => e.eventType === 'refund.issued');
+  assert.ok(refundEvent, 'expected a refund.issued audit event');
+  assert.match(refundEvent.eventHash, /^[0-f]{64}$/);
+  assert.equal(refundEvent.eventHash, hashAuditEvent(refundEvent));
+});
+
+test('audit hash changes when financial details tamper with', () => {
+  const base = {
+    eventType: 'refund.issued',
+    actorId: 'creator-1',
+    targetId: 'refund-1',
+    metadata: { amount: '40', txHash: 'TX123' },
+    createdAt: '2024-01-01T00:00:00.000Z',
+  };
+  const tampered = { ...base, metadata: { ...base.metadata, amount: '4000' } };
+  assert.notEqual(hashAuditEvent(base), hashAuditEvent(tampered));
+});
+
+test('processRefund fails closed when audit hashing fails', async () => {
+  const failingAudit = {
+    async logAuditEvent() {
+      throw new Error('audit sink unavailable');
+    },
+  };
+  const { svc } = makeService(null, false, failingAudit);
+  await assert.rejects(
+    () =>
+      svc.processRefund({
+        campaignId: 'camp-1',
+        contributionId: 'contrib-1',
+        amount: 40,
+        reason: 'Goodwill',
+        initiatorId: 'creator-1',
+      }),
+    err => {
+      assert.match(err.message, /audit sink unavailable/);
       return true;
     }
   );

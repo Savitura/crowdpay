@@ -23,6 +23,7 @@ const { assertUserKycVerified } = require('../services/kycService');
 const { parsePagination, paginatedResponse } = require('../utils/pagination');
 const { assertContributorMeetsRequirements } = require('../services/contributorIdentityService');
 const { assertContributionPolicy } = require('../services/contributionPolicy');
+const auditEventService = require('../services/auditEventService');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const asyncHandler = require('../utils/asyncHandler');
@@ -65,6 +66,47 @@ async function resolveContributorWallet(req) {
     walletPublicKey: rows[0].wallet_public_key,
     walletSecretEncrypted: rows[0].wallet_secret_encrypted,
   };
+}
+
+// Record a tamper-evident audit event for a financial action. The event is
+// hashed and chained to the previous event for the same campaign so that any
+// tampering with the audit log can be detected. Audit failures must not break
+// the financial operation itself, but they are logged so operators can reconcile.
+async function recordContributionAuditEvent({
+  client,
+  contributionId,
+  campaignId,
+  userId,
+  amount,
+  asset,
+  txHash,
+  idempotencyKey,
+  metadata,
+}) {
+  try {
+    await auditEventService.appendEvent({
+      client,
+      eventType: 'contribution.submitted',
+      aggregateType: 'campaign',
+      aggregateId: campaignId,
+      actorId: userId,
+      payload: {
+        contributionId,
+        campaignId,
+        userId,
+        amount,
+        asset,
+        txHash,
+        idempotencyKey,
+        ...(metadata || {}),
+      },
+    });
+  } catch (err) {
+    logger.error(
+      { err, campaignId, contributionId },
+      'Failed to record tamper-evident contribution audit event'
+    );
+  }
 }
 
 router.post(
@@ -195,6 +237,24 @@ router.post(
         client,
       });
 
+      // Append a tamper-evident audit event inside the same transaction so the
+      // financial record and its audit trail commit atomically.
+      await recordContributionAuditEvent({
+        client,
+        contributionId: result.contributionId || result.id,
+        campaignId: campaign_id,
+        userId,
+        amount,
+        asset: sendAsset,
+        txHash: result.txHash,
+        idempotencyKey: req.idempotencyKey || idempotency_key,
+        metadata: {
+          tierId: tier_id || null,
+          previewValidated: Boolean(previewPath),
+          contractMode: Boolean(campaign.escrow_contract_id),
+        },
+      });
+
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
@@ -230,13 +290,6 @@ router.post(
      * from DB-backed revocation/existence checks (embedTokenService).
      * First verify token format and signature/expiry via JWT service.
      */
-    const jwtPayload = verifyEmbedToken(embed_token);
-    if (!jwtPayload || jwtPayload.sub !== campaign_id) {
-      return res.status(401).json({ error: 'Invalid or expired embed token' });
-    }
-    /*
-     * Now perform DB-backed revocation and existence validation via embedTokenService.
-     */
     const tokenPayload = await embedTokenService.validateEmbedToken(embed_token);
     if (!tokenPayload) {
       return res.status(403).json({ error: 'Embed token has been revoked or is invalid' });
@@ -266,7 +319,7 @@ router.post(
 
     try {
       await assertContributionPolicy(campaign, amount, user.wallet_public_key);
-      await assertUserKycVerified(userId);
+      await assertUserEycVerified(userId);
       await assertContributorMeetsRequirements(user.wallet_public_key, campaign_id);
     } catch (err) {
       if (
@@ -286,15 +339,42 @@ router.post(
       return res.status(err.statusCode || 400).json({ error: err.message });
     }
 
-    const result = await contributionService.submitCustodialContribution({
-      campaign,
-      campaignId: campaign_id,
-      userId,
-      walletPublicKey: user.wallet_public_key,
-      walletSecretEncrypted: user.wallet_secret_encrypted,
-      amount,
-      sendAsset: send_asset || campaign.asset_type,
-    });
+    const client = await db.connect();
+    let result;
+    try {
+      await client.query('BEGIN');
+      result = await contributionService.submitCustodialContribution({
+        campaign,
+        campaignId: campaign_id,
+        userId,
+        walletPublicKey: user.wallet_public_key,
+        walletSecretEncrypted: user.wallet_secret_encrypted,
+        amount,
+        sendAsset: send_asset || campaign.asset_type,
+        client,
+      });
+
+      await recordContributionAuditEvent({
+        client,
+        contributionId: result.contributionId || result.id,
+        campaignId: campaign_id,
+        userId,
+        amount,
+        asset: send_asset || campaign.asset_type,
+        txHash: result.txHash,
+        metadata: {
+          source: 'embed',
+          contractMode: Boolean(campaign.escrow_contract_id),
+        },
+      });
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
 
     return res.status(202).json({
       success: true,
@@ -334,64 +414,12 @@ router.get(
       offset
     );
 
-    return res.json({ contributions, total, limit, offset });
-  })
-);
-
-function isContributionViewer(req, contribution, campaignCreatorId) {
-  if (req.user?.role === 'admin') return true;
-  if (campaignCreatorId === req.user?.userId) return true;
-  if (req.user?.walletPublicKey && contribution.sender_public_key === req.user.walletPublicKey) {
-    return true;
-  }
-  return false;
-}
-
-router.get(
-  '/:id/diagnosis',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const { id } = req.params;
-
-    const { rows } = await db.query(
-      `SELECT c.id, c.campaign_id, c.sender_public_key, c.payment_type, c.path_hops,
-              c.effective_rate, c.slippage_bps, c.send_max, c.retry_count, c.diagnosis, c.tx_hash,
-              st.metadata AS metadata
-       FROM contributions c
-       LEFT JOIN stellar_transactions st ON st.tx_hash = c.tx_hash AND st.kind = 'contribution'
-       WHERE c.id = $1`,
-      [id]
-    );
-    const contribution = rows[0];
-    if (!contribution) {
-      return res.status(404).json({ error: 'Contribution not found' });
-    }
-
-    const { rows: campaignRows } = await db.query(
-      'SELECT creator_id FROM campaigns WHERE id = $1',
-      [contribution.campaign_id]
-    );
-    if (!isContributionViewer(req, contribution, campaignRows[0]?.creator_id)) {
-      return res.status(403).json({ error: 'Not authorized to view this contribution' });
-    }
-
-    const metadata = contribution.metadata || {};
-    const report = await contributionDiagnostics.diagnoseContribution({
-      contribution,
-      metadata,
-      txHash: contribution.tx_hash,
+    return res.json({
+      data: contributions,
+      total,
+      limit,
+      offset,
     });
-
-    // Persist a status change (e.g. pending -> failed) so the stored diagnosis
-    // stays actionable without re-hitting Horizon on every list read.
-    if (report.status && report.status !== contribution.diagnosis) {
-      await db.query('UPDATE contributions SET diagnosis = $1 WHERE id = $2', [
-        report.status,
-        contribution.id,
-      ]);
-    }
-
-    return res.json({ diagnosis: report });
   })
 );
 

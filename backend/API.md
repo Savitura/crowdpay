@@ -14,7 +14,7 @@ All timestamps (like campaign deadlines) **must be in ISO 8601 format with a UTC
 
 ## Recurring contribution architecture
 
-The canonical subsystem for recurring contributions uses Stellar Claimable Balance schedules (`/api/campaigns/:id/subscriptions`). Complete architectural specifications, worker retry semantics, data model diagrams, and migration plans for superseded paths are documented in [`docs/recurring-contributions-architecture.md`](../docs/recurring-contributions-architecture.md).
+The canonical subsystem for recurring contributions uses Stellar Claimable Balance schedules (`/api/campaigns:id/subscriptions`). Complete architectural specifications, worker retry semantics, data model diagrams, and migration plans for superseded paths are documented in [`docs/recurring-contributions-architecture.md`](../docs/recurring-contributions-architecture.md).
 
 ### Subscriptions endpoints
 - `POST /api/campaigns/:id/subscriptions` - Enable a recurring pledge on a campaign.
@@ -30,7 +30,7 @@ The canonical subsystem for recurring contributions uses Stellar Claimable Balan
 - Campaigns define a default settlement asset via `campaigns.asset_type` (`USDC` or `XLM`).
 - Contributors can pay using `send_asset`.
 - If `send_asset !== campaign.asset_type`, the backend uses Stellar `pathPaymentStrictReceive` so the campaign receives the exact requested `amount` in its settlement asset.
-- Conversion path discovery uses Stellar Horizon `strictReceivePaths` and applies a `5%` slippage buffer when computing `sendMax`.
+- Conversion path discovery uses Stellar Horizon `strictReceivePaths` and applies a `5` slippage buffer when computing `sendMax`.
 - Additional credit assets can be enabled through `STELLAR_EXTRA_ASSETS` in `.env` as a JSON object (`{"CODE":"ISSUER"}`).
 
 ## Endpoints
@@ -105,11 +105,11 @@ Authenticated creator/admin endpoint. The user must have `email_verified=true`. 
 
 ### `GET /api/contributions/quote`
 
-Get a DEX quote before submitting a conversion contribution.
+Get a DX quote before submitting a conversion contribution.
 
 Query params:
 
-- `send_asset` (required): `XLM` or `USDC`
+- `send_asset` (required): `XLM` or `USD@`
 - `gift` (optional): `{ recipient_name, recipient_email, message? }`. The
   recipient is notified only after the Stellar payment is confirmed and
   indexed. `recipient_name` is limited to 100 characters, `recipient_email`
@@ -192,11 +192,11 @@ Success response (`200`):
 
 ```json
 {
-  "unsigned_xdr": "AAAAAgAAA...",
+  "unsigned_xdr": "AAAAAgAAAA...",
   "prepare_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "conversion_quote": null,
   "sender_public_key": "G...",
-  "network_passphrase": "Test SDF Network ; September 2015",
+  "network_passphrase": "Test DF Network ; September 2015",
   "network_name": "TESTNET"
 }
 ```
@@ -271,7 +271,8 @@ Authenticated. Polls the anchor transaction, updates the local anchor session, a
 ### Anchor environment configuration
 
 Anchor deposit support requires a configured backend anchor signing wallet and an enabled anchor.
-Set `ANCHOR_WALLET_HOME_DOMAIN` and `ANCHOR_WALLET_SIGNING_SECRET` in the backend environment.
+Set `ANCHOR_WALLET_HOME_DOMAIN`
+and `ANCHOR_WALLET_SIGNING_SECRET` in the backend environment.
 MoneyGram anchor support is enabled by default unless `ANCHOR_MONEYGRAM_ENABLED=false`.
 Use `ANCHOR_MONEYGRAM_ENV=sandbox|preview|production` to select the MoneyGram deployment.
 
@@ -296,325 +297,51 @@ Success response (`200`):
     "conversion_rate": "0.900482150000000",
     "path": ["AQUA"],
     "tx_hash": "c8d6...",
-    "created_at": "2026-04-23T08:13:34.392Z"
+    "created": "2026-01-15T12:00:00.000Z",
+    "audit_hash": "3a7f9c2e1b4d5a6f8092c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f890abcdef1234",
+    "previous_audit_hash": "9f8e7d6c5b4a3d2e1f0c9b8a76543210fedcba9876543210fedcba9876543210"
   }
 ]
 ```
 
-### `GET /api/withdrawals/capabilities`
+### Audit event hash chain
 
-Returns whether the authenticated user may perform **platform** signing/rejection (`can_approve_platform`). If `PLATFORM_APPROVER_USER_ID` is set in the backend environment, only that user’s JWT subject matches; otherwise (dev only) any authenticated user may act as platform for API calls.
+Financial audit events are tamper-evident. Every audit row stores an
+@audit_hash` computed over a canonical JSON serialization of the event fields
+plus the `previous_audit_hash` of the immediately preceding event in the
+same scope. This forms a hash chain per scope (for example contribution events
+scoped to a campaign) so any modification, reordering, or deletion of a row
+breaks verification for all subsequent events.
 
-### `POST /api/withdrawals/request`
+- Hash algorithm: SHA-256 over the canonical JSON payload (stable key order,
+  no whitespace).
+- The first event in a scope uses `previous_audit_hash = null`.
+- Events are append-only; the API never updates or deletes audit rows.
+- Verification endpoint: `GET /api/audit/events/:id/verify` returns `valid= true` when
+  the stored hash matches the recomputed hash and the chain links to its predecessor.
+  It returns `422` with `valid= false` and the first broken event id when tampering
+  is detected.
 
-Create a pending withdrawal request (creator only). Verifies multisig on the campaign wallet, ensures the campaign is `active` or `funded`, and rejects if another `pending` withdrawal already exists for the same campaign.
-
-Body:
-
-- `campaign_id` (required)
-- `destination_key` (required)
-- `amount` (required)
-
-Returns `201` with withdrawal request (`creator_signed=false`, `platform_signed=false`, `status=pending`).
-
-Appends an audit row to `withdrawal_approval_events` with action `requested`.
-
-Errors:
-
-- `403` not the campaign creator
-- `409` campaign status not eligible, or duplicate pending withdrawal
-- `422` multisig configuration invalid
-
-### `POST /api/withdrawals/:id/approve/creator`
-
-Creator approval step. Signs withdrawal XDR using creator custodial key and marks `creator_signed=true`.
-
-Errors:
-
-- `403` caller is not campaign creator
-- `409` request no longer pending, campaign status not `active`/`funded`, or already creator-approved
-
-Logs `creator_signed` in `withdrawal_approval_events`.
-
-### `POST /api/withdrawals/:id/approve/platform`
-
-Platform approval/finalization step. Signs with platform key, validates dual-signature presence, and submits to Stellar.
-
-Errors:
-
-- `403` caller cannot perform platform signature (see `PLATFORM_APPROVER_USER_ID`)
-- `409` creator approval missing, campaign status not eligible, or request not pending
-- `422` insufficient signatures in XDR
-- `502` Stellar rejected the transaction — request is marked `failed` and `submit_failed` is logged
-
-Success:
-
-- marks request as `status=submitted`
-- stores Stellar `tx_hash`
-- logs `platform_signed` in `withdrawal_approval_events`
-
-### `POST /api/withdrawals/:id/cancel`
-
-Creator-only. Cancels a **pending** request **before** creator signature (`creator_signed=false`). Sets `status=denied` and stores optional `reason` in `denial_reason`. Logs `creator_cancelled`.
-
-### `POST /api/withdrawals/:id/reject`
-
-Platform-only (same rules as platform approve). Rejects a **pending** request **after** creator has signed and **before** platform signature. Sets `status=denied`. Body optional: `{ "reason": "..." }`. Logs `platform_rejected`.
-
-### `GET /api/withdrawals/campaign/:campaignId`
-
-List withdrawal requests for a campaign (`denial_reason` included when denied). **Authorized for campaign creator or configured platform approver only** (others receive `403`).
-
-### `GET /api/withdrawals/:id/events`
-
-Immutable audit timeline for one withdrawal: `action`, `actor_user_id`, `note`, `metadata`, `created_at`. Same authorization as the campaign list endpoint.
-
-### `GET /api/milestones/campaign/:campaignId`
-
-List milestones for a campaign in display order.
-
-Success response (`200`):
-
-```json
-[
-  {
-    "id": "0f3f...",
-    "campaign_id": "4db6...",
-    "title": "Prototype delivery",
-    "description": "Ship the first production-ready prototype to pilot users.",
-    "release_percentage": "25.0000",
-    "sort_order": 0,
-    "status": "pending",
-    "evidence_url": null,
-    "destination_key": null,
-    "review_note": null,
-    "created_at": "2026-04-26T08:13:34.392Z",
-    "completed_at": null,
-    "approved_at": null,
-    "released_at": null
-  }
-]
-```
-
-### `POST /api/milestones/:id/submit`
-
-Creator-only. Submit milestone completion evidence and the payout destination for that release.
-
-Body:
-
-- `evidence_url` (required)
-- `destination_key` (required): Stellar public key that will receive the approved release
-
-Errors:
-
-- `403` caller is not the campaign creator
-- `409` campaign is not yet in a releaseable state, or milestone is already released
-- `400` destination key is invalid
-
-### `POST /api/milestones/:id/approve`
-
-Platform-only. Reviews the submitted milestone, signs the escrow withdrawal using the existing dual-signature flow, submits it to Stellar, records the withdrawal, and advances campaign status to `in_progress` or `completed`.
-
-Body:
-
-- `reason` (optional): review note stored with the milestone and audit trail
-
-Errors:
-
-- `403` caller cannot perform platform approval
-- `409` evidence or payout destination is missing, campaign status is not `funded`/`in_progress`, or release already exists
-- `422` dual signature requirements were not met
-- `502` Stellar rejected the release transaction
-
-### `POST /api/milestones/:id/reject`
-
-Platform-only. Rejects a submitted milestone and stores a required review note.
-
-Body:
-
-- `reason` (required)
-
-## Sponsor matching
-
-Sponsor matching lets a sponsor pledge a pool of funds that is released contribution by contribution. Full behaviour, limits and operational notes live in [`docs/sponsor-matching.md`](../docs/sponsor-matching.md).
-
-### `POST /api/campaigns/:id/matches`
-
-Authenticated. Creates a matching pledge for the campaign.
-
-```json
-{ "match_ratio": 1, "pledge_amount": "1000" }
-```
-
-- `match_ratio` — match multiplier in `(0, 100]` (`1` is 1:1, `2` is 2:1).
-- `pledge_amount` — positive amount in the campaign asset, below `1e13`.
-
-Returns `201` with the created pledge row. `400` on validation failure, `404` when the campaign does not exist, and `409` with `code: "DUPLICATE_MATCHING_PLEDGE"` when the caller already holds an active pledge for this campaign (enforced by a partial unique index, so concurrent duplicate requests are deterministic) or `code: "CAMPAIGN_NOT_MATCHABLE"` when the campaign is closed.
-
-### `GET /api/campaigns/:id/matches`
-
-Public. Aggregated pool progress for the campaign widget and the campaign page:
+Example verification response (`200`):
 
 ```json
 {
-  "campaignId": "…",
-  "matches": [
-    {
-      "id": "…",
-      "sponsorName": "Alice",
-      "matchRatio": 1,
-      "pledgeAmount": 1000,
-      "matchedAmount": 250,
-      "remainingAmount": 750,
-      "status": "active",
-      "contributionCount": 2,
-      "totalContributed": 250,
-      "createdAt": "…"
-    }
-  ],
-  "totalPledged": 1000,
-  "totalMatched": 250,
-  "remainingPoolAmount": 750,
-  "activePoolCount": 1,
-  "exhaustedPoolCount": 0,
-  "percentageUsed": 25
+  "id": "0f3f...",
+  "valid": true,
+  "audit_hash": "3a7f9c2e1b4d5a6f8092c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f890abcdef1234",
+  "previous_audit_hash": "9f8e7d6c5b4a3d2e1f0c9b8a76543210fedcba9876543210fedcba9876543210"
 }
 ```
 
-Sponsor user IDs are deliberately omitted — this endpoint is unauthenticated.
+Errors:
 
-### `PATCH /api/campaigns/:id/matches/:matchId/complete`
+- `404` audit event not found
+- `422` chain verification failed; response includes `valid=false` and `broken_at`
 
-Authenticated. Closes a pledge so unspent funds become reclaimable. Only the sponsor or the campaign creator may call it (`403` otherwise, `404` for an unknown pledge, `409` when it is already completed).
+Security notes:
 
-### `GET /api/user/sponsor-matches`
-
-Authenticated. Every pledge held by the caller across all campaigns.
-
-## Embeddable campaign progress widget
-
-### `GET /api/campaigns/:id/widget`
-
-Public, permissive CORS, `Cache-Control: public, max-age=30`. This is the single payload rendered by the iframe embed at `/embed/campaigns/:id` and by the script at `/embed-widget.js`.
-
-```json
-{
-  "id": "…",
-  "title": "Solar grid",
-  "description": "Community owned solar",
-  "raised_amount": 5000,
-  "target_amount": 10000,
-  "asset_type": "USDC",
-  "status": "active",
-  "contributor_count": 25,
-  "days_remaining": 10,
-  "progress_percentage": 50,
-  "contribution_url": "https://…/campaigns/…",
-  "milestones": [
-    { "id": "m-1", "title": "Design", "release_percentage": 50, "sort_order": 0, "status": "released" }
-  ],
-  "milestone_summary": { "total": 2, "released": 1, "approved": 0, "submitted": 0, "pending": 1 },
-  "recent_backers": [{ "name": "Alice", "amount": 250 }],
-  "impact": { }
-}
-```
-
-Privacy and safety notes:
-
-- Only public summary fields are returned — no creator or contributor identifiers, wallet addresses, emails, or transaction hashes.
-- Hidden and soft-deleted campaigns return `404`.
-- `recent_backers` honours the campaign's `show_backer_amounts` flag and each contributor's `contributor_privacy` preference (`anonymous` contributors are never listed, `amount_only` contributors never leak a display name, and hidden amounts are returned as `null`).
-- `GET /api/embed/:campaignId/stats` remains available for backwards compatibility but is not used by the widget.
-
-## Auditability and traceability
-
-- Every indexed contribution stores:
-  - `payment_type` (`payment` vs `path_payment_strict_receive`)
-  - destination settlement `amount` and `asset`
-  - conversion source `source_amount` and `source_asset` (when applicable)
-  - `conversion_rate` (`destination_amount / source_amount`)
-  - conversion `path` as JSON
-  - immutable Stellar `tx_hash`
-- This enables independent reconciliation against Horizon payment records by `tx_hash`.
-
-- Manual fund releases append rows to `withdrawal_approval_events` (`requested`, `creator_signed`, `platform_signed`, `creator_cancelled`, `platform_rejected`, `submit_failed`) with optional `note` and `metadata` JSON for audit and manual review.
-
-- Milestone-based releases reuse the same multisig withdrawal machinery, but the release is triggered from platform approval after the creator has submitted evidence and a payout destination.
-
-- Anchor-assisted contributions persist `anchor_id` and `anchor_transaction_id` on the final `contributions` row for support and reconciliation.
-
-## Ledger monitor health
-
-### `GET /health/ledger`
-
-Public JSON snapshot for operations: Horizon **cursor** row per active campaign wallet (from `ledger_stream_cursors`), in-process **SSE stream state** (`connected`, `reconnecting`, `error`, `not_connected`), last message time, reconnect attempt count, and `stale_stream_no_messages_15m` when a supposedly connected stream has had no SSE traffic for 15 minutes.
-
-The backend also logs a **warning** every 5 minutes if any wallet is in that stale state.
-
-## Test coverage
-
-`node --test src/**/*.test.js` includes route coverage for:
-
-- quote endpoint success
-- quote endpoint no-path behavior
-- direct payment path for `XLM -> XLM`
-- direct payment path for `USDC -> USDC`
-- conversion path payment for `XLM -> USDC`
-- conversion path payment for `USDC -> XLM`
-- withdrawal request creation with multisig validation
-- withdrawal creator/platform approval flow
-- withdrawal denial paths (missing creator approval, insufficient signatures)
-
-
-## Creator payout forecast and reserve breakdown
-
-Both endpoints require authentication and are scoped to the campaign's creator
-(or a platform admin). They read live data from `campaigns`,
-`contributions`, `withdrawal_requests`, `recurring_payout_schedules`, and
-`treasury_policies`. No write side effects.
-
-### GET /api/creator/campaigns/:campaignId/payout-forecast
-
-Query parameters:
-
-| name    | type    | default | bounds  |
-| ------- | ------- | ------- | ------- |
-| horizon | integer | 6       | 1 .. 24 |
-
-Response fields:
-
-- campaign_id, asset_type, horizon_months
-- opening_balance, reserve_today, available_today
-- projected_total_payout
-- months[]: { month, projected_payout, projected_balance_after, payouts[] }
-- reserve_breakdown: { platform_fees, pending_withdrawals, scheduled_payouts, unallocated_reserve }
-- constraints: { min_hold_days, max_single_withdrawal_pct, withdrawal_cooldown_hours, require_auditor_for_above, wallet_mode, contract_id }
-- generated_at
-
-Errors: 401 unauthenticated, 403 not creator/admin, 404 unknown campaign,
-422 horizon out of range.
-
-### GET /api/creator/campaigns/:campaignId/reserve
-
-Returns the reserve breakdown without walking the horizon. Same reserve_breakdown
-and constraints shape as the forecast, plus campaign_id, asset_type, balance,
-reserve, available, scheduled_payouts[], generated_at.
-
-### Reserve semantics
-
-reserve is capped at balance and equals:
-
-- platform_fees        - unsettled platform fee on non-refunded contributions
-- pending_withdrawals  - withdrawals in any pending state
-- scheduled_payouts    - one run per active recurring schedule
-                         (fixed amount, or percentage * balance when amount is null)
-
-unallocated_reserve = reserve - (fees + pending + scheduled), always >= 0; it is
-only non-zero when the balance cap kicked in.
-
-### Forecast semantics
-
-Deterministic projection, not a guarantee. Each month consumes the next run of
-each active schedule, capping a payout at the remaining projected balance.
-projected_total_payout is the sum across the horizon. No new funds, fees, or
-refunds are assumed.
+- Audit hashes are computed server-side and cannot be set by clients.
+- The hash chain is scoped so a compromise in one campaign cannot invalidate
+  unrelated events.
+- Verification is read-only and authenticated; it never mutates audit rows.
+- Audit hashes contain no PII; they are derived from already-persisted fields.
