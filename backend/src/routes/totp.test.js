@@ -48,6 +48,8 @@ function buildApp({ queryImpl, totpServiceImpl, bcryptImpl, userOverrides = {} }
     },
     '../services/walletSecrets': {
       encryptWalletSecret: async secret => `cpws:v1:${secret.slice(0, 8)}`,
+      encryptTotpSecret: async (secret, userId) => `cpts:v1:${userId}:${secret}`,
+      withDecryptedTotpSecret: async (_secret, _userId, fn) => fn('JBSWY3DPEHPK3PXP'),
     },
     '../services/emailService': {
       sendEmail: () => {},
@@ -91,14 +93,14 @@ const totpEnabledUser = {
 };
 
 test('POST /2fa/setup generates secret and QR code', async () => {
-  let updatedSecret = false;
+  let storedSecret;
   const { app } = buildApp({
-    queryImpl: async text => {
+    queryImpl: async (text, params) => {
       if (text.includes('SELECT * FROM users')) {
         return { rows: [creatorUser] };
       }
       if (text.includes('UPDATE users SET totp_secret')) {
-        updatedSecret = true;
+        storedSecret = params[0];
       }
       return { rows: [] };
     },
@@ -106,9 +108,9 @@ test('POST /2fa/setup generates secret and QR code', async () => {
 
   const res = await request(app).post('/api/auth/2fa/setup');
   assert.equal(res.status, 200);
-  assert.ok(res.body.secret);
+  assert.equal(res.body.secret, 'JBSWY3DPEHPK3PXP');
   assert.ok(res.body.qrCodeDataUrl);
-  assert.equal(updatedSecret, true);
+  assert.equal(storedSecret, 'cpts:v1:1:JBSWY3DPEHPK3PXP');
 });
 
 test('POST /2fa/setup rejects contributor role', async () => {

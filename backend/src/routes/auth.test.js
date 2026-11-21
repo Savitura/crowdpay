@@ -183,6 +183,8 @@ function buildApp({
         calls.encrypted.push({ secret, opts });
         return `ENC-${secret}`;
       },
+      encryptTotpSecret: async secret => `ENC-TOTP-${secret}`,
+      withDecryptedTotpSecret: async (_secret, _userId, fn) => fn('TESTSECRET'),
     },
     '../services/kycProvider': {
       isKycRequiredForCampaigns: () => Boolean(kyc.requiredForCampaigns),
@@ -613,7 +615,7 @@ test('POST /api/auth/2fa/setup generates a secret for a creator', async () => {
   assert.equal(res.body.secret, 'TESTSECRET');
   assert.ok(res.body.qrCodeDataUrl.startsWith('data:image/png'));
   const update = calls.db.find(q => q.sql.includes('UPDATE users SET totp_secret'));
-  assert.equal(update.params[0], 'TESTSECRET');
+  assert.equal(update.params[0], 'ENC-TOTP-TESTSECRET');
   assert.ok(calls.totpAudit.some(a => a.event === 'totp_setup_initiated'));
 });
 

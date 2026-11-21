@@ -151,7 +151,8 @@ cd frontend && npm run dev   # http://localhost:5173
 | `ESCROW_CONTRACT_ID` / `MILESTONES_CONTRACT_ID` | **env mode** — both must be set together. Re-uses the given instances for every campaign, so it suits a single demo campaign (see [Deployed testnet contracts](#deployed-testnet-contracts)) |
 | `ESCROW_WASM_HASH` / `MILESTONES_WASM_HASH` | **deploy mode** — deploys a fresh escrow and milestones instance per campaign from WASM already installed on the network |
 | `WALLET_ENCRYPTION_KEY` | Base64 or hex-encoded 32-byte encryption key used by backend wallet recovery |
-| `WALLET_SECRET_LOCAL_KEK` | Base64-encoded 32-byte key-encryption key for stored secrets |
+| `WALLET_SECRET_LOCAL_KEK` | Base64-encoded 32-byte key-encryption key for stored wallet and TOTP secrets when using the local provider |
+| `WALLET_SECRET_PROVIDER` | Secret envelope provider: `local` for development or `aws-kms` in production (production requires `AWS_REGION`, `WALLET_SECRET_KMS_KEY_ID`, and AWS credentials) |
 | `FRONTEND_URL` | Allowed CORS origin (dev: `http://localhost:5173`) |
 | `SMTP_HOST` / `EMAIL_SERVICE_API_KEY` | Email delivery. **Required in production** — boot fails without one of them unless `DISABLE_EMAILS=true` is set as an explicit opt-out (which logs a warning). Optional in dev. `/health` reports `email: "ready" \| "unconfigured"`. |
 | `PERSONA_API_KEY` / `PERSONA_TEMPLATE_ID` | KYC provider (optional in dev) |
@@ -177,6 +178,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 - For local secret storage, generate the keys once and keep them in a secure secret store or deployment environment.
 - To rotate keys safely, decrypt existing secrets with the current key and re-encrypt them with the new key before switching the environment to use the new value.
 - In production, using `WALLET_SECRET_PROVIDER=aws-kms` is the recommended approach because AWS KMS can manage key lifecycle without direct key material rotation in the app.
+- TOTP seeds use the same envelope-encryption provider and key-management settings, with a separate TOTP purpose and user ID bound into authenticated encryption. Keep the configured KEK/KMS key stable and available for as long as encrypted TOTP seeds exist.
 
 Generate a platform keypair:
 ```bash
@@ -197,6 +199,20 @@ npm run rotate-wallet-secrets:dry-run --prefix backend
 # Confirm and execute rotation (requires explicit --confirm flag)
 npm run rotate-wallet-secrets:confirm --prefix backend
 ```
+
+### TOTP secret migration
+
+The `users.totp_secret` column remains `TEXT`; no API or UI migration is required. Existing plaintext TOTP seeds must be encrypted before deploying the version that requires envelopes. Run with the same database and key/KMS configuration as the application:
+
+```bash
+# Inspect the number of legacy seeds without changing rows
+npm run rotate-totp-secrets:dry-run --prefix backend
+
+# Encrypt legacy seeds (requires explicit confirmation)
+npm run rotate-totp-secrets:confirm --prefix backend
+```
+
+The application refuses to start while any non-null plaintext or invalid TOTP envelope remains. Preserve the active `WALLET_SECRET_LOCAL_KEK` (or KMS key access) in a secure secret store; loss or rotation without re-encryption makes TOTP unusable. Setup responses continue returning the plaintext seed and QR code to the user, while only the authenticated envelope is stored. Backup codes remain one-way bcrypt hashes and do not require envelope encryption.
 
 ---
 
