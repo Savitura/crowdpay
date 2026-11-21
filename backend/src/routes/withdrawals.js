@@ -1,3 +1,4 @@
+const { assertBeneficiaryAllowed } = require('../services/payoutBeneficiaries');
 const router = require('express').Router();
 const db = require('../config/database');
 const logger = require('../config/logger');
@@ -213,6 +214,7 @@ router.post(
     if (!isOwner) {
       return res.status(403).json({ error: 'Only campaign owners can request withdrawals' });
     }
+    await assertBeneficiaryAllowed(db, campaign_id, destination_key);
     if (campaign.milestone_count > 0) {
       return res.status(409).json({
         error:
@@ -549,6 +551,7 @@ const platformApproveHandler = asyncHandler(async (req, res) => {
     }
 
     const requestRow = requests[0];
+    await assertBeneficiaryAllowed(client, requestRow.campaign_id, requestRow.destination_key);
 
     if (requestRow.status !== 'pending') {
       await client.query('ROLLBACK');
