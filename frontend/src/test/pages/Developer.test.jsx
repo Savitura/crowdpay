@@ -11,6 +11,7 @@ const apiMocks = vi.hoisted(() => ({
   listApiKeys: vi.fn().mockResolvedValue([]),
   listWebhooks: vi.fn().mockResolvedValue([]),
   listWebhookDeliveries: vi.fn().mockResolvedValue([]),
+  getCredentialActivity: vi.fn().mockResolvedValue([]),
   createApiKey: vi.fn().mockResolvedValue({ api_key: 'new-key' }),
 }));
 
@@ -50,5 +51,34 @@ describe('Developer page', () => {
       })
     );
     expect(await screen.findByText(/Copy now:/i)).toBeInTheDocument();
+  });
+
+  it('aborts in-flight API and OpenAPI spec requests on unmount', () => {
+    sessionStorage.clear();
+    const fetchSignals = [];
+
+    global.fetch = vi.fn().mockImplementation((_url, options = {}) => {
+      fetchSignals.push(options.signal);
+      return new Promise(() => {});
+    });
+
+    apiMocks.listApiKeys.mockReturnValue(new Promise(() => {}));
+    apiMocks.listWebhooks.mockReturnValue(new Promise(() => {}));
+    apiMocks.listWebhookDeliveries.mockReturnValue(new Promise(() => {}));
+    apiMocks.getCredentialActivity.mockReturnValue(new Promise(() => {}));
+
+    const { unmount } = renderWithProviders(<Developer />);
+
+    const apiSignal = apiMocks.listApiKeys.mock.calls.at(-1)?.[0]?.signal;
+    expect(apiSignal).toBeInstanceOf(globalThis.AbortSignal);
+    expect(apiSignal.aborted).toBe(false);
+
+    expect(fetchSignals[0]).toBeInstanceOf(globalThis.AbortSignal);
+    expect(fetchSignals[0].aborted).toBe(false);
+
+    unmount();
+
+    expect(apiSignal.aborted).toBe(true);
+    expect(fetchSignals[0].aborted).toBe(true);
   });
 });

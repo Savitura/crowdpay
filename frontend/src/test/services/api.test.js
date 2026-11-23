@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { retryQueuedRequests } from '../../services/api';
+import { api, isRequestCanceled, retryQueuedRequests } from '../../services/api';
 
 const { responseRejectedHandlers, requestInterceptors } = vi.hoisted(() => ({
   responseRejectedHandlers: [],
@@ -225,5 +225,43 @@ describe('API Service - API key management uses the cookie-session client', () =
     const config = runRequestInterceptor({ method: 'post', headers: {} });
 
     expect(config.headers['x-csrf-token']).toBe('test-csrf-token');
+  });
+});
+
+describe('API Service - Request Cancellation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('forwards optional AbortSignal to apiClient.get helpers', async () => {
+    const controller = new AbortController();
+    axios.get.mockResolvedValue({ data: [] });
+
+    await api.listApiKeys({ signal: controller.signal });
+    expect(axios.get).toHaveBeenCalledWith('/users/api-keys', { signal: controller.signal });
+
+    await api.listWebhookDeliveries({ limit: 80 }, { signal: controller.signal });
+    expect(axios.get).toHaveBeenCalledWith('/webhooks/deliveries', {
+      params: { limit: 80 },
+      signal: controller.signal,
+    });
+  });
+
+  it('does not queue canceled GET requests while offline and preserves cancellation metadata', async () => {
+    setOnline(false);
+    const canceledError = Object.assign(new Error('canceled'), {
+      code: 'ERR_CANCELED',
+      name: 'CanceledError',
+      config: { method: 'get', url: '/users/api-keys' },
+    });
+
+    await expect(responseRejectedHandlers[0](canceledError)).rejects.toMatchObject({
+      code: 'ERR_CANCELED',
+      canceled: true,
+    });
+
+    const normalized = await responseRejectedHandlers[0](canceledError).catch((e) => e);
+    expect(isRequestCanceled(normalized)).toBe(true);
+    delete globalThis.navigator.onLine;
   });
 });

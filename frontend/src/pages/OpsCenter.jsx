@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ResponsiveContainer,
@@ -40,6 +40,13 @@ export default function OpsCenter() {
   const [historyMetric, setHistoryMetric] = useState('horizon_testnet_latency_ms');
   const [historyData, setHistoryData] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const historyAbortRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      historyAbortRef.current?.abort();
+    };
+  }, []);
 
   const fetchWithAuth = useCallback(
     async (url, options = {}) => {
@@ -72,41 +79,60 @@ export default function OpsCenter() {
   );
 
   const loadDashboardData = useCallback(
-    async (isRefresh = false) => {
+    async (isRefresh = false, signal) => {
       if (!apiKey) return;
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
       setErrorMsg('');
 
+      const fetchOpts = signal ? { signal } : {};
+
       try {
         // 1. Health data
-        const healthRes = await fetchWithAuth(`/api/ops/health${isRefresh ? '?fresh=true' : ''}`);
+        const healthRes = await fetchWithAuth(
+          `/api/ops/health${isRefresh ? '?fresh=true' : ''}`,
+          fetchOpts
+        );
+        if (signal?.aborted) return;
         if (healthRes.ok) {
           const hJson = await healthRes.json();
+          if (signal?.aborted) return;
           setHealthData(hJson.data);
         }
 
         // 2. Open Incidents
-        const openIncRes = await fetchWithAuth('/api/ops/incidents?status=open');
+        const openIncRes = await fetchWithAuth('/api/ops/incidents?status=open', fetchOpts);
+        if (signal?.aborted) return;
         if (openIncRes.ok) {
           const incJson = await openIncRes.json();
+          if (signal?.aborted) return;
           setIncidents(incJson.incidents || []);
         }
 
         // 3. Resolved Incidents
-        const resIncRes = await fetchWithAuth('/api/ops/incidents?status=resolved&limit=10');
+        const resIncRes = await fetchWithAuth(
+          '/api/ops/incidents?status=resolved&limit=10',
+          fetchOpts
+        );
+        if (signal?.aborted) return;
         if (resIncRes.ok) {
           const resJson = await resIncRes.json();
+          if (signal?.aborted) return;
           setResolvedIncidents(resJson.incidents || []);
         }
 
         // 4. Wallet audit
-        const auditRes = await fetchWithAuth('/api/ops/campaigns/wallet-audit');
+        const auditRes = await fetchWithAuth('/api/ops/campaigns/wallet-audit', fetchOpts);
+        if (signal?.aborted) return;
         if (auditRes.ok) {
           const aJson = await auditRes.json();
+          if (signal?.aborted) return;
           setWalletAudit(aJson.wallets || []);
         }
       } catch (err) {
+        if (err?.name === 'AbortError' || signal?.aborted) {
+          return;
+        }
         if (err.message === 'UNAUTHORIZED_OPS' || err.message === 'FORBIDDEN_OPS') {
           setAuthError(
             err.message === 'FORBIDDEN_OPS'
@@ -120,8 +146,10 @@ export default function OpsCenter() {
           setErrorMsg(err.message || 'Failed to fetch operations data.');
         }
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (!signal?.aborted) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [apiKey, fetchWithAuth]
@@ -129,11 +157,21 @@ export default function OpsCenter() {
 
   // Initial load and 30s auto-refresh
   useEffect(() => {
-    if (apiKey) {
-      loadDashboardData();
-      const interval = setInterval(() => loadDashboardData(true), 30000);
-      return () => clearInterval(interval);
-    }
+    if (!apiKey) return undefined;
+
+    let activeController = new AbortController();
+    loadDashboardData(false, activeController.signal);
+
+    const interval = setInterval(() => {
+      activeController.abort();
+      activeController = new AbortController();
+      loadDashboardData(true, activeController.signal);
+    }, 30000);
+
+    return () => {
+      clearInterval(interval);
+      activeController.abort();
+    };
   }, [apiKey, loadDashboardData]);
 
   const handleKeySubmit = (e) => {
@@ -218,13 +256,21 @@ export default function OpsCenter() {
   };
 
   const handleOpenHistory = async (metricName) => {
+    historyAbortRef.current?.abort();
+    const controller = new AbortController();
+    historyAbortRef.current = controller;
+
     setHistoryMetric(metricName);
     setHistoryModalOpen(true);
     setHistoryLoading(true);
     try {
-      const res = await fetchWithAuth(`/api/ops/metrics/history?metric=${metricName}&limit=50`);
+      const res = await fetchWithAuth(`/api/ops/metrics/history?metric=${metricName}&limit=50`, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
       if (res.ok) {
         const json = await res.json();
+        if (controller.signal.aborted) return;
         const formatted = (json.history || []).map((h) => ({
           time: new Date(h.collected_at).toLocaleTimeString([], {
             hour: '2-digit',
@@ -235,9 +281,14 @@ export default function OpsCenter() {
         setHistoryData(formatted);
       }
     } catch (err) {
+      if (err?.name === 'AbortError' || controller.signal.aborted) {
+        return;
+      }
       console.error(err);
     } finally {
-      setHistoryLoading(false);
+      if (!controller.signal.aborted) {
+        setHistoryLoading(false);
+      }
     }
   };
 
