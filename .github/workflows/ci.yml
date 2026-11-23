@@ -385,6 +385,15 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+
+      - name: Check formatting
+        working-directory: ./contracts/soroban
+        run: cargo fmt --check
+
+      - name: Run clippy
+        working-directory: ./contracts/soroban
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Run cargo test
         working-directory: ./contracts/soroban

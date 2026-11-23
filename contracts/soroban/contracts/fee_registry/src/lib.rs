@@ -2,10 +2,29 @@
 #[cfg(test)]
 extern crate std;
 
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, token};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol,
+};
 
 #[cfg(test)]
 mod test;
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum FeeRegistryError {
+    AlreadyInitialized = 1,
+    NotInitialized = 2,
+    ProposalNotFound = 3,
+    Unauthorized = 4,
+    ActiveProposalExists = 5,
+    VotingNotEnded = 6,
+    NoDepositToReclaim = 7,
+    FeeExceedsCap = 8,
+    InsufficientTokens = 9,
+    AlreadyVoted = 10,
+    ProposalNotActive = 11,
+}
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,7 +58,7 @@ pub enum DataKey {
     ProposalCounter,
     ProposalVotes(u32, Address), // proposal_id, voter_address
     LockedDeposit(u32, Address), // proposal_id, voter_address
-    Proposal(u32), // proposal_id
+    Proposal(u32),               // proposal_id
 }
 
 const DAY_IN_LEDGERS: u32 = 17_280;
@@ -92,27 +111,47 @@ impl FeeRegistry {
         validate_fees(initial_platform_fee_bps, initial_creator_share_bps);
 
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::GovernanceToken, &governance_token);
-        env.storage().instance().set(&DataKey::PlatformFeeBps, &initial_platform_fee_bps);
-        env.storage().instance().set(&DataKey::CreatorShareBps, &initial_creator_share_bps);
-        env.storage().instance().set(&DataKey::ProposalCounter, &0u32);
+        env.storage()
+            .instance()
+            .set(&DataKey::GovernanceToken, &governance_token);
+        env.storage()
+            .instance()
+            .set(&DataKey::PlatformFeeBps, &initial_platform_fee_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::CreatorShareBps, &initial_creator_share_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::ProposalCounter, &0u32);
         Self::bump_instance(&env);
     }
 
     pub fn get_fee(env: Env) -> u32 {
-        env.storage().instance().get(&DataKey::PlatformFeeBps).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::PlatformFeeBps)
+            .unwrap_or(0)
     }
 
     pub fn get_creator_share(env: Env) -> u32 {
-        env.storage().instance().get(&DataKey::CreatorShareBps).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::CreatorShareBps)
+            .unwrap_or(0)
     }
 
-    pub fn get_governance_token(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::GovernanceToken).unwrap()
+    pub fn get_governance_token(env: Env) -> Result<Address, FeeRegistryError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::GovernanceToken)
+            .ok_or(FeeRegistryError::NotInitialized)
     }
 
-    pub fn get_admin(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::Admin).unwrap()
+    pub fn get_admin(env: Env) -> Result<Address, FeeRegistryError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(FeeRegistryError::NotInitialized)
     }
 
     pub fn get_pending_proposal(env: Env) -> Option<FeeProposal> {
@@ -120,7 +159,9 @@ impl FeeRegistry {
     }
 
     pub fn get_proposal(env: Env, proposal_id: u32) -> Option<FeeProposal> {
-        env.storage().persistent().get(&DataKey::Proposal(proposal_id))
+        env.storage()
+            .persistent()
+            .get(&DataKey::Proposal(proposal_id))
     }
 
     pub fn propose_change(
@@ -128,13 +169,17 @@ impl FeeRegistry {
         proposer: Address,
         new_fee_bps: u32,
         new_creator_share_bps: u32,
-    ) -> u32 {
+    ) -> Result<u32, FeeRegistryError> {
         proposer.require_auth();
 
         validate_fees(new_fee_bps, new_creator_share_bps);
 
         // Check if proposer has minimum token balance
-        let governance_token: Address = env.storage().instance().get(&DataKey::GovernanceToken).unwrap();
+        let governance_token: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::GovernanceToken)
+            .ok_or(FeeRegistryError::NotInitialized)?;
         let token_client = token::Client::new(&env, &governance_token);
         let proposer_balance = token_client.balance(&proposer);
 
@@ -143,14 +188,22 @@ impl FeeRegistry {
         }
 
         // Check if there's already an active proposal
-        if let Some(existing_proposal) = env.storage().instance().get::<_, FeeProposal>(&DataKey::PendingProposal) {
+        if let Some(existing_proposal) = env
+            .storage()
+            .instance()
+            .get::<_, FeeProposal>(&DataKey::PendingProposal)
+        {
             if existing_proposal.status == ProposalStatus::Active {
                 panic!("There is already an active proposal");
             }
         }
 
         // Create new proposal
-        let proposal_counter: u32 = env.storage().instance().get(&DataKey::ProposalCounter).unwrap_or(0);
+        let proposal_counter: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProposalCounter)
+            .unwrap_or(0);
         let new_proposal_id = proposal_counter + 1;
         let current_ledger_time = env.ledger().timestamp();
         let deadline = current_ledger_time + PROPOSAL_VOTING_PERIOD;
@@ -165,21 +218,34 @@ impl FeeRegistry {
             status: ProposalStatus::Active,
         };
 
-        env.storage().instance().set(&DataKey::PendingProposal, &proposal);
-        env.storage().instance().set(&DataKey::ProposalCounter, &new_proposal_id);
-        env.storage().persistent().set(&DataKey::Proposal(new_proposal_id), &proposal);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingProposal, &proposal);
+        env.storage()
+            .instance()
+            .set(&DataKey::ProposalCounter, &new_proposal_id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Proposal(new_proposal_id), &proposal);
         Self::bump_persistent(&env, &DataKey::Proposal(new_proposal_id));
         Self::bump_instance(&env);
 
-        new_proposal_id
+        Ok(new_proposal_id)
     }
 
-    pub fn vote(env: Env, voter: Address, proposal_id: u32, in_favor: bool) {
+    pub fn vote(
+        env: Env,
+        voter: Address,
+        proposal_id: u32,
+        in_favor: bool,
+    ) -> Result<(), FeeRegistryError> {
         voter.require_auth();
 
-        let mut proposal: FeeProposal = env.storage().instance()
+        let mut proposal: FeeProposal = env
+            .storage()
+            .instance()
             .get::<_, FeeProposal>(&DataKey::PendingProposal)
-            .expect("No active proposal");
+            .ok_or(FeeRegistryError::ProposalNotFound)?;
 
         if proposal.id != proposal_id {
             panic!("Proposal ID does not match active proposal");
@@ -200,7 +266,11 @@ impl FeeRegistry {
         }
 
         // Get voter's token balance at time of vote
-        let governance_token: Address = env.storage().instance().get(&DataKey::GovernanceToken).unwrap();
+        let governance_token: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::GovernanceToken)
+            .ok_or(FeeRegistryError::NotInitialized)?;
         let token_client = token::Client::new(&env, &governance_token);
         let vote_weight = token_client.balance(&voter);
 
@@ -225,18 +295,31 @@ impl FeeRegistry {
             proposal.votes_against += vote_weight;
         }
 
-        env.storage().instance().set(&DataKey::PendingProposal, &proposal);
-        env.storage().persistent().set(&DataKey::Proposal(proposal_id), &proposal);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingProposal, &proposal);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Proposal(proposal_id), &proposal);
         Self::bump_persistent(&env, &DataKey::Proposal(proposal_id));
         Self::bump_instance(&env);
+        Ok(())
     }
 
-    pub fn reclaim_vote_deposit(env: Env, voter: Address, proposal_id: u32) {
+    pub fn reclaim_vote_deposit(
+        env: Env,
+        voter: Address,
+        proposal_id: u32,
+    ) -> Result<(), FeeRegistryError> {
         voter.require_auth();
 
-        let proposal_opt: Option<FeeProposal> = env.storage().persistent().get(&DataKey::Proposal(proposal_id))
+        let proposal_opt: Option<FeeProposal> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Proposal(proposal_id))
             .or_else(|| {
-                let pending: Option<FeeProposal> = env.storage().instance().get(&DataKey::PendingProposal);
+                let pending: Option<FeeProposal> =
+                    env.storage().instance().get(&DataKey::PendingProposal);
                 if let Some(ref p) = pending {
                     if p.id == proposal_id {
                         return pending;
@@ -245,9 +328,10 @@ impl FeeRegistry {
                 None
             });
 
-        let proposal = proposal_opt.expect("Proposal not found");
+        let proposal = proposal_opt.ok_or(FeeRegistryError::ProposalNotFound)?;
 
-        if proposal.status == ProposalStatus::Active && env.ledger().timestamp() < proposal.deadline {
+        if proposal.status == ProposalStatus::Active && env.ledger().timestamp() < proposal.deadline
+        {
             panic!("Voting period has not ended");
         }
 
@@ -258,7 +342,11 @@ impl FeeRegistry {
             panic!("No deposit to reclaim");
         }
 
-        let governance_token: Address = env.storage().instance().get(&DataKey::GovernanceToken).unwrap();
+        let governance_token: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::GovernanceToken)
+            .ok_or(FeeRegistryError::NotInitialized)?;
         let token_client = token::Client::new(&env, &governance_token);
 
         token_client.transfer(&env.current_contract_address(), &voter, &locked_amount);
@@ -269,6 +357,7 @@ impl FeeRegistry {
             (Symbol::new(&env, "deposit_reclaimed"), voter),
             (proposal_id, locked_amount),
         );
+        Ok(())
     }
 
     pub fn get_locked_deposit(env: Env, proposal_id: u32, voter: Address) -> i128 {
@@ -276,10 +365,12 @@ impl FeeRegistry {
         env.storage().persistent().get(&deposit_key).unwrap_or(0)
     }
 
-    pub fn execute_proposal(env: Env, proposal_id: u32) {
-        let mut proposal: FeeProposal = env.storage().instance()
+    pub fn execute_proposal(env: Env, proposal_id: u32) -> Result<(), FeeRegistryError> {
+        let mut proposal: FeeProposal = env
+            .storage()
+            .instance()
             .get::<_, FeeProposal>(&DataKey::PendingProposal)
-            .expect("No active proposal");
+            .ok_or(FeeRegistryError::ProposalNotFound)?;
 
         if proposal.id != proposal_id {
             panic!("Proposal ID does not match active proposal");
@@ -295,22 +386,41 @@ impl FeeRegistry {
 
         if proposal.votes_for > proposal.votes_against && proposal.votes_for >= QUORUM_THRESHOLD {
             // Proposal passed - update fees
-            env.storage().instance().set(&DataKey::PlatformFeeBps, &proposal.proposed_fee_bps);
-            env.storage().instance().set(&DataKey::CreatorShareBps, &proposal.proposed_creator_share_bps);
+            env.storage()
+                .instance()
+                .set(&DataKey::PlatformFeeBps, &proposal.proposed_fee_bps);
+            env.storage().instance().set(
+                &DataKey::CreatorShareBps,
+                &proposal.proposed_creator_share_bps,
+            );
             proposal.status = ProposalStatus::Executed;
         } else {
             // Proposal failed
             proposal.status = ProposalStatus::Failed;
         }
 
-        env.storage().instance().set(&DataKey::PendingProposal, &proposal);
-        env.storage().persistent().set(&DataKey::Proposal(proposal_id), &proposal);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingProposal, &proposal);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Proposal(proposal_id), &proposal);
         Self::bump_persistent(&env, &DataKey::Proposal(proposal_id));
         Self::bump_instance(&env);
+        Ok(())
     }
 
-    pub fn admin_set_fee(env: Env, admin: Address, new_fee_bps: u32, new_creator_share_bps: u32) {
-        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    pub fn admin_set_fee(
+        env: Env,
+        admin: Address,
+        new_fee_bps: u32,
+        new_creator_share_bps: u32,
+    ) -> Result<(), FeeRegistryError> {
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(FeeRegistryError::NotInitialized)?;
         if admin != stored_admin {
             panic!("Only the admin can set the fee");
         }
@@ -318,9 +428,14 @@ impl FeeRegistry {
 
         validate_fees(new_fee_bps, new_creator_share_bps);
 
-        env.storage().instance().set(&DataKey::PlatformFeeBps, &new_fee_bps);
-        env.storage().instance().set(&DataKey::CreatorShareBps, &new_creator_share_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::PlatformFeeBps, &new_fee_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::CreatorShareBps, &new_creator_share_bps);
         Self::bump_instance(&env);
+        Ok(())
     }
 
     pub fn get_vote_status(env: Env, proposal_id: u32, voter: Address) -> Option<bool> {
@@ -337,8 +452,10 @@ impl FeeRegistry {
 
     fn bump_persistent(env: &Env, key: &DataKey) {
         let extend_to = STORAGE_TTL_LEDGERS.min(env.storage().max_ttl());
-        env.storage()
-            .persistent()
-            .extend_ttl(key, extend_to.saturating_sub(TTL_BUMP_SLACK), extend_to);
+        env.storage().persistent().extend_ttl(
+            key,
+            extend_to.saturating_sub(TTL_BUMP_SLACK),
+            extend_to,
+        );
     }
 }

@@ -171,9 +171,10 @@ impl CampaignTreasury {
         env.storage()
             .persistent()
             .set(&DataKey::Pending, &Vec::<PendingWithdrawal>::new(&env));
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contributors, &Vec::<ContributionRecord>::new(&env));
+        env.storage().persistent().set(
+            &DataKey::Contributors,
+            &Vec::<ContributionRecord>::new(&env),
+        );
 
         env.events()
             .publish((symbol_short!("init"), campaign_id), creator);
@@ -408,10 +409,8 @@ impl CampaignTreasury {
         }
 
         env.storage().instance().set(&DataKey::Refunded, &true);
-        env.events().publish(
-            (symbol_short!("refunded"),),
-            (refunded, contributors.len()),
-        );
+        env.events()
+            .publish((symbol_short!("refunded"),), (refunded, contributors.len()));
         Ok(refunded)
     }
 
@@ -554,18 +553,16 @@ fn execute(
     }
 
     let asset = asset(env);
-    token::Client::new(env, &asset).transfer(
-        &env.current_contract_address(),
-        destination,
-        &amount,
-    );
+    token::Client::new(env, &asset).transfer(&env.current_contract_address(), destination, &amount);
 
     let now = env.ledger().timestamp();
     let withdrawn: i128 = get_i128(env, &DataKey::TotalWithdrawn);
     env.storage()
         .instance()
         .set(&DataKey::TotalWithdrawn, &(withdrawn + amount));
-    env.storage().instance().set(&DataKey::LastWithdrawalAt, &now);
+    env.storage()
+        .instance()
+        .set(&DataKey::LastWithdrawalAt, &now);
 
     history.push_back(WithdrawalRecord {
         id,
@@ -577,8 +574,10 @@ fn execute(
     });
     env.storage().persistent().set(&DataKey::History, &history);
 
-    env.events()
-        .publish((symbol_short!("withdrawn"), destination.clone()), (id, amount));
+    env.events().publish(
+        (symbol_short!("withdrawn"), destination.clone()),
+        (id, amount),
+    );
     Ok(())
 }
 

@@ -6,14 +6,10 @@ members = [
   "contracts/crowdpay",
   "contracts/escrow",
   "contracts/fee_registry",
+  "contracts/matching_pool",
   "contracts/migration",
   "contracts/milestones",
   "contracts/milestones_v2",
-]
-# contracts/matching_pool holds a bare lib.rs with no Cargo.toml and no src/
-# layout, so it is excluded until that contract is given a manifest.
-exclude = [
-  "contracts/matching_pool",
 ]
 
 [workspace.dependencies]
