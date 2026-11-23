@@ -30,12 +30,28 @@ export default defineConfig(({ mode }) => ({
         embed: './embed.html',
       },
       output: {
-        manualChunks: {
-          'react-vendor': ['react', 'react-dom'],
-          'router': ['react-router-dom'],
-          'sentry': ['@sentry/react'],
-          'recharts': ['recharts'],
-          'i18n': ['i18next', 'react-i18next', 'i18next-browser-languagedetector'],
+        manualChunks(id) {
+          if (/[\\/]node_modules[\\/]recharts[\\/]/.test(id)) {
+            return 'recharts';
+          }
+          if (
+            /[\\/]node_modules[\\/](react|react-dom|react-is|prop-types|scheduler)[\\/]/.test(id)
+          ) {
+            return 'react-vendor';
+          }
+          if (/[\\/]node_modules[\\/](react-router|react-router-dom|@remix-run)[\\/]/.test(id)) {
+            return 'router';
+          }
+          if (/[\\/]node_modules[\\/]@sentry[\\/]/.test(id)) {
+            return 'sentry';
+          }
+          if (
+            /[\\/]node_modules[\\/](i18next|react-i18next|i18next-browser-languagedetector)[\\/]/.test(
+              id
+            )
+          ) {
+            return 'i18n';
+          }
         },
       },
     },

@@ -6,8 +6,6 @@ import { api } from '../services/api';
 
 const MiniLineChart = React.lazy(() => import('../components/MiniLineChart'));
 
-import { XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-
 function StatCard({ label, value }) {
   return (
     <div className="campaign-card" style={{ minHeight: 'auto', padding: '0.6rem 0.75rem' }}>
