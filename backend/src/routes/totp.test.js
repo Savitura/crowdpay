@@ -48,6 +48,8 @@ function buildApp({ queryImpl, totpServiceImpl, bcryptImpl, userOverrides = {} }
     },
     '../services/walletSecrets': {
       encryptWalletSecret: async secret => `cpws:v1:${secret.slice(0, 8)}`,
+      encryptTotpSecret: async (secret, userId) => `cpts:v1:${userId}:${secret}`,
+      withDecryptedTotpSecret: async (_secret, _userId, fn) => fn('JBSWY3DPEHPK3PXP'),
     },
     '../services/emailService': {
       sendEmail: () => {},
@@ -91,14 +93,14 @@ const totpEnabledUser = {
 };
 
 test('POST /2fa/setup generates secret and QR code', async () => {
-  let updatedSecret = false;
+  let storedSecret;
   const { app } = buildApp({
-    queryImpl: async text => {
-      if (text.includes('SELECT * FROM users')) {
+    queryImpl: async (text, params) => {
+      if (text.includes('FROM users')) {
         return { rows: [creatorUser] };
       }
       if (text.includes('UPDATE users SET totp_secret')) {
-        updatedSecret = true;
+        storedSecret = params[0];
       }
       return { rows: [] };
     },
@@ -106,9 +108,9 @@ test('POST /2fa/setup generates secret and QR code', async () => {
 
   const res = await request(app).post('/api/auth/2fa/setup');
   assert.equal(res.status, 200);
-  assert.ok(res.body.secret);
+  assert.equal(res.body.secret, 'JBSWY3DPEHPK3PXP');
   assert.ok(res.body.qrCodeDataUrl);
-  assert.equal(updatedSecret, true);
+  assert.equal(storedSecret, 'cpts:v1:1:JBSWY3DPEHPK3PXP');
 });
 
 test('POST /2fa/setup rejects contributor role', async () => {
@@ -139,7 +141,7 @@ test('POST /2fa/verify activates 2FA and returns backup codes', async () => {
   let updated = false;
   const { app } = buildApp({
     queryImpl: async text => {
-      if (text.includes('SELECT * FROM users')) {
+      if (text.includes('FROM users')) {
         return { rows: [{ ...creatorUser, totp_secret: 'JBSWY3DPEHPK3PXP' }] };
       }
       if (text.includes('UPDATE users SET totp_enabled')) {
@@ -189,7 +191,7 @@ test('POST /2fa/disable clears TOTP and revokes devices', async () => {
   let revoked = false;
   const { app } = buildApp({
     queryImpl: async text => {
-      if (text.includes('SELECT * FROM users')) {
+      if (text.includes('FROM users')) {
         return { rows: [totpEnabledUser] };
       }
       if (text.includes('UPDATE users SET totp_enabled = false')) {
@@ -243,7 +245,7 @@ test('GET /2fa/backup-codes regenerates and returns codes', async () => {
   let updated = false;
   const { app } = buildApp({
     queryImpl: async text => {
-      if (text.includes('SELECT * FROM users')) {
+      if (text.includes('FROM users')) {
         return { rows: [totpEnabledUser] };
       }
       if (text.includes('UPDATE users SET backup_codes')) {
@@ -352,7 +354,7 @@ test('GET /2fa/audit-log returns events', async () => {
   const events = [{ id: 1, event_type: 'totp_enabled' }];
   const { app } = buildApp({
     queryImpl: async text => {
-      if (text.includes('SELECT * FROM users')) {
+      if (text.includes('FROM users')) {
         return { rows: [totpEnabledUser] };
       }
       if (text.includes('FROM security_audit_log')) {
@@ -371,7 +373,7 @@ test('POST /2fa/challenge uses clock skew via totpService.verifyTotp', async () 
   let verifyCalledWith = null;
   const { app } = buildApp({
     queryImpl: async text => {
-      if (text.includes('SELECT * FROM users')) {
+      if (text.includes('FROM users')) {
         return {
           rows: [
             {
@@ -407,7 +409,7 @@ test('POST /2fa/challenge uses clock skew via totpService.verifyTotp', async () 
 test('POST /2fa/challenge skips 2FA for trusted device', async () => {
   const { app } = buildApp({
     queryImpl: async text => {
-      if (text.includes('SELECT * FROM users')) {
+      if (text.includes('FROM users')) {
         return {
           rows: [
             {
@@ -441,7 +443,7 @@ test('POST /2fa/setup logs audit event', async () => {
   let auditLogged = false;
   const { app } = buildApp({
     queryImpl: async text => {
-      if (text.includes('SELECT * FROM users')) {
+      if (text.includes('FROM users')) {
         return { rows: [creatorUser] };
       }
       return { rows: [] };
@@ -460,7 +462,7 @@ test('POST /2fa/setup logs audit event', async () => {
 test('POST /2fa/verify generates 10 backup codes', async () => {
   const { app } = buildApp({
     queryImpl: async text => {
-      if (text.includes('SELECT * FROM users')) {
+      if (text.includes('FROM users')) {
         return { rows: [{ ...creatorUser, totp_secret: 'JBSWY3DPEHPK3PXP' }] };
       }
       return { rows: [] };

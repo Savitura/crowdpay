@@ -8,6 +8,7 @@ members = [
   "contracts/fee_registry",
   "contracts/matching_pool",
   "contracts/migration",
+  "contracts/matching_pool",
   "contracts/milestones",
   "contracts/milestones_v2",
 ]

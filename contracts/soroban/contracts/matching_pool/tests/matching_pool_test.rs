@@ -1,86 +1,234 @@
-use matching_pool::{MatchingPoolContract, MatchingPoolContractClient, MatchingPoolError};
+use matching_pool::{MatchingPoolContract, MatchingPoolContractClient};
 use soroban_sdk::{testutils::Address as _, Address, Env, Symbol};
 
-fn setup_pool(env: &Env) -> (Address, MatchingPoolContractClient<'_>) {
+fn setup(
+    env: &Env,
+    campaign_id: u64,
+    match_ratio: i128,
+) -> (Address, MatchingPoolContractClient<'_>) {
+    let sponsor = Address::generate(env);
     let contract_id = env.register_contract(None, MatchingPoolContract);
     let client = MatchingPoolContractClient::new(env, &contract_id);
-    (contract_id, client)
+    client.initialize(&sponsor, &campaign_id, &match_ratio);
+    (sponsor, client)
+}
+
+fn funded_setup(
+    env: &Env,
+    match_ratio: i128,
+    amount: i128,
+) -> (Address, Address, MatchingPoolContractClient<'_>) {
+    let (sponsor, client) = setup(env, 7, match_ratio);
+    let recipient = Address::generate(env);
+    client.fund(&sponsor, &amount);
+    (sponsor, recipient, client)
 }
 
 #[test]
-fn test_integration_full_lifecycle() {
+fn initialization_records_sponsor_campaign_and_ratio() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_contract_id, client) = setup_pool(&env);
-
     let sponsor = Address::generate(&env);
-    let _donor_1 = Address::generate(&env);
-    let _donor_2 = Address::generate(&env);
-    let campaign_wallet = Address::generate(&env);
+    let contract_id = env.register_contract(None, MatchingPoolContract);
+    let client = MatchingPoolContractClient::new(&env, &contract_id);
 
-    // 1. Initialize pool: campaign 999, 1:1 match ratio (100)
-    client.initialize(&sponsor, &999, &100);
+    client.initialize(&sponsor, &42u64, &150);
 
-    // 2. Sponsor deposits 5,000 stroops
-    client.deposit(&sponsor, &5_000);
-
-    let initial_status = client.get_pool_status();
-    assert_eq!(initial_status.total_pool, 5_000);
-    assert_eq!(initial_status.remaining_pool, 5_000);
-
-    // 3. First donor contributes 2,000 -> 2,000 matched
-    let match1 = client.release_match(&2_000, &campaign_wallet);
-    assert_eq!(match1, 2_000);
-
-    // 4. Second donor contributes 4,000 -> only 3,000 remaining in pool, so 3,000 matched
-    let match2 = client.release_match(&4_000, &campaign_wallet);
-    assert_eq!(match2, 3_000);
-
-    // 5. Pool is exhausted
-    let status_exhausted = client.get_pool_status();
-    assert_eq!(status_exhausted.remaining_pool, 0);
-    assert_eq!(status_exhausted.matched_amount, 5_000);
-    assert_eq!(status_exhausted.status, Symbol::new(&env, "exhausted"));
-
-    // 6. Third donor contributes 1,000 -> 0 matched
-    let match3 = client.release_match(&1_000, &campaign_wallet);
-    assert_eq!(match3, 0);
-
-    // 7. Reclaim when empty returns 0
-    let reclaimed = client.reclaim(&sponsor);
-    assert_eq!(reclaimed, 0);
+    let status = client.get_pool_status();
+    assert_eq!(status.campaign_id, 42);
+    assert_eq!(status.sponsor, sponsor);
+    assert_eq!(status.match_ratio, 150);
+    assert_eq!(status.total_pool, 0);
+    assert_eq!(status.matched_amount, 0);
+    assert_eq!(status.remaining_pool, 0);
+    assert_eq!(status.status, Symbol::new(&env, "active"));
 }
 
 #[test]
-fn test_integration_partial_match_and_reclaim() {
+fn initialization_requires_sponsor_auth() {
+    let env = Env::default();
+    let sponsor = Address::generate(&env);
+    let contract_id = env.register_contract(None, MatchingPoolContract);
+    let client = MatchingPoolContractClient::new(&env, &contract_id);
+
+    assert!(client.try_initialize(&sponsor, &1u64, &100).is_err());
+}
+
+#[test]
+fn fund_records_pledge_for_sponsor() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_contract_id, client) = setup_pool(&env);
+    let (sponsor, client) = setup(&env, 1, 100);
 
-    let sponsor = Address::generate(&env);
+    assert_eq!(client.fund(&sponsor, &1_000), 1_000);
+    assert_eq!(client.fund(&sponsor, &500), 1_500);
+
+    let status = client.get_pool_status();
+    assert_eq!(status.total_pool, 1_500);
+    assert_eq!(status.remaining_pool, 1_500);
+    assert_eq!(status.matched_amount, 0);
+    assert_eq!(status.status, Symbol::new(&env, "active"));
+}
+
+#[test]
+fn fund_requires_sponsor_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (sponsor, client) = setup(&env, 1, 100);
+    env.set_auths(&[]);
+
+    assert!(client.try_fund(&sponsor, &1_000).is_err());
+    assert_eq!(client.get_pool_status().total_pool, 0);
+}
+
+#[test]
+fn fund_rejects_non_sponsor_even_with_mocked_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_sponsor, client) = setup(&env, 1, 100);
+    let attacker = Address::generate(&env);
+
+    assert!(client.try_fund(&attacker, &1_000).is_err());
+    assert_eq!(client.get_pool_status().total_pool, 0);
+}
+
+#[test]
+fn fund_rejects_non_positive_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (sponsor, client) = setup(&env, 1, 100);
+
+    assert!(client.try_fund(&sponsor, &0).is_err());
+    assert!(client.try_fund(&sponsor, &-1).is_err());
+    assert_eq!(client.get_pool_status().total_pool, 0);
+}
+
+#[test]
+fn release_match_applies_one_to_one_ratio() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_sponsor, recipient, client) = funded_setup(&env, 100, 10_000);
+
+    assert_eq!(client.release_match(&1_000, &recipient), 1_000);
+
+    let status = client.get_pool_status();
+    assert_eq!(status.matched_amount, 1_000);
+    assert_eq!(status.remaining_pool, 9_000);
+    assert_eq!(status.status, Symbol::new(&env, "active"));
+}
+
+#[test]
+fn release_match_applies_two_to_one_ratio() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_sponsor, recipient, client) = funded_setup(&env, 200, 10_000);
+
+    assert_eq!(client.release_match(&1_500, &recipient), 3_000);
+
+    let status = client.get_pool_status();
+    assert_eq!(status.matched_amount, 3_000);
+    assert_eq!(status.remaining_pool, 7_000);
+}
+
+#[test]
+fn release_match_caps_at_remaining_pool_and_marks_exhausted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_sponsor, recipient, client) = funded_setup(&env, 100, 500);
+
+    assert_eq!(client.release_match(&600, &recipient), 500);
+
+    let status = client.get_pool_status();
+    assert_eq!(status.matched_amount, 500);
+    assert_eq!(status.remaining_pool, 0);
+    assert_eq!(status.total_pool, 500);
+    assert_eq!(status.status, Symbol::new(&env, "exhausted"));
+}
+
+#[test]
+fn repeated_releases_exhaust_pool_and_return_zero_afterwards() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_sponsor, recipient, client) = funded_setup(&env, 100, 1_000);
+
+    assert_eq!(client.release_match(&400, &recipient), 400);
+    assert_eq!(client.release_match(&400, &recipient), 400);
+    assert_eq!(client.get_pool_status().status, Symbol::new(&env, "active"));
+
+    assert_eq!(client.release_match(&400, &recipient), 200);
+    assert_eq!(
+        client.get_pool_status().status,
+        Symbol::new(&env, "exhausted")
+    );
+
+    assert_eq!(client.release_match(&400, &recipient), 0);
+    let status = client.get_pool_status();
+    assert_eq!(status.matched_amount, 1_000);
+    assert_eq!(status.remaining_pool, 0);
+}
+
+#[test]
+fn release_match_on_empty_pool_returns_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_sponsor, client) = setup(&env, 1, 100);
     let recipient = Address::generate(&env);
-    let non_sponsor = Address::generate(&env);
 
-    // 1. Initialize with 2:1 ratio (200)
-    client.initialize(&sponsor, &888, &200);
-    client.deposit(&sponsor, &10_000);
+    assert_eq!(client.release_match(&1_000, &recipient), 0);
 
-    // 2. Release match: 3,000 contribution -> 6,000 match
-    let matched = client.release_match(&3_000, &recipient);
-    assert_eq!(matched, 6_000);
+    let status = client.get_pool_status();
+    assert_eq!(status.matched_amount, 0);
+    assert_eq!(status.remaining_pool, 0);
+    assert_eq!(status.status, Symbol::new(&env, "active"));
+}
 
-    let mid_status = client.get_pool_status();
-    assert_eq!(mid_status.remaining_pool, 4_000);
+#[test]
+fn reclaim_returns_unmatched_funds_and_marks_completed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (sponsor, recipient, client) = funded_setup(&env, 100, 1_000);
+    client.release_match(&400, &recipient);
 
-    // 3. Non-sponsor tries to reclaim -> rejected
-    let unauthorized_err = client.try_reclaim(&non_sponsor);
-    assert_eq!(unauthorized_err, Err(Ok(MatchingPoolError::Unauthorized)));
+    assert_eq!(client.reclaim(&sponsor), 600);
 
-    // 4. Sponsor reclaims remaining 4,000
-    let reclaimed = client.reclaim(&sponsor);
-    assert_eq!(reclaimed, 4_000);
+    let status = client.get_pool_status();
+    assert_eq!(status.remaining_pool, 600);
+    assert_eq!(status.matched_amount, 400);
+    assert_eq!(status.status, Symbol::new(&env, "completed"));
+}
 
-    let final_status = client.get_pool_status();
-    assert_eq!(final_status.remaining_pool, 0);
-    assert_eq!(final_status.status, Symbol::new(&env, "completed"));
+#[test]
+fn reclaim_requires_sponsor_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (sponsor, _recipient, client) = funded_setup(&env, 100, 1_000);
+    env.set_auths(&[]);
+
+    assert!(client.try_reclaim(&sponsor).is_err());
+    assert_eq!(client.get_pool_status().status, Symbol::new(&env, "active"));
+}
+
+#[test]
+fn reclaim_rejects_non_sponsor_even_with_mocked_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_sponsor, _recipient, client) = funded_setup(&env, 100, 1_000);
+    let attacker = Address::generate(&env);
+
+    assert!(client.try_reclaim(&attacker).is_err());
+    assert_eq!(client.get_pool_status().status, Symbol::new(&env, "active"));
+}
+
+#[test]
+fn reclaim_returns_zero_when_pool_is_exhausted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (sponsor, recipient, client) = funded_setup(&env, 100, 500);
+    client.release_match(&500, &recipient);
+
+    assert_eq!(client.reclaim(&sponsor), 0);
+    assert_eq!(
+        client.get_pool_status().status,
+        Symbol::new(&env, "exhausted")
+    );
 }

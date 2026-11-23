@@ -265,6 +265,21 @@ cd contracts/soroban
 cargo test --all
 ```
 
+The sponsor `matching_pool` crate keeps `lib.rs` at the crate root and has its
+own unit tests (`test.rs`) and Soroban SDK integration tests
+(`tests/matching_pool_test.rs`). Run just those with:
+
+```bash
+cd contracts/soroban
+cargo test -p matching_pool
+```
+
+They cover initialization, sponsor funding, 1:1 and 2:1 match ratios, pool
+exhaustion, unauthorized callers (`initialize`, `fund`, `reclaim`) and sponsor
+reclaim. `fund(sponsor, amount)` records a sponsor's pledge in the pool before
+matches are released; it and `reclaim` reject any address other than the
+sponsor stored at initialization.
+
 ---
 
 ## 5. Testnet deployment

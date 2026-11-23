@@ -192,9 +192,9 @@ Extended over time via migrations, `users` also includes:
 
 | Column | Type | Notes |
 |---|---|---|
-| totp_secret | TEXT | |
+| totp_secret | TEXT | Versioned authenticated envelope (`cpts:v1:`); legacy plaintext rows must be rotated before startup |
 | totp_enabled | BOOLEAN | |
-| backup_codes | TEXT[] | |
+| backup_codes | TEXT[] | bcrypt hashes; plaintext codes are returned only when issued |
 | kyc_status | ENUM | unverified / pending / verified / rejected |
 | kyc_provider_reference | TEXT | unique, nullable |
 | kyc_completed_at | TIMESTAMPTZ | |

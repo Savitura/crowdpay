@@ -398,6 +398,8 @@ ALTER TABLE withdrawal_requests
   ADD COLUMN milestone_id UUID REFERENCES milestones(id);
 
 CREATE INDEX withdrawal_requests_milestone_idx ON withdrawal_requests (milestone_id);
+CREATE INDEX withdrawal_requests_requested_by_created_idx
+  ON withdrawal_requests (requested_by, created_at DESC);
 
 CREATE TABLE anchor_deposits (
   id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
