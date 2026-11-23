@@ -24,6 +24,14 @@ pub const MAX_PCT: u32 = 100;
 const SECONDS_PER_DAY: u64 = 86_400;
 const SECONDS_PER_HOUR: u64 = 3_600;
 
+const DAY_IN_LEDGERS: u32 = 17_280;
+/// A treasury lives from launch through the deadline, the hold period and every
+/// payout after it, so keep its entries live well beyond the 4096-ledger default.
+pub const STORAGE_TTL_LEDGERS: u32 = 180 * DAY_IN_LEDGERS;
+/// Entries are only re-extended once their remaining TTL drops this far below
+/// the target, so back-to-back calls don't pay for redundant bumps.
+const TTL_BUMP_SLACK: u32 = DAY_IN_LEDGERS;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -177,6 +185,7 @@ impl CampaignTreasury {
 
         env.events()
             .publish((symbol_short!("init"), campaign_id), creator);
+        extend_storage_ttl(&env);
         Ok(())
     }
 
@@ -228,6 +237,7 @@ impl CampaignTreasury {
 
         env.events()
             .publish((symbol_short!("received"), contributor), amount);
+        extend_storage_ttl(&env);
         Ok(())
     }
 
@@ -306,6 +316,7 @@ impl CampaignTreasury {
             env.storage().persistent().set(&DataKey::Pending, &pending);
             env.events()
                 .publish((symbol_short!("wpending"), destination), (id, amount));
+            extend_storage_ttl(&env);
             return Ok(Some(id));
         }
 
@@ -412,6 +423,7 @@ impl CampaignTreasury {
             (symbol_short!("refunded"),),
             (refunded, contributors.len()),
         );
+        extend_storage_ttl(&env);
         Ok(refunded)
     }
 
@@ -421,6 +433,7 @@ impl CampaignTreasury {
         platform(&env).require_auth();
         env.storage().instance().set(&DataKey::Paused, &true);
         env.events().publish((symbol_short!("paused"),), reason);
+        extend_storage_ttl(&env);
         Ok(())
     }
 
@@ -429,6 +442,7 @@ impl CampaignTreasury {
         platform(&env).require_auth();
         env.storage().instance().set(&DataKey::Paused, &false);
         env.events().publish((symbol_short!("unpaused"),), ());
+        extend_storage_ttl(&env);
         Ok(())
     }
 
@@ -579,7 +593,24 @@ fn execute(
 
     env.events()
         .publish((symbol_short!("withdrawn"), destination.clone()), (id, amount));
+    extend_storage_ttl(env);
     Ok(())
+}
+
+/// Extend the instance (config, totals, flags) and every persistent ledger
+/// (history, pending, contributors) to `STORAGE_TTL_LEDGERS`. Called on each
+/// successful state change so an active treasury never has entries archived
+/// between its deadline and its final payout.
+fn extend_storage_ttl(env: &Env) {
+    let extend_to = STORAGE_TTL_LEDGERS.min(env.storage().max_ttl());
+    let threshold = extend_to.saturating_sub(TTL_BUMP_SLACK);
+    env.storage().instance().extend_ttl(threshold, extend_to);
+    let persistent = env.storage().persistent();
+    for key in [DataKey::History, DataKey::Pending, DataKey::Contributors] {
+        if persistent.has(&key) {
+            persistent.extend_ttl(&key, threshold, extend_to);
+        }
+    }
 }
 
 mod test;

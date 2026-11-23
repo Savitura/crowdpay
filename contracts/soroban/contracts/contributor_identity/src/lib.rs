@@ -10,6 +10,14 @@ use soroban_sdk::{
 /// Maximum reputation score a contributor can hold.
 pub const MAX_REPUTATION: u32 = 1000;
 
+const DAY_IN_LEDGERS: u32 = 17_280;
+/// Identities and attestations are long-lived (an attestation may not expire
+/// for a year), so keep entries live well beyond the 4096-ledger default.
+pub const STORAGE_TTL_LEDGERS: u32 = 180 * DAY_IN_LEDGERS;
+/// Entries are only re-extended once their remaining TTL drops this far below
+/// the target, so back-to-back calls don't pay for redundant bumps.
+const TTL_BUMP_SLACK: u32 = DAY_IN_LEDGERS;
+
 // ---------------------------------------------------------------------------
 // Storage key enum
 // ---------------------------------------------------------------------------
@@ -99,6 +107,7 @@ impl ContributorIdentityContract {
             .instance()
             .set(&DataKey::IssuersMap, &issuers);
         env.storage().instance().set(&DataKey::IsInitialized, &true);
+        Self::bump_instance(&env);
     }
 
     // -----------------------------------------------------------------------
@@ -117,6 +126,7 @@ impl ContributorIdentityContract {
             .unwrap_or_else(|| Map::new(&env));
         issuers.set(issuer.clone(), true);
         env.storage().instance().set(&DataKey::IssuersMap, &issuers);
+        Self::bump_instance(&env);
 
         env.events()
             .publish((Symbol::new(&env, "issuer_added"), issuer), ());
@@ -134,6 +144,7 @@ impl ContributorIdentityContract {
             .unwrap_or_else(|| Map::new(&env));
         issuers.remove(issuer.clone());
         env.storage().instance().set(&DataKey::IssuersMap, &issuers);
+        Self::bump_instance(&env);
 
         env.events()
             .publish((Symbol::new(&env, "issuer_removed"), issuer), ());
@@ -153,6 +164,7 @@ impl ContributorIdentityContract {
         // Idempotent — never overwrite an existing record.
         let key = DataKey::Identity(caller.clone());
         if env.storage().persistent().has(&key) {
+            Self::bump_identity(&env, &key);
             return;
         }
 
@@ -163,6 +175,7 @@ impl ContributorIdentityContract {
             last_updated: env.ledger().timestamp(),
         };
         env.storage().persistent().set(&key, &identity);
+        Self::bump_identity(&env, &key);
 
         env.events()
             .publish((Symbol::new(&env, "identity_registered"), caller), ());
@@ -205,6 +218,7 @@ impl ContributorIdentityContract {
         identity.last_updated = env.ledger().timestamp();
 
         env.storage().persistent().set(&key, &identity);
+        Self::bump_identity(&env, &key);
 
         env.events().publish(
             (Symbol::new(&env, "attestation_added"), subject),
@@ -247,6 +261,7 @@ impl ContributorIdentityContract {
         identity.last_updated = env.ledger().timestamp();
 
         env.storage().persistent().set(&key, &identity);
+        Self::bump_identity(&env, &key);
 
         env.events().publish(
             (Symbol::new(&env, "attestation_revoked"), subject),
@@ -283,6 +298,7 @@ impl ContributorIdentityContract {
         identity.last_updated = env.ledger().timestamp();
 
         env.storage().persistent().set(&key, &identity);
+        Self::bump_identity(&env, &key);
 
         env.events().publish(
             (Symbol::new(&env, "reputation_updated"), subject),
@@ -357,6 +373,27 @@ impl ContributorIdentityContract {
     // Internal helpers
     // -----------------------------------------------------------------------
 
+    fn ttl_window(env: &Env) -> (u32, u32) {
+        let extend_to = STORAGE_TTL_LEDGERS.min(env.storage().max_ttl());
+        (extend_to.saturating_sub(TTL_BUMP_SLACK), extend_to)
+    }
+
+    /// Extend the instance entry (admin, platform contract, issuers map).
+    fn bump_instance(env: &Env) {
+        let (threshold, extend_to) = Self::ttl_window(env);
+        env.storage().instance().extend_ttl(threshold, extend_to);
+    }
+
+    /// Extend one contributor's identity record together with the instance, so
+    /// any write to an identity also keeps the issuer list it depends on alive.
+    fn bump_identity(env: &Env, key: &DataKey) {
+        let (threshold, extend_to) = Self::ttl_window(env);
+        env.storage()
+            .persistent()
+            .extend_ttl(key, threshold, extend_to);
+        env.storage().instance().extend_ttl(threshold, extend_to);
+    }
+
     fn assert_approved_issuer(env: &Env, issuer: &Address) {
         let issuers: Map<Address, bool> = env
             .storage()
@@ -368,3 +405,6 @@ impl ContributorIdentityContract {
         }
     }
 }
+
+#[cfg(test)]
+mod test;
