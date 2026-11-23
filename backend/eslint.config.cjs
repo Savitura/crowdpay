@@ -55,6 +55,21 @@ module.exports = [
       'eqeqeq': 'error',
       'no-var': 'error',
       'prefer-const': 'warn',
+      // #1236: Restrict parseFloat on monetary/token calculations to prevent precision loss.
+      // Contributors should use toStroops/stroopsToDecimal from src/utils/stroops.js instead.
+      'no-restricted-syntax': [
+        'warn',
+        {
+          selector: 'CallExpression[callee.name="parseFloat"]',
+          message:
+            'Avoid parseFloat for monetary calculations. Use toStroops or stroopsToDecimal from src/utils/stroops.js to prevent floating-point precision drift.',
+        },
+        {
+          selector: 'CallExpression[callee.object.name="Number"][callee.property.name="parseFloat"]',
+          message:
+            'Avoid Number.parseFloat for monetary calculations. Use toStroops or stroopsToDecimal from src/utils/stroops.js to prevent floating-point precision drift.',
+        },
+      ],
     },
   },
 
@@ -72,6 +87,9 @@ module.exports = [
         expect: 'readonly',
         jest: 'readonly',
       },
+    },
+    rules: {
+      'no-restricted-syntax': 'off',
     },
   },
 ];
