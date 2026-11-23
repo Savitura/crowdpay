@@ -7,9 +7,7 @@
  * produced it.
  *
  * Usage:
- *   cd contracts/soroban
- *   stellar contract build
- *   node ../backend/src/scripts/deployContracts.js
+ *   node backend/src/scripts/deployContracts.js [--help]
  *
  * Prerequisites:
  *   - stellar CLI installed (https://github.com/stellar/stellar-cli)
@@ -19,17 +17,45 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 
+const USAGE = `\
+Usage: node deployContracts.js [--help]
+
+Deploys the Soroban escrow and milestones contracts and writes the resulting
+contract IDs to contracts/soroban/deployments/<network>.json.
+
+Options:
+  --help    Show this message and exit.
+
+Environment:
+  PLATFORM_SECRET_KEY   Required. Source account secret key (backend/.env).
+  STELLAR_NETWORK       Target network (default: testnet).
+
+Exits 0 on success, 1 on any error.
+`;
+
 const { execSync } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+function parseArgs() {
+  const args = process.argv.slice(2);
+  return { help: args.includes('--help') || args.includes('-h') };
+}
+
+const { help } = parseArgs();
+if (help) {
+  process.stdout.write(USAGE);
+  process.exit(0);
+}
+
 const NETWORK = process.env.STELLAR_NETWORK || 'testnet';
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET_KEY;
 
 if (!PLATFORM_SECRET) {
-  console.error('PLATFORM_SECRET_KEY is required in backend/.env');
-  process.exit(1);
+  process.stderr.write('[deploy-contracts] Error: PLATFORM_SECRET_KEY is required in backend/.env\n');
+  process.exitCode = 1;
+  process.exit();
 }
 
 const SOROBAN_DIR = path.join(__dirname, '../../../contracts/soroban');
@@ -49,7 +75,7 @@ const CONTRACTS = [
 ];
 
 function run(cmd) {
-  console.log(`> ${cmd}`);
+  process.stdout.write(`> ${cmd}\n`);
   // The contract ID is printed on stdout and the transaction link on stderr;
   // the deployment record needs both.
   return execSync(`${cmd} 2>&1`, { encoding: 'utf8', cwd: SOROBAN_DIR });
@@ -96,16 +122,19 @@ function deploy() {
   for (const contract of CONTRACTS) {
     const wasmPath = findWasm(contract.wasm);
     if (!wasmPath) {
-      console.error(`No wasm found for ${contract.name}. Looked for:`);
-      for (const dir of TARGET_DIRS) {
-        console.error(`  ${path.join(dir, contract.wasm)}`);
-        console.error(`  ${path.join(dir, contract.wasm.replace(/\.wasm$/, '.optimized.wasm'))}`);
-      }
-      console.error('Build first: cd contracts/soroban && stellar contract build');
-      process.exit(1);
+      const searched = TARGET_DIRS.flatMap(dir => [
+        `  ${path.join(dir, contract.wasm)}`,
+        `  ${path.join(dir, contract.wasm.replace(/\.wasm$/, '.optimized.wasm'))}`,
+      ]).join('\n');
+      process.stderr.write(
+        `[deploy-contracts] Error: no wasm found for ${contract.name}. Searched:\n${searched}\n` +
+        `[deploy-contracts] Build first: cd contracts/soroban && stellar contract build\n`
+      );
+      process.exitCode = 1;
+      return;
     }
 
-    console.log(`\nDeploying ${contract.name} from ${path.relative(SOROBAN_DIR, wasmPath)}`);
+    process.stdout.write(`\nDeploying ${contract.name} from ${path.relative(SOROBAN_DIR, wasmPath)}\n`);
     const output = run(
       `stellar contract deploy --wasm "${wasmPath}" --source "${PLATFORM_SECRET}" --network ${NETWORK}`
     );
@@ -122,19 +151,24 @@ function deploy() {
 
     record(entry);
     deployed.push(entry);
-    console.log(`${entry.name} contract ID: ${entry.contract_id}`);
+    process.stdout.write(`${entry.name} contract ID: ${entry.contract_id}\n`);
   }
 
-  console.log(`\nRecorded deployment in ${path.relative(process.cwd(), DEPLOYMENTS_FILE)}`);
-  console.log('\nBackend environment:');
+  process.stdout.write(`\nRecorded deployment in ${path.relative(process.cwd(), DEPLOYMENTS_FILE)}\n`);
+  process.stdout.write('\nBackend environment:\n');
   for (const entry of deployed) {
-    console.log(`  ${entry.name.toUpperCase()}_CONTRACT_ID=${entry.contract_id}`);
+    process.stdout.write(`  ${entry.name.toUpperCase()}_CONTRACT_ID=${entry.contract_id}\n`);
   }
-  console.log('\nREADME table:');
+  process.stdout.write('\nREADME table:\n');
   for (const entry of deployed) {
     const url = `https://stellar.expert/explorer/${NETWORK}/contract/${entry.contract_id}`;
-    console.log(`  | \`${entry.name}\` | [\`${entry.contract_id}\`](${url}) |`);
+    process.stdout.write(`  | \`${entry.name}\` | [\`${entry.contract_id}\`](${url}) |\n`);
   }
 }
 
-deploy();
+try {
+  deploy();
+} catch (err) {
+  process.stderr.write(`[deploy-contracts] Error: ${err.message}\n`);
+  process.exitCode = 1;
+}
