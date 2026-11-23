@@ -1,71 +1,27 @@
 import { useEffect, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import SimpleMDE from 'react-simplemde-editor';
-import 'easymde/dist/easymde.min.css';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import OnboardingCallout from '../components/OnboardingCallout';
 import KycPrompt from '../components/KycPrompt';
 import { isCreatorOnboardingVisible, dismissCreatorOnboarding } from '../lib/onboarding';
 import { saveDraft, loadDraft, clearDraft, hasDraftContent } from '../lib/campaignDraft';
+import {
+  emptyMilestone,
+  emptyTier,
+  milestonePercentTotal,
+  stepOneError,
+  stepTwoError,
+  milestonesError,
+  tiersError,
+} from '../lib/campaignValidation';
+import CreateCampaignStepGoal from '../components/campaign/create/CreateCampaignStepGoal';
+import CreateCampaignStepDetails from '../components/campaign/create/CreateCampaignStepDetails';
+import CreateCampaignStepMilestones from '../components/campaign/create/CreateCampaignStepMilestones';
 
 const DRAFT_SAVE_DEBOUNCE_MS = 800;
 const SERVER_DRAFT_SAVE_MS = 30_000;
-
-const ASSETS = [
-  {
-    value: 'USDC',
-    label: 'USDC',
-    hint: 'Stable dollar value on Stellar. Best when backers think in USD.',
-  },
-  {
-    value: 'XLM',
-    label: 'XLM',
-    hint: 'Native Stellar asset. Simple for contributors who already hold XLM.',
-  },
-];
-
-const CATEGORIES = [
-  { value: 'technology', label: 'Technology' },
-  { value: 'community', label: 'Community' },
-  { value: 'arts', label: 'Arts & Culture' },
-  { value: 'education', label: 'Education' },
-  { value: 'environment', label: 'Environment' },
-  { value: 'health', label: 'Health' },
-  { value: 'business', label: 'Business' },
-  { value: 'open_source', label: 'Open Source' },
-  { value: 'other', label: 'Other' },
-];
-function emptyMilestone() {
-  return { title: '', description: '', release_percentage: '' };
-}
-
-function emptyTier() {
-  return {
-    title: '',
-    description: '',
-    min_amount: '',
-    limit: '',
-    estimated_delivery: '',
-    nft_enabled: false,
-    nft_metadata_url: '',
-    nft_artwork_url: '',
-  };
-}
-
-function milestonePercentTotal(milestones) {
-  return milestones.reduce(
-    (sum, milestone) => sum + (Number(milestone.release_percentage) || 0),
-    0
-  );
-}
-
-const SUPPORTED_LOCALES = [
-  { code: 'fr', label: 'French (Français)' },
-  { code: 'es', label: 'Spanish (Español)' },
-  { code: 'de', label: 'German (Deutsch)' },
-];
 
 export default function CreateCampaign() {
   const { t } = useTranslation();
@@ -393,129 +349,30 @@ export default function CreateCampaign() {
     }));
   }
 
-  function validateTiers() {
-    if (form.reward_tiers.length === 0) {
-      setError('');
-      return true;
-    }
-    if (form.reward_tiers.length > 10) {
-      setError('Campaigns can define at most 10 reward tiers.');
+  function applyValidation(...messages) {
+    const message = messages.find(Boolean);
+    if (message) {
+      setError(message);
       return false;
     }
-
-    for (let index = 0; index < form.reward_tiers.length; index += 1) {
-      const tier = form.reward_tiers[index];
-      if (!tier.title.trim()) {
-        setError(`Reward tier ${index + 1} needs a title.`);
-        return false;
-      }
-      if (!tier.min_amount || Number(tier.min_amount) <= 0) {
-        setError(`Reward tier ${index + 1} needs a minimum amount greater than zero.`);
-        return false;
-      }
-      if (tier.limit && (Number(tier.limit) <= 0 || !Number.isInteger(Number(tier.limit)))) {
-        setError(`Reward tier ${index + 1} limit must be a positive whole number.`);
-        return false;
-      }
-      if (tier.estimated_delivery && tier.estimated_delivery < today) {
-        setError(`Reward tier ${index + 1} estimated delivery must be today or in the future.`);
-        return false;
-      }
-    }
-
     setError('');
     return true;
   }
 
   function validateStep1() {
-    if (!form.title.trim()) {
-      setError('Please enter a campaign title.');
-      return false;
-    }
-    if (!form.target_amount || Number(form.target_amount) <= 0) {
-      setError('Enter a fundraising goal greater than zero.');
-      return false;
-    }
-    setError('');
-    return true;
+    return applyValidation(stepOneError(form));
   }
 
   function validateStep2() {
-    if (form.deadline) {
-      const deadlineDate = new Date(form.deadline);
-      const now = new Date();
-      if (deadlineDate.getTime() <= now.getTime()) {
-        setError('Deadline must be today or in the future (UTC).');
-        return false;
-      }
-    }
-    if (form.min_contribution && Number(form.min_contribution) <= 0) {
-      setError('Minimum contribution must be greater than zero.');
-      return false;
-    }
-    if (form.max_contribution) {
-      if (Number(form.max_contribution) <= 0) {
-        setError('Maximum contribution must be greater than zero.');
-        return false;
-      }
-      if (form.min_contribution && Number(form.max_contribution) <= Number(form.min_contribution)) {
-        setError('Maximum contribution must be greater than minimum contribution.');
-        return false;
-      }
-      if (form.target_amount && Number(form.max_contribution) > Number(form.target_amount)) {
-        setError('Maximum contribution cannot exceed the target amount.');
-        return false;
-      }
-    }
-    if (form.max_per_user) {
-      if (Number(form.max_per_user) <= 0) {
-        setError('Per-contributor cap must be greater than zero.');
-        return false;
-      }
-      if (form.min_contribution && Number(form.max_per_user) <= Number(form.min_contribution)) {
-        setError('Per-contributor cap must be greater than minimum contribution.');
-        return false;
-      }
-    }
-
-    setError('');
-    return true;
+    return applyValidation(stepTwoError(form));
   }
 
   function validateMilestones() {
-    if (form.milestones.length === 0) {
-      setError('');
-      return true;
-    }
-    if (form.milestones.length > 5) {
-      setError('Campaigns can define at most 5 milestones.');
-      return false;
-    }
+    return applyValidation(milestonesError(form));
+  }
 
-    for (let index = 0; index < form.milestones.length; index += 1) {
-      const milestone = form.milestones[index];
-      if (!milestone.title.trim()) {
-        setError(`Milestone ${index + 1} needs a title.`);
-        return false;
-      }
-      if (!milestone.description.trim()) {
-        setError(`Milestone ${index + 1} needs a description.`);
-        return false;
-      }
-      if (!milestone.release_percentage || Number(milestone.release_percentage) <= 0) {
-        setError(`Milestone ${index + 1} needs a release percentage greater than zero.`);
-        return false;
-      }
-    }
-
-    const total = milestonePercentTotal(form.milestones);
-    if (Math.abs(total - 100) > 0.0001) {
-      setError('Milestone percentages must sum to exactly 100%.');
-      return false;
-    }
-
-    setError('');
-    return true;
+  function validateTiers() {
+    return applyValidation(tiersError(form, today));
   }
 
   async function handleSubmit(e) {
@@ -662,7 +519,6 @@ export default function CreateCampaign() {
       setLoading(false);
     }
   }
-
   if (!ready) {
     return (
       <main className="container page-narrow" style={{ paddingTop: '3rem' }}>
@@ -713,7 +569,6 @@ export default function CreateCampaign() {
   }
 
   const milestoneTotal = milestonePercentTotal(form.milestones);
-
   return (
     <main className="container page-mid" style={{ paddingTop: '1.75rem', paddingBottom: '3rem' }}>
       <nav aria-label="Progress" style={{ marginBottom: '1.25rem' }}>
@@ -835,1192 +690,77 @@ export default function CreateCampaign() {
           </div>
         )}
         {step === 1 && (
-          <>
-            {templates.length > 0 && (
-              <div className="form-stack" style={{ marginBottom: '1rem' }}>
-                <label className="label-strong" htmlFor="cc-template">
-                  Start with a template (Optional)
-                </label>
-                <select
-                  id="cc-template"
-                  value={form.template_id}
-                  onChange={(event) => applyTemplate(event.target.value)}
-                >
-                  <option value="">Start from scratch</option>
-                  {templates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name} — {template.description}
-                    </option>
-                  ))}
-                </select>
-                {form.template_id && (
-                  <small style={{ color: 'var(--color-text-hint)' }}>
-                    The template filled in your campaign details. You can customize every field.
-                  </small>
-                )}
-              </div>
-            )}
-            <div className="form-stack">
-              <label className="label-strong" htmlFor="cc-title">
-                {t('createCampaign.campaignTitle')}
-              </label>
-              <input
-                id="cc-title"
-                value={form.title}
-                onChange={setField('title')}
-                placeholder={t('createCampaign.campaignTitlePlaceholder')}
-                required
-                aria-required="true"
-                autoComplete="off"
-              />
-            </div>
-
-            <div className="form-stack" style={{ marginTop: '1rem' }}>
-              <label className="label-strong" htmlFor="cc-target">
-                {t('createCampaign.fundraisingGoal')}
-              </label>
-              <input
-                id="cc-target"
-                type="number"
-                inputMode="decimal"
-                min="0.0000001"
-                step="any"
-                value={form.target_amount}
-                onChange={setField('target_amount')}
-                placeholder={t('createCampaign.targetAmountPlaceholder')}
-                required
-                aria-required="true"
-              />
-              {kycRequired && isVerified && verificationTier !== 'enhanced' && (
-                <small style={{ color: 'var(--color-text-hint)', fontSize: '0.8rem' }}>
-                  Your {verificationTier} tier allows campaign goals up to $
-                  {tierLimit.toLocaleString()}.
-                  {verificationTier === 'basic' && ' Upgrade to Standard for up to $50,000.'}
-                  {verificationTier === 'standard' && ' Upgrade to Enhanced for unlimited goals.'}
-                </small>
-              )}
-              {exceedsTierLimit && (
-                <div
-                  className="alert alert--warning"
-                  style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}
-                >
-                  <strong>
-                    Goal exceeds your {verificationTier} tier limit of ${tierLimit.toLocaleString()}
-                    .
-                  </strong>
-                  <p style={{ margin: '0.35rem 0 0', fontSize: '0.82rem' }}>
-                    {verificationTier === 'basic' &&
-                      'Upgrade to Standard verification (ID + address) to run campaigns up to $50,000.'}
-                    {verificationTier === 'standard' &&
-                      'Upgrade to Enhanced verification (ID + address + liveness) for unlimited campaign goals.'}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="form-stack" style={{ marginTop: '1rem' }}>
-              <label className="label-strong" htmlFor="cc-category">
-                {t('createCampaign.contributionLimits')}
-              </label>
-              <input
-                id="cc-category"
-                value={form.category}
-                onChange={setField('category')}
-                placeholder={t('createCampaign.categoryPlaceholder')}
-                autoComplete="off"
-              />
-            </div>
-
-            <div
-              style={{
-                marginTop: '1.25rem',
-                border: '1px dashed var(--color-border)',
-                padding: '1rem',
-                borderRadius: '8px',
-              }}
-            >
-              <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' }}>
-                {t('createCampaign.contributionLimits')}
-              </h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                <div className="form-stack">
-                  <label className="label-strong" htmlFor="cc-min-contrib">
-                    {t('createCampaign.minContribution')}
-                  </label>
-                  <input
-                    id="cc-min-contrib"
-                    type="number"
-                    inputMode="decimal"
-                    min="0.0000001"
-                    step="any"
-                    value={form.min_contribution}
-                    onChange={setField('min_contribution')}
-                    placeholder={t('createCampaign.minContributionPlaceholder')}
-                  />
-                </div>
-                <div className="form-stack">
-                  <label className="label-strong" htmlFor="cc-max-contrib">
-                    {t('createCampaign.maxContribution')}
-                  </label>
-                  <input
-                    id="cc-max-contrib"
-                    type="number"
-                    inputMode="decimal"
-                    min="0.0000001"
-                    step="any"
-                    value={form.max_contribution}
-                    onChange={setField('max_contribution')}
-                    placeholder={t('createCampaign.maxContributionPlaceholder')}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <fieldset style={{ border: 'none', margin: '1.25rem 0 0', padding: 0 }}>
-              <legend className="label-strong" style={{ marginBottom: '0.5rem' }}>
-                {t('createCampaign.settlementAsset')}
-              </legend>
-              <p
-                style={{
-                  fontSize: '0.8rem',
-                  color: 'var(--color-text-hint)',
-                  marginBottom: '0.65rem',
-                }}
-              >
-                {t('createCampaign.settlementAssetHelp')}
-              </p>
-              <div className="asset-picker" role="radiogroup" aria-label="Settlement asset">
-                {ASSETS.map((a) => (
-                  <label
-                    key={a.value}
-                    className={`asset-picker__option${form.asset_type === a.value ? ' asset-picker__option--selected' : ''}`}
-                  >
-                    <input
-                      type="radio"
-                      name="asset_type"
-                      value={a.value}
-                      checked={form.asset_type === a.value}
-                      onChange={() => selectAsset(a.value)}
-                    />
-                    <div className="asset-picker__code">{a.label}</div>
-                    <div className="asset-picker__hint">{a.hint}</div>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-
-            <fieldset className="form-stack" style={{ marginTop: '1rem' }}>
-              <legend className="label-strong">Treasury mode</legend>
-              <p style={{ color: 'var(--color-text-muted)', marginBottom: '0.65rem' }}>
-                Standard uses the two-of-two multisig wallet. Contract holds the funds in a Soroban
-                treasury that enforces your spending rules on-chain — the rules cannot be changed
-                once the campaign is created.
-              </p>
-              <div role="radiogroup" aria-label="Treasury mode">
-                <label>
-                  <input
-                    type="radio"
-                    name="wallet_mode"
-                    value="standard"
-                    checked={form.wallet_mode === 'standard'}
-                    onChange={() => setForm((f) => ({ ...f, wallet_mode: 'standard' }))}
-                  />
-                  Standard multisig
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name="wallet_mode"
-                    value="contract"
-                    checked={form.wallet_mode === 'contract'}
-                    onChange={() => setForm((f) => ({ ...f, wallet_mode: 'contract' }))}
-                  />
-                  Soroban contract treasury
-                </label>
-              </div>
-
-              {form.wallet_mode === 'contract' && (
-                <div className="form-stack" aria-label="Treasury policy">
-                  <label htmlFor="cc-min-hold">
-                    Minimum hold period: <strong>{form.treasury_policy.minHoldDays} days</strong>{' '}
-                    after the deadline
-                  </label>
-                  <input
-                    id="cc-min-hold"
-                    type="range"
-                    min="0"
-                    max="90"
-                    value={form.treasury_policy.minHoldDays}
-                    onChange={(e) => updateTreasuryPolicy('minHoldDays', Number(e.target.value))}
-                  />
-
-                  <label htmlFor="cc-max-pct">
-                    Maximum single withdrawal:{' '}
-                    <strong>{form.treasury_policy.maxSingleWithdrawalPct}%</strong> of the balance
-                  </label>
-                  <input
-                    id="cc-max-pct"
-                    type="range"
-                    min="10"
-                    max="100"
-                    value={form.treasury_policy.maxSingleWithdrawalPct}
-                    onChange={(e) =>
-                      updateTreasuryPolicy('maxSingleWithdrawalPct', Number(e.target.value))
-                    }
-                  />
-
-                  <label htmlFor="cc-cooldown">
-                    Cooldown between withdrawals:{' '}
-                    <strong>{form.treasury_policy.withdrawalCooldownHours} hours</strong>
-                  </label>
-                  <input
-                    id="cc-cooldown"
-                    type="range"
-                    min="0"
-                    max="168"
-                    value={form.treasury_policy.withdrawalCooldownHours}
-                    onChange={(e) =>
-                      updateTreasuryPolicy('withdrawalCooldownHours', Number(e.target.value))
-                    }
-                  />
-
-                  <label htmlFor="cc-auditor-above">
-                    Auditor required above ({form.asset_type})
-                  </label>
-                  <input
-                    id="cc-auditor-above"
-                    type="text"
-                    inputMode="decimal"
-                    value={form.treasury_policy.requireAuditorForAbove}
-                    onChange={(e) => updateTreasuryPolicy('requireAuditorForAbove', e.target.value)}
-                  />
-
-                  <label htmlFor="cc-auto-refund">
-                    <input
-                      id="cc-auto-refund"
-                      type="checkbox"
-                      checked={form.treasury_policy.autoRefundOnMiss}
-                      onChange={(e) => updateTreasuryPolicy('autoRefundOnMiss', e.target.checked)}
-                    />
-                    Refund contributors automatically if the goal is missed
-                  </label>
-                  <small style={{ color: 'var(--color-text-muted)' }}>
-                    Anyone can trigger the refund once the deadline passes, so contributors are not
-                    dependent on you or CrowdPay acting.
-                  </small>
-                </div>
-              )}
-            </fieldset>
-
-            <div className="form-stack" style={{ marginTop: '1rem' }}>
-              <label className="label-strong" htmlFor="cc-category">
-                Category{' '}
-                <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>
-                  (optional)
-                </span>
-              </label>
-              <select id="cc-category" value={form.category} onChange={setField('category')}>
-                <option value="">Select a category</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c.value} value={c.value}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="form-group" style={{ marginTop: '1rem' }}>
-              <label className="label-strong" htmlFor="cc-country">
-                Location{' '}
-                <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>
-                  (optional)
-                </span>
-              </label>
-              <input
-                id="cc-country"
-                type="text"
-                value={form.country}
-                onChange={setField('country')}
-                placeholder={t('createCampaign.countryPlaceholder')}
-                maxLength={80}
-              />
-            </div>
-
-            {error && (
-              <p className="alert alert--error" style={{ marginTop: '1rem' }} role="alert">
-                {error}
-              </p>
-            )}
-
-            <button
-              type="button"
-              className="btn-primary"
-              style={{ width: '100%', marginTop: '1.25rem' }}
-              onClick={() => {
-                if (validateStep1()) setStep(2);
-              }}
-            >
-              {t('createCampaign.continueToDetails')}
-            </button>
-          </>
+          <CreateCampaignStepGoal
+            t={t}
+            form={form}
+            templates={templates}
+            kycRequired={kycRequired}
+            isVerified={isVerified}
+            verificationTier={verificationTier}
+            tierLimit={tierLimit}
+            exceedsTierLimit={exceedsTierLimit}
+            setField={setField}
+            applyTemplate={applyTemplate}
+            selectAsset={selectAsset}
+            updateTreasuryPolicy={updateTreasuryPolicy}
+            setForm={setForm}
+            error={error}
+            onContinue={() => {
+              if (validateStep1()) setStep(2);
+            }}
+          />
         )}
 
         {step === 2 && (
-          <>
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                gap: '0.75rem',
-                background: 'var(--color-surface)',
-                border: '1px solid var(--color-border-lightest)',
-                borderRadius: '12px',
-                padding: '1rem',
-                marginBottom: '1rem',
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  setError('');
-                  setStep(1);
-                }}
-                style={{
-                  border: 'none',
-                  background: 'transparent',
-                  color: 'var(--color-accent)',
-                  padding: 0,
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                }}
-              >
-                ← Edit
-              </button>
-              <span style={{ fontWeight: 700 }}>{form.title || 'Untitled campaign'}</span>
-              <span style={{ color: 'var(--color-text-muted)' }}>
-                Goal: {form.target_amount || '—'} {form.asset_type || ''}
-              </span>
-            </div>
-            <div className="form-stack">
-              <label className="label-strong" htmlFor="cc-desc">
-                {t('createCampaign.description')}{' '}
-                <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>
-                  {t('createCampaign.optional')}
-                </span>
-              </label>
-              <SimpleMDE
-                id="cc-desc"
-                value={form.description}
-                onChange={setDescription}
-                options={{
-                  spellChecker: false,
-                  placeholder: t('createCampaign.descriptionPlaceholder'),
-                }}
-              />
-            </div>
-
-            <div className="form-stack" style={{ marginTop: '1rem' }}>
-              <label className="label-strong" htmlFor="cc-cover">
-                {t('createCampaign.coverImage')}{' '}
-                <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>
-                  {t('createCampaign.optional')}
-                </span>
-              </label>
-              <div
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setIsDragOverCover(true);
-                }}
-                onDragLeave={() => setIsDragOverCover(false)}
-                onDrop={handleCoverImageDrop}
-                style={{
-                  border: `2px dashed ${isDragOverCover ? 'var(--color-accent)' : 'var(--color-border-lightest)'}`,
-                  borderRadius: '12px',
-                  padding: '0.9rem',
-                  background: isDragOverCover
-                    ? 'var(--color-accent-lightest)'
-                    : 'var(--color-surface)',
-                }}
-              >
-                <input
-                  id="cc-cover"
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={handleCoverImageChange}
-                />
-                <p
-                  style={{
-                    marginTop: '0.45rem',
-                    marginBottom: 0,
-                    color: 'var(--color-text-hint)',
-                    fontSize: '0.8rem',
-                  }}
-                >
-                  {t('createCampaign.coverImageHelp')}
-                </p>
-              </div>
-              {coverImagePreview && (
-                <img
-                  src={coverImagePreview}
-                  alt="Cover preview"
-                  style={{
-                    marginTop: '0.75rem',
-                    width: '100%',
-                    borderRadius: '12px',
-                    maxHeight: '220px',
-                    objectFit: 'cover',
-                  }}
-                />
-              )}
-            </div>
-
-            <div className="form-stack" style={{ marginTop: '1rem' }}>
-              <label className="label-strong" htmlFor="cc-deadline">
-                {t('createCampaign.deadline')}{' '}
-                <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>
-                  {t('createCampaign.optional')}
-                </span>
-              </label>
-              <input
-                id="cc-deadline"
-                type="date"
-                min={today}
-                value={form.deadline}
-                onChange={setField('deadline')}
-              />
-            </div>
-
-            <div
-              className="form-stack"
-              style={{
-                marginTop: '1.25rem',
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: '0.5rem',
-              }}
-            >
-              <input
-                id="cc-show-backers"
-                type="checkbox"
-                style={{ width: 'auto', margin: 0 }}
-                checked={form.show_backer_amounts}
-                onChange={(e) => setForm((f) => ({ ...f, show_backer_amounts: e.target.checked }))}
-              />
-              <label
-                htmlFor="cc-show-backers"
-                style={{ fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
-              >
-                {t('createCampaign.showAmounts')}
-              </label>
-            </div>
-            <p
-              style={{ fontSize: '0.8rem', color: 'var(--color-text-hint)', marginTop: '0.35rem' }}
-            >
-              {t('createCampaign.showAmountsHelp')}
-            </p>
-
-            <details style={{ marginTop: '1rem' }}>
-              <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem' }}>
-                Contribution limits (optional)
-              </summary>
-              <div
-                style={{
-                  marginTop: '0.75rem',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '0.75rem',
-                }}
-              >
-                <div className="form-stack">
-                  <label htmlFor="cc-min">Minimum per contribution ({form.asset_type})</label>
-                  <input
-                    id="cc-min"
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={form.min_contribution}
-                    onChange={setField('min_contribution')}
-                    placeholder="No minimum"
-                  />
-                </div>
-                <div className="form-stack">
-                  <label htmlFor="cc-max">Maximum per contribution ({form.asset_type})</label>
-                  <input
-                    id="cc-max"
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={form.max_contribution}
-                    onChange={setField('max_contribution')}
-                    placeholder="No maximum"
-                  />
-                </div>
-                <div className="form-stack">
-                  <label htmlFor="cc-maxuser">Per-contributor cap ({form.asset_type})</label>
-                  <input
-                    id="cc-maxuser"
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={form.max_per_user}
-                    onChange={setField('max_per_user')}
-                    placeholder="No cap"
-                  />
-                </div>
-              </div>
-            </details>
-
-            <div
-              style={{
-                marginTop: '1.5rem',
-                borderTop: '1px solid var(--color-border-lightest)',
-                paddingTop: '1.25rem',
-              }}
-            >
-              <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.35rem' }}>
-                Translations (Optional)
-              </h3>
-              <p
-                style={{
-                  fontSize: '0.85rem',
-                  color: 'var(--color-text-muted)',
-                  marginBottom: '0.75rem',
-                }}
-              >
-                Provide translated versions of your campaign for international contributors.
-              </p>
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: '0.5rem',
-                  marginBottom: '0.75rem',
-                }}
-              >
-                {SUPPORTED_LOCALES.map((loc) => {
-                  const hasTranslation = Boolean(translations[loc.code]?.title);
-                  const isActive = activeTranslationLocale === loc.code;
-                  return (
-                    <button
-                      key={loc.code}
-                      type="button"
-                      className={isActive ? 'btn-primary' : 'btn-secondary'}
-                      style={{ fontSize: '0.85rem', padding: '0.35rem 0.65rem' }}
-                      onClick={() => setActiveTranslationLocale(isActive ? null : loc.code)}
-                    >
-                      {hasTranslation ? `✓ Edit ${loc.label}` : `+ Add Translation (${loc.label})`}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {activeTranslationLocale && (
-                <div
-                  style={{
-                    background: 'var(--color-surface, #f9fafb)',
-                    border: '1px solid var(--color-border-lightest, #e5e7eb)',
-                    borderRadius: '8px',
-                    padding: '1rem',
-                    marginBottom: '1rem',
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      marginBottom: '0.5rem',
-                    }}
-                  >
-                    <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>
-                      {SUPPORTED_LOCALES.find((l) => l.code === activeTranslationLocale)?.label}{' '}
-                      Translation
-                    </span>
-                    {translations[activeTranslationLocale]?.title && (
-                      <button
-                        type="button"
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: 'var(--color-error, #ef4444)',
-                          fontSize: '0.8rem',
-                          cursor: 'pointer',
-                          padding: 0,
-                        }}
-                        onClick={() => {
-                          const next = { ...translations };
-                          delete next[activeTranslationLocale];
-                          setTranslations(next);
-                          setActiveTranslationLocale(null);
-                        }}
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                  <div className="form-stack" style={{ marginBottom: '0.5rem' }}>
-                    <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>
-                      Translated Title *
-                    </label>
-                    <input
-                      type="text"
-                      value={translations[activeTranslationLocale]?.title || ''}
-                      onChange={(e) =>
-                        setTranslations((prev) => ({
-                          ...prev,
-                          [activeTranslationLocale]: {
-                            ...prev[activeTranslationLocale],
-                            title: e.target.value,
-                          },
-                        }))
-                      }
-                      placeholder={`Title in ${SUPPORTED_LOCALES.find((l) => l.code === activeTranslationLocale)?.label}`}
-                    />
-                  </div>
-                  <div className="form-stack" style={{ marginBottom: '0.5rem' }}>
-                    <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>
-                      Translated Description (optional)
-                    </label>
-                    <textarea
-                      value={translations[activeTranslationLocale]?.description || ''}
-                      onChange={(e) =>
-                        setTranslations((prev) => ({
-                          ...prev,
-                          [activeTranslationLocale]: {
-                            ...prev[activeTranslationLocale],
-                            description: e.target.value,
-                          },
-                        }))
-                      }
-                      rows={3}
-                      placeholder={`Description in ${SUPPORTED_LOCALES.find((l) => l.code === activeTranslationLocale)?.label}`}
-                      style={{
-                        width: '100%',
-                        padding: '0.5rem',
-                        border: '1px solid var(--color-border-lightest)',
-                        borderRadius: '6px',
-                        fontSize: '0.85rem',
-                        boxSizing: 'border-box',
-                        resize: 'vertical',
-                      }}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    style={{ fontSize: '0.8rem', padding: '0.35rem 0.65rem' }}
-                    onClick={() => setActiveTranslationLocale(null)}
-                  >
-                    Done
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {error && (
-              <p className="alert alert--error" style={{ marginTop: '1rem' }} role="alert">
-                {error}
-              </p>
-            )}
-
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.65rem',
-                marginTop: '1.25rem',
-              }}
-            >
-              <button
-                type="button"
-                className="btn-primary"
-                style={{ width: '100%' }}
-                onClick={() => {
-                  if (validateStep2()) setStep(3);
-                }}
-              >
-                {t('createCampaign.continueToMilestones')}
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                style={{ width: '100%' }}
-                onClick={() => {
-                  setError('');
-                  setStep(1);
-                }}
-              >
-                {t('createCampaign.back')}
-              </button>
-            </div>
-          </>
+          <CreateCampaignStepDetails
+            t={t}
+            form={form}
+            coverImageFile={coverImageFile}
+            coverImagePreview={coverImagePreview}
+            isDragOverCover={isDragOverCover}
+            translations={translations}
+            activeTranslationLocale={activeTranslationLocale}
+            today={today}
+            setField={setField}
+            setDescription={setDescription}
+            setTranslations={setTranslations}
+            setActiveTranslationLocale={setActiveTranslationLocale}
+            handleCoverImageChange={handleCoverImageChange}
+            handleCoverImageDrop={handleCoverImageDrop}
+            setIsDragOverCover={setIsDragOverCover}
+            setForm={setForm}
+            error={error}
+            onContinue={() => {
+              if (validateStep2()) setStep(3);
+            }}
+            onBack={() => {
+              setError('');
+              setStep(1);
+            }}
+          />
         )}
 
         {step === 3 && (
-          <>
-            <div className="campaign-card" style={{ marginBottom: '1rem' }}>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  gap: '0.75rem',
-                  flexWrap: 'wrap',
-                  marginBottom: '0.5rem',
-                }}
-              >
-                <strong>{t('createCampaign.milestonePlan')}</strong>
-                <span
-                  style={{
-                    fontSize: '0.85rem',
-                    color:
-                      milestoneTotal === 100 || form.milestones.length === 0
-                        ? 'var(--color-success-text)'
-                        : 'var(--color-warning-text)',
-                  }}
-                >
-                  {t('createCampaign.milestoneTotal', { count: milestoneTotal.toLocaleString() })}
-                </span>
-              </div>
-              <p
-                style={{
-                  color: 'var(--color-text-secondary)',
-                  fontSize: '0.88rem',
-                  lineHeight: 1.5,
-                }}
-              >
-                {t('createCampaign.milestoneHelp')}
-              </p>
-            </div>
-
-            {form.milestones.length === 0 ? (
-              <div className="alert alert--info" style={{ marginBottom: '1rem' }}>
-                {t('createCampaign.noMilestones')}
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gap: '0.85rem' }}>
-                {form.milestones.map((milestone, index) => (
-                  <div key={index} className="campaign-card">
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        gap: '0.75rem',
-                        alignItems: 'center',
-                        marginBottom: '0.5rem',
-                      }}
-                    >
-                      <strong>{t('createCampaign.milestone', { count: index + 1 })}</strong>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() => removeMilestone(index)}
-                        style={{ fontSize: '0.8rem' }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                    <div className="form-stack">
-                      <label className="label-strong">{t('createCampaign.milestoneTitle')}</label>
-                      <input
-                        value={milestone.title}
-                        onChange={(e) => setMilestoneField(index, 'title', e.target.value)}
-                        placeholder={t('createCampaign.milestoneTitlePlaceholder')}
-                      />
-                    </div>
-                    <div className="form-stack" style={{ marginTop: '0.75rem' }}>
-                      <label className="label-strong">
-                        {t('createCampaign.milestoneDescription')}
-                      </label>
-                      <textarea
-                        value={milestone.description}
-                        onChange={(e) => setMilestoneField(index, 'description', e.target.value)}
-                        rows={3}
-                        placeholder={t('createCampaign.milestoneDescriptionPlaceholder')}
-                      />
-                    </div>
-                    <div className="form-stack" style={{ marginTop: '0.75rem' }}>
-                      <label className="label-strong">{t('createCampaign.milestoneRelease')}</label>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        min="0.01"
-                        step="0.01"
-                        value={milestone.release_percentage}
-                        onChange={(e) =>
-                          setMilestoneField(index, 'release_percentage', e.target.value)
-                        }
-                        placeholder={t('createCampaign.milestoneReleasePlaceholder')}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {form.milestones.length < 5 && (
-              <button
-                type="button"
-                className="btn-secondary"
-                style={{ width: '100%', marginTop: '1rem' }}
-                onClick={addMilestone}
-              >
-                {t('createCampaign.addMilestone')}
-              </button>
-            )}
-
-            <div className="campaign-card" style={{ marginTop: '1.75rem', marginBottom: '1rem' }}>
-              <strong>
-                {t('createCampaign.rewardTiers')}{' '}
-                <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>
-                  {t('createCampaign.rewardTiersOptional')}
-                </span>
-              </strong>
-              <p
-                style={{
-                  color: 'var(--color-text-secondary)',
-                  fontSize: '0.88rem',
-                  lineHeight: 1.5,
-                  marginTop: '0.35rem',
-                }}
-              >
-                {t('createCampaign.rewardTiersHelp')}
-              </p>
-            </div>
-
-            {form.reward_tiers.length === 0 ? (
-              <div className="alert alert--info" style={{ marginBottom: '1rem' }}>
-                {t('createCampaign.noRewardTiers')}
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gap: '0.85rem' }}>
-                {form.reward_tiers.map((tier, index) => (
-                  <div key={index} className="campaign-card">
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        gap: '0.75rem',
-                        alignItems: 'center',
-                        marginBottom: '0.5rem',
-                      }}
-                    >
-                      <strong>{t('createCampaign.tierLabel', { count: index + 1 })}</strong>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() => removeTier(index)}
-                        style={{ fontSize: '0.8rem' }}
-                      >
-                        {t('createCampaign.removeTier')}
-                      </button>
-                    </div>
-                    <div className="form-stack">
-                      <label className="label-strong">{t('createCampaign.tierTitle')}</label>
-                      <input
-                        value={tier.title}
-                        onChange={(e) => setTierField(index, 'title', e.target.value)}
-                        placeholder={t('createCampaign.tierTitlePlaceholder')}
-                      />
-                    </div>
-                    <div className="form-stack" style={{ marginTop: '0.75rem' }}>
-                      <label className="label-strong">
-                        {t('createCampaign.tierDescription')}{' '}
-                        <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>
-                          {t('createCampaign.tierDescriptionOptional')}
-                        </span>
-                      </label>
-                      <textarea
-                        value={tier.description}
-                        onChange={(e) => setTierField(index, 'description', e.target.value)}
-                        rows={2}
-                        placeholder={t('createCampaign.tierDescriptionPlaceholder')}
-                      />
-                    </div>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr 1fr',
-                        gap: '0.75rem',
-                        marginTop: '0.75rem',
-                      }}
-                    >
-                      <div className="form-stack">
-                        <label className="label-strong">
-                          {t('createCampaign.tierMinAmount', { asset: form.asset_type })}
-                        </label>
-                        <input
-                          type="number"
-                          inputMode="decimal"
-                          min="0.0000001"
-                          step="any"
-                          value={tier.min_amount}
-                          onChange={(e) => setTierField(index, 'min_amount', e.target.value)}
-                          placeholder={t('createCampaign.tierMinAmountPlaceholder')}
-                        />
-                      </div>
-                      <div className="form-stack">
-                        <label className="label-strong">
-                          {t('createCampaign.tierLimit')}{' '}
-                          <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>
-                            {t('createCampaign.tierLimitOptional')}
-                          </span>
-                        </label>
-                        <input
-                          type="number"
-                          inputMode="numeric"
-                          min="1"
-                          step="1"
-                          value={tier.limit}
-                          onChange={(e) => setTierField(index, 'limit', e.target.value)}
-                          placeholder={t('createCampaign.tierLimitPlaceholder')}
-                        />
-                      </div>
-                    </div>
-                    <div className="form-stack" style={{ marginTop: '0.75rem' }}>
-                      <label className="label-strong">
-                        {t('createCampaign.tierEstimatedDelivery')}{' '}
-                        <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>
-                          {t('createCampaign.tierEstimatedDeliveryOptional')}
-                        </span>
-                      </label>
-                      <input
-                        type="date"
-                        min={today}
-                        value={tier.estimated_delivery}
-                        onChange={(e) => setTierField(index, 'estimated_delivery', e.target.value)}
-                      />
-                    </div>
-                    <div
-                      className="campaign-card"
-                      style={{ marginTop: '0.75rem', padding: '0.85rem' }}
-                    >
-                      <label
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.5rem',
-                          fontWeight: 700,
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={Boolean(tier.nft_enabled)}
-                          onChange={(e) => setTierField(index, 'nft_enabled', e.target.checked)}
-                        />
-                        {t('createCampaign.tierNftEnabled')}
-                      </label>
-                      <p
-                        style={{
-                          marginTop: '0.45rem',
-                          marginBottom: '0.65rem',
-                          fontSize: '0.84rem',
-                          color: 'var(--color-text-secondary)',
-                        }}
-                      >
-                        {t('createCampaign.tierNftHelp')}
-                      </p>
-                      {Boolean(tier.nft_enabled) && (
-                        <div style={{ display: 'grid', gap: '0.65rem' }}>
-                          <div className="form-stack">
-                            <label className="label-strong">
-                              {t('createCampaign.tierMetadataUrl')}{' '}
-                              <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>
-                                {t('createCampaign.tierMetadataUrlOptional')}
-                              </span>
-                            </label>
-                            <input
-                              value={tier.nft_metadata_url || ''}
-                              onChange={(e) =>
-                                setTierField(index, 'nft_metadata_url', e.target.value)
-                              }
-                              placeholder={t('createCampaign.tierMetadataUrlPlaceholder')}
-                            />
-                          </div>
-                          <div className="form-stack">
-                            <label className="label-strong">
-                              {t('createCampaign.tierArtworkUrl')}{' '}
-                              <span style={{ fontWeight: 500, color: 'var(--color-text-muted)' }}>
-                                {t('createCampaign.tierArtworkUrlOptional')}
-                              </span>
-                            </label>
-                            <input
-                              value={tier.nft_artwork_url || ''}
-                              onChange={(e) =>
-                                setTierField(index, 'nft_artwork_url', e.target.value)
-                              }
-                              placeholder={t('createCampaign.tierArtworkUrlPlaceholder')}
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {form.reward_tiers.length < 10 && (
-              <button
-                type="button"
-                className="btn-secondary"
-                style={{ width: '100%', marginTop: '1rem' }}
-                onClick={addTier}
-              >
-                {t('createCampaign.addRewardTier')}
-              </button>
-            )}
-
-            <div className="alert alert--info" style={{ marginTop: '1.25rem' }} role="status">
-              <strong>{t('createCampaign.launchSummary')}</strong> {form.title || 'Untitled'} with a
-              goal of {form.target_amount || '—'} {form.asset_type}
-              {form.min_contribution && ` (Min: ${form.min_contribution} ${form.asset_type})`}
-              {form.max_contribution && ` (Max: ${form.max_contribution} ${form.asset_type})`}
-              {form.max_per_user && ` (Cap: ${form.max_per_user} ${form.asset_type})`}
-              {form.milestones.length
-                ? ` and ${form.milestones.length} milestone release${form.milestones.length > 1 ? 's' : ''}.`
-                : ' and no milestone plan.'}
-            </div>
-
-            {/* ── Contributor Requirements (#689) ─────────────────────────── */}
-            <div className="campaign-card" style={{ marginTop: '1.25rem' }}>
-              <strong style={{ display: 'block', marginBottom: '0.5rem' }}>
-                Contributor Requirements
-              </strong>
-              <p
-                style={{
-                  fontSize: '0.85rem',
-                  color: 'var(--color-text-secondary)',
-                  marginBottom: '1rem',
-                }}
-              >
-                Optionally restrict who can contribute to this campaign. Contributors who don&apos;t
-                meet these requirements will be blocked.
-              </p>
-
-              {/* Minimum reputation score */}
-              <label className="label-strong" htmlFor="min_reputation_score">
-                Minimum reputation score (0 = no minimum)
-              </label>
-              <input
-                id="min_reputation_score"
-                type="range"
-                min="0"
-                max="500"
-                step="10"
-                value={form.min_reputation_score ?? 0}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, min_reputation_score: Number(e.target.value) }))
-                }
-                style={{ width: '100%', margin: '0.5rem 0' }}
-              />
-              <div
-                style={{
-                  fontSize: '0.85rem',
-                  color: 'var(--color-text-secondary)',
-                  marginBottom: '1rem',
-                }}
-              >
-                Selected: <strong>{form.min_reputation_score ?? 0}</strong>
-              </div>
-
-              {/* Required attestations */}
-              <label className="label-strong" style={{ display: 'block', marginBottom: '0.5rem' }}>
-                Required KYC attestations
-              </label>
-              {[
-                { value: 'kyc_basic', label: 'KYC Basic' },
-                { value: 'kyc_standard', label: 'KYC Standard' },
-                { value: 'kyc_enhanced', label: 'KYC Enhanced' },
-              ].map(({ value, label }) => {
-                const current = form.required_attestations ?? [];
-                const checked = current.includes(value);
-                return (
-                  <label
-                    key={value}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.5rem',
-                      marginBottom: '0.4rem',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() =>
-                        setForm((f) => ({
-                          ...f,
-                          required_attestations: checked
-                            ? (f.required_attestations ?? []).filter((a) => a !== value)
-                            : [...(f.required_attestations ?? []), value],
-                        }))
-                      }
-                    />
-                    <span style={{ fontSize: '0.875rem' }}>{label}</span>
-                  </label>
-                );
-              })}
-
-              {(form.min_reputation_score > 0 || (form.required_attestations ?? []).length > 0) && (
-                <div
-                  className="alert alert--info"
-                  style={{ marginTop: '0.75rem', fontSize: '0.82rem' }}
-                >
-                  Contributors without these requirements will be blocked from contributing to this
-                  campaign.
-                </div>
-              )}
-            </div>
-
-            {error && (
-              <p className="alert alert--error" style={{ marginTop: '1rem' }} role="alert">
-                {error}
-              </p>
-            )}
-
-            {duplicateWarning && (
-              <div className="alert alert--warning" style={{ marginTop: '1rem' }} role="alert">
-                <p>
-                  <strong>Warning:</strong> {duplicateWarning}
-                </p>
-                <p style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>
-                  You can still launch it, but it will be hidden until reviewed by an admin.
-                </p>
-              </div>
-            )}
-
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.65rem',
-                marginTop: '1.25rem',
-              }}
-            >
-              <button
-                type="submit"
-                className="btn-primary"
-                disabled={loading}
-                style={{ width: '100%' }}
-              >
-                {loading ? t('createCampaign.creatingWallet') : t('createCampaign.launchCampaign')}
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                style={{ width: '100%' }}
-                disabled={loading}
-                onClick={() => {
-                  setError('');
-                  setStep(2);
-                }}
-              >
-                Back
-              </button>
-            </div>
-          </>
+          <CreateCampaignStepMilestones
+            t={t}
+            form={form}
+            milestoneTotal={milestoneTotal}
+            today={today}
+            error={error}
+            duplicateWarning={duplicateWarning}
+            loading={loading}
+            setForm={setForm}
+            setMilestoneField={setMilestoneField}
+            addMilestone={addMilestone}
+            removeMilestone={removeMilestone}
+            setTierField={setTierField}
+            addTier={addTier}
+            removeTier={removeTier}
+            onBack={() => {
+              setError('');
+              setStep(2);
+            }}
+          />
         )}
       </form>
 
