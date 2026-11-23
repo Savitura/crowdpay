@@ -124,6 +124,12 @@ jobs:
           DATABASE_URL="$DATABASE_URL_SCHEMA_CHECK" npm run verify-schema -- --compare-snapshot "$RUNNER_TEMP/migrations.json"
           dropdb -h localhost -U postgres crowdpay_schema_check
 
+      - name: Validate milestone percentage invariants
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/crowdpay_test
+        run: npm run validate-milestones
+
       - name: Run test suite
         working-directory: ./backend
         env:
