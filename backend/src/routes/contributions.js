@@ -334,65 +334,6 @@ router.get(
       offset
     );
 
-    return res.json({ contributions, total, limit, offset });
+    return res.json(paginatedResponse(contributions, total, limit, offset));
   })
 );
-
-function isContributionViewer(req, contribution, campaignCreatorId) {
-  if (req.user?.role === 'admin') return true;
-  if (campaignCreatorId === req.user?.userId) return true;
-  if (req.user?.walletPublicKey && contribution.sender_public_key === req.user.walletPublicKey) {
-    return true;
-  }
-  return false;
-}
-
-router.get(
-  '/:id/diagnosis',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const { id } = req.params;
-
-    const { rows } = await db.query(
-      `SELECT c.id, c.campaign_id, c.sender_public_key, c.payment_type, c.path_hops,
-              c.effective_rate, c.slippage_bps, c.send_max, c.retry_count, c.diagnosis, c.tx_hash,
-              st.metadata AS metadata
-       FROM contributions c
-       LEFT JOIN stellar_transactions st ON st.tx_hash = c.tx_hash AND st.kind = 'contribution'
-       WHERE c.id = $1`,
-      [id]
-    );
-    const contribution = rows[0];
-    if (!contribution) {
-      return res.status(404).json({ error: 'Contribution not found' });
-    }
-
-    const { rows: campaignRows } = await db.query(
-      'SELECT creator_id FROM campaigns WHERE id = $1',
-      [contribution.campaign_id]
-    );
-    if (!isContributionViewer(req, contribution, campaignRows[0]?.creator_id)) {
-      return res.status(403).json({ error: 'Not authorized to view this contribution' });
-    }
-
-    const metadata = contribution.metadata || {};
-    const report = await contributionDiagnostics.diagnoseContribution({
-      contribution,
-      metadata,
-      txHash: contribution.tx_hash,
-    });
-
-    // Persist a status change (e.g. pending -> failed) so the stored diagnosis
-    // stays actionable without re-hitting Horizon on every list read.
-    if (report.status && report.status !== contribution.diagnosis) {
-      await db.query('UPDATE contributions SET diagnosis = $1 WHERE id = $2', [
-        report.status,
-        contribution.id,
-      ]);
-    }
-
-    return res.json({ diagnosis: report });
-  })
-);
-
-module.exports = router;
