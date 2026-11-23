@@ -1,11 +1,13 @@
 /**
  * stellarService.js
  *
- * Core Stellar operations:
- *   - Create campaign wallets (multisig)
- *   - Establish trustlines
- *   - Build and submit contribution transactions
- *   - Path payment (cross-currency contributions)
+ * Core Stellar operations (facade). Implementation is split into focused
+ * modules under ./stellar/:
+ *   - horizonClient.js   : Horizon account/ledger queries
+ *   - accountHelpers.js  : custodial account funding and trustline helpers
+ *   - transactionUtils.js: transaction building/submission helpers
+ *
+ * Campaign wallet, freeze and contribution flows remain in this file.
  */
 
 const {
@@ -106,6 +108,7 @@ function toStellarAsset(assetCode) {
 function getSupportedAssetCodes() {
   return Object.keys(configuredAssets);
 }
+// NOTE: asset/trustline helpers are provided by ./stellar/accountHelpers.js
 
 /** Issued assets CrowdPay may move on-chain (requires trustlines on custodial accounts). */
 function listCreditAssetCodes() {

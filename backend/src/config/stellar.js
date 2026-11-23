@@ -11,6 +11,9 @@ const networkPassphrase = isTestnet ? Networks.TESTNET : Networks.PUBLIC;
 // USDC asset — issuer differs between testnet and mainnet
 const USDC = new Asset('USDC', process.env.USDC_ISSUER);
 
+// Note: stellarService.js is being decomposed into focused modules (horizon, account, payment).
+// This config module remains the single source of truth for network/asset configuration.
+
 function parseAdditionalAssets() {
   if (!process.env.STELLAR_EXTRA_ASSETS) return {};
   try {

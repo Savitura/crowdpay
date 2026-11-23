@@ -12,6 +12,10 @@
  * Usage:
  *   node contracts/stellar/pathPayment.js --quote <sendAsset> <sendAmount> <destAsset>
  *   node contracts/stellar/pathPayment.js --send <senderSecret> <destPublicKey> <sendAsset> <sendMax> <destAmount>
+ *
+ * Note: The production service was decomposed into focused modules under
+ * backend/src/services/stellar/ (horizonClient, accounts, payments). This script
+ * remains a standalone reference and does not import from the backend runtime.
  */
 
 require("dotenv").config({ path: "../../backend/.env" });
