@@ -15,6 +15,46 @@ function createMilestonesRouter(deps = {}) {
   const helpers = deps.helpers || require('./helpers')(deps);
 
   const { requireAuth } = auth;
+
+  const BUDGET_CATEGORY_COLUMNS =
+    'id, campaign_id, title, amount, description, created_at, updated_at';
+
+  const MILESTONE_COLUMNS = [
+    'id',
+    'campaign_id',
+    'title',
+    'description',
+    'release_percentage',
+    'sort_order',
+    'evidence_url',
+    'evidence_description',
+    'evidence_submitted_at',
+    'destination_key',
+    'review_note',
+    'reviewer_id',
+    'reviewed_at',
+    'status',
+    'created_at',
+    'completed_at',
+    'approved_at',
+    'released_at',
+    'claimed_at',
+    'contract_index',
+    'auto_release_enabled',
+    'auto_release_rule',
+    'auto_release_rule_config',
+    'auto_release_window_seconds',
+    'auto_release_status',
+    'auto_release_configured_at',
+    'auto_release_scheduled_at',
+    'auto_release_at',
+    'auto_release_evidence_url',
+    'auto_release_evidence_sha256',
+    'auto_release_halted_at',
+    'auto_release_halt_reason',
+    'auto_release_dispute_id',
+    'release_trigger',
+  ].map(c => `m.${c}`).join(', ');
   const { requireCampaignMember, normalizeMilestonesInput } = helpers;
 
   router.get(
@@ -27,7 +67,7 @@ function createMilestonesRouter(deps = {}) {
       }
 
       const { rows } = await db.query(
-        `SELECT m.*, (c.milestones_contract_id IS NOT NULL) AS on_chain
+        `SELECT ${MILESTONE_COLUMNS}, (c.milestones_contract_id IS NOT NULL) AS on_chain
      FROM milestones m
      JOIN campaigns c ON c.id = m.campaign_id
      WHERE m.campaign_id = $1
@@ -162,7 +202,7 @@ function createMilestonesRouter(deps = {}) {
     '/:id/budgets',
     asyncHandler(async (req, res) => {
       const { rows } = await db.query(
-        `SELECT * FROM campaign_budget_categories WHERE campaign_id = $1 ORDER BY created_at ASC`,
+        `SELECT ${BUDGET_CATEGORY_COLUMNS} FROM campaign_budget_categories WHERE campaign_id = $1 ORDER BY created_at ASC`,
         [req.params.id]
       );
       res.json(rows);

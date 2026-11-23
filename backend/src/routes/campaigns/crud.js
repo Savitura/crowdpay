@@ -1306,9 +1306,10 @@ If your target is reached, you can request a withdrawal. Otherwise, contribution
       const campaignId = req.params.id;
 
       // Check if campaign exists and belongs to user
-      const { rows: campaignRows } = await db.query('SELECT * FROM campaigns WHERE id = $1', [
-        campaignId,
-      ]);
+      const { rows: campaignRows } = await db.query(
+        `SELECT ${publicCampaignColumnList('')} FROM campaigns WHERE id = $1`,
+        [campaignId]
+      );
       if (!campaignRows.length) {
         return res.status(404).json({ error: 'Campaign not found' });
       }
@@ -1573,9 +1574,10 @@ If your target is reached, you can request a withdrawal. Otherwise, contribution
     asyncHandler(async (req, res) => {
       const campaignId = req.params.id;
 
-      const { rows: campaignRows } = await db.query('SELECT * FROM campaigns WHERE id = $1', [
-        campaignId,
-      ]);
+      const { rows: campaignRows } = await db.query(
+        `SELECT ${publicCampaignColumnList('')} FROM campaigns WHERE id = $1`,
+        [campaignId]
+      );
       if (!campaignRows.length) {
         return res.status(404).json({ error: 'Campaign not found' });
       }

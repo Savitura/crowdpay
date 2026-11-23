@@ -1,4 +1,5 @@
 const logger = require('../config/logger');
+const { fetchWithTimeout } = require('../utils/fetchWithTimeout');
 
 /**
  * Extracts owner and repo name from a GitHub URL
@@ -36,7 +37,10 @@ async function fetchGithubRepoStats(repoUrl) {
 
   try {
     // Fetch main repo stats
-    const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
+    const repoRes = await fetchWithTimeout(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers,
+      timeoutMs: 10_000,
+    });
     if (!repoRes.ok) {
       if (repoRes.status === 404) {
         logger.warn(`GitHub repo not found: ${owner}/${repo}`);
@@ -48,9 +52,9 @@ async function fetchGithubRepoStats(repoUrl) {
 
     // Fetch top 5 contributors
     let topContributors = [];
-    const contribRes = await fetch(
+    const contribRes = await fetchWithTimeout(
       `https://api.github.com/repos/${owner}/${repo}/contributors?per_page=5`,
-      { headers }
+      { headers, timeoutMs: 10_000 }
     );
     if (contribRes.ok) {
       const contribData = await contribRes.json();

@@ -9,11 +9,12 @@ import {
   Tooltip,
   CartesianGrid,
 } from 'recharts';
+import { safeLocalStorage, safeSessionStorage } from '../lib/safeStorage';
 
 export default function OpsCenter() {
   const { t } = useTranslation();
   const [apiKey, setApiKey] = useState(
-    () => sessionStorage.getItem('cp_ops_api_key') || localStorage.getItem('cp_ops_api_key') || ''
+    () => safeSessionStorage.getItem('cp_ops_api_key') || safeLocalStorage.getItem('cp_ops_api_key') || ''
   );
   const [tempKey, setTempKey] = useState('');
   const [rememberKey, setRememberKey] = useState(false);
@@ -62,8 +63,8 @@ export default function OpsCenter() {
       }
       const res = await fetch(url, { ...options, headers });
       if (res.status === 401 || res.status === 403) {
-        localStorage.removeItem('cp_ops_api_key');
-        sessionStorage.removeItem('cp_ops_api_key');
+        safeLocalStorage.removeItem('cp_ops_api_key');
+        safeSessionStorage.removeItem('cp_ops_api_key');
         throw new Error(res.status === 403 ? 'FORBIDDEN_OPS' : 'UNAUTHORIZED_OPS');
       }
       return res;
@@ -114,8 +115,8 @@ export default function OpsCenter() {
               : 'Authentication failed: Invalid OPS_API_KEY.'
           );
           setApiKey('');
-          localStorage.removeItem('cp_ops_api_key');
-          sessionStorage.removeItem('cp_ops_api_key');
+          safeLocalStorage.removeItem('cp_ops_api_key');
+          safeSessionStorage.removeItem('cp_ops_api_key');
         } else {
           setErrorMsg(err.message || 'Failed to fetch operations data.');
         }
@@ -141,19 +142,19 @@ export default function OpsCenter() {
     if (!tempKey.trim()) return;
     const clean = tempKey.trim();
     if (rememberKey) {
-      localStorage.setItem('cp_ops_api_key', clean);
-      sessionStorage.removeItem('cp_ops_api_key');
+      safeLocalStorage.setItem('cp_ops_api_key', clean);
+      safeSessionStorage.removeItem('cp_ops_api_key');
     } else {
-      sessionStorage.setItem('cp_ops_api_key', clean);
-      localStorage.removeItem('cp_ops_api_key');
+      safeSessionStorage.setItem('cp_ops_api_key', clean);
+      safeLocalStorage.removeItem('cp_ops_api_key');
     }
     setAuthError('');
     setApiKey(clean);
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('cp_ops_api_key');
-    sessionStorage.removeItem('cp_ops_api_key');
+    safeLocalStorage.removeItem('cp_ops_api_key');
+    safeSessionStorage.removeItem('cp_ops_api_key');
     setApiKey('');
     setHealthData(null);
   };

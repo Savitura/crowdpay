@@ -37,6 +37,32 @@ const {
   validateRequestAsError,
 } = require('../middleware/validation');
 
+const USER_COLUMNS = [
+  'id',
+  'email',
+  'password_hash',
+  'name',
+  'wallet_public_key',
+  'wallet_secret_encrypted',
+  'role',
+  'kyc_status',
+  'kyc_provider_reference',
+  'kyc_completed_at',
+  'is_admin',
+  'totp_secret',
+  'totp_enabled',
+  'backup_codes',
+  'totp_failed_attempts',
+  'totp_locked_until',
+  'enforce_2fa',
+  'country',
+  'verification_status',
+  'verification_tier',
+  'persona_inquiry_id',
+  'contributor_privacy',
+  'created_at',
+].join(', ');
+
 /**
  * @openapi
  * tags:
@@ -508,7 +534,7 @@ router.post('/login', loginLimiter, loginValidation, validateRequest, asyncHandl
   const normalizedEmail = String(email || '')
     .trim()
     .toLowerCase();
-  const { rows } = await db.query('SELECT * FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
+  const { rows } = await db.query(`SELECT ${USER_COLUMNS} FROM users WHERE LOWER(email) = $1`, [normalizedEmail]);
 
   if (!rows.length || !(await bcrypt.compare(password, rows[0].password_hash))) {
     // Record failed login attempt
@@ -596,7 +622,7 @@ router.post(
     const normalizedEmail = String(email || '')
       .trim()
       .toLowerCase();
-    const { rows } = await db.query('SELECT * FROM users WHERE LOWER(email) = $1', [
+    const { rows } = await db.query(`SELECT ${USER_COLUMNS} FROM users WHERE LOWER(email) = $1`, [
       normalizedEmail,
     ]);
 
@@ -693,7 +719,7 @@ router.post(
 );
 
 router.post('/2fa/setup', requireAuth, asyncHandler(async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);
+  const { rows } = await db.query(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [req.user.userId]);
   const user = rows[0];
 
   if (user.role !== 'admin' && user.role !== 'creator') {
@@ -724,7 +750,7 @@ router.post('/2fa/verify', requireAuth, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Code is required' });
   }
 
-  const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);
+  const { rows } = await db.query(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [req.user.userId]);
   const user = rows[0];
 
   if (!user.totp_secret) {
@@ -758,7 +784,7 @@ router.post('/2fa/disable', requireAuth, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Current 2FA code is required to disable' });
   }
 
-  const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);
+  const { rows } = await db.query(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [req.user.userId]);
   const user = rows[0];
 
   if (!user.totp_enabled) {
@@ -792,7 +818,7 @@ router.post('/2fa/disable', requireAuth, asyncHandler(async (req, res) => {
 );
 
 router.get('/2fa/backup-codes', requireAuth, asyncHandler(async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);
+  const { rows } = await db.query(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [req.user.userId]);
   const user = rows[0];
 
   if (!user.totp_enabled) {
@@ -813,7 +839,7 @@ router.post('/2fa/trust-device', requireAuth, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: '2FA code is required to trust device' });
   }
 
-  const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);
+  const { rows } = await db.query(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [req.user.userId]);
   const user = rows[0];
 
   if (!user.totp_enabled) {
@@ -834,7 +860,7 @@ router.post('/2fa/trust-device', requireAuth, asyncHandler(async (req, res) => {
 );
 
 router.get('/2fa/devices', requireAuth, asyncHandler(async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);
+  const { rows } = await db.query(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [req.user.userId]);
   const user = rows[0];
 
   if (!user.totp_enabled) {
@@ -847,7 +873,7 @@ router.get('/2fa/devices', requireAuth, asyncHandler(async (req, res) => {
 );
 
 router.delete('/2fa/devices/:deviceId', requireAuth, asyncHandler(async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);
+  const { rows } = await db.query(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [req.user.userId]);
   const user = rows[0];
 
   if (!user.totp_enabled) {
@@ -868,7 +894,7 @@ router.delete('/2fa/devices/:deviceId', requireAuth, asyncHandler(async (req, re
 );
 
 router.get('/2fa/audit-log', requireAuth, asyncHandler(async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);
+  const { rows } = await db.query(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [req.user.userId]);
   const user = rows[0];
 
   if (!user.totp_enabled && user.role !== 'admin') {

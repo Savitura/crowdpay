@@ -1292,7 +1292,7 @@ test('PATCH /api/campaigns/:id accepts valid fields and returns 422 for validati
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+      if (text.includes('FROM campaigns WHERE id = $1')) {
         return {
           rows: [
             {
@@ -1375,7 +1375,7 @@ test('PATCH /api/campaigns/:id accepts max_per_user, min_contribution, max_contr
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+      if (text.includes('FROM campaigns WHERE id = $1')) {
         return {
           rows: [
             {
@@ -1456,7 +1456,7 @@ test('PATCH /api/campaigns/:id rejects invalid fields with 422', async () => {
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+      if (text.includes('FROM campaigns WHERE id = $1')) {
         return {
           rows: [
             {
@@ -1502,7 +1502,7 @@ test('PATCH /api/campaigns/:id returns 422 for deadline in the past', async () =
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+      if (text.includes('FROM campaigns WHERE id = $1')) {
         return {
           rows: [
             {
@@ -1548,7 +1548,7 @@ test('PATCH /api/campaigns/:id validates max_per_user > min_contribution', async
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+      if (text.includes('FROM campaigns WHERE id = $1')) {
         return {
           rows: [
             {
@@ -1595,7 +1595,7 @@ test('PATCH /api/campaigns/:id full object round-trip works', async () => {
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+      if (text.includes('FROM campaigns WHERE id = $1')) {
         return {
           rows: [
             {

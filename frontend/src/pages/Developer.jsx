@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { api } from '../services/api';
+import { safeLocalStorage, safeSessionStorage } from '../lib/safeStorage';
 
 const EVENT_OPTIONS = [
   'campaign.funded',
@@ -65,13 +66,13 @@ export default function Developer() {
     try {
       // Cache hit: the spec is unlikely to change during a session (Issue #580).
       const cacheKey = `cp_openapi_spec_${V1_API_BASE}`;
-      const cachedRaw = sessionStorage.getItem(cacheKey);
+      const cachedRaw = safeSessionStorage.getItem(cacheKey);
       if (cachedRaw) {
         try {
           const cached = JSON.parse(cachedRaw);
           if (Array.isArray(cached) && cached.length > 0) {
             setV1Endpoints(cached);
-            const saved = localStorage.getItem('cp_explorer_endpoint');
+            const saved = safeLocalStorage.getItem('cp_explorer_endpoint');
             if (saved && cached.find((e) => e.id === saved)) {
               setExplorerEndpoint(saved);
             } else if (cached.length > 0) {
@@ -81,7 +82,7 @@ export default function Developer() {
           }
         } catch {
           // Corrupted cache — silently re-fetch.
-          sessionStorage.removeItem(cacheKey);
+          safeSessionStorage.removeItem(cacheKey);
         }
       }
 
@@ -128,13 +129,13 @@ export default function Developer() {
       // Cache the parsed endpoints in sessionStorage so subsequent mounts
       // skip the network roundtrip (Issue #580).
       try {
-        sessionStorage.setItem(cacheKey, JSON.stringify(endpoints));
+        safeSessionStorage.setItem(cacheKey, JSON.stringify(endpoints));
       } catch {
         // Storage full or unavailable — non-critical, the endpoints are already
         // in component state.
       }
 
-      const saved = localStorage.getItem('cp_explorer_endpoint');
+      const saved = safeLocalStorage.getItem('cp_explorer_endpoint');
       if (saved && endpoints.find((e) => e.id === saved)) {
         setExplorerEndpoint(saved);
       } else if (endpoints.length > 0) {
@@ -153,9 +154,9 @@ export default function Developer() {
 
   useEffect(() => {
     if (!explorerEndpoint) return;
-    localStorage.setItem('cp_explorer_endpoint', explorerEndpoint);
+    safeLocalStorage.setItem('cp_explorer_endpoint', explorerEndpoint);
 
-    const savedParamsStr = localStorage.getItem(`cp_explorer_params_${explorerEndpoint}`);
+    const savedParamsStr = safeLocalStorage.getItem(`cp_explorer_params_${explorerEndpoint}`);
     if (savedParamsStr) {
       try {
         const parsed = JSON.parse(savedParamsStr);
@@ -180,7 +181,7 @@ export default function Developer() {
   useEffect(() => {
     if (!explorerEndpoint) return;
     const timer = setTimeout(() => {
-      localStorage.setItem(
+      safeLocalStorage.setItem(
         `cp_explorer_params_${explorerEndpoint}`,
         JSON.stringify({
           pathParams: explorerPathParams,

@@ -23,6 +23,42 @@ const { logAuditEvent } = require('../services/auditService');
 const disputeService = require('../services/disputeService');
 const { logDisputeEvent } = disputeService;
 
+const DISPUTE_COLUMNS = [
+  'id',
+  'campaign_id',
+  'raised_by',
+  'reason',
+  'description',
+  'evidence_url',
+  'status',
+  'resolution_note',
+  'created_at',
+  'resolved_at',
+  'frozen_at',
+  'arbitrator_signer_added',
+  'decision',
+  'milestone_id',
+];
+
+const DISPUTE_EVENT_COLUMNS = [
+  'id',
+  'dispute_id',
+  'actor_id',
+  'action',
+  'note',
+  'created_at',
+];
+
+function disputeColumnList(alias = '') {
+  const prefix = alias ? `${alias}.` : '';
+  return DISPUTE_COLUMNS.map(col => `${prefix}${col}`).join(', ');
+}
+
+function disputeEventColumnList(alias = '') {
+  const prefix = alias ? `${alias}.` : '';
+  return DISPUTE_EVENT_COLUMNS.map(col => `${prefix}${col}`).join(', ');
+}
+
 function frontendBaseUrl() {
   return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
 }
@@ -303,9 +339,10 @@ router.patch(
       return res.status(422).json({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` });
     }
 
-    const { rows: disputes } = await db.query('SELECT * FROM disputes WHERE id = $1', [
-      req.params.id,
-    ]);
+    const { rows: disputes } = await db.query(
+      `SELECT ${disputeColumnList('')} FROM disputes WHERE id = $1`,
+      [req.params.id]
+    );
     if (!disputes.length) return res.status(404).json({ error: 'Dispute not found' });
     const dispute = disputes[0];
 
@@ -635,7 +672,7 @@ router.post(
     }
 
     const { rows: disputes } = await db.query(
-      `SELECT d.*, c.creator_id, c.wallet_public_key, c.escrow_contract_id, c.raised_amount, c.title AS campaign_title,
+      `SELECT ${disputeColumnList('d')}, c.creator_id, c.wallet_public_key, c.escrow_contract_id, c.raised_amount, c.title AS campaign_title,
             u.wallet_public_key AS creator_wallet_public_key
      FROM disputes d
      JOIN campaigns c ON c.id = d.campaign_id
@@ -911,7 +948,7 @@ router.get(
   requireRole('admin'),
   asyncHandler(async (req, res) => {
     const { rows } = await db.query(
-      `SELECT de.*, u.name AS actor_name
+      `SELECT ${disputeEventColumnList('de')}, u.name AS actor_name
      FROM dispute_events de
      LEFT JOIN users u ON u.id = de.actor_id
      WHERE de.dispute_id = $1
