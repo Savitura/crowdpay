@@ -197,6 +197,7 @@ test('POST /api/withdrawals/request creates pending request and logs event', asy
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -236,7 +237,7 @@ test('POST /api/withdrawals/request returns 429 when the velocity limit is excee
   assert.equal(response.body.limit, 5);
 });
 
-test('POST /api/withdrawals/request rejects an invalid Stellar public key with 422', async () => {
+test('POST /api/withdrawals/request rejects an invalid Stellar public key with 400', async () => {
   const { app, cleanup } = buildApp({
     queryImpl: async text => {
       if (text.includes('FROM campaigns WHERE id')) {
@@ -253,10 +254,11 @@ test('POST /api/withdrawals/request rejects an invalid Stellar public key with 4
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: 'not-a-valid-key',
       amount: '10.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
-  assert.equal(response.status, 422);
+  assert.equal(response.status, 400);
   assert.match(response.body.error.message, /destination_key must be a valid Stellar public key/);
 });
 
@@ -278,6 +280,7 @@ test('POST /api/withdrawals/request returns 400 for failed campaigns', async () 
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -303,6 +306,7 @@ test('POST /api/withdrawals/request blocks when campaign not active or funded', 
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -329,6 +333,7 @@ test('POST /api/withdrawals/request blocks duplicate pending', async () => {
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -362,6 +367,7 @@ test('POST /api/withdrawals/request denies invalid multisig config', async () =>
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -942,6 +948,7 @@ test('POST /api/withdrawals/request splits the payout between the creator and re
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '1000.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -994,6 +1001,7 @@ test('POST /api/withdrawals/request rejects a withdrawal smaller than the commis
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '50.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -1943,6 +1951,7 @@ test('POST /api/withdrawals/request calculates and persists creator_share and co
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '1000.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
