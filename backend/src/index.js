@@ -133,23 +133,33 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 3001;
 if (require.main === module) {
   const { startBackgroundWorkers, stopBackgroundWorkers } = require('./worker');
+  const { assertNoLegacyPlaintextUserTotpSecrets } = require('./services/walletSecrets');
 
-  const server = app.listen(PORT, async () => {
-    logger.info(`Server running on port ${PORT}`);
-    await startBackgroundWorkers();
-  });
+  async function startServer() {
+    await assertNoLegacyPlaintextUserTotpSecrets();
 
-  const gracefulShutdown = async () => {
-    logger.info('Received shutdown signal, stopping background workers...');
-    await stopBackgroundWorkers();
-    server.close(() => {
-      logger.info('HTTP server closed');
-      process.exit(0);
+    const server = app.listen(PORT, async () => {
+      logger.info(`Server running on port ${PORT}`);
+      await startBackgroundWorkers();
     });
-  };
 
-  process.on('SIGTERM', gracefulShutdown);
-  process.on('SIGINT', gracefulShutdown);
+    const gracefulShutdown = async () => {
+      logger.info('Received shutdown signal, stopping background workers...');
+      await stopBackgroundWorkers();
+      server.close(() => {
+        logger.info('HTTP server closed');
+        process.exit(0);
+      });
+    };
+
+    process.on('SIGTERM', gracefulShutdown);
+    process.on('SIGINT', gracefulShutdown);
+  }
+
+  startServer().catch(err => {
+    logger.error('Server startup failed', { error: err.message });
+    process.exitCode = 1;
+  });
 }
 
 module.exports = app;

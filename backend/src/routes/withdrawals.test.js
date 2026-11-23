@@ -206,6 +206,36 @@ test('POST /api/withdrawals/request creates pending request and logs event', asy
   assert.ok(calls.some(c => c.includes('INSERT INTO stellar_transactions')));
 });
 
+test('POST /api/withdrawals/request returns 429 when the velocity limit is exceeded', async () => {
+  const { app, cleanup } = buildApp({
+    queryImpl: async text => {
+      if (text.includes('FROM withdrawal_requests') && text.includes('COUNT(*)')) {
+        return { rows: [{ count: 6 }] };
+      }
+      if (text.includes('FROM campaigns WHERE id')) {
+        return { rows: [campaignRow()] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const response = await request(app)
+    .post('/api/withdrawals/request')
+    .set('Authorization', 'Bearer token')
+    .send({
+      campaign_id: '11111111-1111-1111-1111-111111111111',
+      destination_key: VALID_DESTINATION,
+      amount: '10.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
+    });
+
+  cleanup();
+  assert.equal(response.status, 429);
+  assert.equal(response.headers['retry-after'], '3600');
+  assert.equal(response.body.code, 'VELOCITY_LIMIT_EXCEEDED');
+  assert.equal(response.body.limit, 5);
+});
+
 test('POST /api/withdrawals/request rejects an invalid Stellar public key with 422', async () => {
   const { app, cleanup } = buildApp({
     queryImpl: async text => {

@@ -307,7 +307,7 @@ Returns whether the authenticated user may perform **platform** signing/rejectio
 
 ### `POST /api/withdrawals/request`
 
-Create a pending withdrawal request (creator only). Verifies multisig on the campaign wallet, ensures the campaign is `active` or `funded`, and rejects if another `pending` withdrawal already exists for the same campaign.
+Create a pending withdrawal request (creator only). Verifies multisig on the campaign wallet, ensures the campaign is `active` or `funded`, and rejects if another `pending` withdrawal already exists for the same campaign. Requests are also subject to a per-user rolling-window velocity limit; see [Velocity limits](#velocity-limits-for-withdrawal-and-refund-attempts).
 
 Body:
 
@@ -324,6 +324,34 @@ Errors:
 - `403` not the campaign creator
 - `409` campaign status not eligible, or duplicate pending withdrawal
 - `422` multisig configuration invalid
+- `429` withdrawal velocity limit exceeded (includes `Retry-After` and `retry_after`)
+
+### Velocity limits for withdrawal and refund attempts
+
+`POST /api/withdrawals/request` and `POST /api/refund-requests` count the
+actor's requests inside a rolling window before creating a new row. The limit
+is enforced from the existing `withdrawal_requests` / `refund_requests` tables,
+so it survives process restarts and is shared by every API instance.
+
+When the limit is reached the API responds with `429 Too Many Requests`:
+
+```json
+{
+  "error": "Too Many Requests",
+  "code": "VELOCITY_LIMIT_EXCEEDED",
+  "message": "Withdrawal velocity limit exceeded. Please try again later.",
+  "retry_after": 3600,
+  "limit": 5,
+  "window_seconds": 3600
+}
+```
+
+The response also carries a `Retry-After` header in seconds. Defaults are 5
+withdrawal attempts and 10 refund attempts per actor per hour. Tune them with
+`WITHDRAWAL_VELOCITY_MAX_REQUESTS`, `WITHDRAWAL_VELOCITY_WINDOW_SECONDS`,
+`REFUND_VELOCITY_MAX_REQUESTS`, and `REFUND_VELOCITY_WINDOW_SECONDS`. Setting a
+max to `0` disables that limit. See `docs/velocity-limits.md` for operational
+and security details.
 
 ### `POST /api/withdrawals/:id/approve/creator`
 

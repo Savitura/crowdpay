@@ -4,6 +4,9 @@ const { Keypair } = require('@stellar/stellar-sdk');
 const db = require('../config/database');
 
 const ENVELOPE_PREFIX = 'cpws:v1:';
+const TOTP_ENVELOPE_PREFIX = 'cpts:v1:';
+const WALLET_SECRET_KIND = 'wallet-secret-envelope';
+const TOTP_SECRET_KIND = 'totp-secret-envelope';
 const LOCAL_PROVIDER = 'local';
 const AWS_KMS_PROVIDER = 'aws-kms';
 
@@ -60,24 +63,40 @@ function b64ToBuffer(value) {
   return Buffer.from(String(value), 'base64');
 }
 
-function encodeEnvelope(payload) {
-  return `${ENVELOPE_PREFIX}${Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')}`;
+function encodeEnvelope(payload, prefix = ENVELOPE_PREFIX) {
+  return `${prefix}${Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')}`;
 }
 
 function parseEnvelope(value) {
-  if (typeof value !== 'string' || !value.startsWith(ENVELOPE_PREFIX)) return null;
-  const encoded = value.slice(ENVELOPE_PREFIX.length);
+  if (typeof value !== 'string') return null;
+  const prefix = value.startsWith(ENVELOPE_PREFIX)
+    ? ENVELOPE_PREFIX
+    : value.startsWith(TOTP_ENVELOPE_PREFIX)
+      ? TOTP_ENVELOPE_PREFIX
+      : null;
+  if (!prefix) return null;
+
+  const encoded = value.slice(prefix.length);
   const decoded = Buffer.from(encoded, 'base64url').toString('utf8');
   const payload = JSON.parse(decoded);
-  if (!payload || payload.kind !== 'wallet-secret-envelope' || payload.v !== 1) {
-    throw new Error('Unsupported wallet secret envelope');
+  const expectedKind = prefix === ENVELOPE_PREFIX ? WALLET_SECRET_KIND : TOTP_SECRET_KIND;
+  if (!payload || payload.kind !== expectedKind || payload.v !== 1) {
+    throw new Error('Unsupported secret envelope');
   }
   return payload;
 }
 
 function isEncryptedWalletSecret(value) {
   try {
-    return Boolean(parseEnvelope(value));
+    return parseEnvelope(value)?.kind === WALLET_SECRET_KIND;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function isEncryptedTotpSecret(value) {
+  try {
+    return parseEnvelope(value)?.kind === TOTP_SECRET_KIND;
   } catch (_err) {
     return false;
   }
@@ -119,7 +138,7 @@ function decryptAesGcm({ ciphertext, key, iv, aad, tag }) {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }
 
-function localEnvelopeEncrypt(secretBuffer, context) {
+function localEnvelopeEncrypt(secretBuffer, context, kind = WALLET_SECRET_KIND) {
   const aad = Buffer.from(JSON.stringify(context), 'utf8');
   const dataKey = crypto.randomBytes(32);
   const wrapped = encryptAesGcm({
@@ -136,7 +155,7 @@ function localEnvelopeEncrypt(secretBuffer, context) {
 
   return {
     v: 1,
-    kind: 'wallet-secret-envelope',
+    kind,
     provider: LOCAL_PROVIDER,
     algorithm: 'aes-256-gcm',
     context,
@@ -313,7 +332,7 @@ function kmsRequest(target, payload) {
   });
 }
 
-async function awsKmsEnvelopeEncrypt(secretBuffer, context) {
+async function awsKmsEnvelopeEncrypt(secretBuffer, context, kind = WALLET_SECRET_KIND) {
   const dataKeyResponse = await kmsRequest('TrentService.GenerateDataKey', {
     KeyId: process.env.WALLET_SECRET_KMS_KEY_ID,
     KeySpec: 'AES_256',
@@ -331,7 +350,7 @@ async function awsKmsEnvelopeEncrypt(secretBuffer, context) {
 
     return {
       v: 1,
-      kind: 'wallet-secret-envelope',
+      kind,
       provider: AWS_KMS_PROVIDER,
       algorithm: 'aes-256-gcm',
       kms_key_id: dataKeyResponse.KeyId || process.env.WALLET_SECRET_KMS_KEY_ID,
@@ -393,10 +412,10 @@ function validateWalletSecretConfig() {
   throw new Error(`Unsupported WALLET_SECRET_PROVIDER: ${provider}`);
 }
 
-async function encryptWithProvider(secretBuffer, context) {
+async function encryptWithProvider(secretBuffer, context, kind = WALLET_SECRET_KIND) {
   const provider = getConfiguredProvider();
-  if (provider === LOCAL_PROVIDER) return localEnvelopeEncrypt(secretBuffer, context);
-  if (provider === AWS_KMS_PROVIDER) return awsKmsEnvelopeEncrypt(secretBuffer, context);
+  if (provider === LOCAL_PROVIDER) return localEnvelopeEncrypt(secretBuffer, context, kind);
+  if (provider === AWS_KMS_PROVIDER) return awsKmsEnvelopeEncrypt(secretBuffer, context, kind);
   throw new Error(`Unsupported WALLET_SECRET_PROVIDER: ${provider}`);
 }
 
@@ -420,13 +439,31 @@ async function encryptWalletSecret(secret, contextInput = {}) {
   }
 }
 
+async function encryptTotpSecret(secret, userId) {
+  validateWalletSecretConfig();
+  if (isEncryptedTotpSecret(secret)) return secret;
+
+  const secretBuffer = Buffer.from(String(secret), 'utf8');
+  try {
+    const context = {
+      app: 'crowdpay',
+      entity: 'user-totp-secret',
+      user_id: String(userId),
+    };
+    const envelope = await encryptWithProvider(secretBuffer, context, TOTP_SECRET_KIND);
+    return encodeEnvelope(envelope, TOTP_ENVELOPE_PREFIX);
+  } finally {
+    secretBuffer.fill(0);
+  }
+}
+
 async function decryptWalletSecretToBuffer(secret, contextInput = {}) {
   if (typeof secret !== 'string' || !secret) {
     throw new Error('Wallet secret is missing');
   }
 
   const envelope = parseEnvelope(secret);
-  if (!envelope) {
+  if (!envelope || envelope.kind !== WALLET_SECRET_KIND) {
     throw new Error('Wallet secret has invalid format: encrypted envelope required');
   }
 
@@ -451,8 +488,41 @@ async function decryptWalletSecretToBuffer(secret, contextInput = {}) {
   return decryptWithProvider(envelope);
 }
 
+async function decryptTotpSecretToBuffer(secret, userId) {
+  if (typeof secret !== 'string' || !secret) {
+    throw new Error('TOTP secret is missing');
+  }
+
+  const envelope = parseEnvelope(secret);
+  if (!envelope || envelope.kind !== TOTP_SECRET_KIND) {
+    throw new Error('TOTP secret has invalid format: encrypted envelope required');
+  }
+
+  const context = envelope.context || {};
+  if (
+    context.app !== 'crowdpay' ||
+    context.entity !== 'user-totp-secret' ||
+    context.user_id !== String(userId)
+  ) {
+    throw new Error('TOTP secret owner or purpose mismatch');
+  }
+
+  return decryptWithProvider(envelope);
+}
+
 async function withDecryptedWalletSecret(secret, contextInput, fn) {
   const secretBuffer = await decryptWalletSecretToBuffer(secret, contextInput);
+  let plaintextSecret = secretBuffer.toString('utf8');
+  try {
+    return await fn(plaintextSecret);
+  } finally {
+    secretBuffer.fill(0);
+    plaintextSecret = null;
+  }
+}
+
+async function withDecryptedTotpSecret(secret, userId, fn) {
+  const secretBuffer = await decryptTotpSecretToBuffer(secret, userId);
   let plaintextSecret = secretBuffer.toString('utf8');
   try {
     return await fn(plaintextSecret);
@@ -521,15 +591,82 @@ async function assertNoLegacyPlaintextUserWalletSecrets({ runner = db } = {}) {
   }
 }
 
+async function rotateLegacyUserTotpSecrets({ runner = db, dryRun = false } = {}) {
+  const { rows } = await runner.query(
+    'SELECT id, totp_secret FROM users WHERE totp_secret IS NOT NULL ORDER BY created_at ASC, id ASC'
+  );
+
+  let rotated = 0;
+  let alreadyEncrypted = 0;
+  let invalid = 0;
+
+  for (const row of rows) {
+    if (isEncryptedTotpSecret(row.totp_secret)) {
+      alreadyEncrypted += 1;
+      continue;
+    }
+
+    if (
+      typeof row.totp_secret !== 'string' ||
+      !row.totp_secret ||
+      row.totp_secret.startsWith(ENVELOPE_PREFIX) ||
+      row.totp_secret.startsWith(TOTP_ENVELOPE_PREFIX)
+    ) {
+      invalid += 1;
+      continue;
+    }
+
+    const encryptedSecret = await encryptTotpSecret(row.totp_secret, row.id);
+    if (!dryRun) {
+      await runner.query('UPDATE users SET totp_secret = $1 WHERE id = $2', [
+        encryptedSecret,
+        row.id,
+      ]);
+    }
+    rotated += 1;
+  }
+
+  return {
+    total: rows.length,
+    rotated,
+    alreadyEncrypted,
+    invalid,
+  };
+}
+
+async function countLegacyPlaintextUserTotpSecrets({ runner = db } = {}) {
+  const { rows } = await runner.query('SELECT totp_secret FROM users WHERE totp_secret IS NOT NULL');
+  return rows.reduce(
+    (count, row) => count + (isEncryptedTotpSecret(row.totp_secret) ? 0 : 1),
+    0
+  );
+}
+
+async function assertNoLegacyPlaintextUserTotpSecrets({ runner = db } = {}) {
+  const count = await countLegacyPlaintextUserTotpSecrets({ runner });
+  if (count > 0) {
+    throw new Error(
+      `Detected ${count} legacy plaintext TOTP secret(s); run npm run rotate-totp-secrets before starting the application`
+    );
+  }
+}
+
 module.exports = {
+  assertNoLegacyPlaintextUserTotpSecrets,
   assertNoLegacyPlaintextUserWalletSecrets,
+  countLegacyPlaintextUserTotpSecrets,
   countLegacyPlaintextUserWalletSecrets,
+  decryptTotpSecretToBuffer,
   decryptWalletSecretToBuffer,
+  encryptTotpSecret,
   encryptWalletSecret,
   getConfiguredProvider,
+  isEncryptedTotpSecret,
   isEncryptedWalletSecret,
   isLegacyPlaintextWalletSecret,
+  rotateLegacyUserTotpSecrets,
   rotateLegacyUserWalletSecrets,
   validateWalletSecretConfig,
+  withDecryptedTotpSecret,
   withDecryptedWalletSecret,
 };

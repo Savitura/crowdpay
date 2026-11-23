@@ -3,6 +3,7 @@ const db = require('../config/database');
 const logger = require('../config/logger');
 const { requireAuth } = require('../middleware/auth');
 const { idempotency } = require('../middleware/idempotency');
+const { createVelocityLimit } = require('../middleware/velocityLimit');
 const { sendAlert } = require('../services/alerting');
 const { withdrawalValidation, validateRequest } = require('../middleware/validation');
 const {
@@ -56,6 +57,15 @@ async function recordPayoutAudit(payload) {
 }
 
 const ALLOWED_CAMPAIGN_STATUS_FOR_REQUEST = ['active', 'funded'];
+
+// Rolling-window velocity guard for withdrawal attempts (#1126). Counts rows
+// the actor created in `withdrawal_requests`, so it survives restarts and is
+// shared across API instances.
+const withdrawalVelocityLimit = createVelocityLimit({
+  kind: 'withdrawal',
+  actorId: req => req.user?.userId,
+  query: (text, params) => db.query(text, params),
+});
 
 function frontendBaseUrl() {
   return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
@@ -162,6 +172,7 @@ router.post(
   requireAuth,
   withdrawalValidation,
   validateRequest,
+  withdrawalVelocityLimit,
   asyncHandler(async (req, res) => {
     /**
      * @openapi
@@ -191,6 +202,8 @@ router.post(
      *         description: Forbidden
      *       404:
      *         description: Campaign not found
+     *       429:
+     *         description: Withdrawal velocity limit exceeded
      */
     const { campaign_id, destination_key, amount, evidence } = req.body;
 

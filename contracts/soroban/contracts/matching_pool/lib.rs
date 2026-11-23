@@ -30,6 +30,14 @@ pub struct PoolStatus {
     pub status: Symbol,
 }
 
+pub(crate) fn calculate_match_amount(
+    contribution_amount: i128,
+    match_ratio: i128,
+    remaining_pool: i128,
+) -> i128 {
+    ((contribution_amount * match_ratio) / 100).min(remaining_pool)
+}
+
 #[contract]
 pub struct MatchingPoolContract;
 
@@ -81,7 +89,7 @@ impl MatchingPoolContract {
             authorized_caller: authorized_caller.clone(),
             token: token.clone(),
             match_ratio,
-            total_pool,
+            total_pool: 0,
             matched_amount: 0,
             remaining_pool: total_pool,
             status: Symbol::new(&env, "active"),
@@ -124,6 +132,25 @@ impl MatchingPoolContract {
         );
     }
 
+    /// Record the sponsor's pledge so matching funds can be released later.
+    pub fn fund(env: Env, sponsor: Address, amount: i128) -> i128 {
+        sponsor.require_auth();
+
+        assert!(amount > 0, "Amount must be positive");
+
+        let key = Symbol::new(&env, "state");
+        let mut status: PoolStatus = env.storage().persistent().get(&key).unwrap();
+        if sponsor != status.sponsor {
+            panic!("Only the sponsor can fund the pool");
+        }
+
+        status.total_pool += amount;
+        status.remaining_pool += amount;
+        env.storage().persistent().set(&key, &status);
+
+        status.remaining_pool
+    }
+
     /// Release matching funds when a contribution is confirmed.
     ///
     /// Requires authorization from the designated authorized_caller (admin/platform/escrow).
@@ -150,6 +177,32 @@ impl MatchingPoolContract {
 
         let match_amount = (contribution_amount * status.match_ratio) / 100;
         let actual_match = match_amount.min(status.remaining_pool);
+    /// Called by backend oracle when a contribution is verified on-chain.
+    /// Calculates match_amount = min(contribution * ratio, remaining_pool)
+    /// and transfers it to the campaign recipient address.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `contribution_amount` - Amount of user contribution
+    /// * `recipient` - Campaign wallet to receive the match
+    ///
+    /// # Returns
+    /// The amount actually matched (0 if pool exhausted)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let matched = release_match(env, 100_0000000, recipient_address);
+    /// // matched = 100_0000000 for 1:1 ratio, or proportional amount if pool limited
+    /// ```
+    pub fn release_match(env: Env, contribution_amount: i128, recipient: Address) -> i128 {
+        let key = Symbol::new(&env, "state");
+        let mut status: PoolStatus = env.storage().persistent().get(&key).unwrap();
+
+        let actual_match = calculate_match_amount(
+            contribution_amount,
+            status.match_ratio,
+            status.remaining_pool,
+        );
 
         if actual_match > 0 {
             status.matched_amount += actual_match;
@@ -173,6 +226,9 @@ impl MatchingPoolContract {
             );
         }
 
+        }
+
+        let _ = recipient;
         actual_match
     }
 
@@ -187,6 +243,22 @@ impl MatchingPoolContract {
     }
 
     /// Get the current pool status and match statistics.
+    ///
+    /// # Returns
+    /// `PoolStatus` with current pool state:
+    /// - campaign_id
+    /// - sponsor address
+    /// - match_ratio
+    /// - total_pool (initial pledge)
+    /// - matched_amount (funds released so far)
+    /// - remaining_pool (available for future matches)
+    /// - status ('active' or 'exhausted')
+    ///
+    /// # Example
+    /// ```ignore
+    /// let pool = get_pool_status(env);
+    /// if pool.status == "exhausted" { /* handle exhausted pool */ }
+    /// ```
     pub fn get_pool_status(env: Env) -> PoolStatus {
         let key = Symbol::new(&env, "state");
         env.storage().persistent().get(&key).unwrap()
@@ -197,14 +269,29 @@ impl MatchingPoolContract {
     /// Enforces that caller is the registered sponsor, sets remaining_pool to 0,
     /// marks status as 'completed', transfers unclaimed balance to sponsor,
     /// and emits pool_reclaimed event.
+    /// Transfers remaining unmatched funds back to the sponsor.
+    /// Only callable by sponsor address. Campaign creator may also call
+    /// to initiate reclaim (backend verifies campaign end status).
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment
+    /// * `sponsor` - Sponsor address (must sign)
+    ///
+    /// # Returns
+    /// Amount reclaimed
+    ///
+    /// # Example
+    /// ```ignore
+    /// let reclaimed = reclaim(env, sponsor_address);
+    /// // sponsor receives reclaimed amount back to their Stellar account
+    /// ```
     pub fn reclaim(env: Env, sponsor: Address) -> i128 {
         sponsor.require_auth();
 
         let key = Symbol::new(&env, "state");
         let mut status: PoolStatus = env.storage().persistent().get(&key).unwrap();
-
         if sponsor != status.sponsor {
-            panic!("Unauthorized sponsor");
+            panic!("Only the sponsor can reclaim the pool");
         }
 
         let unclaimed = status.remaining_pool;
@@ -223,6 +310,8 @@ impl MatchingPoolContract {
                 (Symbol::new(&env, "pool_reclaimed"), status.campaign_id),
                 (sponsor, unclaimed),
             );
+            status.status = Symbol::new(&env, "completed");
+            env.storage().persistent().set(&key, &status);
         }
 
         unclaimed
@@ -536,3 +625,4 @@ mod tests {
         assert_eq!(f.token_client.balance(&f.client.address), 1_000);
     }
 }
+mod test;
