@@ -20,20 +20,14 @@ const { ERROR_CODES, allocateProportionalRefunds } = require('../services/disput
 const { validateRenderUrl } = require('../utils/urlValidation');
 const { haltScheduledReleases } = require('../services/milestoneAutoRelease');
 const { logAuditEvent } = require('../services/auditService');
+const disputeService = require('../services/disputeService');
+const { logDisputeEvent } = disputeService;
 
 function frontendBaseUrl() {
   return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
 }
 
-async function logDisputeEvent(client, { disputeId, actorId, action, note }) {
-  await client.query(
-    `INSERT INTO dispute_events (dispute_id, actor_id, action, note)
-     VALUES ($1, $2, $3, $4)`,
-    [disputeId, actorId || null, action, note || null]
-  );
-}
-
-// POST /campaigns/:id/disputes — contributor raises a dispute
+// POST /campaigns/:id/disputes - contributor raises a dispute
 router.post('/campaigns/:id/disputes', requireAuth, async (req, res) => {
   const { reason, description, evidence_url, milestone_id: milestoneId } = req.body;
 
@@ -134,7 +128,7 @@ router.post('/campaigns/:id/disputes', requireAuth, async (req, res) => {
     await client.query('COMMIT');
 
     // On-chain escrow freeze: adds the platform arbitrator as a third signer
-    // and raises the threshold to 3. This is best-effort here — the app
+    // and raises the threshold to 3. This is best-effort here - the app
     // already blocks new contributions and holds pending withdrawals above,
     // so a transient Horizon failure doesn't leave funds movable; the freeze
     // is retried by re-fetching the dispute if arbitrator_signer_added stays
@@ -220,60 +214,39 @@ router.post('/campaigns/:id/disputes', requireAuth, async (req, res) => {
   }
 });
 
-// GET /campaigns/:id/disputes — admin only
+// GET /campaigns/:id/disputes - admin only
 router.get(
   '/campaigns/:id/disputes',
   requireAuth,
   requireRole('admin'),
   asyncHandler(async (req, res) => {
     const { limit, offset } = parsePagination(req.query, { limit: 20, max: 100 });
-
-    const countResult = await db.query(
-      'SELECT COUNT(*)::int AS total FROM disputes WHERE campaign_id = $1',
-      [req.params.id]
-    );
-    const total = countResult.rows[0].total;
-
-    const { rows } = await db.query(
-      `SELECT d.*, u.name AS raised_by_name, u.email AS raised_by_email
-     FROM disputes d
-     JOIN users u ON u.id = d.raised_by
-     WHERE d.campaign_id = $1
-     ORDER BY d.created_at DESC
-     LIMIT $2 OFFSET $3`,
-      [req.params.id, limit, offset]
-    );
-    res.json({ data: rows, total, limit, offset });
+    const result = await disputeService.listCampaignDisputes(req.params.id, {
+      limit,
+      offset,
+      db,
+    });
+    res.json(result);
   })
 );
 
-// GET /campaigns/:id/dispute — the campaign's current active dispute, scoped
+// GET /campaigns/:id/dispute - the campaign's current active dispute, scoped
 // to the disputing contributor or the campaign creator (not admin-only, so
 // the frontend can locate the dispute to render the evidence form).
 router.get(
   '/campaigns/:id/dispute',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const { rows } = await db.query(
-      `SELECT d.*, c.creator_id
-     FROM disputes d
-     JOIN campaigns c ON c.id = d.campaign_id
-     WHERE d.campaign_id = $1 AND d.status IN ('open', 'under_review')
-     ORDER BY d.created_at DESC
-     LIMIT 1`,
-      [req.params.id]
+    const dispute = await disputeService.getActiveCampaignDispute(
+      req.params.id,
+      req.user.userId,
+      { db }
     );
-    if (!rows.length) return res.json({ dispute: null });
-
-    const dispute = rows[0];
-    if (req.user.userId !== dispute.raised_by && req.user.userId !== dispute.creator_id) {
-      return res.json({ dispute: null });
-    }
     res.json({ dispute });
   })
 );
 
-// POST /disputes/:id/evidence — either party (creator or contributor) submits evidence
+// POST /disputes/:id/evidence - either party (creator or contributor) submits evidence
 router.post(
   '/disputes/:id/evidence',
   requireAuth,
@@ -291,45 +264,27 @@ router.post(
       }
     }
 
-    const { rows: disputes } = await db.query(
-      `SELECT d.*, c.creator_id
-     FROM disputes d JOIN campaigns c ON c.id = d.campaign_id
-     WHERE d.id = $1`,
-      [req.params.id]
-    );
-    if (!disputes.length) return res.status(404).json({ error: 'Dispute not found' });
-    const dispute = disputes[0];
-
-    let role;
-    if (req.user.userId === dispute.raised_by) {
-      role = 'contributor';
-    } else if (req.user.userId === dispute.creator_id) {
-      role = 'creator';
-    } else {
-      return res.status(403).json({
-        error: 'Only the disputing contributor or the campaign creator can submit evidence',
-      });
+    try {
+      const evidence = await disputeService.submitEvidence(
+        {
+          disputeId: req.params.id,
+          userId: req.user.userId,
+          text,
+          attachmentUrls: urls,
+        },
+        { db, logger }
+      );
+      res.status(201).json(evidence);
+    } catch (err) {
+      if (err.status) {
+        return res.status(err.status).json({ error: err.message });
+      }
+      throw err;
     }
-
-    const { rows } = await db.query(
-      `INSERT INTO dispute_evidence (dispute_id, submitted_by, role, text, attachment_urls)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING *`,
-      [dispute.id, req.user.userId, role, text.trim(), JSON.stringify(urls)]
-    );
-
-    await logDisputeEvent(db, {
-      disputeId: dispute.id,
-      actorId: req.user.userId,
-      action: 'evidence_submitted',
-      note: role,
-    }).catch(err => logger.error('Dispute evidence log failed', { error: err.message }));
-
-    res.status(201).json(rows[0]);
   })
 );
 
-// PATCH /disputes/:id — admin updates status + resolution note
+// PATCH /disputes/:id - admin updates status + resolution note
 router.patch(
   '/disputes/:id',
   requireAuth,
@@ -475,7 +430,7 @@ router.patch(
           sendDisputeResolvedContributorEmail({
             to: userRows[0].email,
             disputeId: dispute.id,
-            outcome: 'resolved in your favor — a refund has been initiated',
+            outcome: 'resolved in your favor - a refund has been initiated',
             contributorName: userRows[0].name,
             campaignTitle: disputeCampaignRows[0]?.title,
             resolutionNote: resolution_note,
@@ -620,7 +575,7 @@ router.patch(
             to: creatorRows[0].email,
             disputeId: dispute.id,
             outcome:
-              'resolved in your favor — the dispute is closed' + (txInfo ? ` (TX: ${txInfo})` : ''),
+              'resolved in your favor - the dispute is closed' + (txInfo ? ` (TX: ${txInfo})` : ''),
             creatorName: creatorRows[0].name,
             campaignTitle: creatorRows[0].title,
             resolutionNote: resolution_note,
@@ -664,7 +619,7 @@ router.patch(
   })
 );
 
-// POST /admin/disputes/:id/decide — platform arbitrator decides the dispute outcome
+// POST /admin/disputes/:id/decide - platform arbitrator decides the dispute outcome
 router.post(
   '/admin/disputes/:id/decide',
   requireAuth,
@@ -881,7 +836,7 @@ router.post(
           sendDisputeResolvedCreatorEmail({
             to: creatorRows[0].email,
             disputeId: dispute.id,
-            outcome: 'resolved in your favor — the dispute is closed',
+            outcome: 'resolved in your favor - the dispute is closed',
             creatorName: creatorRows[0].name,
             campaignTitle: dispute.campaign_title,
             resolutionNote: reason,
@@ -899,7 +854,7 @@ router.post(
           sendDisputeResolvedContributorEmail({
             to: user.email,
             disputeId: dispute.id,
-            outcome: 'resolved in your favor — a refund has been issued',
+            outcome: 'resolved in your favor - a refund has been issued',
             contributorName: user.name,
             campaignTitle: dispute.campaign_title,
             resolutionNote: reason,
@@ -949,7 +904,7 @@ router.post(
   })
 );
 
-// GET /disputes/:id/events — audit log (admin only)
+// GET /disputes/:id/events - audit log (admin only)
 router.get(
   '/disputes/:id/events',
   requireAuth,

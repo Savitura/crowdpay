@@ -27,6 +27,7 @@ const {
   checkLoginAnomalies,
 } = require('../services/sessionService');
 const asyncHandler = require('../utils/asyncHandler');
+const authService = require('../services/authService');
 const {
   registerValidation,
   loginValidation,
