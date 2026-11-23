@@ -1,26 +1,12 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, lazy, Suspense } from 'react';
 import { Link, useParams, Navigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import VelocityWidget from '../components/campaign/VelocityWidget';
 
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-  PieChart,
-  Pie,
-  Cell,
-  BarChart,
-  Bar,
-} from 'recharts';
-
-const DONUT_COLORS = ['#7c3aed', '#22c55e', '#f59e0b', '#ef4444', '#3b82f6', '#ec4899', '#14b8a6'];
+const AssetMixChart = lazy(() => import('../components/AssetMixChart'));
+const MilestoneProgressChart = lazy(() => import('../components/MilestoneProgressChart'));
 
 function StatCard({ label, value }) {
   return (
@@ -209,56 +195,44 @@ export default function CreatorCampaignAnalytics() {
           >
             <div className="campaign-card">
               <h3 style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>Asset Mix</h3>
-              {assetMixData.length > 0 ? (
-                <div style={{ width: '100%', height: '220px' }}>
-                  <ResponsiveContainer>
-                    <PieChart>
-                      <Pie
-                        data={assetMixData}
-                        dataKey="value"
-                        nameKey="name"
-                        cx="50%"
-                        cy="50%"
-                        outerRadius={80}
-                        label
-                      >
-                        {assetMixData.map((_, index) => (
-                          <Cell
-                            key={`cell-${index}`}
-                            fill={DONUT_COLORS[index % DONUT_COLORS.length]}
-                          />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <p style={{ color: 'var(--color-text-hint)' }}>No contribution data</p>
-              )}
+              <Suspense
+                fallback={
+                  <div
+                    style={{
+                      height: '220px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'var(--color-text-hint)',
+                    }}
+                  >
+                    Loading asset mix...
+                  </div>
+                }
+              >
+                <AssetMixChart data={assetMixData} />
+              </Suspense>
             </div>
 
             <div className="campaign-card">
               <h3 style={{ marginBottom: '1rem', fontSize: '1.1rem' }}>Milestone Progress</h3>
-              {milestonesData.length > 0 ? (
-                <div style={{ width: '100%', height: '220px' }}>
-                  <ResponsiveContainer>
-                    <BarChart
-                      data={milestonesData}
-                      layout="vertical"
-                      margin={{ top: 5, right: 20, left: 20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis type="number" domain={[0, 100]} />
-                      <YAxis dataKey="name" type="category" width={80} />
-                      <Tooltip />
-                      <Bar dataKey="progress" fill="#22c55e" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <p style={{ color: 'var(--color-text-hint)' }}>No milestones defined</p>
-              )}
+              <Suspense
+                fallback={
+                  <div
+                    style={{
+                      height: '220px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'var(--color-text-hint)',
+                    }}
+                  >
+                    Loading milestone progress...
+                  </div>
+                }
+              >
+                <MilestoneProgressChart data={milestonesData} />
+              </Suspense>
             </div>
           </div>
         </>

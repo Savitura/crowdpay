@@ -87,11 +87,38 @@ export default function App() {
                     path="/campaigns/new"
                     element={
                       <PrivateRoute>
-                        <CreateCampaign />
+                        <Suspense
+                          fallback={
+                            <div
+                              className="loading-container"
+                              style={{ padding: '2rem', textAlign: 'center' }}
+                            >
+                              Loading...
+                            </div>
+                          }
+                        >
+                          <CreateCampaign />
+                        </Suspense>
                       </PrivateRoute>
                     }
                   />
-                  <Route path="/campaigns/:id" element={<Campaign />} />
+                  <Route
+                    path="/campaigns/:id"
+                    element={
+                      <Suspense
+                        fallback={
+                          <div
+                            className="loading-container"
+                            style={{ padding: '2rem', textAlign: 'center' }}
+                          >
+                            Loading...
+                          </div>
+                        }
+                      >
+                        <Campaign />
+                      </Suspense>
+                    }
+                  />
                   <Route path="/campaigns/:id/share" element={<CampaignShare />} />
                   {/* Short share link handed out by the referral system (#675) */}
                   <Route path="/c/:id" element={<Campaign />} />
@@ -106,7 +133,18 @@ export default function App() {
                     path="/admin"
                     element={
                       <PrivateRoute>
-                        <AdminDashboard />
+                        <Suspense
+                          fallback={
+                            <div
+                              className="loading-container"
+                              style={{ padding: '2rem', textAlign: 'center' }}
+                            >
+                              Loading...
+                            </div>
+                          }
+                        >
+                          <AdminDashboard />
+                        </Suspense>
                       </PrivateRoute>
                     }
                   />
@@ -138,7 +176,18 @@ export default function App() {
                     path="/dashboard/analytics"
                     element={
                       <PrivateRoute>
-                        <CreatorAnalytics />
+                        <Suspense
+                          fallback={
+                            <div
+                              className="loading-container"
+                              style={{ padding: '2rem', textAlign: 'center' }}
+                            >
+                              Loading...
+                            </div>
+                          }
+                        >
+                          <CreatorAnalytics />
+                        </Suspense>
                       </PrivateRoute>
                     }
                   />
@@ -146,7 +195,18 @@ export default function App() {
                     path="/dashboard/analytics/:campaignId"
                     element={
                       <PrivateRoute>
-                        <CreatorCampaignAnalytics />
+                        <Suspense
+                          fallback={
+                            <div
+                              className="loading-container"
+                              style={{ padding: '2rem', textAlign: 'center' }}
+                            >
+                              Loading...
+                            </div>
+                          }
+                        >
+                          <CreatorCampaignAnalytics />
+                        </Suspense>
                       </PrivateRoute>
                     }
                   />
@@ -183,7 +243,23 @@ export default function App() {
                     }
                   />
                   <Route path="/governance" element={<Governance />} />
-                  <Route path="/ops" element={<OpsCenter />} />
+                  <Route
+                    path="/ops"
+                    element={
+                      <Suspense
+                        fallback={
+                          <div
+                            className="loading-container"
+                            style={{ padding: '2rem', textAlign: 'center' }}
+                          >
+                            Loading...
+                          </div>
+                        }
+                      >
+                        <OpsCenter />
+                      </Suspense>
+                    }
+                  />
                   <Route
                     path="/my-contributions"
                     element={<Navigate to="/dashboard?tab=contributions" replace />}
