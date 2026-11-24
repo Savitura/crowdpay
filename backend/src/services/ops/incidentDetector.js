@@ -7,6 +7,7 @@
 
 const db = require('../../config/database');
 const logger = require('../../config/logger');
+const { safeFetch } = require('../../utils/safeFetch');
 
 // Threshold constants
 const HORIZON_WARN_LATENCY_MS = 2000;
@@ -152,10 +153,11 @@ async function dispatchIncidentNotification(incident, isResolved = false) {
   // 1. Webhook
   if (webhookUrl) {
     try {
-      await fetch(webhookUrl, {
+      await safeFetch(webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        timeoutMs: 10_000,
       });
       logger.info('Dispatched ops incident webhook', {
         incident_id: incident.id,

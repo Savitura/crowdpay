@@ -11,6 +11,52 @@ const { toStroops, fromStroops, mulBpsFloor, percentToBps } = require('../utils/
 const VALID_CADENCES = ['daily', 'weekly', 'biweekly', 'monthly'];
 const ADVISORY_LOCK_KEY = 926001;
 
+const SCHEDULE_COLUMNS = [
+  'id',
+  'campaign_id',
+  'creator_id',
+  'amount',
+  'percentage',
+  'asset_type',
+  'destination_key',
+  'cadence',
+  'start_date',
+  'next_run_at',
+  'end_date',
+  'max_occurrences',
+  'occurrences_count',
+  'status',
+  'timezone',
+  'last_run_at',
+  'last_withdrawal_request_id',
+  'last_error',
+  'evidence',
+  'created_at',
+  'updated_at',
+];
+
+const RUN_COLUMNS = [
+  'id',
+  'schedule_id',
+  'campaign_id',
+  'withdrawal_request_id',
+  'run_at',
+  'status',
+  'amount',
+  'error_message',
+  'created_at',
+];
+
+function scheduleColumnList(alias = '') {
+  const prefix = alias ? `${alias}.` : '';
+  return SCHEDULE_COLUMNS.map(col => `${prefix}${col}`).join(', ');
+}
+
+function runColumnList(alias = '') {
+  const prefix = alias ? `${alias}.` : '';
+  return RUN_COLUMNS.map(col => `${prefix}${col}`).join(', ');
+}
+
 function calculateNextRunTime(fromDate, cadence, _timezone = 'UTC') {
   const current = dayjs(fromDate);
   switch (cadence) {
@@ -148,7 +194,7 @@ async function createPayoutSchedule({
  */
 async function listPayoutSchedules(campaignId, creatorId) {
   const { rows } = await db.query(
-    `SELECT * FROM recurring_payout_schedules
+    `SELECT ${scheduleColumnList('')} FROM recurring_payout_schedules
      WHERE campaign_id = $1 AND creator_id = $2
      ORDER BY created_at DESC`,
     [campaignId, creatorId]
@@ -161,7 +207,7 @@ async function listPayoutSchedules(campaignId, creatorId) {
  */
 async function getPayoutSchedule(scheduleId, campaignId, creatorId) {
   const { rows } = await db.query(
-    `SELECT * FROM recurring_payout_schedules
+    `SELECT ${scheduleColumnList('')} FROM recurring_payout_schedules
      WHERE id = $1 AND campaign_id = $2 AND creator_id = $3`,
     [scheduleId, campaignId, creatorId]
   );
@@ -174,7 +220,7 @@ async function getPayoutSchedule(scheduleId, campaignId, creatorId) {
 
   const schedule = rows[0];
   const { rows: runs } = await db.query(
-    `SELECT * FROM recurring_payout_runs
+    `SELECT ${runColumnList('')} FROM recurring_payout_runs
      WHERE schedule_id = $1
      ORDER BY run_at DESC
      LIMIT 50`,
@@ -210,7 +256,7 @@ async function pausePayoutSchedule(scheduleId, campaignId, creatorId) {
  */
 async function resumePayoutSchedule(scheduleId, campaignId, creatorId) {
   const { rows: existing } = await db.query(
-    `SELECT * FROM recurring_payout_schedules
+    `SELECT ${scheduleColumnList('')} FROM recurring_payout_schedules
      WHERE id = $1 AND campaign_id = $2 AND creator_id = $3 AND status = 'paused'`,
     [scheduleId, campaignId, creatorId]
   );
@@ -324,7 +370,7 @@ async function processDuePayoutSchedules() {
     if (!lockAcquired) return [];
 
     const { rows: dueSchedules } = await db.query(
-      `SELECT s.*, c.title AS campaign_title, c.status AS campaign_status, c.wallet_public_key,
+      `SELECT ${scheduleColumnList('s')}, c.title AS campaign_title, c.status AS campaign_status, c.wallet_public_key,
             c.target_amount, c.raised_amount, u.email AS creator_email, u.name AS creator_name,
             u.wallet_public_key AS creator_wallet_public_key
      FROM recurring_payout_schedules s

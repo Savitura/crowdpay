@@ -1,5 +1,11 @@
 #![cfg(test)]
-
+#![allow(
+    deprecated,
+    unused_imports,
+    unused_variables,
+    mismatched_lifetime_syntaxes,
+    clippy::all
+)]
 use super::*;
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{symbol_short, token, Address, Env};
@@ -312,7 +318,12 @@ fn at_or_below_the_auditor_threshold_executes_immediately() {
 fn approving_an_unknown_pending_id_is_rejected() {
     let env = Env::default();
     let h = setup(&env, policy(), 10_000);
-    let err = h.client.try_approve_withdrawal(&404).err().unwrap().unwrap();
+    let err = h
+        .client
+        .try_approve_withdrawal(&404)
+        .err()
+        .unwrap()
+        .unwrap();
     assert_eq!(err, TreasuryError::PendingNotFound);
 }
 
@@ -604,7 +615,9 @@ fn test_initialize_requires_platform_auth() {
 fn jump_past_default_ttl(env: &Env, h: &Harness) {
     let jump = env.ledger().get().min_persistent_entry_ttl * 100;
     env.as_contract(&h.token.address, || {
-        env.storage().instance().extend_ttl(jump + 1000, jump + 1000);
+        env.storage()
+            .instance()
+            .extend_ttl(jump + 1000, jump + 1000);
     });
     env.ledger().with_mut(|li| li.sequence_number += jump);
 }

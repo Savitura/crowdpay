@@ -510,6 +510,14 @@ export const api = {
     const res = await apiClient.get(`/contributions/finalization/${txHash}`);
     return res.data;
   },
+  async getContributionRefundStatus(contributionId) {
+    const res = await apiClient.get(`/contributions/${contributionId}/refund-status`);
+    return res.data;
+  },
+  async requestContributionRefund(contributionId) {
+    const res = await apiClient.post(`/contributions/${contributionId}/refund`);
+    return res.data;
+  },
 
   // --- Subscriptions (Freighter support #821) ---
   async prepareSubscription(campaignId, { amountPerPeriod, asset, periodMonths, totalPeriods }) {
@@ -578,6 +586,44 @@ export const api = {
   },
   async listWebhookDeliveries(params) {
     const res = await apiClient.get('/webhooks/deliveries', { params });
+    return res.data;
+  },
+  async sendWebhookTestEvent(id, data = {}) {
+    const res = await apiClient.post(`/webhooks/${id}/test`, data);
+    return res.data;
+  },
+  async getWebhookDeliveries(id, params) {
+    const res = await apiClient.get(`/webhooks/${id}/deliveries`, { params });
+    return res.data;
+  },
+  async getWebhookDeliveryDetails(deliveryId) {
+    const res = await apiClient.get(`/webhooks/deliveries/${deliveryId}`);
+    return res.data;
+  },
+  async replayWebhookDelivery(deliveryId) {
+    const res = await apiClient.post(`/webhooks/deliveries/${deliveryId}/replay`);
+    return res.data;
+  },
+  async listCampaignWebhooks(campaignId) {
+    const res = await apiClient.get(`/campaigns/${campaignId}/webhooks`);
+    return res.data;
+  },
+  async createCampaignWebhook(campaignId, data) {
+    const res = await apiClient.post(`/campaigns/${campaignId}/webhooks`, data);
+    return res.data;
+  },
+  async deleteCampaignWebhook(campaignId, webhookId) {
+    const res = await apiClient.delete(`/campaigns/${campaignId}/webhooks/${webhookId}`);
+    return res.data;
+  },
+  async sendCampaignWebhookTestEvent(campaignId, webhookId, data = {}) {
+    const res = await apiClient.post(`/campaigns/${campaignId}/webhooks/${webhookId}/test`, data);
+    return res.data;
+  },
+  async getCampaignWebhookDeliveries(campaignId, webhookId, params) {
+    const res = await apiClient.get(`/campaigns/${campaignId}/webhooks/${webhookId}/deliveries`, {
+      params,
+    });
     return res.data;
   },
 

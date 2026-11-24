@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { useToast } from '../context/ToastContext';
+import { validateMonetaryInput, parseDecimal } from '../utils/decimal';
 
 /**
  * PoolManager — UI for creating, joining, and managing contribution pools.
@@ -46,13 +47,21 @@ export default function PoolManager({ campaignId, campaignTitle }) {
   const handleCreatePool = async (e) => {
     e.preventDefault();
     if (!poolTitle.trim() || !poolTarget) return;
+    const targetCheck = validateMonetaryInput(poolTarget, {
+      fieldName: 'Target amount',
+      allowZero: false,
+    });
+    if (!targetCheck.isValid) {
+      toast(targetCheck.error, 'error');
+      return;
+    }
     setCreating(true);
     try {
       await api.createPool({
         campaign_id: campaignId,
         title: poolTitle.trim(),
         description: poolDesc.trim() || undefined,
-        target_amount: parseFloat(poolTarget),
+        target_amount: Number(parseDecimal(poolTarget)),
       });
       toast('Pool created! Share the link with your group.', 'success');
       setShowCreateForm(false);
@@ -68,13 +77,17 @@ export default function PoolManager({ campaignId, campaignTitle }) {
   };
 
   const handleJoinPool = async (poolId) => {
-    if (!joinAmount || parseFloat(joinAmount) <= 0) {
+    const joinCheck = validateMonetaryInput(joinAmount, {
+      fieldName: 'Share amount',
+      allowZero: false,
+    });
+    if (!joinCheck.isValid) {
       toast('Enter a valid share amount', 'error');
       return;
     }
     setJoining(true);
     try {
-      await api.joinPool(poolId, parseFloat(joinAmount), joinName.trim() || undefined);
+      await api.joinPool(poolId, Number(parseDecimal(joinAmount)), joinName.trim() || undefined);
       toast('You have joined the pool!', 'success');
       setJoinPoolId(null);
       setJoinAmount('');

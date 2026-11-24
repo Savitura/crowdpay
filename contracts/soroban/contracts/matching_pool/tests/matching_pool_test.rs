@@ -74,7 +74,14 @@ fn initialization_requires_sponsor_auth() {
     let client = MatchingPoolContractClient::new(&env, &contract_id);
 
     assert!(client
-        .try_initialize(&sponsor, &Address::generate(&env), &token_id, &1u64, &100, &0)
+        .try_initialize(
+            &sponsor,
+            &Address::generate(&env),
+            &token_id,
+            &1u64,
+            &100,
+            &0
+        )
         .is_err());
 }
 
@@ -136,7 +143,10 @@ fn release_match_applies_one_to_one_ratio() {
     env.mock_all_auths();
     let f = setup(&env, 100, 10_000, 0);
 
-    assert_eq!(f.client.release_match(&f.caller, &1_000, &f.recipient), 1_000);
+    assert_eq!(
+        f.client.release_match(&f.caller, &1_000, &f.recipient),
+        1_000
+    );
 
     let status = f.client.get_pool_status();
     assert_eq!(status.matched_amount, 1_000);
@@ -151,7 +161,10 @@ fn release_match_applies_two_to_one_ratio() {
     env.mock_all_auths();
     let f = setup(&env, 200, 10_000, 0);
 
-    assert_eq!(f.client.release_match(&f.caller, &1_500, &f.recipient), 3_000);
+    assert_eq!(
+        f.client.release_match(&f.caller, &1_500, &f.recipient),
+        3_000
+    );
 
     let status = f.client.get_pool_status();
     assert_eq!(status.matched_amount, 3_000);
@@ -181,7 +194,10 @@ fn repeated_releases_exhaust_pool_and_return_zero_afterwards() {
 
     assert_eq!(f.client.release_match(&f.caller, &400, &f.recipient), 400);
     assert_eq!(f.client.release_match(&f.caller, &400, &f.recipient), 400);
-    assert_eq!(f.client.get_pool_status().status, Symbol::new(&env, "active"));
+    assert_eq!(
+        f.client.get_pool_status().status,
+        Symbol::new(&env, "active")
+    );
 
     assert_eq!(f.client.release_match(&f.caller, &400, &f.recipient), 200);
     assert_eq!(
@@ -267,7 +283,10 @@ fn reclaim_requires_sponsor_auth() {
     env.set_auths(&[]);
 
     assert!(f.client.try_reclaim(&f.sponsor).is_err());
-    assert_eq!(f.client.get_pool_status().status, Symbol::new(&env, "active"));
+    assert_eq!(
+        f.client.get_pool_status().status,
+        Symbol::new(&env, "active")
+    );
 }
 
 #[test]
@@ -278,7 +297,10 @@ fn reclaim_rejects_non_sponsor_even_with_mocked_auth() {
     let attacker = Address::generate(&env);
 
     assert!(f.client.try_reclaim(&attacker).is_err());
-    assert_eq!(f.client.get_pool_status().status, Symbol::new(&env, "active"));
+    assert_eq!(
+        f.client.get_pool_status().status,
+        Symbol::new(&env, "active")
+    );
 }
 
 #[test]
@@ -312,7 +334,9 @@ fn pool_state_survives_past_default_ttl() {
     // the pool's own storage is under test.
     let jump = env.ledger().get().min_persistent_entry_ttl * 100;
     env.as_contract(&f.token_id, || {
-        env.storage().instance().extend_ttl(jump + 1000, jump + 1000);
+        env.storage()
+            .instance()
+            .extend_ttl(jump + 1000, jump + 1000);
     });
     env.ledger().with_mut(|li| li.sequence_number += jump);
 

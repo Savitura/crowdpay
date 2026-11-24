@@ -1,9 +1,16 @@
+#![allow(
+    deprecated,
+    unused_imports,
+    unused_variables,
+    mismatched_lifetime_syntaxes,
+    clippy::all
+)]
+use milestones::{Milestone, MilestoneStatus, MilestonesContract, MilestonesContractClient};
 use soroban_sdk::{
     contract, contractimpl, contracttype,
     testutils::{Address as _, Events},
     token, Address, BytesN, Env, Symbol, Vec,
 };
-use milestones::{MilestonesContract, MilestonesContractClient, Milestone, MilestoneStatus};
 
 fn make_milestone(env: &Env, title: &[u8; 32], bps: u32) -> Milestone {
     Milestone {
@@ -52,7 +59,9 @@ impl MockEscrow {
     pub fn approve_withdrawal(env: Env, _to: Address, release_amount: i128) {
         let key = MockDataKey::ApprovedAmount;
         let current: i128 = env.storage().instance().get(&key).unwrap_or(0);
-        env.storage().instance().set(&key, &(current + release_amount));
+        env.storage()
+            .instance()
+            .set(&key, &(current + release_amount));
     }
 
     pub fn execute_withdrawal(env: Env, _to: Address, release_amount: i128) {
@@ -61,15 +70,23 @@ impl MockEscrow {
         if current < release_amount {
             panic!("Insufficient approved amount");
         }
-        env.storage().instance().set(&key, &(current - release_amount));
+        env.storage()
+            .instance()
+            .set(&key, &(current - release_amount));
     }
 
     pub fn get_total_raised(env: Env) -> i128 {
-        env.storage().instance().get(&MockDataKey::TotalMockRaised).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&MockDataKey::TotalMockRaised)
+            .unwrap_or(0)
     }
 
     pub fn get_asset(env: Env) -> Address {
-        env.storage().instance().get(&MockDataKey::MockAsset).unwrap()
+        env.storage()
+            .instance()
+            .get(&MockDataKey::MockAsset)
+            .unwrap()
     }
 }
 
@@ -99,7 +116,9 @@ fn setup_milestones_contract(
 
     let total_key = MockDataKey::TotalMockRaised;
     env.as_contract(&escrow_id, || {
-        env.storage().instance().set(&total_key, &escrow_total_raised);
+        env.storage()
+            .instance()
+            .set(&total_key, &escrow_total_raised);
     });
 
     let asset_key = MockDataKey::MockAsset;
@@ -115,10 +134,7 @@ fn setup_milestones_contract(
     (contract_id, creator, platform, escrow_id)
 }
 
-fn setup_no_auth(
-    env: &Env,
-    milestones: Vec<Milestone>,
-) -> (Address, Address, Address) {
+fn setup_no_auth(env: &Env, milestones: Vec<Milestone>) -> (Address, Address, Address) {
     let creator = Address::generate(&env);
     let platform = Address::generate(&env);
     let token_addr = env.register_stellar_asset_contract(Address::generate(&env));
@@ -148,7 +164,9 @@ fn setup_no_auth(
     let contract_id = env.register_contract(None, MilestonesContract);
     let client = MilestonesContractClient::new(&env, &contract_id);
 
-    client.mock_all_auths().initialize(&creator, &platform, &escrow_id, &milestones);
+    client
+        .mock_all_auths()
+        .initialize(&creator, &platform, &escrow_id, &milestones);
 
     (contract_id, creator, platform)
 }
@@ -158,7 +176,11 @@ fn test_initialize_requires_platform_auth() {
     let env = Env::default();
     let milestones = Vec::from_array(
         &env,
-        [make_milestone(&env, b"INIT1111111111111111111111111111", 10000u32)],
+        [make_milestone(
+            &env,
+            b"INIT1111111111111111111111111111",
+            10000u32,
+        )],
     );
     let creator = Address::generate(&env);
     let platform = Address::generate(&env);
@@ -241,7 +263,11 @@ fn test_submit_milestone_rejects_non_creator() {
     let env = Env::default();
     let milestones = Vec::from_array(
         &env,
-        [make_milestone(&env, b"DDDD1111111111111111111111111111", 10000u32)],
+        [make_milestone(
+            &env,
+            b"DDDD1111111111111111111111111111",
+            10000u32,
+        )],
     );
 
     let (contract_id, _creator, _platform) = setup_no_auth(&env, milestones);
@@ -259,7 +285,11 @@ fn test_approve_milestone_platform_only() {
     let env = Env::default();
     let milestones = Vec::from_array(
         &env,
-        [make_milestone(&env, b"EEEE1111111111111111111111111111", 10000u32)],
+        [make_milestone(
+            &env,
+            b"EEEE1111111111111111111111111111",
+            10000u32,
+        )],
     );
 
     let (contract_id, creator, platform, _escrow) =
@@ -280,7 +310,11 @@ fn test_approve_milestone_rejects_non_platform() {
     let env = Env::default();
     let milestones = Vec::from_array(
         &env,
-        [make_milestone(&env, b"FFFF1111111111111111111111111111", 10000u32)],
+        [make_milestone(
+            &env,
+            b"FFFF1111111111111111111111111111",
+            10000u32,
+        )],
     );
 
     let (contract_id, creator, _platform) = setup_no_auth(&env, milestones);
@@ -297,7 +331,11 @@ fn test_reject_milestone() {
     let env = Env::default();
     let milestones = Vec::from_array(
         &env,
-        [make_milestone(&env, b"GGGG1111111111111111111111111111", 10000u32)],
+        [make_milestone(
+            &env,
+            b"GGGG1111111111111111111111111111",
+            10000u32,
+        )],
     );
 
     let (contract_id, creator, platform, _escrow) =
@@ -319,7 +357,11 @@ fn test_reject_milestone_rejects_non_platform() {
     let env = Env::default();
     let milestones = Vec::from_array(
         &env,
-        [make_milestone(&env, b"HHHH1111111111111111111111111111", 10000u32)],
+        [make_milestone(
+            &env,
+            b"HHHH1111111111111111111111111111",
+            10000u32,
+        )],
     );
 
     let (contract_id, creator, _platform) = setup_no_auth(&env, milestones);
@@ -363,7 +405,11 @@ fn test_set_paused_blocks_submit_and_approve() {
     let env = Env::default();
     let milestones = Vec::from_array(
         &env,
-        [make_milestone(&env, b"KKKK1111111111111111111111111111", 10000u32)],
+        [make_milestone(
+            &env,
+            b"KKKK1111111111111111111111111111",
+            10000u32,
+        )],
     );
 
     let (contract_id, _creator, platform, _escrow) =
@@ -394,7 +440,11 @@ fn test_set_paused_rejects_non_platform() {
     let env = Env::default();
     let milestones = Vec::from_array(
         &env,
-        [make_milestone(&env, b"LLLL1111111111111111111111111111", 10000u32)],
+        [make_milestone(
+            &env,
+            b"LLLL1111111111111111111111111111",
+            10000u32,
+        )],
     );
 
     let (contract_id, _creator, _platform) = setup_no_auth(&env, milestones);
@@ -411,7 +461,11 @@ fn test_resubmit_after_rejection() {
     let env = Env::default();
     let milestones = Vec::from_array(
         &env,
-        [make_milestone(&env, b"JJJJ1111111111111111111111111111", 10000u32)],
+        [make_milestone(
+            &env,
+            b"JJJJ1111111111111111111111111111",
+            10000u32,
+        )],
     );
 
     let (contract_id, creator, platform, _escrow) =
@@ -434,8 +488,8 @@ fn test_resubmit_after_rejection() {
 
 #[test]
 fn test_storage_ttl_outlives_default_ttl() {
-    use soroban_sdk::testutils::{storage::Instance as _, Ledger};
     use milestones::STORAGE_TTL_LEDGERS;
+    use soroban_sdk::testutils::{storage::Instance as _, Ledger};
 
     let env = Env::default();
     let milestones = Vec::from_array(
@@ -456,11 +510,16 @@ fn test_storage_ttl_outlives_default_ttl() {
     // Keep the mock escrow alive; only this contract's storage is under test.
     let jump = env.ledger().get().min_persistent_entry_ttl * 100;
     env.as_contract(&escrow_id, || {
-        env.storage().instance().extend_ttl(jump + 1000, jump + 1000);
+        env.storage()
+            .instance()
+            .extend_ttl(jump + 1000, jump + 1000);
     });
     env.ledger().with_mut(|li| li.sequence_number += jump);
 
     let evidence = BytesN::from_array(&env, b"evid_hash_1234567890123456789012");
     client.submit_milestone(&0u32, &evidence);
-    assert_eq!(client.get_milestone(&0u32).status, MilestoneStatus::Submitted);
+    assert_eq!(
+        client.get_milestone(&0u32).status,
+        MilestoneStatus::Submitted
+    );
 }
