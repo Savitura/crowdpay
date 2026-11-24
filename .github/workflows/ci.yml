@@ -100,6 +100,9 @@ jobs:
 
       - name: Upgrade production-like fixture and verify schema.sql/migrations converge
         working-directory: ./backend
+        # Two disposable databases are built here; bound the step so a dead
+        # database service fails fast instead of hanging the job.
+        timeout-minutes: 10
         env:
           DATABASE_URL: postgresql://postgres:password@localhost:5432/crowdpay_test
         run: npm run test:migration-upgrade
@@ -116,6 +119,7 @@ jobs:
 
       - name: Compare migration-only and schema bootstrap snapshots
         working-directory: ./backend
+        timeout-minutes: 5
         env:
           DATABASE_URL_MIGRATION_CHECK: postgresql://postgres:password@localhost:5432/crowdpay_test
           DATABASE_URL_SCHEMA_CHECK: postgresql://postgres:password@localhost:5432/crowdpay_schema_check
