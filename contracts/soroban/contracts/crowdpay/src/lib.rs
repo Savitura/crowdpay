@@ -104,7 +104,9 @@ impl CrowdPayContract {
             if m.amount <= 0 {
                 panic!("Milestone amount must be positive");
             }
-            total_milestone_amount += m.amount;
+            total_milestone_amount = total_milestone_amount
+                .checked_add(m.amount)
+                .expect("Total milestone amount overflow");
         }
 
         if total_milestone_amount > goal {

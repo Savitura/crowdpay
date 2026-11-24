@@ -24,6 +24,7 @@ pub enum FeeRegistryError {
     InsufficientTokens = 9,
     AlreadyVoted = 10,
     ProposalNotActive = 11,
+    VoteWeightOverflow = 12,
 }
 
 #[contracttype]
@@ -290,9 +291,15 @@ impl FeeRegistry {
 
         // Update proposal vote counts
         if in_favor {
-            proposal.votes_for += vote_weight;
+            proposal.votes_for = proposal
+                .votes_for
+                .checked_add(vote_weight)
+                .ok_or(FeeRegistryError::VoteWeightOverflow)?;
         } else {
-            proposal.votes_against += vote_weight;
+            proposal.votes_against = proposal
+                .votes_against
+                .checked_add(vote_weight)
+                .ok_or(FeeRegistryError::VoteWeightOverflow)?;
         }
 
         env.storage()

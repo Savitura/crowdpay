@@ -186,6 +186,7 @@ async function processRefund(contributionId, amount, service = stellarService) {
 }
 
 module.exports = {
+  getCampaignRefunds,
   getEligibleContributions,
   listRefunds,
   processRefund,

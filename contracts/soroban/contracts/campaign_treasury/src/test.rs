@@ -526,6 +526,127 @@ fn zero_and_negative_amounts_are_refused() {
     );
 }
 
+#[test]
+fn contribution_total_overflow_is_rejected_without_recording_the_contribution() {
+    let env = Env::default();
+    let h = setup(&env, policy(), i128::MAX);
+    let contributor = Address::generate(&env);
+
+    h.client.receive_contribution(&contributor, &i128::MAX);
+    assert_eq!(h.client.get_total_received(), i128::MAX);
+
+    assert_eq!(
+        h.client
+            .try_receive_contribution(&contributor, &1)
+            .err()
+            .unwrap()
+            .unwrap(),
+        TreasuryError::ArithmeticOverflow
+    );
+    assert_eq!(h.client.get_total_received(), i128::MAX);
+    let contributors: Vec<ContributionRecord> = env.as_contract(&h.contract_id, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Contributors)
+            .unwrap()
+    });
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(contributors.get(0).unwrap().amount, i128::MAX);
+}
+
+#[test]
+fn withdrawal_identifier_overflow_is_rejected() {
+    let env = Env::default();
+    let h = setup(&env, policy(), 10_000);
+    contribute(&env, &h, 1_000);
+    env.as_contract(&h.contract_id, || {
+        env.storage()
+            .instance()
+            .set(&DataKey::NextId, &u32::MAX);
+    });
+
+    assert_eq!(
+        h.client
+            .try_request_withdrawal(
+                &1,
+                &Address::generate(&env),
+                &symbol_short!("w"),
+            )
+            .err()
+            .unwrap()
+            .unwrap(),
+        TreasuryError::ArithmeticOverflow
+    );
+    assert_eq!(h.client.get_withdrawal_history().len(), 0);
+    assert_eq!(h.client.get_total_withdrawn(), 0);
+}
+
+#[test]
+fn withdrawal_history_limit_does_not_transfer_or_record_an_extra_withdrawal() {
+    let env = Env::default();
+    let h = setup(&env, policy(), 10_000);
+    contribute(&env, &h, 10_000);
+    let destination = Address::generate(&env);
+    let mut history = Vec::new(&env);
+    for id in 0..MAX_HISTORY {
+        history.push_back(WithdrawalRecord {
+            id,
+            amount: 1,
+            destination: destination.clone(),
+            executed_at: DEADLINE,
+            requester: h.creator.clone(),
+            approved_by: None,
+        });
+    }
+    env.as_contract(&h.contract_id, || {
+        env.storage().persistent().set(&DataKey::History, &history);
+    });
+
+    assert_eq!(h.client.get_withdrawal_history().len(), MAX_HISTORY);
+    let before = h.token.balance(&destination);
+    assert_eq!(
+        h.client
+            .try_request_withdrawal(&1, &destination, &symbol_short!("w"))
+            .err()
+            .unwrap()
+            .unwrap(),
+        TreasuryError::HistoryFull
+    );
+    assert_eq!(h.token.balance(&destination), before);
+    assert_eq!(h.client.get_total_withdrawn(), 0);
+    assert_eq!(h.client.get_withdrawal_history().len(), MAX_HISTORY);
+}
+
+#[test]
+fn pending_withdrawal_is_rechecked_against_balance_at_approval_time() {
+    let env = Env::default();
+    let mut p = policy();
+    p.require_auditor_for_above = 5_000;
+    let h = setup(&env, p, 10_000);
+    contribute(&env, &h, 10_000);
+
+    let pending_destination = Address::generate(&env);
+    let pending_id = h
+        .client
+        .request_withdrawal(&6_000, &pending_destination, &symbol_short!("pending"))
+        .unwrap();
+    let immediate_destination = Address::generate(&env);
+    h.client
+        .request_withdrawal(&5_000, &immediate_destination, &symbol_short!("small"));
+
+    assert_eq!(
+        h.client
+            .try_approve_withdrawal(&pending_id)
+            .err()
+            .unwrap()
+            .unwrap(),
+        TreasuryError::InsufficientBalance
+    );
+    assert_eq!(h.token.balance(&pending_destination), 0);
+    assert_eq!(h.client.get_pending_withdrawals().len(), 1);
+    assert_eq!(h.client.get_total_withdrawn(), 5_000);
+}
+
 // ── acceptance criterion 6: history stays consistent across many operations ──
 
 #[test]

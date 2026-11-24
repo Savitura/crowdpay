@@ -73,7 +73,9 @@ impl MilestonesContract {
 
         let mut total_bps: u32 = 0;
         for m in milestones.iter() {
-            total_bps += m.release_bps;
+            total_bps = total_bps
+                .checked_add(m.release_bps)
+                .expect("Milestone release BPS total overflow");
         }
         if total_bps != 10000 {
             panic!("Total BPS must be 10000");
