@@ -714,3 +714,123 @@ test('a custodial creator is refused above the custodial signing limit and nothi
   assert.equal(calls.length, 0);
   assert.equal(insertedRow, false);
 });
+
+// ── additional policy validation & DB error handling ─────────────────────────
+
+test('validatePolicy applies defaults and accepts 7-decimal auditor thresholds', () => {
+  const { service } = build();
+  const defaults = service.validatePolicy();
+  assert.deepEqual(defaults, {
+    minHoldDays: 0,
+    maxSingleWithdrawalPct: 100,
+    withdrawalCooldownHours: 0,
+    requireAuditorForAbove: '0',
+    autoRefundOnMiss: false,
+  });
+
+  const precise = service.validatePolicy({ requireAuditorForAbove: '100.1234567' });
+  assert.equal(precise.requireAuditorForAbove, '100.1234567');
+});
+
+test('validatePolicy rejects non-integers, negative cooldown, and malformed auditor thresholds', () => {
+  const { service } = build();
+  const cases = [
+    { minHoldDays: 1.5 },
+    { maxSingleWithdrawalPct: 25.5 },
+    { withdrawalCooldownHours: -1 },
+    { withdrawalCooldownHours: 2.5 },
+    { requireAuditorForAbove: '1.12345678' },
+    { requireAuditorForAbove: 'abc' },
+  ];
+  for (const override of cases) {
+    assert.throws(
+      () => service.validatePolicy(override),
+      err => err.code === 'INVALID_POLICY' && err.statusCode === 400,
+      `expected ${JSON.stringify(override)} to be rejected`
+    );
+  }
+});
+
+test('setPolicy rejects unknown campaigns and non-draft/non-active campaigns', async () => {
+  const missing = build({ queryImpl: async () => ({ rows: [] }) });
+  await assert.rejects(
+    () => missing.service.setPolicy(CAMPAIGN_ID, { maxSingleWithdrawalPct: 50 }),
+    err => err.code === 'CAMPAIGN_NOT_FOUND' && err.statusCode === 404
+  );
+
+  const completed = build({
+    queryImpl: async () => ({
+      rows: [campaignRow({ contract_id: null, status: 'completed' })],
+    }),
+  });
+  await assert.rejects(
+    () => completed.service.setPolicy(CAMPAIGN_ID, { maxSingleWithdrawalPct: 50 }),
+    err => err.code === 'CAMPAIGN_LIVE' && err.statusCode === 409
+  );
+});
+
+test('propagates database errors from policy, withdrawal, approval, and reconciliation queries', async () => {
+  const dbErr = Object.assign(new Error('connection terminated'), { code: '57P01' });
+
+  const failOnPolicyInsert = build({
+    queryImpl: async text => {
+      if (text.includes('FROM campaigns')) {
+        return { rows: [campaignRow({ contract_id: null, wallet_mode: 'standard' })] };
+      }
+      throw dbErr;
+    },
+  });
+  await assert.rejects(
+    () => failOnPolicyInsert.service.setPolicy(CAMPAIGN_ID, { maxSingleWithdrawalPct: 50 }),
+    err => err === dbErr
+  );
+
+  const failOnGetPolicy = build({
+    queryImpl: async () => {
+      throw dbErr;
+    },
+  });
+  await assert.rejects(
+    () => failOnGetPolicy.service.getPolicyRow(CAMPAIGN_ID),
+    err => err === dbErr
+  );
+
+  const failOnWithdrawalInsert = build({
+    soroban: { invokeResult: null },
+    queryImpl: async text => {
+      if (text.includes('FROM campaigns')) return { rows: [campaignRow()] };
+      if (text.includes('FROM users')) return { rows: [userRow()] };
+      throw dbErr;
+    },
+  });
+  await assert.rejects(
+    () =>
+      failOnWithdrawalInsert.service.buildWithdrawalRequest(CAMPAIGN_ID, {
+        amount: '100',
+        destination: DEST,
+        memo: 'payout',
+        requestedBy: 'creator-1',
+      }),
+    err => err === dbErr
+  );
+
+  const failOnApproveUpdate = build({
+    queryImpl: async text => {
+      if (text.includes('FROM campaigns')) {
+        return { rows: [campaignRow({ auditor_public_key: AUDITOR })] };
+      }
+      if (text.includes('FROM users')) {
+        return {
+          rows: [
+            userRow({ wallet_public_key: AUDITOR, wallet_secret_encrypted: 'auditor-secret' }),
+          ],
+        };
+      }
+      throw dbErr;
+    },
+  });
+  await assert.rejects(
+    () => failOnApproveUpdate.service.approvePendingWithdrawal(CAMPAIGN_ID, 7, { approverId: 'auditor-1' }),
+    err => err === dbErr
+  );
+});

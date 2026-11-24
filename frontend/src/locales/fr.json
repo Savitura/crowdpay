@@ -150,7 +150,7 @@
     "placeholder": "Écrivez votre message de remerciement...",
     "send": "Envoyer le remerciement",
     "sendError": "Impossible d'envoyer le message de remerciement",
-    "charactersLeft": "Caractères restants : {{count}}",
+    "charactersLeft": "caractères restants",
     "sent": "Remerciement envoyé avec succès !"
   },
   "home": {

@@ -46,3 +46,13 @@ describe('i18n lazy locale loading', () => {
     expect(i18n.t('common.cancel')).toBe('Cancel');
   });
 });
+
+describe('i18n locale key and interpolation parity', () => {
+  it('ensures all locale files share identical key sets and interpolation tokens', async () => {
+    const { checkLocaleParity } = await import('../../scripts/check-i18n-parity.js');
+    const result = checkLocaleParity();
+
+    expect(result.errors).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+});

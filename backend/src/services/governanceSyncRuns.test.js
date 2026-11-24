@@ -436,3 +436,111 @@ test('safeErrorMessage bounds length', () => {
   const { service } = buildService();
   assert.equal(service.safeErrorMessage(new Error('x'.repeat(2000))).length, 500);
 });
+
+test('runGovernanceSync rejects unknown triggers before touching the database', async () => {
+  let queried = false;
+  const { service } = buildService({
+    queryOverride: async () => {
+      queried = true;
+      return { rows: [] };
+    },
+  });
+
+  await assert.rejects(
+    service.runGovernanceSync({ trigger: 'invalid-trigger' }),
+    err => err.statusCode === 400 && /Unknown trigger/.test(err.message)
+  );
+  assert.equal(queried, false);
+});
+
+test('retryRun rejects an in-flight running run with 409', async () => {
+  let release;
+  const { service } = buildService({
+    performProposalSync: async () => {
+      await new Promise(resolve => {
+        release = resolve;
+      });
+      return { proposalsSeen: 0, proposalsUpdated: 0, proposalsMissing: 0, providerCursor: null };
+    },
+  });
+
+  const inFlight = service.runGovernanceSync({ trigger: 'manual' });
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+
+  const runningId = (await service.runGovernanceSync({ trigger: 'manual' })).run.id;
+  await assert.rejects(
+    service.retryRun(runningId),
+    err => err.statusCode === 409 && err.code === 'SYNC_RUN_NOT_RETRYABLE'
+  );
+
+  release();
+  await inFlight;
+});
+
+test('audit log failures do not prevent a governance sync run from succeeding', async () => {
+  const table = createRunsTable();
+  const service = proxyquire('./governanceSyncRuns', {
+    '../config/database': { query: table.query },
+    '../config/logger': silentLogger,
+    './governance': {
+      performProposalSync: async () => ({
+        proposalsSeen: 2,
+        proposalsUpdated: 1,
+        proposalsMissing: 0,
+        providerCursor: 'proposal:9',
+      }),
+    },
+    './auditService': {
+      logAuditEvent: async () => {
+        throw new Error('audit sink unavailable');
+      },
+    },
+  });
+
+  const { run, deduplicated } = await service.runGovernanceSync({
+    trigger: 'manual',
+    requestedBy: 'admin-1',
+  });
+  assert.equal(deduplicated, false);
+  assert.equal(run.status, 'succeeded');
+  assert.equal(run.proposals_seen, 2);
+});
+
+test('purgeExpiredRuns loops leaf-first until no expired rows remain', async () => {
+  const batches = [[{ id: 'r1' }, { id: 'r2' }], [{ id: 'r0' }], []];
+  let calls = 0;
+  const { service } = buildService({
+    queryOverride: async () => ({ rows: batches[calls++] || [] }),
+  });
+
+  const deleted = await service.purgeExpiredRuns({ retentionDays: 30 });
+  assert.equal(deleted, 3);
+  assert.equal(calls, 3);
+});
+
+test('propagates non-unique-violation database errors across run operations', async () => {
+  const dbErr = Object.assign(new Error('database unavailable'), { code: '57P01' });
+
+  // Failure during insertRun (non-23505)
+  const failInsert = buildService({
+    queryOverride: async text => {
+      if (/error_code = 'ABANDONED'/.test(text)) return { rows: [] };
+      throw dbErr;
+    },
+  });
+  await assert.rejects(
+    failInsert.service.runGovernanceSync({ trigger: 'manual' }),
+    err => err === dbErr
+  );
+
+  // Failure during recoverAbandonedRuns, listRuns, getRun, and purgeExpiredRuns
+  const failAll = buildService({
+    queryOverride: async () => {
+      throw dbErr;
+    },
+  });
+  await assert.rejects(failAll.service.recoverAbandonedRuns(), err => err === dbErr);
+  await assert.rejects(failAll.service.listRuns(), err => err === dbErr);
+  await assert.rejects(failAll.service.getRun(crypto.randomUUID()), err => err === dbErr);
+  await assert.rejects(failAll.service.purgeExpiredRuns(), err => err === dbErr);
+});

@@ -10,6 +10,7 @@
     "lint:strict": "eslint src/components/Navbar.jsx src/components/ErrorBoundary.jsx src/components/ImpersonationBanner.jsx src/components/ContributeModal.jsx src/pages/AdminDashboard.jsx vite.config.js --max-warnings=0",
     "format": "prettier --write src/",
     "format:check": "node ../scripts/format-check.js",
+    "i18n:check": "node ../scripts/check-i18n-parity.js",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
