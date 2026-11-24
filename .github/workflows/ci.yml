@@ -264,6 +264,24 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  stellar-script-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Stellar example script dependencies
+        run: npm install --prefix contracts --no-package-lock --no-audit --no-fund
+
+      - name: Run Stellar example script tests
+        run: npm test --prefix contracts
+
   frontend-checks:
     runs-on: ubuntu-latest
 
