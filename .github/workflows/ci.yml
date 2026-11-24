@@ -121,6 +121,8 @@ jobs:
         working-directory: ./backend
         timeout-minutes: 5
         env:
+          # dropdb runs below and prompts interactively without this.
+          PGPASSWORD: password
           DATABASE_URL_MIGRATION_CHECK: postgresql://postgres:password@localhost:5432/crowdpay_test
           DATABASE_URL_SCHEMA_CHECK: postgresql://postgres:password@localhost:5432/crowdpay_schema_check
         run: |
