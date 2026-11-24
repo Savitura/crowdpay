@@ -2,6 +2,9 @@
   "name": "crowdpay-contracts",
   "version": "1.0.0",
   "description": "Stellar transaction scripts for CrowdPay",
+  "scripts": {
+    "test": "node --test stellar/*.test.js"
+  },
   "dependencies": {
     "@stellar/stellar-sdk": "^12.3.0",
     "dotenv": "^16.4.5"
