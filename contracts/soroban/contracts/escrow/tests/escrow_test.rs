@@ -1,3 +1,11 @@
+#![allow(
+    deprecated,
+    unused_imports,
+    unused_variables,
+    mismatched_lifetime_syntaxes,
+    clippy::all
+)]
+use escrow::{DataKey, EscrowContract, EscrowContractClient, EscrowError, REFUND_WINDOW_LEDGERS};
 use soroban_sdk::{
     testutils::{
         storage::{Instance as _, Persistent as _},
@@ -5,7 +13,18 @@ use soroban_sdk::{
     },
     token, Address, Env,
 };
-use escrow::{DataKey, EscrowContract, EscrowContractClient, REFUND_WINDOW_LEDGERS};
+
+#[test]
+fn test_uninitialized_reads_return_error() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    assert_eq!(client.try_get_asset(), Err(Ok(EscrowError::NotInitialized)));
+    assert_eq!(
+        client.try_get_platform_fee_config(),
+        Err(Ok(EscrowError::NotInitialized))
+    );
+}
 
 fn install_token(env: &Env) -> (Address, token::StellarAssetClient) {
     let admin = Address::generate(&env);
@@ -72,7 +91,15 @@ fn test_initialize_requires_fee_recipient_auth() {
         let token_addr = env.register_stellar_asset_contract(admin.clone());
 
         // Without mock_all_auths, initialize fails because fee_recipient auth is required
-        client.initialize(&admin, &1u64, &1000, &999999, &token_addr, &100, &fee_recipient);
+        client.initialize(
+            &admin,
+            &1u64,
+            &1000,
+            &999999,
+            &token_addr,
+            &100,
+            &fee_recipient,
+        );
     }));
     assert!(result.is_err());
 }
@@ -104,7 +131,15 @@ fn test_initialize_rejects_invalid_fee() {
     let client = EscrowContractClient::new(&env, &contract_id);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.initialize(&admin, &1u64, &1000, &100, &token_addr, &10001, &fee_recipient);
+        client.initialize(
+            &admin,
+            &1u64,
+            &1000,
+            &100,
+            &token_addr,
+            &10001,
+            &fee_recipient,
+        );
     }));
     assert!(result.is_err());
 }
@@ -124,7 +159,15 @@ fn test_initialize_rejects_fee_above_cap() {
 
     // 1001 BPS is one basis point above the 10% cap and must be rejected.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.initialize(&admin, &1u64, &1000, &100, &token_addr, &1001, &fee_recipient);
+        client.initialize(
+            &admin,
+            &1u64,
+            &1000,
+            &100,
+            &token_addr,
+            &1001,
+            &fee_recipient,
+        );
     }));
     assert!(result.is_err());
 }
@@ -314,8 +357,7 @@ fn test_approve_withdrawal_increases_approved() {
 #[test]
 fn test_execute_withdrawal_deducts_fee() {
     let env = Env::default();
-    let (contract_id, admin, contributor, fee_recipient) =
-        setup_contract(&env, 1000, 999999, 1000);
+    let (contract_id, admin, contributor, fee_recipient) = setup_contract(&env, 1000, 999999, 1000);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     let token_addr = client.get_asset();
@@ -529,8 +571,7 @@ fn test_refund_rejects_no_contribution() {
 #[test]
 fn test_full_flow_deposit_withdraw_with_fee() {
     let env = Env::default();
-    let (contract_id, admin, contributor, fee_recipient) =
-        setup_contract(&env, 1000, 999999, 500);
+    let (contract_id, admin, contributor, fee_recipient) = setup_contract(&env, 1000, 999999, 500);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     let token_addr = client.get_asset();
@@ -559,8 +600,7 @@ fn test_full_flow_deposit_withdraw_with_fee() {
 fn test_withdrawal_blocked_when_target_not_met() {
     let env = Env::default();
     // Target is 2000, only 1000 deposited
-    let (contract_id, admin, contributor, _fee_recipient) =
-        setup_contract(&env, 2000, 999999, 0);
+    let (contract_id, admin, contributor, _fee_recipient) = setup_contract(&env, 2000, 999999, 0);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     let token_addr = client.get_asset();
@@ -615,8 +655,7 @@ fn test_withdrawal_allowed_from_milestones_contract_before_target() {
 #[test]
 fn test_withdrawal_blocked_after_campaign_failed() {
     let env = Env::default();
-    let (contract_id, admin, contributor, _fee_recipient) =
-        setup_contract(&env, 1000, 100, 0);
+    let (contract_id, admin, contributor, _fee_recipient) = setup_contract(&env, 1000, 100, 0);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     let token_addr = client.get_asset();
@@ -642,8 +681,7 @@ fn test_withdrawal_blocked_after_campaign_failed() {
 #[test]
 fn test_withdrawal_blocked_when_refunding() {
     let env = Env::default();
-    let (contract_id, admin, contributor, _fee_recipient) =
-        setup_contract(&env, 1000, 100, 0);
+    let (contract_id, admin, contributor, _fee_recipient) = setup_contract(&env, 1000, 100, 0);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     let token_addr = client.get_asset();
@@ -672,8 +710,7 @@ fn test_withdrawal_blocked_when_refunding() {
 #[test]
 fn test_admin_override_withdrawal_with_second_signer() {
     let env = Env::default();
-    let (contract_id, _admin, contributor, fee_recipient) =
-        setup_contract(&env, 2000, 999999, 100);
+    let (contract_id, _admin, contributor, fee_recipient) = setup_contract(&env, 2000, 999999, 100);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     let second_signer = Address::generate(&env);
@@ -700,8 +737,7 @@ fn test_admin_override_withdrawal_with_second_signer() {
 #[test]
 fn test_admin_override_rejects_same_signer() {
     let env = Env::default();
-    let (contract_id, admin, contributor, _fee_recipient) =
-        setup_contract(&env, 2000, 999999, 0);
+    let (contract_id, admin, contributor, _fee_recipient) = setup_contract(&env, 2000, 999999, 0);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     let token_addr = client.get_asset();
@@ -721,8 +757,7 @@ fn test_admin_override_rejects_same_signer() {
 #[test]
 fn test_admin_override_rejects_wrong_second_signer() {
     let env = Env::default();
-    let (contract_id, _admin, contributor, _fee_recipient) =
-        setup_contract(&env, 2000, 999999, 0);
+    let (contract_id, _admin, contributor, _fee_recipient) = setup_contract(&env, 2000, 999999, 0);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     let expected_second_signer = Address::generate(&env);
@@ -786,7 +821,15 @@ fn test_refund_pro_rata_after_milestone_release_and_deadline_failure() {
     let (token_addr, _) = install_token(&env);
     let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
-    client.initialize(&milestones_admin, &1u64, &4000, &100, &token_addr, &0, &fee_recipient);
+    client.initialize(
+        &milestones_admin,
+        &1u64,
+        &4000,
+        &100,
+        &token_addr,
+        &0,
+        &fee_recipient,
+    );
     client.set_milestones_contract(&milestones_admin);
 
     let token_cl = token::StellarAssetClient::new(&env, &token_addr);
@@ -833,7 +876,8 @@ fn test_storage_ttl_survives_past_default_ttl() {
     let env = Env::default();
     // Deadline 30 days out: far beyond the 4096-ledger default TTL.
     let deadline: u64 = 30 * 24 * 60 * 60;
-    let (contract_id, _admin, contributor, _fee_recipient) = setup_contract(&env, 1000, deadline, 0);
+    let (contract_id, _admin, contributor, _fee_recipient) =
+        setup_contract(&env, 1000, deadline, 0);
     let client = EscrowContractClient::new(&env, &contract_id);
     let token_addr = client.get_asset();
     let token_client = token::Client::new(&env, &token_addr);
@@ -850,7 +894,9 @@ fn test_storage_ttl_survives_past_default_ttl() {
     // Keep the test token alive; only the escrow's own storage is under test.
     let jump = env.ledger().get().min_persistent_entry_ttl * 100;
     env.as_contract(&token_addr, || {
-        env.storage().instance().extend_ttl(jump + 1000, jump + 1000);
+        env.storage()
+            .instance()
+            .extend_ttl(jump + 1000, jump + 1000);
     });
 
     env.ledger().with_mut(|li| {

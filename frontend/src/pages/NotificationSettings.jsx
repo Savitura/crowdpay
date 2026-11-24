@@ -272,13 +272,25 @@ export default function NotificationSettings() {
 
       <SectionCard title="Quick Settings" description="Quickly set your email preferences.">
         <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-          <button className="btn-secondary" onClick={() => handleQuickSetting('everything')}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => handleQuickSetting('everything')}
+          >
             Email me everything
           </button>
-          <button className="btn-secondary" onClick={() => handleQuickSetting('important')}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => handleQuickSetting('important')}
+          >
             Important only
           </button>
-          <button className="btn-secondary" onClick={() => handleQuickSetting('nothing')}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => handleQuickSetting('nothing')}
+          >
             Email me nothing
           </button>
         </div>

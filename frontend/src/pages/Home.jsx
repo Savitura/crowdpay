@@ -569,52 +569,88 @@ export default function Home() {
         country) && (
         <div style={styles.activeFilters}>
           {search && (
-            <button className="filter-chip" onClick={() => setFilters({ search: '' })}>
+            <button
+              type="button"
+              className="filter-chip"
+              onClick={() => setFilters({ search: '' })}
+            >
               Search: {search} ✕
             </button>
           )}
           {status && (
-            <button className="filter-chip" onClick={() => setFilters({ status: '' })}>
+            <button
+              type="button"
+              className="filter-chip"
+              onClick={() => setFilters({ status: '' })}
+            >
               Status: {status} ✕
             </button>
           )}
           {asset && (
-            <button className="filter-chip" onClick={() => setFilters({ asset: '' })}>
+            <button type="button" className="filter-chip" onClick={() => setFilters({ asset: '' })}>
               Asset: {asset} ✕
             </button>
           )}
           {category && (
-            <button className="filter-chip" onClick={() => setFilters({ category: '' })}>
+            <button
+              type="button"
+              className="filter-chip"
+              onClick={() => setFilters({ category: '' })}
+            >
               Category: {category} ✕
             </button>
           )}
           {minProgress && (
-            <button className="filter-chip" onClick={() => setFilters({ min_progress: '' })}>
+            <button
+              type="button"
+              className="filter-chip"
+              onClick={() => setFilters({ min_progress: '' })}
+            >
               Min Progress: {minProgress}% ✕
             </button>
           )}
           {minFunding && (
-            <button className="filter-chip" onClick={() => setFilters({ min_funding: '' })}>
+            <button
+              type="button"
+              className="filter-chip"
+              onClick={() => setFilters({ min_funding: '' })}
+            >
               Min Raised: {minFunding} ✕
             </button>
           )}
           {maxFunding && (
-            <button className="filter-chip" onClick={() => setFilters({ max_funding: '' })}>
+            <button
+              type="button"
+              className="filter-chip"
+              onClick={() => setFilters({ max_funding: '' })}
+            >
               Max Raised: {maxFunding} ✕
             </button>
           )}
           {deadlineWithin && (
-            <button className="filter-chip" onClick={() => setFilters({ deadline_within: '' })}>
+            <button
+              type="button"
+              className="filter-chip"
+              onClick={() => setFilters({ deadline_within: '' })}
+            >
               Ending within: {deadlineWithin}d ✕
             </button>
           )}
           {creatorVerified === 'true' && (
-            <button className="filter-chip" onClick={() => setFilters({ creator_verified: '' })}>
+            <button
+              type="button"
+              className="filter-chip"
+              onClick={() => setFilters({ creator_verified: '' })}
+            >
               Verified creators ✕
             </button>
           )}
           {country && (
-            <button className="filter-chip" onClick={() => setFilters({ country: '' })}>
+            <button
+              type="button"
+              className="filter-chip"
+              onClick={() => setFilters({ country: '' })}
+            >
               Location: {country} ✕
             </button>
           )}

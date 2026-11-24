@@ -160,7 +160,7 @@ test('GET /api/campaigns/:id/embed includes milestones with public statuses', as
     sort_order: 0,
     status: 'released',
   });
-  // The campaign id must reach the query untouched — it is a UUID, not an int.
+  // The campaign id must reach the query untouched - it is a UUID, not an int.
   const campaignLookup = calls.find(call => call.text.includes('FROM campaigns WHERE id = $1'));
   assert.deepEqual(campaignLookup.params, [CAMPAIGN_ID]);
 });

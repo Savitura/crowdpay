@@ -23,7 +23,7 @@ export default function NotificationDropdown({
     <div style={styles.dropdown}>
       <div style={styles.header}>
         <span style={styles.headerTitle}>Notifications</span>
-        <button style={styles.markAll} onClick={onMarkAllRead}>
+        <button type="button" style={styles.markAll} onClick={onMarkAllRead}>
           Mark all as read
         </button>
       </div>
@@ -32,6 +32,7 @@ export default function NotificationDropdown({
       ) : (
         notifications.map((n) => (
           <button
+            type="button"
             key={n.id}
             style={{
               ...styles.item,

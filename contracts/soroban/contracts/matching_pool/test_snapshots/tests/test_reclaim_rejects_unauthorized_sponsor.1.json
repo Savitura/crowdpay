@@ -364,7 +364,7 @@
             },
             "ext": "v0"
           },
-          4095
+          3110400
         ]
       ],
       [
@@ -396,7 +396,7 @@
             },
             "ext": "v0"
           },
-          4095
+          3110400
         ]
       ],
       [
@@ -675,7 +675,7 @@
             },
             "ext": "v0"
           },
-          4095
+          3110400
         ]
       ]
     ]
@@ -1140,7 +1140,7 @@
             "data": {
               "vec": [
                 {
-                  "string": "caught panic 'Unauthorized sponsor' from contract function 'Symbol(reclaim)'"
+                  "string": "caught panic 'Only the sponsor can reclaim the pool' from contract function 'Symbol(reclaim)'"
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"

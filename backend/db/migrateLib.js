@@ -68,7 +68,11 @@ async function ensureSchemaMigrationsTable(client) {
       file_hash TEXT
     )
   `);
-  // Backfill the hash column on databases created before hash tracking was added.
+  // Backfill columns on databases created before they existed: the runner
+  // selects applied_at, and file_hash tracks edited migrations.
+  await client.query(
+    'ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ DEFAULT NOW()'
+  );
   await client.query('ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS file_hash TEXT');
 }
 

@@ -13,7 +13,14 @@
 const { describe, it, test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const proxyquire = require('proxyquire').noCallThru();
-const { Keypair, xdr, nativeToScVal, StrKey, Account } = require('@stellar/stellar-sdk');
+const {
+  Keypair,
+  xdr,
+  nativeToScVal,
+  scValToNative,
+  StrKey,
+  Account,
+} = require('@stellar/stellar-sdk');
 
 // ---------------------------------------------------------------------------
 // 1. Tests for the manual mock at services/__mocks__/sorobanService.js
@@ -228,8 +235,54 @@ describe('sorobanService real implementation tests', () => {
     const m2 = service.encodeMilestone({ title: 'M2', release_percentage: '25.5' });
     assert.ok(m2);
 
-    const m3 = service.encodeMilestone({ title: 'M3' });
-    assert.ok(m3);
+    // Strict (#1198): a milestone with no percentage is an error, not 0 bps.
+    assert.throws(() => service.encodeMilestone({ title: 'M3' }), /no release percentage/);
+  });
+
+  test('encodeMilestone encodes release_bps exactly from the decimal percentage (#1198)', () => {
+    const service = buildService();
+    const bpsOf = m => Number(scValToNative(service.encodeMilestone(m)).release_bps);
+
+    assert.equal(bpsOf({ title: 'M', release_percentage: '25.5' }), 2550);
+    // Math.round(parseFloat('0.29') * 100) happens to work, but these drift:
+    // 57.01 * 100 = 5700.999999999999, 1.005 is not a whole bp at all.
+    assert.equal(bpsOf({ title: 'M', release_percentage: '57.0100' }), 5701);
+    assert.equal(bpsOf({ title: 'M', release_percentage: 0.29 }), 29);
+    assert.equal(bpsOf({ title: 'M', release_percentage_units: 3000 }), 3000);
+  });
+
+  test('milestoneReleaseBps prefers release_percentage over 10^4-scaled units', () => {
+    const { milestoneReleaseBps } = buildService();
+    // Shape produced by campaignPublishing / routes/campaigns (scale 10000).
+    const published = [
+      { title: 'A', release_percentage: '25.0000', release_percentage_units: 250000 },
+      { title: 'B', release_percentage: '75.0000', release_percentage_units: 750000 },
+    ];
+    const bps = published.map(milestoneReleaseBps);
+    assert.deepEqual(bps, [2500, 7500]);
+    assert.equal(
+      bps.reduce((a, b) => a + b, 0),
+      10000,
+      'contract requires exactly 10000'
+    );
+  });
+
+  test('milestoneReleaseBps rejects sub-basis-point and out-of-range values', () => {
+    const { milestoneReleaseBps } = buildService();
+    for (const m of [
+      { title: 'A', release_percentage: '33.3333' },
+      { title: 'A', release_percentage: '100.01' },
+      { title: 'A', release_percentage: 'abc' },
+      { title: 'A', release_percentage_units: 10001 },
+      { title: 'A', release_percentage_units: 12.5 },
+      { title: 'A' },
+    ]) {
+      assert.throws(
+        () => milestoneReleaseBps(m),
+        err => err.code === 'INVALID_PERCENTAGE' && /Milestone "A"/.test(err.message),
+        JSON.stringify(m)
+      );
+    }
   });
 
   test('mapMilestoneOnChainStatus maps numeric and object statuses', () => {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { getNetwork, signTransaction } from '@stellar/freighter-api';
+import { validateMonetaryInput } from '../utils/decimal';
 
 const PERIOD_OPTIONS = [
   { months: 1, label: 'Monthly' },
@@ -179,8 +180,12 @@ export default function RecurringPledgeForm({ campaignId, asset, walletType, onS
   const [created, setCreated] = useState(null);
   const [signing, setSigning] = useState(false);
 
-  const amount = parseFloat(amountPerPeriod);
-  const amountValid = Number.isFinite(amount) && amount > 0;
+  const amountCheck = validateMonetaryInput(amountPerPeriod, {
+    fieldName: 'Amount per period',
+    allowZero: false,
+  });
+  const amountValid = amountCheck.isValid;
+  const amount = amountValid ? amountCheck.numericValue : 0;
   const totalCommitment = amountValid ? Number((amount * totalPeriods).toFixed(7)) : 0;
 
   const isFreighter = walletType === 'freighter';

@@ -14,13 +14,23 @@ const { getPathPaymentQuote } = require('./stellarService');
 const { SLIPPAGE_BPS } = require('../config/constants');
 const redis = require('../config/redis');
 const logger = require('../config/logger');
+const {
+  toStroops,
+  fromStroops,
+  mulBpsCeil,
+  compareAmounts,
+  divideAmounts,
+} = require('../utils/stroops');
 
 const PREVIEW_TTL_SECONDS = 30;
 const PREVIEW_KEY_PREFIX = 'cp:contribution-preview:';
 
-/** Apply the configured slippage buffer to a quoted source amount. */
+/**
+ * Apply the configured slippage buffer to a quoted source amount, in exact
+ * stroops, rounded up so the bound never undercuts the quote (#1197).
+ */
 function computeMaxSendAmount(sourceAmount) {
-  return (parseFloat(sourceAmount) * (1 + SLIPPAGE_BPS / 10000)).toFixed(7);
+  return fromStroops(mulBpsCeil(toStroops(sourceAmount), 10000 + SLIPPAGE_BPS));
 }
 
 /**
@@ -30,7 +40,7 @@ function computeMaxSendAmount(sourceAmount) {
 function rankAndAnnotatePaths(paths) {
   return paths
     .slice()
-    .sort((a, b) => parseFloat(a.source_amount) - parseFloat(b.source_amount))
+    .sort((a, b) => compareAmounts(a.source_amount, b.source_amount))
     .map((record, index) => ({
       index,
       source_asset: record.source_asset,
@@ -145,9 +155,7 @@ async function consumeContributionPreview({
 
   return {
     ...selected,
-    effective_rate: String(
-      parseFloat(selected.source_amount) / parseFloat(selected.destination_amount)
-    ),
+    effective_rate: divideAmounts(selected.source_amount, selected.destination_amount),
   };
 }
 
