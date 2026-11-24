@@ -14,7 +14,10 @@ import { safeLocalStorage, safeSessionStorage } from '../lib/safeStorage';
 export default function OpsCenter() {
   const { t } = useTranslation();
   const [apiKey, setApiKey] = useState(
-    () => safeSessionStorage.getItem('cp_ops_api_key') || safeLocalStorage.getItem('cp_ops_api_key') || ''
+    () =>
+      safeSessionStorage.getItem('cp_ops_api_key') ||
+      safeLocalStorage.getItem('cp_ops_api_key') ||
+      ''
   );
   const [tempKey, setTempKey] = useState('');
   const [rememberKey, setRememberKey] = useState(false);
@@ -318,13 +321,14 @@ export default function OpsCenter() {
 
         <div style={styles.headerActions}>
           <button
+            type="button"
             onClick={() => loadDashboardData(true)}
             disabled={refreshing}
             style={styles.refreshBtn}
           >
             {refreshing ? 'Refreshing...' : '↻ Refresh Telemetry'}
           </button>
-          <button onClick={handleLogout} style={styles.secondaryBtn}>
+          <button type="button" onClick={handleLogout} style={styles.secondaryBtn}>
             Lock / Change Key
           </button>
         </div>
@@ -443,12 +447,14 @@ export default function OpsCenter() {
         <h2 style={styles.sectionTitle}>Incident Management & Runbooks</h2>
         <div style={styles.tabSwitch}>
           <button
+            type="button"
             onClick={() => setIncidentTab('open')}
             style={incidentTab === 'open' ? styles.tabActive : styles.tabInactive}
           >
             Active Incidents ({incidents.length})
           </button>
           <button
+            type="button"
             onClick={() => setIncidentTab('resolved')}
             style={incidentTab === 'resolved' ? styles.tabActive : styles.tabInactive}
           >
@@ -495,11 +501,19 @@ export default function OpsCenter() {
 
                 <div style={styles.incidentActions}>
                   {inc.status === 'open' && (
-                    <button onClick={() => handleAcknowledge(inc.id)} style={styles.ackBtn}>
+                    <button
+                      type="button"
+                      onClick={() => handleAcknowledge(inc.id)}
+                      style={styles.ackBtn}
+                    >
                       ✓ Acknowledge
                     </button>
                   )}
-                  <button onClick={() => handleOpenRunbook(inc)} style={styles.runbookBtn}>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenRunbook(inc)}
+                    style={styles.runbookBtn}
+                  >
                     ⚡ Execute Runbook
                   </button>
                 </div>
@@ -596,6 +610,7 @@ export default function OpsCenter() {
                   <td style={styles.td}>
                     {w.deficit_xlm > 0 ? (
                       <button
+                        type="button"
                         onClick={() => handleApproveWalletFunding(w.campaign_id)}
                         style={styles.fundingBtn}
                       >
@@ -621,7 +636,11 @@ export default function OpsCenter() {
                 <h3 style={styles.modalTitle}>Automated Runbook Remediation</h3>
                 <p style={styles.modalSubtitle}>Incident: {selectedIncident?.incident_type}</p>
               </div>
-              <button onClick={() => setActiveRunbookModal(false)} style={styles.closeBtn}>
+              <button
+                type="button"
+                onClick={() => setActiveRunbookModal(false)}
+                style={styles.closeBtn}
+              >
                 ✕
               </button>
             </div>
@@ -633,7 +652,7 @@ export default function OpsCenter() {
                     Triggering this runbook will execute automated diagnostics, safe operational
                     locks, and state recovery.
                   </p>
-                  <button onClick={handleExecuteRunbook} style={styles.primaryBtn}>
+                  <button type="button" onClick={handleExecuteRunbook} style={styles.primaryBtn}>
                     Start Runbook Execution
                   </button>
                 </div>
@@ -707,7 +726,11 @@ export default function OpsCenter() {
             </div>
 
             <div style={styles.modalFooter}>
-              <button onClick={() => setActiveRunbookModal(false)} style={styles.secondaryBtn}>
+              <button
+                type="button"
+                onClick={() => setActiveRunbookModal(false)}
+                style={styles.secondaryBtn}
+              >
                 Close
               </button>
             </div>
@@ -724,7 +747,11 @@ export default function OpsCenter() {
                 <h3 style={styles.modalTitle}>Metric Telemetry History</h3>
                 <p style={styles.modalSubtitle}>{historyMetric}</p>
               </div>
-              <button onClick={() => setHistoryModalOpen(false)} style={styles.closeBtn}>
+              <button
+                type="button"
+                onClick={() => setHistoryModalOpen(false)}
+                style={styles.closeBtn}
+              >
                 ✕
               </button>
             </div>
@@ -764,7 +791,11 @@ export default function OpsCenter() {
             </div>
 
             <div style={styles.modalFooter}>
-              <button onClick={() => setHistoryModalOpen(false)} style={styles.secondaryBtn}>
+              <button
+                type="button"
+                onClick={() => setHistoryModalOpen(false)}
+                style={styles.secondaryBtn}
+              >
                 Close
               </button>
             </div>

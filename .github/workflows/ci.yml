@@ -98,7 +98,7 @@ jobs:
           DATABASE_URL: postgresql://postgres:password@localhost:5432/crowdpay_test
         run: npm run migrate
 
-      - name: Upgrade production-like migration fixture in a disposable database
+      - name: Upgrade production-like fixture and verify schema.sql/migrations converge
         working-directory: ./backend
         env:
           DATABASE_URL: postgresql://postgres:password@localhost:5432/crowdpay_test

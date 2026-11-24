@@ -164,6 +164,7 @@ export default function AcceptInvite() {
             </p>
           )}
           <button
+            type="button"
             className="btn-primary"
             disabled={loading || preview?.expired}
             onClick={handleAccept}

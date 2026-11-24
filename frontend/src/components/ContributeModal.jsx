@@ -511,7 +511,7 @@ export default function ContributeModal({
     // Check if the prepared transaction is expired
     if (prepared.timeBounds && new Date(prepared.timeBounds.maxTime * 1000) < new Date()) {
       throw new Error(
-        'This transaction has expired. Please <button className="link-btn" onClick={() => setPhase("rebuild")}>rebuild the quote</button> ' +
+        'This transaction has expired. Please <button type="button" className="link-btn" onClick={() => setPhase("rebuild")}>rebuild the quote</button> ' +
           'or refresh the page to generate a new quote for the current network.'
       );
     }
@@ -684,10 +684,14 @@ export default function ContributeModal({
       if (err?.message === SIGNING_CANCELLED) {
         setError('Signing cancelled. Nothing was sent — you can start the payment again.');
       } else if (err?.message && err.message.includes('expired')) {
-        setError('This transaction has expired. Click "Rebuild quote" to generate a new quote, or refresh the page.');
+        setError(
+          'This transaction has expired. Click "Rebuild quote" to generate a new quote, or refresh the page.'
+        );
         setRebuildRequested(true);
       } else if (err?.message && err.message.includes('network')) {
-        setError('Network mismatch detected. Please switch your wallet to the correct network and try again.');
+        setError(
+          'Network mismatch detected. Please switch your wallet to the correct network and try again.'
+        );
       } else {
         setError(
           paymentMethod === 'freighter'

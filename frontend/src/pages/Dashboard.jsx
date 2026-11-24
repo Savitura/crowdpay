@@ -1561,6 +1561,7 @@ export default function Dashboard() {
         >
           {thankYouSent}
           <button
+            type="button"
             onClick={() => setThankYouSent('')}
             style={{
               background: 'none',

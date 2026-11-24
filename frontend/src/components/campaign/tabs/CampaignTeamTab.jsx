@@ -274,6 +274,7 @@ export default function CampaignTeamTab({
                   {(canChangeRoles || String(member.user_id) === String(user?.id)) &&
                     member.user_id && (
                       <button
+                        type="button"
                         className="btn-secondary"
                         onClick={() => handleRemoveMember && handleRemoveMember(member.user_id)}
                         disabled={
