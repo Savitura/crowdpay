@@ -137,6 +137,108 @@ jobs:
           ENABLE_CAMPAIGN_STATUS_CRON: "false"
         run: npm test
 
+  backend-docker-prod:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: crowdpay_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build production backend Docker image
+        run: docker build -f backend/Dockerfile.prod -t crowdpay-backend:prod-ci ./backend
+
+      - name: Inspect image for non-root USER and HEALTHCHECK
+        run: |
+          IMAGE_USER="$(docker inspect --format '{{.Config.User}}' crowdpay-backend:prod-ci)"
+          echo "Image Config.User: ${IMAGE_USER}"
+          if [ -z "$IMAGE_USER" ] || [ "$IMAGE_USER" = "root" ] || [ "$IMAGE_USER" = "0" ] || [ "${IMAGE_USER%%:*}" = "root" ] || [ "${IMAGE_USER%%:*}" = "0" ]; then
+            echo "ERROR: backend/Dockerfile.prod must configure a non-root USER (found: '${IMAGE_USER}')"
+            exit 1
+          fi
+
+          HEALTHCHECK_TEST="$(docker inspect --format '{{json .Config.Healthcheck.Test}}' crowdpay-backend:prod-ci)"
+          echo "Image Config.Healthcheck.Test: ${HEALTHCHECK_TEST}"
+          if [ -z "$HEALTHCHECK_TEST" ] || [ "$HEALTHCHECK_TEST" = "null" ] || [ "$HEALTHCHECK_TEST" = "[]" ]; then
+            echo "ERROR: backend/Dockerfile.prod must define a HEALTHCHECK"
+            exit 1
+          fi
+
+      - name: Run container and verify non-root runtime user and HEALTHCHECK
+        run: |
+          docker run -d \
+            --name crowdpay-backend-ci \
+            --network host \
+            --health-interval=2s \
+            --health-timeout=5s \
+            --health-start-period=2s \
+            --health-retries=5 \
+            -e DATABASE_URL=postgresql://postgres:password@127.0.0.1:5432/crowdpay_test \
+            -e JWT_SECRET=ci-test-jwt-secret-at-least-32-chars-long \
+            -e JWT_ISSUER=crowdpay-ci \
+            -e JWT_AUDIENCE=crowdpay-ci \
+            -e API_KEY_PEPPER=ci-test-api-key-pepper-distinct \
+            -e PLATFORM_SECRET_KEY=SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR \
+            -e ARBITRATOR_SECRET_KEY=SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR \
+            -e STELLAR_NETWORK=testnet \
+            -e STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org \
+            -e WALLET_ENCRYPTION_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            -e OPS_API_KEY=ci-test-ops-key \
+            -e UNSUBSCRIBE_SECRET=ci-test-unsubscribe-secret \
+            -e IMPACT_SIGNING_SECRET=ci-test-impact-secret \
+            -e DISABLE_EMAILS=true \
+            -e ENABLE_CAMPAIGN_STATUS_CRON=false \
+            -e WORKER_ENABLED=false \
+            crowdpay-backend:prod-ci
+
+          for i in $(seq 1 30); do
+            STATUS="$(docker inspect --format '{{.State.Health.Status}}' crowdpay-backend-ci)"
+            echo "Attempt ${i}/30: health=${STATUS}"
+            if [ "$STATUS" = "healthy" ]; then
+              break
+            fi
+            RUNNING="$(docker inspect --format '{{.State.Running}}' crowdpay-backend-ci)"
+            if [ "$RUNNING" != "true" ]; then
+              echo "ERROR: Container exited prematurely"
+              docker logs crowdpay-backend-ci
+              exit 1
+            fi
+            sleep 2
+          done
+
+          FINAL_STATUS="$(docker inspect --format '{{.State.Health.Status}}' crowdpay-backend-ci)"
+          if [ "$FINAL_STATUS" != "healthy" ]; then
+            echo "ERROR: Container did not become healthy (status: ${FINAL_STATUS})"
+            docker inspect --format '{{json .State.Health}}' crowdpay-backend-ci
+            docker logs crowdpay-backend-ci
+            exit 1
+          fi
+
+          RUNTIME_UID="$(docker exec crowdpay-backend-ci id -u)"
+          RUNTIME_USER="$(docker exec crowdpay-backend-ci id -un)"
+          echo "Runtime user: ${RUNTIME_USER} (uid=${RUNTIME_UID})"
+          if [ "$RUNTIME_UID" = "0" ]; then
+            echo "ERROR: Container process is running as root (uid=0)"
+            exit 1
+          fi
+
+      - name: Cleanup production backend container
+        if: always()
+        run: docker rm -f crowdpay-backend-ci || true
+
   performance-budgets:
     runs-on: ubuntu-latest
     services:
