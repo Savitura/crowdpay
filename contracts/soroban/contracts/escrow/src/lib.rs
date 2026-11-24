@@ -494,12 +494,16 @@ impl EscrowContract {
             client.transfer(&env.current_contract_address(), &fee_recipient, &fee_amount);
         }
 
-        approved_for_to -= release_amount;
+        approved_for_to = approved_for_to
+            .checked_sub(release_amount)
+            .ok_or(EscrowError::InsufficientApproval)?;
         env.storage().persistent().set(&dest_key, &approved_for_to);
         Self::bump_persistent(&env, &dest_key);
         Self::bump_instance(&env);
 
-        approved -= release_amount;
+        approved = approved
+            .checked_sub(release_amount)
+            .ok_or(EscrowError::InsufficientApproval)?;
         env.storage()
             .instance()
             .set(&DataKey::ApprovedWithdrawal, &approved);

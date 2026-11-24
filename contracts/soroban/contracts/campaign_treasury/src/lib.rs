@@ -62,6 +62,8 @@ pub enum TreasuryError {
     InvalidAmount = 13,
     /// The on-chain history is full; no further withdrawals can be recorded.
     HistoryFull = 14,
+    /// An amount or identifier exceeded its integer range.
+    ArithmeticOverflow = 15,
 }
 
 #[derive(Clone)]
@@ -205,9 +207,12 @@ impl CampaignTreasury {
         platform(&env).require_auth();
 
         let total: i128 = get_i128(&env, &DataKey::TotalReceived);
+        let total = total
+            .checked_add(amount)
+            .ok_or(TreasuryError::ArithmeticOverflow)?;
         env.storage()
             .instance()
-            .set(&DataKey::TotalReceived, &(total + amount));
+            .set(&DataKey::TotalReceived, &total);
 
         // The contributor ledger is what makes a proportional refund possible; a
         // repeat contributor accumulates into their existing row.
@@ -220,7 +225,10 @@ impl CampaignTreasury {
         for i in 0..contributors.len() {
             let mut record = contributors.get(i).unwrap();
             if record.contributor == contributor {
-                record.amount += amount;
+                record.amount = record
+                    .amount
+                    .checked_add(amount)
+                    .ok_or(TreasuryError::ArithmeticOverflow)?;
                 contributors.set(i, record);
                 found = true;
                 break;
@@ -265,7 +273,12 @@ impl CampaignTreasury {
 
         // 1. Hold period: deadline + min_hold_days must be behind us.
         let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();
-        let hold_until = deadline + (policy.min_hold_days as u64) * SECONDS_PER_DAY;
+        let hold_duration = (policy.min_hold_days as u64)
+            .checked_mul(SECONDS_PER_DAY)
+            .ok_or(TreasuryError::ArithmeticOverflow)?;
+        let hold_until = deadline
+            .checked_add(hold_duration)
+            .ok_or(TreasuryError::ArithmeticOverflow)?;
         if now < hold_until {
             return Err(TreasuryError::HoldPeriodNotElapsed);
         }
@@ -277,14 +290,19 @@ impl CampaignTreasury {
             .get(&DataKey::LastWithdrawalAt)
             .unwrap_or(0);
         if last > 0 {
-            let ready_at = last + (policy.withdrawal_cooldown_hours as u64) * SECONDS_PER_HOUR;
+            let cooldown = (policy.withdrawal_cooldown_hours as u64)
+                .checked_mul(SECONDS_PER_HOUR)
+                .ok_or(TreasuryError::ArithmeticOverflow)?;
+            let ready_at = last
+                .checked_add(cooldown)
+                .ok_or(TreasuryError::ArithmeticOverflow)?;
             if now < ready_at {
                 return Err(TreasuryError::CooldownNotElapsed);
             }
         }
 
         // 3. The request must fit inside the balance and the per-withdrawal ceiling.
-        let balance = available_balance(&env);
+        let balance = available_balance(&env)?;
         if amount > balance {
             return Err(TreasuryError::InsufficientBalance);
         }
@@ -300,7 +318,7 @@ impl CampaignTreasury {
             if auditor(&env).is_none() {
                 return Err(TreasuryError::AuditorNotConfigured);
             }
-            let id = next_id(&env);
+            let id = next_id(&env)?;
             let mut pending: Vec<PendingWithdrawal> = env
                 .storage()
                 .persistent()
@@ -321,7 +339,7 @@ impl CampaignTreasury {
             return Ok(Some(id));
         }
 
-        let id = next_id(&env);
+        let id = next_id(&env)?;
         execute(&env, id, amount, &destination, &creator, None)?;
         Ok(None)
     }
@@ -351,7 +369,7 @@ impl CampaignTreasury {
         let entry = found.ok_or(TreasuryError::PendingNotFound)?;
 
         // Re-check the balance: time has passed since the request was parked.
-        if entry.amount > available_balance(&env) {
+        if entry.amount > available_balance(&env)? {
             return Err(TreasuryError::InsufficientBalance);
         }
         env.storage().persistent().set(&DataKey::Pending, &pending);
@@ -400,7 +418,7 @@ impl CampaignTreasury {
         // Refunds are proportional to what is actually left, so a treasury that was
         // partially withdrawn before the miss still returns everything it holds
         // rather than reverting on the last contributor.
-        let balance = available_balance(&env);
+        let balance = available_balance(&env)?;
         let asset = asset(&env);
         let client = token::Client::new(&env, &asset);
         let contract = env.current_contract_address();
@@ -415,7 +433,9 @@ impl CampaignTreasury {
             };
             if share > 0 {
                 client.transfer(&contract, &record.contributor, &share);
-                refunded += share;
+                refunded = refunded
+                    .checked_add(share)
+                    .ok_or(TreasuryError::ArithmeticOverflow)?;
             }
         }
 
@@ -536,17 +556,20 @@ fn get_i128(env: &Env, key: &DataKey) -> i128 {
     env.storage().instance().get(key).unwrap_or(0)
 }
 
-fn next_id(env: &Env) -> u32 {
+fn next_id(env: &Env) -> Result<u32, TreasuryError> {
     let id: u32 = env.storage().instance().get(&DataKey::NextId).unwrap_or(1);
-    env.storage().instance().set(&DataKey::NextId, &(id + 1));
-    id
+    let next = id.checked_add(1).ok_or(TreasuryError::ArithmeticOverflow)?;
+    env.storage().instance().set(&DataKey::NextId, &next);
+    Ok(id)
 }
 
 /// What the treasury may still pay out: everything received less everything already
 /// withdrawn. Reading the ledger balance directly would let a stray inbound payment
 /// widen the percentage ceiling.
-fn available_balance(env: &Env) -> i128 {
-    get_i128(env, &DataKey::TotalReceived) - get_i128(env, &DataKey::TotalWithdrawn)
+fn available_balance(env: &Env) -> Result<i128, TreasuryError> {
+    get_i128(env, &DataKey::TotalReceived)
+        .checked_sub(get_i128(env, &DataKey::TotalWithdrawn))
+        .ok_or(TreasuryError::ArithmeticOverflow)
 }
 
 fn execute(
@@ -571,9 +594,12 @@ fn execute(
 
     let now = env.ledger().timestamp();
     let withdrawn: i128 = get_i128(env, &DataKey::TotalWithdrawn);
+    let withdrawn = withdrawn
+        .checked_add(amount)
+        .ok_or(TreasuryError::ArithmeticOverflow)?;
     env.storage()
         .instance()
-        .set(&DataKey::TotalWithdrawn, &(withdrawn + amount));
+        .set(&DataKey::TotalWithdrawn, &withdrawn);
     env.storage()
         .instance()
         .set(&DataKey::LastWithdrawalAt, &now);

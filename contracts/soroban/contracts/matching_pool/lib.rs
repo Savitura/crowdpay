@@ -84,8 +84,14 @@ fn add_funds(env: &Env, from: Address, amount: i128) -> PoolStatus {
         &amount,
     );
 
-    status.total_pool += amount;
-    status.remaining_pool += amount;
+    status.total_pool = status
+        .total_pool
+        .checked_add(amount)
+        .expect("Total pool amount overflow");
+    status.remaining_pool = status
+        .remaining_pool
+        .checked_add(amount)
+        .expect("Remaining pool amount overflow");
     if status.status == Symbol::new(env, "exhausted") && status.remaining_pool > 0 {
         status.status = Symbol::new(env, "active");
     }
@@ -223,8 +229,14 @@ impl MatchingPoolContract {
             return 0;
         }
 
-        status.matched_amount += actual_match;
-        status.remaining_pool -= actual_match;
+        status.matched_amount = status
+            .matched_amount
+            .checked_add(actual_match)
+            .expect("Matched amount overflow");
+        status.remaining_pool = status
+            .remaining_pool
+            .checked_sub(actual_match)
+            .expect("Remaining pool amount underflow");
         if status.remaining_pool == 0 {
             status.status = Symbol::new(&env, "exhausted");
         }

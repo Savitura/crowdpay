@@ -2,6 +2,30 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const proxyquire = require('proxyquire').noCallThru();
 
+function buildReadService(queryImpl) {
+  const calls = [];
+  const db = {
+    query: async (sql, params) => {
+      calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params });
+      return queryImpl(sql, params);
+    },
+    connect: async () => ({
+      query: async (sql, params) => {
+        calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params });
+        return queryImpl(sql, params);
+      },
+      release() {},
+    }),
+  };
+  return {
+    service: proxyquire('./poolQueries', {
+      '../config/database': db,
+      './contributionService': { submitCustodialContribution: async () => ({ txHash: 'unused' }) },
+    }),
+    calls,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // join(): a mock DB with a real mutex around the pool row, so concurrent
 // `join` calls actually serialize the way `SELECT ... FOR UPDATE` would
@@ -123,6 +147,108 @@ test('join serializes two concurrent requests so the pool target cannot be joint
   assert.equal(rejected.length, 1);
   assert.match(rejected[0].reason.message, /exceeds remaining pool target/);
   assert.equal(state.members.length, 1);
+});
+
+test('listByCampaign and listByUser pass their filters to the expected queries', async () => {
+  const { service, calls } = buildReadService(async () => ({ rows: [{ id: 'pool-1' }] }));
+
+  assert.deepEqual(await service.listByCampaign('campaign-1'), [{ id: 'pool-1' }]);
+  assert.deepEqual(await service.listByUser('user-1'), [{ id: 'pool-1' }]);
+
+  assert.deepEqual(
+    calls.map(call => call.params),
+    [['campaign-1'], ['user-1']]
+  );
+  assert.match(calls[0].sql, /WHERE cp\.campaign_id = \$1/);
+  assert.match(calls[1].sql, /WHERE cp\.leader_id = \$1/);
+});
+
+test('getById returns null for an absent pool and includes ordered members for an existing pool', async () => {
+  let poolExists = false;
+  const { service, calls } = buildReadService(async sql => {
+    if (sql.includes('FROM contribution_pools')) {
+      return { rows: poolExists ? [{ id: 'pool-1', member_count: 1 }] : [] };
+    }
+    return { rows: [{ id: 'member-1', user_id: 'user-1' }] };
+  });
+
+  assert.equal(await service.getById('missing'), null);
+  poolExists = true;
+  assert.deepEqual(await service.getById('pool-1'), {
+    id: 'pool-1',
+    member_count: 1,
+    members: [{ id: 'member-1', user_id: 'user-1' }],
+  });
+  assert.equal(calls.filter(call => call.sql.includes('JOIN users')).length, 1);
+});
+
+test('create inserts all pool fields and returns the inserted row', async () => {
+  const created = { id: 'pool-1', title: 'Group' };
+  const { service, calls } = buildReadService(async () => ({ rows: [created] }));
+
+  const result = await service.create({
+    campaign_id: 'campaign-1',
+    leader_id: 'leader-1',
+    title: 'Group',
+    description: 'Friends',
+    target_amount: 100,
+    expires_at: '2026-12-01',
+  });
+
+  assert.deepEqual(result, created);
+  assert.deepEqual(calls[0].params, [
+    'campaign-1',
+    'leader-1',
+    'Group',
+    'Friends',
+    100,
+    '2026-12-01',
+  ]);
+});
+
+test('leave rejects leaders and nonmembers, and deletes a member otherwise', async () => {
+  let leaderId = 'leader-1';
+  let rowCount = 1;
+  const { service, calls } = buildReadService(async sql => {
+    if (sql.includes('SELECT leader_id')) return { rows: [{ leader_id: leaderId }] };
+    return { rows: [], rowCount };
+  });
+
+  await assert.rejects(() => service.leave('pool-1', 'leader-1'), /leader cannot leave/);
+  leaderId = 'leader-1';
+  rowCount = 0;
+  await assert.rejects(() => service.leave('pool-1', 'member-1'), /Not a member/);
+  rowCount = 1;
+  await service.leave('pool-1', 'member-1');
+  assert.deepEqual(calls[2].params, ['pool-1', 'member-1']);
+});
+
+test('update ignores unsupported fields and refuses edits to non-open pools', async () => {
+  let status = 'open';
+  const { service, calls } = buildReadService(async sql => {
+    if (sql.startsWith('SELECT leader_id')) {
+      return { rows: [{ leader_id: 'leader-1', status }] };
+    }
+    return { rows: [{ id: 'pool-1', title: 'Updated' }] };
+  });
+
+  const updated = await service.update('pool-1', 'leader-1', {
+    title: 'Updated',
+    id: 'injected',
+    status: 'closed',
+  });
+  assert.deepEqual(updated, { id: 'pool-1', title: 'Updated' });
+  assert.deepEqual(calls[1].params, ['Updated', 'closed', 'pool-1']);
+  assert.match(
+    calls[1].sql,
+    /UPDATE contribution_pools SET title = \$1, status = \$2 WHERE id = \$3/
+  );
+
+  status = 'submitted';
+  await assert.rejects(
+    () => service.update('pool-1', 'leader-1', { title: 'Nope' }),
+    /Can only edit open pools/
+  );
 });
 
 // ---------------------------------------------------------------------------
