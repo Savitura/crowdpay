@@ -69,6 +69,11 @@ User contributes (with tier_id)
 
 ## Testing
 
+- [ ] `npm test` passes.
+- [ ] If SQL migrations changed, verified they converge cleanly.
+- [ ] If Soroban contracts changed, ran contract tests and verified snapshots.
+- [ ] If monetary logic changed, used `stroops.js` for exact arithmetic.
+
 - [ ] Unit test `reserveTierSlot()` — success path
 - [ ] Unit test `reserveTierSlot()` — sold-out path returns null
 - [ ] Unit test `assignTierToContribution()` with explicit `tierId` — no double-increment
