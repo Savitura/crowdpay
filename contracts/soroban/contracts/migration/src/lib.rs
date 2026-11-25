@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, IntoVal};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, IntoVal, Symbol};
 
 // Standalone one-shot migration orchestrator: drives a live upgrade from a
 // milestones V1 contract to a milestones V2 contract (see
@@ -31,7 +31,11 @@ impl MigrationContract {
     /// its state across, then emits MigrationCompleted with the number of
     /// milestones that were carried over.
     pub fn migrate(env: Env, v1_contract_id: Address, v2_contract_id: Address) {
-        let platform: Address = env.storage().instance().get(&DataKey::Platform).expect("Not initialized");
+        let platform: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Platform)
+            .expect("Not initialized");
         platform.require_auth();
 
         let _: () = env.invoke_contract(

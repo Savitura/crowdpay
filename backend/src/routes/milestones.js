@@ -33,6 +33,63 @@ const {
 const { createNotification } = require('../services/notifications');
 const { notifyFollowers } = require('../services/campaignFollowService');
 const { notifyContributorFundRelease } = require('../services/fundReleaseNotifications');
+
+const MILESTONE_COLUMNS = [
+  'id',
+  'campaign_id',
+  'title',
+  'description',
+  'release_percentage',
+  'sort_order',
+  'evidence_url',
+  'evidence_description',
+  'evidence_submitted_at',
+  'destination_key',
+  'review_note',
+  'reviewer_id',
+  'reviewed_at',
+  'status',
+  'created_at',
+  'completed_at',
+  'approved_at',
+  'released_at',
+  'claimed_at',
+  'contract_index',
+  'auto_release_enabled',
+  'auto_release_rule',
+  'auto_release_rule_config',
+  'auto_release_window_seconds',
+  'auto_release_status',
+  'auto_release_configured_at',
+  'auto_release_scheduled_at',
+  'auto_release_at',
+  'auto_release_evidence_url',
+  'auto_release_evidence_sha256',
+  'auto_release_halted_at',
+  'auto_release_halt_reason',
+  'auto_release_dispute_id',
+  'release_trigger',
+].join(', ');
+
+function milestoneColumnList(alias = '') {
+  const prefix = alias ? `${alias}.` : '';
+  return MILESTONE_COLUMNS.split(', ').map(col => `${prefix}${col}`).join(', ');
+}
+
+const MILESTONE_EVENT_COLUMNS = [
+  'id',
+  'milestone_id',
+  'actor_id',
+  'action',
+  'note',
+  'metadata',
+  'created_at',
+];
+
+function milestoneEventColumnList(alias = '') {
+  const prefix = alias ? `${alias}.` : '';
+  return MILESTONE_EVENT_COLUMNS.map(col => `${prefix}${col}`).join(', ');
+}
 const { evaluateCampaign } = require('../services/fraudService');
 const {
   sendMilestoneReleasedCreatorEmail,
@@ -193,7 +250,7 @@ router.get(
   '/campaign/:campaignId',
   asyncHandler(async (req, res) => {
     const { rows } = await db.query(
-      `SELECT m.*, 
+      `SELECT ${milestoneColumnList('m')}, 
             (c.milestones_contract_id IS NOT NULL) AS on_chain
      FROM milestones m
      JOIN campaigns c ON c.id = m.campaign_id
@@ -342,7 +399,7 @@ router.post(
     }
 
     const { rows: milestones } = await db.query(
-      `SELECT m.*, c.creator_id, c.status AS campaign_status, c.title AS campaign_title,
+      `SELECT ${milestoneColumnList('m')}, c.creator_id, c.status AS campaign_status, c.title AS campaign_title,
             c.migration_in_progress
      FROM milestones m
      JOIN campaigns c ON c.id = m.campaign_id
@@ -537,7 +594,7 @@ router.post(
     }
 
     const { rows: milestones } = await db.query(
-      `SELECT m.*, c.creator_id, c.status AS campaign_status
+      `SELECT ${milestoneColumnList('m')}, c.creator_id, c.status AS campaign_status
      FROM milestones m
      JOIN campaigns c ON c.id = m.campaign_id
      WHERE m.id = $1`,
@@ -574,7 +631,7 @@ router.post(
 router.get(
   '/:id/auto-release',
   asyncHandler(async (req, res) => {
-    const { rows } = await db.query('SELECT * FROM milestones WHERE id = $1', [req.params.id]);
+    const { rows } = await db.query(`SELECT ${MILESTONE_COLUMNS} FROM milestones WHERE id = $1`, [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Milestone not found' });
     res.json(autoRelease.describeAutoRelease(rows[0]));
   })
@@ -597,7 +654,7 @@ router.put(
     }
 
     const { rows: milestones } = await db.query(
-      `SELECT m.*, c.creator_id
+      `SELECT ${milestoneColumnList('m')}, c.creator_id
      FROM milestones m
      JOIN campaigns c ON c.id = m.campaign_id
      WHERE m.id = $1`,
@@ -683,7 +740,7 @@ router.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const { rows: milestones } = await db.query(
-      `SELECT m.*, c.creator_id
+      `SELECT ${milestoneColumnList('m')}, c.creator_id
      FROM milestones m
      JOIN campaigns c ON c.id = m.campaign_id
      WHERE m.id = $1`,
@@ -699,7 +756,7 @@ router.get(
     }
 
     const { rows } = await db.query(
-      `SELECT e.*, u.name AS actor_name
+      `SELECT ${milestoneEventColumnList('e')}, u.name AS actor_name
      FROM milestone_events e
      LEFT JOIN users u ON u.id = e.actor_id
      WHERE e.milestone_id = $1
@@ -883,7 +940,7 @@ const approveMilestoneReleaseHandler = asyncHandler(async (req, res) => {
   const reviewNote = String(req.body?.reason || '').trim() || null;
 
   const { rows: milestoneRows } = await db.query(
-    `SELECT m.*, c.status AS campaign_status, c.wallet_public_key AS campaign_wallet_public_key,
+    `SELECT ${milestoneColumnList('m')}, c.status AS campaign_status, c.wallet_public_key AS campaign_wallet_public_key,
             c.asset_type, c.raised_amount, c.target_amount, c.title AS campaign_title,
             c.creator_id, u.wallet_public_key AS creator_wallet_public_key,
             u.wallet_secret_encrypted, u.wallet_type AS creator_wallet_type

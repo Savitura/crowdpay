@@ -1,4 +1,5 @@
 const logger = require('../config/logger');
+const { fetchWithTimeout } = require('../utils/fetchWithTimeout');
 
 // Delivery adapters for each outbound notification channel. Each adapter is a
 // pure async function `(destination, message) -> void` where `message` is
@@ -32,20 +33,14 @@ function messageText({ title, body, link }) {
 // POST a JSON body to a webhook URL with a bounded timeout. Shared by the
 // Slack and Discord adapters, which differ only in payload shape.
 async function postWebhook(url, payload) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      throw new Error(`webhook responded ${res.status}`);
-    }
-  } finally {
-    clearTimeout(timeout);
+  const res = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    timeoutMs: 10_000,
+  });
+  if (!res.ok) {
+    throw new Error(`webhook responded ${res.status}`);
   }
 }
 

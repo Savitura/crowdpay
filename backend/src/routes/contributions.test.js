@@ -1706,10 +1706,18 @@ test('POST /api/contributions redeems a cross-asset preview token once and enfor
 
   assert.equal(response.status, 202);
   assert.equal(response.body.preview_validated, true);
-  assert.equal(consumeCalls.length, 1, 'the single-use preview token must be redeemed exactly once');
+  assert.equal(
+    consumeCalls.length,
+    1,
+    'the single-use preview token must be redeemed exactly once'
+  );
   assert.equal(consumeCalls[0].previewToken, 'tok-cross-asset');
   assert.equal(consumeCalls[0].selectedPathIndex, 0);
-  assert.equal(previewStore.has('tok-cross-asset'), false, 'the preview key must be gone afterwards');
+  assert.equal(
+    previewStore.has('tok-cross-asset'),
+    false,
+    'the preview key must be gone afterwards'
+  );
 
   assert.ok(txOrder.indexOf('BEGIN') !== -1, 'the redemption must happen inside a transaction');
   assert.ok(
@@ -1982,6 +1990,14 @@ function buildRefundApp({ contributionRow, refundImpl }) {
     '../services/sorobanService': {
       triggerRefund: refundImpl || (async () => 'refund-tx-hash'),
     },
+    '../services/contributionRefundStatusService': {
+      getContributionRefundStatus: async id => ({
+        contribution_id: id,
+        refund_status: 'eligible',
+        stage: 'eligible',
+        estimated_time_text: 'Within 24–48 hours',
+      }),
+    },
     '../middleware/contributionRateLimiter': {
       contributionRateLimiter: (_req, _res, next) => next(),
     },
@@ -2013,83 +2029,79 @@ const FAILED_CONTRIBUTION = {
   contract_refund_tx_hash: null,
 };
 
-// TODO(#786): Refund route not implemented
-test(
-  'POST /api/contributions/:id/refund returns 400 for a funded campaign',
-  { skip: 'Route not implemented - see #786' },
-  async () => {
-    const { app } = buildRefundApp({
-      contributionRow: { ...FAILED_CONTRIBUTION, campaign_status: 'funded' },
-    });
+test('POST /api/contributions/:id/refund returns 400 for a funded campaign', async () => {
+  const { app } = buildRefundApp({
+    contributionRow: { ...FAILED_CONTRIBUTION, campaign_status: 'funded' },
+  });
 
-    const response = await request(app)
-      .post('/api/contributions/c-1/refund')
-      .set('Authorization', 'Bearer token')
-      .send({});
+  const response = await request(app)
+    .post('/api/contributions/c-1/refund')
+    .set('Authorization', 'Bearer token')
+    .send({});
 
-    assert.equal(response.status, 400);
-    assert.match(response.body.error, /only available for failed campaigns/i);
-    assert.equal(response.body.campaign_status, 'funded');
-    assert.ok(response.body.eligibility);
-  }
-);
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /only available for failed campaigns/i);
+  assert.equal(response.body.campaign_status, 'funded');
+  assert.ok(response.body.eligibility);
+});
 
-test(
-  'POST /api/contributions/:id/refund returns 400 for an active campaign',
-  { skip: 'Route not implemented - see #786' },
-  async () => {
-    const { app } = buildRefundApp({
-      contributionRow: { ...FAILED_CONTRIBUTION, campaign_status: 'active' },
-    });
+test('POST /api/contributions/:id/refund returns 400 for an active campaign', async () => {
+  const { app } = buildRefundApp({
+    contributionRow: { ...FAILED_CONTRIBUTION, campaign_status: 'active' },
+  });
 
-    const response = await request(app)
-      .post('/api/contributions/c-1/refund')
-      .set('Authorization', 'Bearer token')
-      .send({});
+  const response = await request(app)
+    .post('/api/contributions/c-1/refund')
+    .set('Authorization', 'Bearer token')
+    .send({});
 
-    assert.equal(response.status, 400);
-  }
-);
+  assert.equal(response.status, 400);
+});
 
-test(
-  'POST /api/contributions/:id/refund rejects a duplicate refund with 409',
-  { skip: 'Route not implemented - see #786' },
-  async () => {
-    const { app } = buildRefundApp({
-      contributionRow: {
-        ...FAILED_CONTRIBUTION,
-        contract_refunded_at: '2026-06-01T00:00:00.000Z',
-        contract_refund_tx_hash: 'existing-tx',
-      },
-    });
+test('POST /api/contributions/:id/refund rejects a duplicate refund with 409', async () => {
+  const { app } = buildRefundApp({
+    contributionRow: {
+      ...FAILED_CONTRIBUTION,
+      contract_refunded_at: '2026-06-01T00:00:00.000Z',
+      contract_refund_tx_hash: 'existing-tx',
+    },
+  });
 
-    const response = await request(app)
-      .post('/api/contributions/c-1/refund')
-      .set('Authorization', 'Bearer token')
-      .send({});
+  const response = await request(app)
+    .post('/api/contributions/c-1/refund')
+    .set('Authorization', 'Bearer token')
+    .send({});
 
-    assert.equal(response.status, 409);
-    assert.match(response.body.error, /already been refunded/i);
-    assert.equal(response.body.tx_hash, 'existing-tx');
-  }
-);
+  assert.equal(response.status, 409);
+  assert.match(response.body.error, /already been refunded/i);
+  assert.equal(response.body.tx_hash, 'existing-tx');
+});
 
-test(
-  'POST /api/contributions/:id/refund processes an eligible failed-campaign refund',
-  { skip: 'Route not implemented - see #786' },
-  async () => {
-    const { app, updates } = buildRefundApp({ contributionRow: FAILED_CONTRIBUTION });
+test('POST /api/contributions/:id/refund processes an eligible failed-campaign refund', async () => {
+  const { app, updates } = buildRefundApp({ contributionRow: FAILED_CONTRIBUTION });
 
-    const response = await request(app)
-      .post('/api/contributions/c-1/refund')
-      .set('Authorization', 'Bearer token')
-      .send({});
+  const response = await request(app)
+    .post('/api/contributions/c-1/refund')
+    .set('Authorization', 'Bearer token')
+    .send({});
 
-    assert.equal(response.status, 200);
-    assert.equal(response.body.tx_hash, 'refund-tx-hash');
-    assert.equal(updates.length, 1);
-  }
-);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.tx_hash, 'refund-tx-hash');
+  assert.equal(updates.length, 1);
+});
+
+test('GET /api/contributions/:id/refund-status returns contribution refund tracking details', async () => {
+  const { app } = buildRefundApp({ contributionRow: FAILED_CONTRIBUTION });
+
+  const response = await request(app)
+    .get('/api/contributions/c-1/refund-status')
+    .set('Authorization', 'Bearer token');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.contribution_id, 'c-1');
+  assert.equal(response.body.refund_status, 'eligible');
+  assert.equal(response.body.estimated_time_text, 'Within 24–48 hours');
+});
 
 // --- GET /api/contributions/campaign/:campaignId pagination bounds (#490) ---
 //

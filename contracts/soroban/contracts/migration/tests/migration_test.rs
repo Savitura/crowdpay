@@ -1,8 +1,17 @@
-use soroban_sdk::{testutils::{Address as _, Events}, Address, BytesN, Env, Vec};
+use soroban_sdk::{
+    testutils::{Address as _, Events},
+    Address, BytesN, Env, Vec,
+};
 
 use migration::{MigrationContract, MigrationContractClient};
-use milestones::{Milestone as V1Milestone, MilestoneStatus as V1Status, MilestonesContract, MilestonesContractClient};
-use milestones_v2::{Milestone as V2Milestone, MilestoneStatus as V2Status, MilestonesV2Contract, MilestonesV2ContractClient};
+use milestones::{
+    Milestone as V1Milestone, MilestoneStatus as V1Status, MilestonesContract,
+    MilestonesContractClient,
+};
+use milestones_v2::{
+    Milestone as V2Milestone, MilestoneStatus as V2Status, MilestonesV2Contract,
+    MilestonesV2ContractClient,
+};
 
 fn v1_milestone(env: &Env, title: &[u8; 32], bps: u32) -> V1Milestone {
     V1Milestone {
@@ -39,18 +48,28 @@ fn test_migrate_pauses_v1_and_copies_state_into_v2_emitting_one_event() {
     );
     let v1_id = env.register_contract(None, MilestonesContract);
     MilestonesContractClient::new(&env, &v1_id).initialize(
-        &v1_creator, &platform, &v1_escrow, &v1_milestones,
+        &v1_creator,
+        &platform,
+        &v1_escrow,
+        &v1_milestones,
     );
 
     let v2_creator = Address::generate(&env);
     let v2_escrow = Address::generate(&env);
     let seed_milestones = Vec::from_array(
         &env,
-        [v2_milestone(&env, b"ZZZZ0000000000000000000000000000", 10000u32)],
+        [v2_milestone(
+            &env,
+            b"ZZZZ0000000000000000000000000000",
+            10000u32,
+        )],
     );
     let v2_id = env.register_contract(None, MilestonesV2Contract);
     MilestonesV2ContractClient::new(&env, &v2_id).initialize(
-        &v2_creator, &platform, &v2_escrow, &seed_milestones,
+        &v2_creator,
+        &platform,
+        &v2_escrow,
+        &seed_milestones,
     );
 
     let migration_id = env.register_contract(None, MigrationContract);
@@ -67,7 +86,10 @@ fn test_migrate_pauses_v1_and_copies_state_into_v2_emitting_one_event() {
     let migrated = v2_client.get_all_milestones();
     assert_eq!(migrated.len(), v1_milestones.len());
     for i in 0..v1_milestones.len() {
-        assert_eq!(migrated.get(i).unwrap().release_bps, v1_milestones.get(i).unwrap().release_bps);
+        assert_eq!(
+            migrated.get(i).unwrap().release_bps,
+            v1_milestones.get(i).unwrap().release_bps
+        );
     }
 
     // migrate() publishes exactly one event, from this contract: MigrationCompleted.
@@ -76,7 +98,10 @@ fn test_migrate_pauses_v1_and_copies_state_into_v2_emitting_one_event() {
         .iter()
         .filter(|(contract_id, ..)| *contract_id == migration_id)
         .count();
-    assert_eq!(migration_event_count, 1, "MigrationCompleted must be emitted exactly once");
+    assert_eq!(
+        migration_event_count, 1,
+        "MigrationCompleted must be emitted exactly once"
+    );
 }
 
 #[test]
@@ -101,23 +126,31 @@ fn test_migrate_rejects_non_platform() {
     let v1_escrow = Address::generate(&env);
     let v1_milestones = Vec::from_array(
         &env,
-        [v1_milestone(&env, b"BBBB1111111111111111111111111111", 10000u32)],
+        [v1_milestone(
+            &env,
+            b"BBBB1111111111111111111111111111",
+            10000u32,
+        )],
     );
     let v1_id = env.register_contract(None, MilestonesContract);
-    MilestonesContractClient::new(&env, &v1_id).mock_all_auths().initialize(
-        &v1_creator, &platform, &v1_escrow, &v1_milestones,
-    );
+    MilestonesContractClient::new(&env, &v1_id)
+        .mock_all_auths()
+        .initialize(&v1_creator, &platform, &v1_escrow, &v1_milestones);
 
     let v2_creator = Address::generate(&env);
     let v2_escrow = Address::generate(&env);
     let v2_milestones = Vec::from_array(
         &env,
-        [v2_milestone(&env, b"BBBB1111111111111111111111111111", 10000u32)],
+        [v2_milestone(
+            &env,
+            b"BBBB1111111111111111111111111111",
+            10000u32,
+        )],
     );
     let v2_id = env.register_contract(None, MilestonesV2Contract);
-    MilestonesV2ContractClient::new(&env, &v2_id).mock_all_auths().initialize(
-        &v2_creator, &platform, &v2_escrow, &v2_milestones,
-    );
+    MilestonesV2ContractClient::new(&env, &v2_id)
+        .mock_all_auths()
+        .initialize(&v2_creator, &platform, &v2_escrow, &v2_milestones);
 
     let migration_id = env.register_contract(None, MigrationContract);
     let migration_client = MigrationContractClient::new(&env, &migration_id);

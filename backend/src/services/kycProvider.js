@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const ff = require('./featureFlags');
 const logger = require('../config/logger');
+const { fetchWithTimeout } = require('../utils/fetchWithTimeout');
 
 function isKycRequiredForCampaigns() {
   return ff.isEnabled('kyc-required-for-campaigns');
@@ -30,8 +31,9 @@ async function createPersonaInquiry({ user }) {
     );
   }
 
-  const response = await fetch('https://withpersona.com/api/v1/inquiries', {
+  const response = await fetchWithTimeout('https://withpersona.com/api/v1/inquiries', {
     method: 'POST',
+    timeoutMs: 15_000,
     headers: {
       Authorization: `Bearer ${process.env.PERSONA_API_KEY}`,
       'Content-Type': 'application/json',

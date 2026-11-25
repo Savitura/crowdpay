@@ -1,12 +1,36 @@
 #[cfg(test)]
 mod test {
-    use soroban_sdk::{testutils::Address as _, Address, Env};
+    #![allow(
+        deprecated,
+        unused_imports,
+        unused_variables,
+        mismatched_lifetime_syntaxes,
+        clippy::all
+    )]
     use crate::{FeeRegistry, FeeRegistryClient, ProposalStatus};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Address, Env,
+    };
 
     fn setup_contract(env: &Env) -> (Address, FeeRegistryClient<'_>) {
         let contract_id = env.register_contract(None, FeeRegistry);
         let client = FeeRegistryClient::new(env, &contract_id);
         (contract_id, client)
+    }
+
+    #[test]
+    fn test_uninitialized_reads_return_error() {
+        let env = Env::default();
+        let (_contract_id, client) = setup_contract(&env);
+        assert_eq!(
+            client.try_get_admin(),
+            Err(Ok(crate::FeeRegistryError::NotInitialized))
+        );
+        assert_eq!(
+            client.try_get_governance_token(),
+            Err(Ok(crate::FeeRegistryError::NotInitialized))
+        );
     }
 
     #[test]
@@ -16,7 +40,7 @@ mod test {
         let (_contract_id, client) = setup_contract(&env);
         let admin = Address::generate(&env);
         let governance_token = Address::generate(&env);
-        
+
         client.initialize(
             &admin,
             &governance_token,
@@ -38,12 +62,7 @@ mod test {
         let admin = Address::generate(&env);
         let governance_token = Address::generate(&env);
 
-        client.initialize(
-            &admin,
-            &governance_token,
-            &250,
-            &500,
-        );
+        client.initialize(&admin, &governance_token, &250, &500);
     }
 
     #[test]
@@ -53,9 +72,9 @@ mod test {
         let (_contract_id, client) = setup_contract(&env);
         let admin = Address::generate(&env);
         let governance_token = Address::generate(&env);
-        
+
         client.initialize(&admin, &governance_token, &300, &400);
-        
+
         assert_eq!(client.get_fee(), 300);
     }
 
@@ -67,7 +86,7 @@ mod test {
         let (_contract_id, client) = setup_contract(&env);
         let admin = Address::generate(&env);
         let governance_token = Address::generate(&env);
-        
+
         client.initialize(&admin, &governance_token, &250, &500);
         client.initialize(&admin, &governance_token, &300, &400);
     }
@@ -79,11 +98,11 @@ mod test {
         let (_contract_id, client) = setup_contract(&env);
         let admin = Address::generate(&env);
         let governance_token = Address::generate(&env);
-        
+
         client.initialize(&admin, &governance_token, &250, &500);
-        
+
         client.admin_set_fee(&admin, &350, &450);
-        
+
         assert_eq!(client.get_fee(), 350);
         assert_eq!(client.get_creator_share(), 450);
     }
@@ -123,6 +142,42 @@ mod test {
     #[test]
     #[should_panic(expected = "Platform fee BPS must not exceed MAX_FEE_BPS")]
     fn test_admin_set_fee_rejects_fee_above_cap() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_contract_id, client) = setup_contract(&env);
+        let admin = Address::generate(&env);
+        let governance_token = Address::generate(&env);
+        client.initialize(&admin, &governance_token, &250, &500);
+
+        client.admin_set_fee(&admin, &1001, &500);
+    }
+
+    #[test]
+    #[should_panic(expected = "Creator share BPS must not exceed MAX_CREATOR_SHARE_BPS")]
+    fn test_admin_set_fee_rejects_creator_share_above_cap() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_contract_id, client) = setup_contract(&env);
+        let admin = Address::generate(&env);
+        let governance_token = Address::generate(&env);
+        client.initialize(&admin, &governance_token, &250, &500);
+
+        client.admin_set_fee(&admin, &250, &10001);
+    }
+
+    #[test]
+    #[should_panic(expected = "Platform fee BPS must not exceed MAX_FEE_BPS")]
+    fn test_initialize_rejects_fee_above_cap() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_contract_id, client) = setup_contract(&env);
+        let admin = Address::generate(&env);
+        let governance_token = Address::generate(&env);
+
+        client.initialize(&admin, &governance_token, &1001, &500);
+    }
+
+    #[test]
     fn test_vote_locks_deposit_and_prevents_transfer_double_voting() {
         use soroban_sdk::{testutils::Ledger, token};
 
@@ -130,7 +185,7 @@ mod test {
         env.mock_all_auths();
         let (contract_id, client) = setup_contract(&env);
         let admin = Address::generate(&env);
-        
+
         let token_admin = Address::generate(&env);
         let token_addr = env.register_stellar_asset_contract(token_admin.clone());
         let token_admin_client = token::StellarAssetClient::new(&env, &token_addr);
@@ -185,7 +240,8 @@ mod test {
         assert!(reclaim_early.is_err());
 
         // Fast forward ledger time past deadline (7 days)
-        env.ledger().set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
 
         // Execute proposal
         client.execute_proposal(&proposal_id);
@@ -209,16 +265,7 @@ mod test {
         env.mock_all_auths();
         let (_contract_id, client) = setup_contract(&env);
         let admin = Address::generate(&env);
-        let governance_token = Address::generate(&env);
-        client.initialize(&admin, &governance_token, &250, &500);
 
-        client.admin_set_fee(&admin, &1001, &500);
-    }
-
-    #[test]
-    #[should_panic(expected = "Creator share BPS must not exceed MAX_CREATOR_SHARE_BPS")]
-    fn test_admin_set_fee_rejects_creator_share_above_cap() {
-        
         let token_admin = Address::generate(&env);
         let token_addr = env.register_stellar_asset_contract(token_admin.clone());
         let token_admin_client = token::StellarAssetClient::new(&env, &token_addr);
@@ -240,29 +287,13 @@ mod test {
     #[test]
     #[should_panic(expected = "No deposit to reclaim")]
     fn test_reclaim_with_no_deposit_panics() {
-        use soroban_sdk::{testutils::Ledger, token};
+        use soroban_sdk::token;
 
         let env = Env::default();
         env.mock_all_auths();
         let (_contract_id, client) = setup_contract(&env);
         let admin = Address::generate(&env);
-        let governance_token = Address::generate(&env);
-        client.initialize(&admin, &governance_token, &250, &500);
 
-        client.admin_set_fee(&admin, &250, &10001);
-    }
-
-    #[test]
-    #[should_panic(expected = "Platform fee BPS must not exceed MAX_FEE_BPS")]
-    fn test_initialize_rejects_fee_above_cap() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (_contract_id, client) = setup_contract(&env);
-        let admin = Address::generate(&env);
-        let governance_token = Address::generate(&env);
-
-        client.initialize(&admin, &governance_token, &1001, &500);
-        
         let token_admin = Address::generate(&env);
         let token_addr = env.register_stellar_asset_contract(token_admin.clone());
         let token_admin_client = token::StellarAssetClient::new(&env, &token_addr);
@@ -275,7 +306,8 @@ mod test {
         token_admin_client.mint(&proposer, &2000);
         let proposal_id = client.propose_change(&proposer, &300, &600);
 
-        env.ledger().set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
         client.execute_proposal(&proposal_id);
 
         client.reclaim_vote_deposit(&non_voter, &proposal_id);
@@ -283,10 +315,10 @@ mod test {
 
     #[test]
     fn test_vote_deposit_survives_past_default_ttl() {
+        use crate::{DataKey, STORAGE_TTL_LEDGERS};
         use soroban_sdk::testutils::storage::{Instance as _, Persistent as _};
         use soroban_sdk::testutils::Ledger;
         use soroban_sdk::token;
-        use crate::{DataKey, STORAGE_TTL_LEDGERS};
 
         let env = Env::default();
         env.mock_all_auths();
@@ -307,14 +339,21 @@ mod test {
         env.as_contract(&contract_id, || {
             let deposit_key = DataKey::LockedDeposit(proposal_id, voter.clone());
             assert!(env.storage().persistent().get_ttl(&deposit_key) >= STORAGE_TTL_LEDGERS - 1);
-            assert!(env.storage().persistent().get_ttl(&DataKey::Proposal(proposal_id)) >= STORAGE_TTL_LEDGERS - 1);
+            assert!(
+                env.storage()
+                    .persistent()
+                    .get_ttl(&DataKey::Proposal(proposal_id))
+                    >= STORAGE_TTL_LEDGERS - 1
+            );
             assert!(env.storage().instance().get_ttl() >= STORAGE_TTL_LEDGERS - 1);
         });
 
         // Keep the test token alive; only the registry's own storage is under test.
         let jump = env.ledger().get().min_persistent_entry_ttl * 100;
         env.as_contract(&token_addr, || {
-            env.storage().instance().extend_ttl(jump + 1000, jump + 1000);
+            env.storage()
+                .instance()
+                .extend_ttl(jump + 1000, jump + 1000);
         });
         env.ledger().with_mut(|li| {
             li.sequence_number += jump;

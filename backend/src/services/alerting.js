@@ -1,4 +1,5 @@
 const logger = require('../config/logger');
+const { fetchWithTimeout } = require('../utils/fetchWithTimeout');
 
 async function sendAlert(message, context = {}) {
   const url = process.env.ALERT_WEBHOOK_URL;
@@ -13,10 +14,11 @@ async function sendAlert(message, context = {}) {
   };
 
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      timeoutMs: 5000,
     });
     if (!res.ok) {
       logger.warn('Alert webhook returned non-2xx', { status: res.status });

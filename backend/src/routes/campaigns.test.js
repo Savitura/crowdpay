@@ -120,10 +120,10 @@ function buildApp({
     '../middleware/validation': {
       createCampaignValidation: [],
       createCampaignUpdateValidation: [],
-      updateCampaignValidation: [],
+      updateCampaignValidation: require('../middleware/validation').updateCampaignValidation,
       getCampaignsValidation: [],
-      validateRequest: (_req, _res, next) => next(),
-      createValidateRequest: () => (_req, _res, next) => next(),
+      validateRequest: require('../middleware/validation').validateRequest,
+      createValidateRequest: require('../middleware/validation').createValidateRequest,
     },
     '../services/analyticsService': {
       getCampaignAnalytics: async () => ({ overview: {}, chart: [] }),
@@ -755,7 +755,7 @@ function buildListingApp(queries) {
   return buildApp({
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('COUNT(*)')) return { rows: [{ total: 1 }] };
+      if (text.includes('COUNT(*)::int AS total FROM')) return { rows: [{ total: 1 }] };
       return { rows: [{ id: 'camp-1', title: 'Solar panels', status: 'active' }] };
     },
   });
@@ -793,7 +793,7 @@ test('GET /api/campaigns never serialises fraud/duplicate internals or the walle
   const app = buildApp({
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('COUNT(*)')) return { rows: [{ total: 1 }] };
+      if (text.includes('COUNT(*)::int AS total FROM')) return { rows: [{ total: 1 }] };
       return {
         rows: [
           { id: 'camp-1', title: 'Solar panels', status: 'active', ...internalCampaignFields() },
@@ -815,7 +815,7 @@ test('GET /api/campaigns never serialises fraud/duplicate internals or the walle
     );
   }
 
-  const listQuery = queries.find(query => query.text.includes('FROM campaigns c'));
+  const listQuery = queries.find(query => query.text.includes('SELECT c.id'));
   assert.ok(listQuery, 'the listing query should have been issued');
   assert.doesNotMatch(listQuery.text, /SELECT\s+c\.\*/);
   assert.match(listQuery.text, /SELECT\s+c\.id,/);
@@ -1292,7 +1292,7 @@ test('PATCH /api/campaigns/:id accepts valid fields and returns 422 for validati
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+      if (text.includes('FROM campaigns WHERE id = $1')) {
         return {
           rows: [
             {
@@ -1318,7 +1318,20 @@ test('PATCH /api/campaigns/:id accepts valid fields and returns 422 for validati
         return { rows: [{ total_budget: '0' }] };
       }
       if (text.includes('UPDATE campaigns') && text.includes('SET') && text.includes('WHERE id')) {
-        return { rows: [] };
+        return {
+          rows: [
+            {
+              id: 'campaign-1',
+              title: 'Updated Title',
+              description: 'Updated description',
+              target_amount: '200',
+              deadline: '2027-01-15T23:59:59Z',
+              country: 'CA',
+              creator_id: 'creator-1',
+              status: 'active',
+            },
+          ],
+        };
       }
       if (text.includes('BEGIN') || text.includes('COMMIT')) {
         return { rows: [] };
@@ -1362,7 +1375,7 @@ test('PATCH /api/campaigns/:id accepts max_per_user, min_contribution, max_contr
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+      if (text.includes('FROM campaigns WHERE id = $1')) {
         return {
           rows: [
             {
@@ -1443,7 +1456,7 @@ test('PATCH /api/campaigns/:id rejects invalid fields with 422', async () => {
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+      if (text.includes('FROM campaigns WHERE id = $1')) {
         return {
           rows: [
             {
@@ -1489,7 +1502,7 @@ test('PATCH /api/campaigns/:id returns 422 for deadline in the past', async () =
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+      if (text.includes('FROM campaigns WHERE id = $1')) {
         return {
           rows: [
             {
@@ -1535,7 +1548,7 @@ test('PATCH /api/campaigns/:id validates max_per_user > min_contribution', async
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+      if (text.includes('FROM campaigns WHERE id = $1')) {
         return {
           rows: [
             {
@@ -1582,7 +1595,7 @@ test('PATCH /api/campaigns/:id full object round-trip works', async () => {
     authUser: { userId: 'creator-1', role: 'creator' },
     queryImpl: async (text, params) => {
       queries.push({ text, params });
-      if (text.includes('SELECT * FROM campaigns WHERE id = $1')) {
+      if (text.includes('FROM campaigns WHERE id = $1')) {
         return {
           rows: [
             {

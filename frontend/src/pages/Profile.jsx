@@ -439,7 +439,12 @@ export default function Profile() {
               )}
 
               {setupStep === 0 && (
-                <button className="btn-primary" onClick={handleStart2FA} disabled={twoFaLoading}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleStart2FA}
+                  disabled={twoFaLoading}
+                >
                   {twoFaLoading ? t('Setting up...') : t('Setup 2FA')}
                 </button>
               )}
@@ -586,6 +591,7 @@ export default function Profile() {
         )}
 
         <button
+          type="button"
           className="btn-primary"
           onClick={handleRequestExport}
           disabled={exportLoading || dataExports.some((e) => e.status === 'pending')}
@@ -617,7 +623,11 @@ export default function Profile() {
                   </div>
                 </div>
                 {exp.status === 'completed' && new Date(exp.expires_at) > new Date() && (
-                  <button className="btn-secondary" onClick={() => handleDownloadExport(exp.id)}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => handleDownloadExport(exp.id)}
+                  >
                     {t('Download')}
                   </button>
                 )}

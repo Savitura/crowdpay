@@ -93,6 +93,7 @@ export default function CampaignCompare() {
           </p>
         </div>
         <button
+          type="button"
           onClick={() => setShowSelector(true)}
           disabled={selected.length >= MAX_COMPARE}
           className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
@@ -118,6 +119,7 @@ export default function CampaignCompare() {
             ) : (
               filtered.slice(0, 20).map((camp) => (
                 <button
+                  type="button"
                   key={camp.id}
                   onClick={() => handleAddCampaign(camp)}
                   className="w-full text-left px-3 py-2 hover:bg-indigo-50 rounded text-sm flex items-center justify-between"
@@ -132,6 +134,7 @@ export default function CampaignCompare() {
             )}
           </div>
           <button
+            type="button"
             onClick={() => {
               setShowSelector(false);
               setSearch('');
@@ -156,6 +159,7 @@ export default function CampaignCompare() {
             <span>Sort by:</span>
             {['progress', 'raised', 'target', 'name'].map((opt) => (
               <button
+                type="button"
                 key={opt}
                 onClick={() => setSortBy(opt)}
                 className={`px-2 py-1 rounded ${sortBy === opt ? 'bg-indigo-100 text-indigo-700 font-medium' : 'hover:bg-gray-100'}`}
@@ -284,6 +288,7 @@ export default function CampaignCompare() {
                           View
                         </Link>
                         <button
+                          type="button"
                           onClick={() => handleRemove(camp.id)}
                           className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded hover:bg-red-100"
                         >

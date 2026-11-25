@@ -9,6 +9,10 @@ const {
   isValidAmount,
   splitFee,
   mulBpsCeil,
+  mulBpsFloor,
+  compareAmounts,
+  percentToBps,
+  divideAmounts,
 } = require('./stroops');
 
 test('converts values that drift under binary floating point exactly (#840)', () => {
@@ -128,4 +132,57 @@ test('mulBpsCeil rounds up to the next stroop', () => {
   assert.equal(mulBpsCeil(100n, 10500), 105n);
   assert.equal(mulBpsCeil(1n, 10500), 2n);
   assert.equal(mulBpsCeil(toStroops('8.29'), 10500), toStroops('8.7045'));
+});
+
+test('mulBpsFloor rounds down to the stroop so a payout never exceeds its share', () => {
+  // 33.33% of 1 stroop-precise amount: 10.0000001 * 3333 / 10000 = 3.33300003333
+  assert.equal(mulBpsFloor(toStroops('10.0000001'), 3333), 33_330_000n);
+  assert.equal(mulBpsFloor(1n, 9999), 0n, 'sub-stroop share floors to zero');
+  assert.equal(mulBpsFloor(toStroops('5000'), 10_000), toStroops('5000'));
+  assert.throws(() => mulBpsFloor(-1n, 100), AmountError);
+  assert.throws(() => mulBpsFloor(1n, 10_001), /basis points/);
+});
+
+test('compareAmounts compares 7-decimal amounts exactly', () => {
+  // 0.1 + 0.2 !== 0.3 in floats; the strings compare exactly.
+  assert.equal(compareAmounts('0.3000000', '0.3'), 0);
+  assert.equal(compareAmounts('922337203685.4775806', '922337203685.4775807'), -1);
+  assert.equal(
+    parseFloat('922337203685.4775806') < parseFloat('922337203685.4775807'),
+    false,
+    'sanity: floats cannot tell these apart'
+  );
+  assert.equal(compareAmounts('0.0000001', '0'), 1);
+  assert.equal(compareAmounts('-1', 0), -1);
+  assert.equal(compareAmounts(toStroops('2'), '2'), 1, 'bigint is whole units, not stroops');
+});
+
+test('percentToBps parses percentages exactly into integer basis points', () => {
+  assert.equal(percentToBps('25'), 2500);
+  assert.equal(percentToBps('25.5'), 2550);
+  assert.equal(percentToBps('33.3300'), 3333, 'trailing zeros (NUMERIC(7,4)) are fine');
+  assert.equal(percentToBps(0.29), 29, 'float that drifts: 0.29 * 100 = 28.999999999999996');
+  assert.equal(percentToBps(57.01), 5701, '57.01 * 100 = 5700.999999999999 in floats');
+  assert.equal(percentToBps('100'), 10_000);
+  assert.equal(percentToBps('0'), 0);
+});
+
+test('percentToBps rejects values that are not an exact basis point in range', () => {
+  for (const bad of ['12.345', '33.3333', '100.01', '-1', 'abc', '', null, undefined, NaN]) {
+    assert.throws(
+      () => percentToBps(bad),
+      err => err instanceof AmountError && err.code === 'INVALID_PERCENTAGE',
+      `expected ${String(bad)} to be rejected`
+    );
+  }
+});
+
+test('divideAmounts returns an exact, minimal decimal ratio', () => {
+  assert.equal(divideAmounts('105', '100'), '1.05');
+  assert.equal(divideAmounts('20', '10'), '2');
+  assert.equal(divideAmounts('1', '3'), '0.333333333333333');
+  assert.equal(divideAmounts('2', '3'), '0.666666666666667', 'rounds half-up');
+  assert.equal(divideAmounts('0.0000001', '1', 7), '0.0000001');
+  assert.equal(divideAmounts('0', '5'), '0');
+  assert.throws(() => divideAmounts('1', '0'), AmountError);
 });

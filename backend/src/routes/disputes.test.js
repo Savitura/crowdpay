@@ -505,7 +505,7 @@ function buildAppForPatch({
   const queryImpl = async (sql, params) => {
     queries.push({ sql, params });
 
-    if (sql.includes('SELECT * FROM disputes WHERE id')) {
+    if (sql.includes('FROM disputes WHERE id')) {
       return {
         rows: [
           {

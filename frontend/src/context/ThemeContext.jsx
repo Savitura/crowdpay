@@ -1,21 +1,24 @@
 import { createContext, useContext, useEffect, useState } from 'react';
+import { safeLocalStorage } from '../lib/safeStorage';
 
 const ThemeContext = createContext();
 
 export function ThemeProvider({ children }) {
   const [dark, setDark] = useState(() => {
     // Check localStorage first
-    const saved = localStorage.getItem('theme');
+    const saved = safeLocalStorage.getItem('theme');
     if (saved) {
       return saved === 'dark';
     }
     // Fall back to system preference
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+      : false;
   });
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
-    localStorage.setItem('theme', dark ? 'dark' : 'light');
+    safeLocalStorage.setItem('theme', dark ? 'dark' : 'light');
   }, [dark]);
 
   const toggleTheme = () => setDark((prev) => !prev);

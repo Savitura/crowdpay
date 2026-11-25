@@ -164,8 +164,87 @@ function mulBpsCeil(amountStroops, bps) {
   return (amount * rate + BPS_DENOMINATOR - 1n) / BPS_DENOMINATOR;
 }
 
+/** amount * bps / 10000, rounded down to the stroop (for payouts: never overpay). */
+function mulBpsFloor(amountStroops, bps) {
+  const amount = BigInt(amountStroops);
+  if (amount < 0n) throw new AmountError('amount must not be negative');
+  return (amount * assertBps(bps)) / BPS_DENOMINATOR;
+}
+
+/**
+ * Exact three-way comparison of two decimal amounts (strings, numbers or
+ * BigInt stroops are all accepted as in toStroops). Returns -1, 0 or 1.
+ * Zero and negative values are allowed so balances and differences compare.
+ */
+function compareAmounts(a, b) {
+  const opts = { allowZero: true, allowNegative: true };
+  const x = toStroops(a, opts);
+  const y = toStroops(b, opts);
+  if (x < y) return -1;
+  return x > y ? 1 : 0;
+}
+
+/**
+ * Strict percentage -> integer basis points ("12.5" -> 1250, "100" -> 10000).
+ *
+ * The percentage is parsed as a decimal string, never through floating point,
+ * and must land exactly on a basis point: "12.34" and "12.3400" are accepted,
+ * "12.345" is rejected rather than rounded, because a rounded split no longer
+ * sums to the 10000 bps total the contracts enforce.
+ *
+ * @param {string|number} percentage  0..100 inclusive
+ * @returns {number} integer basis points, 0..10000
+ */
+function percentToBps(percentage) {
+  let scaled;
+  try {
+    scaled = toStroops(percentage, { allowZero: true });
+  } catch (err) {
+    if (!(err instanceof AmountError)) throw err;
+    throw new AmountError(
+      `percentage "${percentage}" is not a valid non-negative decimal`,
+      'INVALID_PERCENTAGE'
+    );
+  }
+  // 1 bps = 0.01% = 10^5 units at 7-decimal scale.
+  const perBps = STROOPS_PER_UNIT / 100n;
+  if (scaled % perBps !== 0n) {
+    throw new AmountError(
+      `percentage "${percentage}" is finer than a basis point (max 2 decimal places)`,
+      'INVALID_PERCENTAGE'
+    );
+  }
+  const bps = scaled / perBps;
+  if (bps > BPS_DENOMINATOR) {
+    throw new AmountError(
+      `percentage "${percentage}" must be between 0 and 100`,
+      'INVALID_PERCENTAGE'
+    );
+  }
+  return Number(bps);
+}
+
+const RATE_DECIMALS = 15;
+
+/**
+ * Exact ratio numerator / denominator of two decimal amounts, rounded half-up
+ * to `scale` fractional digits, returned as a minimal decimal string
+ * ("1.05", "2", "0.333333333333333"). Used for exchange / conversion rates;
+ * the default scale matches the NUMERIC(30, 15) rate columns.
+ */
+function divideAmounts(numerator, denominator, scale = RATE_DECIMALS) {
+  const n = toStroops(numerator, { allowZero: true });
+  const d = toStroops(denominator);
+  const factor = 10n ** BigInt(scale);
+  const q = (n * factor * 2n + d) / (2n * d);
+  const whole = (q / factor).toString();
+  const fraction = (q % factor).toString().padStart(scale, '0').replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : whole;
+}
+
 module.exports = {
   STROOP_DECIMALS,
+  RATE_DECIMALS,
   STROOPS_PER_UNIT,
   MAX_STROOPS,
   AmountError,
@@ -175,4 +254,8 @@ module.exports = {
   isValidAmount,
   splitFee,
   mulBpsCeil,
+  mulBpsFloor,
+  compareAmounts,
+  percentToBps,
+  divideAmounts,
 };

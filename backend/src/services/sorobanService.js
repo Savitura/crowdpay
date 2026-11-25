@@ -14,6 +14,7 @@ const { server, networkPassphrase } = require('../config/stellar');
 const logger = require('../config/logger');
 const { TX_TIMEOUT_CONTRIBUTION_S } = require('../config/constants');
 const crypto = require('crypto');
+const { AmountError, percentToBps } = require('../utils/stroops');
 
 const PLACEHOLDER_CONTRACT_ID = 'created_contract_id';
 
@@ -361,7 +362,7 @@ async function initializeMilestones({
     Buffer.from(crypto.createHash('sha256').update(m.title).digest()).copy(titleHash);
     return nativeToScVal({
       title_hash: titleHash,
-      release_bps: m.release_percentage_units || Math.round(parseFloat(m.release_percentage) * 100),
+      release_bps: milestoneReleaseBps(m),
       status: 0,
       evidence_hash: null,
     });
@@ -501,15 +502,49 @@ async function getEscrowPlatformFeeConfig(contractId) {
   });
 }
 
+/**
+ * A milestone's release share as integer basis points for the milestones
+ * contract (#1198), whose shares must sum to exactly 10000.
+ *
+ * `release_percentage` (e.g. "25.5000" from the NUMERIC(7,4) column) is parsed
+ * as a decimal string and must land on a whole basis point; "33.3333" is
+ * rejected rather than rounded, since rounding breaks the 10000 total.
+ * It takes precedence over `release_percentage_units`, which callers scale by
+ * 10000 (percent x 10^4), not 100. `release_percentage_units` is used only when
+ * no percentage is given, and must then already be integer basis points.
+ */
+function milestoneReleaseBps(m) {
+  const label = m?.title ? `Milestone "${m.title}"` : 'Milestone';
+  const percentage = m?.release_percentage;
+  if (percentage !== undefined && percentage !== null && percentage !== '') {
+    try {
+      return percentToBps(percentage);
+    } catch (err) {
+      if (!(err instanceof AmountError)) throw err;
+      throw new AmountError(`${label}: ${err.message}`, err.code);
+    }
+  }
+  const units = m?.release_percentage_units;
+  if (units !== undefined && units !== null) {
+    const bps = Number(units);
+    if (!Number.isInteger(bps) || bps < 0 || bps > 10000) {
+      throw new AmountError(
+        `${label}: release_percentage_units must be integer basis points (0-10000)`,
+        'INVALID_PERCENTAGE'
+      );
+    }
+    return bps;
+  }
+  throw new AmountError(`${label} has no release percentage`, 'INVALID_PERCENTAGE');
+}
+
 function encodeMilestone(m) {
   const titleHash = Buffer.alloc(32);
   Buffer.from(crypto.createHash('sha256').update(m.title).digest()).copy(titleHash);
 
   return nativeToScVal({
     title_hash: titleHash,
-    release_bps:
-      m.release_percentage_units ||
-      Math.round(parseFloat(m.release_percentage || m.release_percentage_units || 0) * 100),
+    release_bps: milestoneReleaseBps(m),
     status: 0,
     evidence_hash: null,
   });
@@ -1086,6 +1121,7 @@ module.exports = {
   uploadContractWasm,
   deployCampaignContracts,
   encodeMilestone,
+  milestoneReleaseBps,
   scvAddressFromString,
   nativeToScVal,
   submitMilestone,

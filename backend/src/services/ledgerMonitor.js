@@ -26,6 +26,7 @@ const {
 const { processContributionMatch } = require('./sponsorMatchingService');
 const { indexContribution: indexTreasuryContribution } = require('./contractTreasury');
 const cache = require('../utils/cache');
+const { normalizeAmount, divideAmounts } = require('../utils/stroops');
 const Sentry = require('@sentry/node');
 const { HorizonIngestionWorker, defaultIngestionWorker } = require('./horizonIngestionWorker');
 
@@ -361,19 +362,21 @@ async function handlePayment(campaignId, walletPublicKey, payment, eventMetadata
   const expectedAssetType = campaignRows[0].asset_type;
 
   const destinationAsset = payment.asset_type === 'native' ? 'XLM' : payment.asset_code;
-  const destinationAmount = parseFloat(payment.amount);
+  // Horizon amounts are 7-decimal strings; keep them exact (#1198) rather than
+  // round-tripping through floats on their way to raised_amount and ledgers.
+  const destinationAmount = normalizeAmount(payment.amount);
   const sourceAsset = payment.source_asset_type
     ? payment.source_asset_type === 'native'
       ? 'XLM'
       : payment.source_asset_code
     : null;
-  const sourceAmount = payment.source_amount ? parseFloat(payment.source_amount) : null;
+  const sourceAmount = payment.source_amount ? normalizeAmount(payment.source_amount) : null;
   const path = Array.isArray(payment.path)
     ? payment.path.map(asset => (asset.asset_type === 'native' ? 'XLM' : asset.asset_code))
     : null;
   const paymentType = payment.type;
   const conversionRate =
-    sourceAmount && destinationAmount ? destinationAmount / sourceAmount : null;
+    sourceAmount && destinationAmount ? divideAmounts(destinationAmount, sourceAmount) : null;
   const txHash = payment.transaction_hash;
 
   // #707: only credit payments in the campaign's own configured asset, from

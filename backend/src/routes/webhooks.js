@@ -331,33 +331,366 @@ router.post(
   })
 );
 
+const SYNTHETIC_TEST_PAYLOADS = {
+  'campaign.funded': {
+    event: 'campaign.funded',
+    campaign_id: '11111111-1111-4111-8111-111111111111',
+    title: 'Solar Community Grid',
+    target_amount: '10000.00',
+    raised_amount: '10000.00',
+    asset: 'USDC',
+    test: true,
+  },
+  'contribution.received': {
+    event: 'contribution.received',
+    contribution_id: '22222222-2222-4222-8222-222222222222',
+    campaign_id: '11111111-1111-4111-8111-111111111111',
+    amount: '150.00',
+    asset: 'USDC',
+    tx_hash: 'tx_test_stellar_hash_00000000000000000000000000000000000000000000001',
+    donor_wallet: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    test: true,
+  },
+  'milestone.approved': {
+    event: 'milestone.approved',
+    campaign_id: '11111111-1111-4111-8111-111111111111',
+    milestone_id: '33333333-3333-4333-8333-333333333333',
+    title: 'Phase 1 Delivery',
+    release_percentage: '30.00',
+    test: true,
+  },
+  'withdrawal.completed': {
+    event: 'withdrawal.completed',
+    campaign_id: '11111111-1111-4111-8111-111111111111',
+    withdrawal_id: '44444444-4444-4444-8444-444444444444',
+    amount: '3000.00',
+    asset: 'USDC',
+    stellar_tx_hash: 'tx_test_stellar_hash_00000000000000000000000000000000000000000000002',
+    test: true,
+  },
+};
+
+function buildSyntheticPayload(eventType, webhook) {
+  const base = SYNTHETIC_TEST_PAYLOADS[eventType] || {
+    event: eventType,
+    test: true,
+    data: { message: `Synthetic test event for ${eventType}` },
+  };
+  return {
+    ...base,
+    webhook_id: webhook.id,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+router.post(
+  '/:id/test',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT id, url, events, secret, user_id FROM webhooks WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`,
+      [req.params.id, req.user.userId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Webhook not found' });
+    }
+
+    const webhook = rows[0];
+    let eventType = req.body?.event_type || req.body?.event;
+    if (!eventType) {
+      eventType = (webhook.events && webhook.events[0]) || 'contribution.received';
+    }
+
+    if (!ALL_WEBHOOK_EVENTS.includes(eventType) && !eventType.startsWith('test.')) {
+      return res.status(400).json({
+        error: `event_type must be one of: ${ALL_WEBHOOK_EVENTS.join(', ')}`,
+      });
+    }
+
+    const payload = buildSyntheticPayload(eventType, webhook);
+
+    const { rows: inserted } = await db.query(
+      `INSERT INTO webhook_deliveries (webhook_id, event_type, payload, status)
+       VALUES ($1, $2, $3::jsonb, 'pending')
+       RETURNING id, webhook_id, event_type, status, created_at`,
+      [webhook.id, eventType, JSON.stringify(payload)]
+    );
+
+    const deliveryId = inserted[0].id;
+    const startTime = Date.now();
+    try {
+      await processDelivery(deliveryId);
+    } catch (dispatchErr) {
+      logger.error('Failed to process test webhook delivery', {
+        deliveryId,
+        error: dispatchErr.message,
+      });
+    }
+    const latencyMs = Math.max(1, Date.now() - startTime);
+
+    const { rows: deliveryRows } = await db.query(
+      `SELECT d.id, d.webhook_id, d.event_type, d.status, d.response_status,
+              d.response_body_snippet, d.attempt_count, d.last_error, d.next_retry_at,
+              d.delivered_at, d.created_at, d.updated_at, d.payload,
+              w.url AS webhook_url
+       FROM webhook_deliveries d
+       JOIN webhooks w ON w.id = d.webhook_id
+       WHERE d.id = $1`,
+      [deliveryId]
+    );
+
+    const delivery = deliveryRows[0] || inserted[0];
+
+    try {
+      await db.query(`UPDATE webhook_deliveries SET latency_ms = $1 WHERE id = $2`, [
+        latencyMs,
+        deliveryId,
+      ]);
+    } catch {
+      // Ignore if latency_ms column is not present
+    }
+
+    await logCredentialEvent({
+      actorId: req.user.userId,
+      action: 'webhook_test_event',
+      resourceType: 'webhook',
+      resourceId: webhook.id,
+      req,
+      metadata: {
+        eventType,
+        deliveryId,
+        status: delivery.status,
+        responseStatus: delivery.response_status,
+        latencyMs,
+      },
+    });
+
+    res.status(200).json({
+      success: delivery.status === 'delivered',
+      message:
+        delivery.status === 'delivered'
+          ? 'Test event delivered successfully'
+          : `Test event delivery failed${delivery.last_error ? `: ${delivery.last_error}` : ''}`,
+      latency_ms: latencyMs,
+      delivery: {
+        ...delivery,
+        latency_ms: latencyMs,
+      },
+    });
+  })
+);
+
 router.get(
   '/deliveries',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
-    const webhookId = req.query.webhook_id || null;
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
+    const offset =
+      req.query.offset !== undefined
+        ? Math.max(0, parseInt(req.query.offset, 10) || 0)
+        : req.query.page !== undefined
+          ? Math.max(0, (parseInt(req.query.page, 10) || 1) - 1) * limit
+          : 0;
 
+    const webhookId = req.query.webhook_id || null;
+    const status = req.query.status || null;
+    const eventType = req.query.event_type || null;
+
+    const conditions = ['w.user_id = $1'];
     const params = [req.user.userId];
-    let whClause = '';
+
     if (webhookId) {
       params.push(webhookId);
-      whClause = ` AND w.id = $${params.length}`;
+      conditions.push(`w.id = $${params.length}`);
     }
-    params.push(limit);
+    if (status) {
+      params.push(status);
+      conditions.push(`d.status = $${params.length}`);
+    }
+    if (eventType) {
+      params.push(eventType);
+      conditions.push(`d.event_type = $${params.length}`);
+    }
 
-    const { rows } = await db.query(
-      `SELECT d.id, d.webhook_id, d.event_type, d.status, d.response_status,
-            d.response_body_snippet, d.attempt_count, d.last_error, d.next_retry_at,
-            d.delivered_at, d.created_at, d.updated_at, d.signature_versions, w.url AS webhook_url
-     FROM webhook_deliveries d
-     JOIN webhooks w ON w.id = d.webhook_id
-     WHERE w.user_id = $1 ${whClause}
-     ORDER BY d.created_at DESC
-     LIMIT $${params.length}`,
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
+    const { rows: countRows } = await db.query(
+      `SELECT COUNT(*)::int AS total
+       FROM webhook_deliveries d
+       JOIN webhooks w ON w.id = d.webhook_id
+       ${whereClause}`,
       params
     );
+    const total = countRows[0]?.total || 0;
+
+    const queryParams = [...params, limit, offset];
+    const { rows } = await db.query(
+      `SELECT d.id, d.webhook_id, d.event_type, d.status, d.response_status,
+              d.response_body_snippet, d.attempt_count, d.last_error, d.next_retry_at,
+              d.delivered_at, d.created_at, d.updated_at, d.signature_versions,
+              d.payload,
+              ROUND(EXTRACT(EPOCH FROM (COALESCE(d.delivered_at, d.updated_at) - d.created_at)) * 1000)::int AS latency_ms,
+              w.url AS webhook_url
+       FROM webhook_deliveries d
+       JOIN webhooks w ON w.id = d.webhook_id
+       ${whereClause}
+       ORDER BY d.created_at DESC
+       LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}`,
+      queryParams
+    );
+
+    const page = Math.floor(offset / limit) + 1;
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    res.set({
+      'X-Total-Count': String(total),
+      'X-Page': String(page),
+      'X-Total-Pages': String(totalPages),
+      'X-Limit': String(limit),
+      'X-Offset': String(offset),
+    });
+
+    if (
+      req.query.paginate === 'true' ||
+      req.query.page !== undefined ||
+      req.query.offset !== undefined
+    ) {
+      return res.json({
+        total,
+        page,
+        limit,
+        offset,
+        total_pages: totalPages,
+        items: rows,
+        deliveries: rows,
+      });
+    }
+
     res.json(rows);
+  })
+);
+
+router.get(
+  '/:id/deliveries',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { rows: webhookRows } = await db.query(
+      `SELECT id, url, events, revoked_at FROM webhooks WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+
+    if (!webhookRows.length) {
+      return res.status(404).json({ error: 'Webhook not found' });
+    }
+
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
+    const offset =
+      req.query.offset !== undefined
+        ? Math.max(0, parseInt(req.query.offset, 10) || 0)
+        : req.query.page !== undefined
+          ? Math.max(0, (parseInt(req.query.page, 10) || 1) - 1) * limit
+          : 0;
+
+    const status = req.query.status || null;
+    const eventType = req.query.event_type || null;
+
+    const conditions = ['d.webhook_id = $1'];
+    const params = [req.params.id];
+
+    if (status) {
+      params.push(status);
+      conditions.push(`d.status = $${params.length}`);
+    }
+    if (eventType) {
+      params.push(eventType);
+      conditions.push(`d.event_type = $${params.length}`);
+    }
+
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
+    const { rows: countRows } = await db.query(
+      `SELECT COUNT(*)::int AS total FROM webhook_deliveries d ${whereClause}`,
+      params
+    );
+    const total = countRows[0]?.total || 0;
+
+    const queryParams = [...params, limit, offset];
+    const { rows } = await db.query(
+      `SELECT d.id, d.webhook_id, d.event_type, d.status, d.response_status,
+              d.response_body_snippet, d.attempt_count, d.last_error, d.next_retry_at,
+              d.delivered_at, d.created_at, d.updated_at, d.signature_versions,
+              d.payload,
+              ROUND(EXTRACT(EPOCH FROM (COALESCE(d.delivered_at, d.updated_at) - d.created_at)) * 1000)::int AS latency_ms,
+              w.url AS webhook_url
+       FROM webhook_deliveries d
+       JOIN webhooks w ON w.id = d.webhook_id
+       ${whereClause}
+       ORDER BY d.created_at DESC
+       LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}`,
+      queryParams
+    );
+
+    const page = Math.floor(offset / limit) + 1;
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    res.set({
+      'X-Total-Count': String(total),
+      'X-Page': String(page),
+      'X-Total-Pages': String(totalPages),
+      'X-Limit': String(limit),
+      'X-Offset': String(offset),
+    });
+
+    res.json({
+      webhook_id: req.params.id,
+      webhook_url: webhookRows[0].url,
+      total,
+      page,
+      limit,
+      offset,
+      total_pages: totalPages,
+      items: rows,
+      deliveries: rows,
+    });
+  })
+);
+
+router.get(
+  '/deliveries/:id',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { rows: deliveryRows } = await db.query(
+      `SELECT d.id, d.webhook_id, d.event_type, d.status, d.response_status,
+              d.response_body_snippet, d.attempt_count, d.last_error, d.next_retry_at,
+              d.delivered_at, d.created_at, d.updated_at, d.signature_versions,
+              d.payload,
+              ROUND(EXTRACT(EPOCH FROM (COALESCE(d.delivered_at, d.updated_at) - d.created_at)) * 1000)::int AS latency_ms,
+              w.url AS webhook_url
+       FROM webhook_deliveries d
+       JOIN webhooks w ON w.id = d.webhook_id
+       WHERE d.id = $1 AND w.user_id = $2`,
+      [req.params.id, req.user.userId]
+    );
+
+    if (!deliveryRows.length) {
+      return res.status(404).json({ error: 'Delivery not found' });
+    }
+
+    const { rows: attemptRows } = await db.query(
+      `SELECT id, attempt_number, started_at, finished_at, response_status,
+              succeeded, error_message,
+              ROUND(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)::int AS latency_ms
+       FROM webhook_delivery_attempts
+       WHERE delivery_kind = 'user' AND delivery_id = $1
+       ORDER BY attempt_number ASC`,
+      [req.params.id]
+    );
+
+    res.json({
+      ...deliveryRows[0],
+      attempts: attemptRows,
+    });
   })
 );
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useModalA11y } from '../hooks/useModalA11y';
 import { useTranslation } from 'react-i18next';
 import { api } from '../services/api';
 
@@ -10,62 +11,13 @@ export default function ThankYouModal({ campaignId, contribution, onClose, onSen
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const modalRef = useRef(null);
+  useModalA11y(modalRef, { onClose });
 
   const isBulk = !contribution;
   const charsLeft = MAX_CHARS - message.length;
 
-  useEffect(() => {
-    const trigger = document.activeElement;
-    return () => {
-      if (trigger && typeof trigger.focus === 'function' && trigger.isConnected) {
-        trigger.focus();
-      }
-    };
-  }, []);
 
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
-  useEffect(() => {
-    const modal = modalRef.current;
-    if (!modal) return;
-    const initialFocusable = modal.querySelectorAll(
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    );
-    initialFocusable[0]?.focus();
-
-    function trapTab(e) {
-      if (e.key !== 'Tab') return;
-      const focusable = modal.querySelectorAll(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      );
-      if (focusable.length === 0) {
-        e.preventDefault();
-        if (!modal.hasAttribute('tabindex')) modal.setAttribute('tabindex', '-1');
-        modal.focus();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (!modal.contains(document.activeElement)) {
-        e.preventDefault();
-        (e.shiftKey ? last : first)?.focus();
-      } else if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last?.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first?.focus();
-      }
-    }
-    modal.addEventListener('keydown', trapTab);
-    return () => modal.removeEventListener('keydown', trapTab);
-  }, []);
 
   async function handleSubmit(e) {
     e.preventDefault();

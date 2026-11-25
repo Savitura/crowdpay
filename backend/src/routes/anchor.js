@@ -26,6 +26,38 @@ const {
   isAnchorFailureStatus,
 } = require('../services/anchorService');
 
+const ANCHOR_DEPOSIT_COLUMNS = [
+  'id',
+  'user_id',
+  'campaign_id',
+  'anchor_id',
+  'anchor_transaction_id',
+  'anchor_asset',
+  'anchor_amount',
+  'campaign_asset',
+  'contribution_amount',
+  'contribution_flow',
+  'conversion_quote',
+  'interactive_url',
+  'anchor_auth_token',
+  'anchor_auth_expires_at',
+  'status',
+  'last_anchor_status',
+  'last_anchor_payload',
+  'last_error',
+  'contribution_tx_hash',
+  'contribution_stellar_transaction_id',
+  'contribution_id',
+  'created_at',
+  'updated_at',
+  'completed_at',
+];
+
+function anchorDepositColumnList(alias = '') {
+  const prefix = alias ? `${alias}.` : '';
+  return ANCHOR_DEPOSIT_COLUMNS.map(col => `${prefix}${col}`).join(', ');
+}
+
 // ── SEP-24 callback signature verification ───────────────────────────────────
 // Providers sign POST /api/anchor/callbacks/sep24 with HMAC-SHA256 using the
 // shared ANCHOR_CALLBACK_HMAC_SECRET. The signature is sent as:
@@ -530,7 +562,7 @@ router.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const { rows } = await db.query(
-      `SELECT ad.*, u.wallet_public_key, u.wallet_secret_encrypted
+      `SELECT ${anchorDepositColumnList('ad')}, u.wallet_public_key, u.wallet_secret_encrypted
      FROM anchor_deposits ad
      JOIN users u ON u.id = ad.user_id
      WHERE ad.id = $1 AND ad.user_id = $2`,
@@ -688,9 +720,10 @@ router.get(
         }
       }
 
-      const { rows: refreshed } = await db.query('SELECT * FROM anchor_deposits WHERE id = $1', [
-        session.id,
-      ]);
+      const { rows: refreshed } = await db.query(
+        `SELECT ${anchorDepositColumnList('')} FROM anchor_deposits WHERE id = $1`,
+        [session.id]
+      );
       return res.json(mapSessionForClient(refreshed[0]));
     } catch (err) {
       logger.error('Anchor deposit status sync failed', {
@@ -777,7 +810,7 @@ router.post('/callbacks/sep24', async (req, res) => {
   // ── 5. Business logic ──────────────────────────────────────────────────────
   try {
     const { rows } = await db.query(
-      `SELECT ad.*, u.wallet_public_key, u.wallet_secret_encrypted
+      `SELECT ${anchorDepositColumnList('ad')}, u.wallet_public_key, u.wallet_secret_encrypted
        FROM anchor_deposits ad
        JOIN users u ON u.id = ad.user_id
        WHERE ad.anchor_transaction_id = $1`,

@@ -1,5 +1,11 @@
 #![cfg(test)]
-
+#![allow(
+    deprecated,
+    unused_imports,
+    unused_variables,
+    mismatched_lifetime_syntaxes,
+    clippy::all
+)]
 use super::*;
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{symbol_short, token, Address, Env};
@@ -312,7 +318,12 @@ fn at_or_below_the_auditor_threshold_executes_immediately() {
 fn approving_an_unknown_pending_id_is_rejected() {
     let env = Env::default();
     let h = setup(&env, policy(), 10_000);
-    let err = h.client.try_approve_withdrawal(&404).err().unwrap().unwrap();
+    let err = h
+        .client
+        .try_approve_withdrawal(&404)
+        .err()
+        .unwrap()
+        .unwrap();
     assert_eq!(err, TreasuryError::PendingNotFound);
 }
 
@@ -596,4 +607,79 @@ fn test_initialize_requires_platform_auth() {
         &10_000,
         &token_id,
     );
+}
+
+/// Advance the ledger far past the default persistent TTL (4096 ledgers). The
+/// test token's instance is kept alive by hand; only the treasury's own storage
+/// is under test.
+fn jump_past_default_ttl(env: &Env, h: &Harness) {
+    let jump = env.ledger().get().min_persistent_entry_ttl * 100;
+    env.as_contract(&h.token.address, || {
+        env.storage()
+            .instance()
+            .extend_ttl(jump + 1000, jump + 1000);
+    });
+    env.ledger().with_mut(|li| li.sequence_number += jump);
+}
+
+#[test]
+fn treasury_state_survives_past_default_ttl() {
+    use soroban_sdk::testutils::storage::{Instance as _, Persistent as _};
+
+    let env = Env::default();
+    let mut p = policy();
+    p.require_auditor_for_above = 1_000;
+    let h = setup(&env, p, 10_000);
+    contribute(&env, &h, 10_000);
+
+    // One executed withdrawal (history) and one parked for the auditor (pending).
+    let first = Address::generate(&env);
+    h.client
+        .request_withdrawal(&500, &first, &symbol_short!("small"));
+    let destination = Address::generate(&env);
+    let pending_id = h
+        .client
+        .request_withdrawal(&5_000, &destination, &symbol_short!("big"))
+        .unwrap();
+
+    env.as_contract(&h.contract_id, || {
+        let persistent = env.storage().persistent();
+        for key in [DataKey::History, DataKey::Pending, DataKey::Contributors] {
+            assert!(persistent.get_ttl(&key) >= STORAGE_TTL_LEDGERS - 1);
+        }
+        assert!(env.storage().instance().get_ttl() >= STORAGE_TTL_LEDGERS - 1);
+    });
+
+    jump_past_default_ttl(&env, &h);
+
+    // Config, totals, history and the parked request all survived.
+    assert_eq!(h.client.get_policy().require_auditor_for_above, 1_000);
+    assert_eq!(h.client.get_total_received(), 10_000);
+    assert_eq!(h.client.get_total_withdrawn(), 500);
+    assert_eq!(h.client.get_withdrawal_history().len(), 1);
+    assert_eq!(h.client.get_pending_withdrawals().len(), 1);
+
+    h.client.approve_withdrawal(&pending_id);
+    assert_eq!(h.token.balance(&destination), 5_000);
+    assert_eq!(h.client.get_total_withdrawn(), 5_500);
+    assert_eq!(h.client.get_withdrawal_history().len(), 2);
+}
+
+#[test]
+fn contributor_ledger_survives_past_default_ttl_for_auto_refund() {
+    let env = Env::default();
+    let mut p = policy();
+    p.auto_refund_on_miss = true;
+    let h = setup(&env, p, 10_000);
+    // Contribute before the deadline, then miss the goal.
+    env.ledger().set_timestamp(DEADLINE - 1);
+    let alice = contribute(&env, &h, 3_000);
+    let bob = contribute(&env, &h, 1_000);
+
+    jump_past_default_ttl(&env, &h);
+    env.ledger().set_timestamp(DEADLINE + DAY);
+
+    assert_eq!(h.client.trigger_auto_refund(), 4_000);
+    assert_eq!(h.token.balance(&alice), 3_000);
+    assert_eq!(h.token.balance(&bob), 1_000);
 }

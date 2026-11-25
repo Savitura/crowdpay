@@ -1,7 +1,13 @@
-﻿import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../services/api';
 import { useToast } from '../context/ToastContext';
 import { stellarExpertTxUrl } from '../config/stellar';
+import {
+  validateMonetaryInput,
+  parseDecimal,
+  compareDecimals,
+  subtractDecimals,
+} from '../utils/decimal';
 
 export default function RefundsSection({ campaign, user, onRefundSuccess }) {
   const toast = useToast();
@@ -71,19 +77,21 @@ export default function RefundsSection({ campaign, user, onRefundSuccess }) {
     e.preventDefault();
     if (!selectedContribution || submitting) return;
 
-    const amountNum = parseFloat(refundAmount);
-    const maxRefundable = parseFloat(
-      selectedContribution.remaining_amount ??
-        parseFloat(selectedContribution.amount) -
-          parseFloat(selectedContribution.refunded_amount || 0)
-    );
-
-    if (isNaN(amountNum) || amountNum <= 0) {
+    const amountCheck = validateMonetaryInput(refundAmount, {
+      fieldName: 'Refund amount',
+      allowZero: false,
+    });
+    if (!amountCheck.isValid) {
       toast?.show?.('Please enter a valid refund amount greater than 0', 'error');
       return;
     }
 
-    if (amountNum > maxRefundable) {
+    const maxRefundable = String(
+      selectedContribution.remaining_amount ??
+        subtractDecimals(selectedContribution.amount, selectedContribution.refunded_amount || '0')
+    );
+
+    if (compareDecimals(refundAmount, maxRefundable) > 0) {
       toast?.show?.(
         `Refund amount cannot exceed remaining balance (${maxRefundable} ${campaign.asset_type || selectedContribution.asset || 'XLM'})`,
         'error'
@@ -100,7 +108,7 @@ export default function RefundsSection({ campaign, user, onRefundSuccess }) {
     try {
       await api.processRefund(campaign.id, {
         contributionId: selectedContribution.id,
-        amount: amountNum,
+        amount: Number(parseDecimal(refundAmount)),
         reason: refundReason,
         isForceRefund: isAdmin && isForceRefund,
         adminNote: isAdmin && isForceRefund ? adminNote : null,

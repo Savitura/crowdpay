@@ -6,9 +6,56 @@ const { buildWithdrawalTransaction } = require('./stellarService');
 const { calculateCommissions } = require('./referral');
 const { insertWithdrawalPendingSignatures } = require('./stellarTransactionService');
 const { createNotification } = require('./notifications');
+const { toStroops, fromStroops, mulBpsFloor, percentToBps } = require('../utils/stroops');
 
 const VALID_CADENCES = ['daily', 'weekly', 'biweekly', 'monthly'];
 const ADVISORY_LOCK_KEY = 926001;
+
+const SCHEDULE_COLUMNS = [
+  'id',
+  'campaign_id',
+  'creator_id',
+  'amount',
+  'percentage',
+  'asset_type',
+  'destination_key',
+  'cadence',
+  'start_date',
+  'next_run_at',
+  'end_date',
+  'max_occurrences',
+  'occurrences_count',
+  'status',
+  'timezone',
+  'last_run_at',
+  'last_withdrawal_request_id',
+  'last_error',
+  'evidence',
+  'created_at',
+  'updated_at',
+];
+
+const RUN_COLUMNS = [
+  'id',
+  'schedule_id',
+  'campaign_id',
+  'withdrawal_request_id',
+  'run_at',
+  'status',
+  'amount',
+  'error_message',
+  'created_at',
+];
+
+function scheduleColumnList(alias = '') {
+  const prefix = alias ? `${alias}.` : '';
+  return SCHEDULE_COLUMNS.map(col => `${prefix}${col}`).join(', ');
+}
+
+function runColumnList(alias = '') {
+  const prefix = alias ? `${alias}.` : '';
+  return RUN_COLUMNS.map(col => `${prefix}${col}`).join(', ');
+}
 
 function calculateNextRunTime(fromDate, cadence, _timezone = 'UTC') {
   const current = dayjs(fromDate);
@@ -56,16 +103,40 @@ async function createPayoutSchedule({
     throw err;
   }
 
-  if (amount && Number(amount) <= 0) {
-    const err = new Error('Amount must be greater than 0');
-    err.statusCode = 422;
-    throw err;
+  // Parse exactly (#1196): reject values the NUMERIC(18,7) / NUMERIC(5,2)
+  // columns would otherwise silently round, so the schedule pays what was set.
+  let storedAmount = null;
+  if (amount) {
+    let amountStroops;
+    try {
+      amountStroops = toStroops(amount, { allowZero: true, allowNegative: true });
+    } catch (parseErr) {
+      const err = new Error(`Invalid amount: ${parseErr.message}`);
+      err.statusCode = 422;
+      throw err;
+    }
+    if (amountStroops <= 0n) {
+      const err = new Error('Amount must be greater than 0');
+      err.statusCode = 422;
+      throw err;
+    }
+    storedAmount = fromStroops(amountStroops);
   }
 
-  if (percentage && (Number(percentage) <= 0 || Number(percentage) > 100)) {
-    const err = new Error('Percentage must be between 0 and 100');
-    err.statusCode = 422;
-    throw err;
+  let storedPercentage = null;
+  if (percentage) {
+    let bps;
+    try {
+      bps = percentToBps(percentage);
+    } catch {
+      bps = null;
+    }
+    if (bps === null || bps <= 0) {
+      const err = new Error('Percentage must be between 0 and 100 with at most 2 decimal places');
+      err.statusCode = 422;
+      throw err;
+    }
+    storedPercentage = `${Math.trunc(bps / 100)}.${String(bps % 100).padStart(2, '0')}`;
   }
 
   // Validate destination public key format
@@ -102,8 +173,8 @@ async function createPayoutSchedule({
     [
       campaignId,
       creatorId,
-      amount ? Number(amount).toFixed(7) : null,
-      percentage ? Number(percentage).toFixed(2) : null,
+      storedAmount,
+      storedPercentage,
       assetType,
       destinationKey,
       cadence,
@@ -123,7 +194,7 @@ async function createPayoutSchedule({
  */
 async function listPayoutSchedules(campaignId, creatorId) {
   const { rows } = await db.query(
-    `SELECT * FROM recurring_payout_schedules
+    `SELECT ${scheduleColumnList('')} FROM recurring_payout_schedules
      WHERE campaign_id = $1 AND creator_id = $2
      ORDER BY created_at DESC`,
     [campaignId, creatorId]
@@ -136,7 +207,7 @@ async function listPayoutSchedules(campaignId, creatorId) {
  */
 async function getPayoutSchedule(scheduleId, campaignId, creatorId) {
   const { rows } = await db.query(
-    `SELECT * FROM recurring_payout_schedules
+    `SELECT ${scheduleColumnList('')} FROM recurring_payout_schedules
      WHERE id = $1 AND campaign_id = $2 AND creator_id = $3`,
     [scheduleId, campaignId, creatorId]
   );
@@ -149,7 +220,7 @@ async function getPayoutSchedule(scheduleId, campaignId, creatorId) {
 
   const schedule = rows[0];
   const { rows: runs } = await db.query(
-    `SELECT * FROM recurring_payout_runs
+    `SELECT ${runColumnList('')} FROM recurring_payout_runs
      WHERE schedule_id = $1
      ORDER BY run_at DESC
      LIMIT 50`,
@@ -185,7 +256,7 @@ async function pausePayoutSchedule(scheduleId, campaignId, creatorId) {
  */
 async function resumePayoutSchedule(scheduleId, campaignId, creatorId) {
   const { rows: existing } = await db.query(
-    `SELECT * FROM recurring_payout_schedules
+    `SELECT ${scheduleColumnList('')} FROM recurring_payout_schedules
      WHERE id = $1 AND campaign_id = $2 AND creator_id = $3 AND status = 'paused'`,
     [scheduleId, campaignId, creatorId]
   );
@@ -237,6 +308,55 @@ async function cancelPayoutSchedule(scheduleId, campaignId, creatorId) {
 }
 
 /**
+ * A schedule's payout for this run, in exact stroops (#1196).
+ *
+ * Fixed-amount schedules pay `amount` as stored. Percentage schedules pay
+ * `percentage` of the campaign's raised amount, computed with integer basis
+ * points and rounded *down* to the stroop so a payout can never exceed its
+ * share (e.g. 33.33% of 10.0000001 = 3.33300003333 -> 3.3330000).
+ *
+ * @param {{ amount?: string|null, percentage?: string|null, raised_amount?: string|null }} schedule
+ * @returns {bigint} payout in stroops (0n when the schedule has no amount)
+ */
+function computeScheduledPayoutStroops(schedule) {
+  if (schedule.amount) {
+    return toStroops(schedule.amount, { allowZero: true });
+  }
+  if (schedule.percentage) {
+    const raised = toStroops(schedule.raised_amount || 0, { allowZero: true });
+    return mulBpsFloor(raised, percentToBps(schedule.percentage));
+  }
+  return 0n;
+}
+
+/**
+ * Split a payout between affiliate commissions and the creator, in exact
+ * stroops (#1196). Commissions without a destination or with nothing owed are
+ * dropped; the creator receives the exact remainder, so
+ * creatorStroops + commissionStroops === payoutStroops always.
+ *
+ * @param {bigint} payoutStroops
+ * @param {Array<{ destination_public_key?: string, commission_owed?: string|number }>} commissions
+ * @returns {{ payableCommissions: object[], commissionStroops: bigint, creatorStroops: bigint }}
+ */
+function splitPayoutCommissions(payoutStroops, commissions) {
+  const payableCommissions = [];
+  let commissionStroops = 0n;
+  for (const commission of commissions || []) {
+    if (!commission.destination_public_key) continue;
+    const owed = toStroops(commission.commission_owed ?? 0, { allowZero: true });
+    if (owed <= 0n) continue;
+    payableCommissions.push({ ...commission, commission_owed: fromStroops(owed) });
+    commissionStroops += owed;
+  }
+  return {
+    payableCommissions,
+    commissionStroops,
+    creatorStroops: payoutStroops - commissionStroops,
+  };
+}
+
+/**
  * Executes due payout schedules by raising withdrawal requests through the two-approver flow.
  */
 async function processDuePayoutSchedules() {
@@ -250,7 +370,7 @@ async function processDuePayoutSchedules() {
     if (!lockAcquired) return [];
 
     const { rows: dueSchedules } = await db.query(
-      `SELECT s.*, c.title AS campaign_title, c.status AS campaign_status, c.wallet_public_key,
+      `SELECT ${scheduleColumnList('s')}, c.title AS campaign_title, c.status AS campaign_status, c.wallet_public_key,
             c.target_amount, c.raised_amount, u.email AS creator_email, u.name AS creator_name,
             u.wallet_public_key AS creator_wallet_public_key
      FROM recurring_payout_schedules s
@@ -271,22 +391,16 @@ async function processDuePayoutSchedules() {
       try {
         const idempotencyKey = `recurring-payout:${schedule.id}:${new Date(schedule.next_run_at).toISOString()}`;
         // 1. Calculate required withdrawal amount
-        let payoutAmount = 0;
-        if (schedule.amount) {
-          payoutAmount = parseFloat(schedule.amount);
-        } else if (schedule.percentage) {
-          const raised = parseFloat(schedule.raised_amount || 0);
-          payoutAmount = (parseFloat(schedule.percentage) / 100) * raised;
-        }
+        const payoutStroops = computeScheduledPayoutStroops(schedule);
 
-        if (payoutAmount <= 0) {
+        if (payoutStroops <= 0n) {
           logger.warn('Payout schedule has 0 or negative calculated amount', {
             scheduleId: schedule.id,
           });
           continue;
         }
 
-        const formattedAmount = payoutAmount.toFixed(7);
+        const formattedAmount = fromStroops(payoutStroops);
 
         // 2. Check available funds without overdraw
         // Total withdrawn or pending for this campaign
@@ -296,11 +410,13 @@ async function processDuePayoutSchedules() {
          WHERE campaign_id = $1 AND status IN ('pending', 'approved', 'submitted', 'completed')`,
           [schedule.campaign_id]
         );
-        const totalWithdrawnOrPending = parseFloat(withdrawnRows[0]?.total_withdrawn || 0);
-        const totalRaised = parseFloat(schedule.raised_amount || 0);
-        const availableFunds = totalRaised - totalWithdrawnOrPending;
+        const totalWithdrawnOrPending = toStroops(withdrawnRows[0]?.total_withdrawn || 0, {
+          allowZero: true,
+        });
+        const totalRaised = toStroops(schedule.raised_amount || 0, { allowZero: true });
+        const availableStroops = totalRaised - totalWithdrawnOrPending;
 
-        if (payoutAmount > availableFunds) {
+        if (payoutStroops > availableStroops) {
           // Record shortfall, do NOT raise withdrawal or partially pay
           await db.query(
             `INSERT INTO recurring_payout_runs
@@ -311,7 +427,7 @@ async function processDuePayoutSchedules() {
               schedule.campaign_id,
               'insufficient_funds',
               formattedAmount,
-              `Insufficient available campaign funds: requested ${formattedAmount} ${schedule.asset_type}, available ${availableFunds.toFixed(7)} ${schedule.asset_type}`,
+              `Insufficient available campaign funds: requested ${formattedAmount} ${schedule.asset_type}, available ${fromStroops(availableStroops)} ${schedule.asset_type}`,
             ]
           );
 
@@ -345,14 +461,11 @@ async function processDuePayoutSchedules() {
         const { commissions } = await calculateCommissions(schedule.campaign_id).catch(() => ({
           commissions: [],
         }));
-        const payableCommissions = (commissions || []).filter(
-          c => c.destination_public_key && parseFloat(c.commission_owed) > 0
+        const { payableCommissions, creatorStroops } = splitPayoutCommissions(
+          payoutStroops,
+          commissions
         );
-        const commissionTotal = payableCommissions.reduce(
-          (sum, c) => sum + parseFloat(c.commission_owed),
-          0
-        );
-        const creatorAmount = (payoutAmount - commissionTotal).toFixed(7);
+        const creatorAmount = fromStroops(creatorStroops);
 
         let xdr = '';
         try {
@@ -564,4 +677,6 @@ module.exports = {
   cancelPayoutSchedule,
   processDuePayoutSchedules,
   calculateNextRunTime,
+  computeScheduledPayoutStroops,
+  splitPayoutCommissions,
 };

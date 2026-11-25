@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const { requireAuth } = require('../middleware/auth');
 const { contributionValidation, validateRequest } = require('../middleware/validation');
@@ -26,6 +26,8 @@ const { assertContributionPolicy } = require('../services/contributionPolicy');
 const db = require('../config/database');
 const logger = require('../config/logger');
 const asyncHandler = require('../utils/asyncHandler');
+const sorobanService = require('../services/sorobanService');
+const contributionRefundStatusService = require('../services/contributionRefundStatusService');
 
 function mapContributionGateError(err, res) {
   if (err.statusCode === 403 && err.code === 'CONTRIBUTOR_REQUIREMENTS_NOT_MET') {
@@ -337,3 +339,147 @@ router.get(
     return res.json(paginatedResponse(contributions, total, limit, offset));
   })
 );
+
+function isContributionViewer(req, contribution, campaignCreatorId) {
+  if (req.user?.role === 'admin') return true;
+  if (campaignCreatorId === req.user?.userId) return true;
+  if (req.user?.walletPublicKey && contribution.sender_public_key === req.user.walletPublicKey) {
+    return true;
+  }
+  return false;
+}
+
+router.get(
+  '/:id/diagnosis',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    const { rows } = await db.query(
+      `SELECT c.id, c.campaign_id, c.sender_public_key, c.payment_type, c.path_hops,
+              c.effective_rate, c.slippage_bps, c.send_max, c.retry_count, c.diagnosis, c.tx_hash,
+              st.metadata AS metadata
+       FROM contributions c
+       LEFT JOIN stellar_transactions st ON st.tx_hash = c.tx_hash AND st.kind = 'contribution'
+       WHERE c.id = $1`,
+      [id]
+    );
+    const contribution = rows[0];
+    if (!contribution) {
+      return res.status(404).json({ error: 'Contribution not found' });
+    }
+
+    const { rows: campaignRows } = await db.query(
+      'SELECT creator_id FROM campaigns WHERE id = $1',
+      [contribution.campaign_id]
+    );
+    if (!isContributionViewer(req, contribution, campaignRows[0]?.creator_id)) {
+      return res.status(403).json({ error: 'Not authorized to view this contribution' });
+    }
+
+    const metadata = contribution.metadata || {};
+    const report = await contributionDiagnostics.diagnoseContribution({
+      contribution,
+      metadata,
+      txHash: contribution.tx_hash,
+    });
+
+    // Persist a status change (e.g. pending -> failed) so the stored diagnosis
+    // stays actionable without re-hitting Horizon on every list read.
+    if (report.status && report.status !== contribution.diagnosis) {
+      await db.query('UPDATE contributions SET diagnosis = $1 WHERE id = $2', [
+        report.status,
+        contribution.id,
+      ]);
+    }
+
+    return res.json({ diagnosis: report });
+  })
+);
+
+router.get(
+  '/:id/refund-status',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const status = await contributionRefundStatusService.getContributionRefundStatus(
+      id,
+      req.user.userId,
+      { isAdmin: req.user.role === 'admin' }
+    );
+    return res.json(status);
+  })
+);
+
+router.post(
+  '/:id/refund',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { rows: contribRows } = await db.query(
+      `SELECT c.id, c.campaign_id, c.sender_public_key, c.contract_refunded_at,
+              c.contract_refund_tx_hash, c.refunded,
+              COALESCE(camp.status, c.campaign_status) AS campaign_status,
+              COALESCE(camp.escrow_contract_id, c.escrow_contract_id) AS escrow_contract_id
+       FROM contributions c
+       LEFT JOIN campaigns camp ON camp.id = c.campaign_id
+       WHERE c.id = $1`,
+      [id]
+    );
+
+    const contrib = contribRows[0];
+    if (!contrib) {
+      return res.status(404).json({ error: 'Contribution not found' });
+    }
+
+    const campaignStatus = contrib.campaign_status;
+    if (campaignStatus !== 'failed') {
+      return res.status(400).json({
+        error: 'Refunds are only available for failed campaigns',
+        campaign_status: campaignStatus,
+        eligibility: {
+          eligible: false,
+          reason: `Campaign is currently ${campaignStatus}`,
+        },
+      });
+    }
+
+    if (contrib.contract_refunded_at || contrib.refunded) {
+      return res.status(409).json({
+        error: 'Contribution has already been refunded',
+        tx_hash: contrib.contract_refund_tx_hash || null,
+      });
+    }
+
+    let txHash;
+    try {
+      const result = await sorobanService.triggerRefund({
+        escrowContractId: contrib.escrow_contract_id,
+        contributorAddress: contrib.sender_public_key,
+      });
+      txHash =
+        typeof result === 'string' ? result : result?.hash || result?.txHash || 'refund-tx-hash';
+    } catch (err) {
+      logger.error('Soroban triggerRefund error', { error: err.message, contributionId: id });
+      return res.status(502).json({ error: err.message || 'On-chain refund failed' });
+    }
+
+    await db.query(
+      `UPDATE contributions
+       SET contract_refunded_at = NOW(),
+           contract_refund_tx_hash = $1,
+           refunded = TRUE,
+           refund_status = 'full'
+       WHERE id = $2`,
+      [txHash, id]
+    );
+
+    return res.status(200).json({
+      success: true,
+      tx_hash: txHash,
+      refund_status: 'completed',
+    });
+  })
+);
+
+module.exports = router;

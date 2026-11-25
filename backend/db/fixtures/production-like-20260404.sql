@@ -81,6 +81,12 @@ CREATE TABLE stellar_transactions (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 20260404_missing_base_tables.sql is recorded as applied below, so the index
+-- that migration creates has to already exist for this snapshot to be a
+-- consistent pre-upgrade state (db/migration-integration-test.js asserts it).
+CREATE INDEX IF NOT EXISTS stellar_transactions_campaign_created_idx
+  ON stellar_transactions (campaign_id, created_at DESC);
+
 CREATE TABLE api_keys (
   id UUID PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -1,3 +1,5 @@
+export * from './decimal';
+
 export const DEFAULT_NGN_RATES = {
   USDC: 1600,
   USD: 1600,

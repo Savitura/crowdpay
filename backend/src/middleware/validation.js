@@ -144,15 +144,30 @@ const createCampaignValidation = [
   body('min_contribution')
     .optional({ nullable: true, checkFalsy: true })
     .isFloat({ gt: 0 })
-    .withMessage('Minimum contribution must be greater than zero'),
+    .withMessage('Minimum contribution must be greater than zero')
+    .bail()
+    .custom(value => isValidAmount(value))
+    .withMessage(
+      `Minimum contribution must have at most ${STROOP_DECIMALS} decimal places and fit a Stellar amount`
+    ),
   body('max_contribution')
     .optional({ nullable: true, checkFalsy: true })
     .isFloat({ gt: 0 })
-    .withMessage('Maximum contribution must be greater than zero'),
+    .withMessage('Maximum contribution must be greater than zero')
+    .bail()
+    .custom(value => isValidAmount(value))
+    .withMessage(
+      `Maximum contribution must have at most ${STROOP_DECIMALS} decimal places and fit a Stellar amount`
+    ),
   body('max_per_user')
     .optional({ nullable: true, checkFalsy: true })
     .isFloat({ gt: 0 })
     .withMessage('Maximum per user must be greater than zero')
+    .bail()
+    .custom(value => isValidAmount(value))
+    .withMessage(
+      `Maximum per user must have at most ${STROOP_DECIMALS} decimal places and fit a Stellar amount`
+    )
     .custom((value, { req }) => {
       if (value === undefined || value === null || value === '') return true;
       const maxPerUser = parseFloat(value);
@@ -223,15 +238,30 @@ const updateCampaignValidation = [
   body('min_contribution')
     .optional({ nullable: true })
     .isFloat({ gt: 0 })
-    .withMessage('Minimum contribution must be greater than zero'),
+    .withMessage('Minimum contribution must be greater than zero')
+    .bail()
+    .custom(value => isValidAmount(value))
+    .withMessage(
+      `Minimum contribution must have at most ${STROOP_DECIMALS} decimal places and fit a Stellar amount`
+    ),
   body('max_contribution')
     .optional({ nullable: true })
     .isFloat({ gt: 0 })
-    .withMessage('Maximum contribution must be greater than zero'),
+    .withMessage('Maximum contribution must be greater than zero')
+    .bail()
+    .custom(value => isValidAmount(value))
+    .withMessage(
+      `Maximum contribution must have at most ${STROOP_DECIMALS} decimal places and fit a Stellar amount`
+    ),
   body('max_per_user')
     .optional({ nullable: true })
     .isFloat({ gt: 0 })
     .withMessage('Maximum per user must be greater than zero')
+    .bail()
+    .custom(value => isValidAmount(value))
+    .withMessage(
+      `Maximum per user must have at most ${STROOP_DECIMALS} decimal places and fit a Stellar amount`
+    )
     .custom((value, { req }) => {
       if (value === undefined || value === null || value === '') return true;
       const maxPerUser = parseFloat(value);
@@ -288,7 +318,12 @@ const contributionQuoteValidation = [
     .notEmpty()
     .withMessage('dest_amount is required')
     .isFloat({ gt: 0 })
-    .withMessage('dest_amount must be greater than zero'),
+    .withMessage('dest_amount must be greater than zero')
+    .bail()
+    .custom(value => isValidAmount(value))
+    .withMessage(
+      `dest_amount must have at most ${STROOP_DECIMALS} decimal places and fit a Stellar amount`
+    ),
 ];
 
 const contributionValidation = [
@@ -378,7 +413,12 @@ const withdrawalValidation = [
     .exists()
     .withMessage('amount is required')
     .isFloat({ gt: 0 })
-    .withMessage('amount must be greater than zero'),
+    .withMessage('amount must be greater than zero')
+    .bail()
+    .custom(value => isValidAmount(value))
+    .withMessage(
+      `amount must have at most ${STROOP_DECIMALS} decimal places and fit a Stellar amount`
+    ),
   body('destination_key')
     .notEmpty()
     .withMessage('destination_key is required')

@@ -103,7 +103,7 @@ test('handlePayment updates stellar_transactions when a contribution row is crea
       return { rows: [{ status: 'active', asset_type: 'XLM', wallet_mode: 'standard' }] };
     }
     if (text.includes('SELECT id FROM contributions')) return { rows: [] };
-    if (text.includes('SELECT creator_id FROM campaigns')) {
+    if (text.includes('SELECT creator_id, title FROM campaigns')) {
       return { rows: [{ creator_id: 'user-creator' }] };
     }
     if (text.includes('SELECT metadata FROM stellar_transactions')) {
@@ -147,7 +147,8 @@ test('handlePayment updates stellar_transactions when a contribution row is crea
   assert.equal(updates.length, 1);
   assert.match(updates[0].text, /raised_amount = raised_amount \+ \$1/);
   assert.match(updates[0].text, /WHEN raised_amount \+ \$1 >= target_amount THEN 'funded'/);
-  assert.deepEqual(updates[0].params, [1, 'camp-1']);
+  // Exact 7-decimal string, not a float (#1198).
+  assert.deepEqual(updates[0].params, ['1.0000000', 'camp-1']);
 });
 
 test('handlePayment accepts contributions on funded campaigns', async () => {
@@ -157,7 +158,7 @@ test('handlePayment accepts contributions on funded campaigns', async () => {
       return { rows: [{ status: 'funded', asset_type: 'XLM', wallet_mode: 'standard' }] };
     }
     if (text.includes('SELECT id FROM contributions')) return { rows: [] };
-    if (text.includes('SELECT creator_id FROM campaigns')) {
+    if (text.includes('SELECT creator_id, title FROM campaigns')) {
       return { rows: [{ creator_id: 'user-creator' }] };
     }
     if (text.includes('SELECT metadata FROM stellar_transactions')) {
@@ -274,7 +275,7 @@ test('handlePayment credits a matching-issuer USDC payment against a USDC campai
       return { rows: [{ status: 'active', asset_type: 'USDC', wallet_mode: 'standard' }] };
     }
     if (text.includes('SELECT id FROM contributions')) return { rows: [] };
-    if (text.includes('SELECT creator_id FROM campaigns')) {
+    if (text.includes('SELECT creator_id, title FROM campaigns')) {
       return { rows: [{ creator_id: 'user-creator' }] };
     }
     if (text.includes('SELECT metadata FROM stellar_transactions')) {
@@ -312,7 +313,7 @@ test('recordConfirmedContribution can be invoked directly (used by contract-mode
   let contributionInsertCalled = false;
   const mockQuery = async text => {
     if (text.includes('SELECT id FROM contributions')) return { rows: [] };
-    if (text.includes('SELECT creator_id FROM campaigns')) {
+    if (text.includes('SELECT creator_id, title FROM campaigns')) {
       return { rows: [{ creator_id: 'user-creator' }] };
     }
     if (text.includes('SELECT metadata FROM stellar_transactions')) {
@@ -352,7 +353,7 @@ function contractModeQuery(seen = {}) {
       return { rows: [{ status: 'active', asset_type: 'XLM', wallet_mode: 'contract' }] };
     }
     if (text.includes('SELECT id FROM contributions')) return { rows: [] };
-    if (text.includes('SELECT creator_id FROM campaigns')) {
+    if (text.includes('SELECT creator_id, title FROM campaigns')) {
       return { rows: [{ creator_id: 'user-creator' }] };
     }
     if (text.includes('SELECT metadata FROM stellar_transactions')) {
@@ -399,7 +400,7 @@ test('handlePayment books the contribution on the treasury for a contract-mode c
   assert.equal(indexed.length, 1);
   assert.equal(indexed[0].campaignId, 'camp-1');
   assert.equal(indexed[0].contributor, 'GFROM');
-  assert.equal(indexed[0].amount, '25');
+  assert.equal(indexed[0].amount, '25.0000000');
 });
 
 test('a treasury indexing failure does not undo an already-committed contribution', async () => {
@@ -521,7 +522,7 @@ test('onPaymentRecord advances cursor only after successful processing', async (
       return { rows: [{ status: 'active', wallet_mode: 'standard' }] };
     }
     if (text.includes('SELECT id FROM contributions')) return { rows: [] };
-    if (text.includes('SELECT creator_id FROM campaigns')) {
+    if (text.includes('SELECT creator_id, title FROM campaigns')) {
       return { rows: [{ creator_id: 'user-creator' }] };
     }
     if (text.includes('SELECT metadata FROM stellar_transactions')) {
@@ -568,4 +569,42 @@ test('onPaymentRecord advances cursor only after successful processing', async (
   // Since we test handlePayment directly, the cursor save happens in the stream handler.
   // The critical assertion is that handlePayment completed without error.
   assert.ok(true, 'handlePayment completed successfully');
+});
+
+test('handlePayment keeps Horizon path-payment amounts and conversion rate exact (#1198)', async () => {
+  let inserted = null;
+  const mockQuery = async (text, params) => {
+    if (text.includes('SELECT status, asset_type, wallet_mode FROM campaigns')) {
+      return { rows: [{ status: 'active', asset_type: 'XLM', wallet_mode: 'standard' }] };
+    }
+    if (text.includes('SELECT id FROM contributions')) return { rows: [] };
+    if (text.includes('SELECT creator_id, title FROM campaigns')) {
+      return { rows: [{ creator_id: 'user-creator', title: 'Test Campaign' }] };
+    }
+    if (text.includes('INSERT INTO contributions')) {
+      inserted = params;
+      return { rows: [{ id: 'contrib-id' }] };
+    }
+    return { rows: [] };
+  };
+  const { ledgerMonitor, updates } = buildLedgerMonitor(mockQuery);
+
+  await ledgerMonitor.handlePayment('camp-1', 'GWALLET', {
+    to: 'GWALLET',
+    from: 'GFROM',
+    type: 'path_payment_strict_receive',
+    asset_type: 'native',
+    // Above 2^53 stroops: parseFloat would drop the final stroop.
+    amount: '922337203685.4775807',
+    source_asset_type: 'credit_alphanum4',
+    source_asset_code: 'USDC',
+    source_amount: '3.0000000',
+    transaction_hash: 'txhash-path',
+  });
+
+  // amount, source_amount, conversion_rate columns of the contributions insert
+  assert.equal(inserted[2], '922337203685.4775807');
+  assert.equal(inserted[9], '3.0000000');
+  assert.equal(inserted[11], '307445734561.825860233333333');
+  assert.deepEqual(updates[0].params, ['922337203685.4775807', 'camp-1']);
 });

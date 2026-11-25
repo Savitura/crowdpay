@@ -137,10 +137,10 @@ function buildApp({
         if (sql.includes('SELECT id, email FROM users')) {
           return { rows: !userMissing && userRow ? [{ id: USER_ID, email: userRow.email }] : [] };
         }
-        if (sql.includes('SELECT * FROM users WHERE id = $1')) {
+        if (sql.includes('FROM users WHERE id = $1')) {
           return { rows: userRow ? [userRow] : [] };
         }
-        if (sql.includes('SELECT * FROM users WHERE LOWER(email)')) {
+        if (sql.includes('FROM users WHERE LOWER(email)')) {
           return { rows: userMissing ? [] : userRow ? [userRow] : [] };
         }
         if (sql.includes('INSERT INTO users')) {
@@ -813,7 +813,7 @@ test('GET /api/auth/2fa/audit-log returns events and clamps the limit', async ()
     userRow: { ...BASE_USER, totp_enabled: true },
     queryImplOverride: async (sql, params, c) => {
       c.db.push({ sql, params });
-      if (sql.includes('SELECT * FROM users WHERE id = $1')) {
+      if (sql.includes('FROM users WHERE id = $1')) {
         return { rows: [{ ...BASE_USER, totp_enabled: true }] };
       }
       if (sql.includes('FROM security_audit_log')) {

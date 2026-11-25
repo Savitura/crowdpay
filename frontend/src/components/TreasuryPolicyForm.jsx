@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { api } from '../services/api';
+import { validateMonetaryInput, parseDecimal } from '../utils/decimal';
 
 /**
  * Policy configuration for a contract-mode campaign. Shown at creation time and
@@ -31,10 +32,27 @@ export default function TreasuryPolicyForm({ campaignId, initialPolicy = {}, onS
 
   async function submit(event) {
     event.preventDefault();
+    if (policy.requireAuditorForAbove !== undefined && policy.requireAuditorForAbove !== '') {
+      const check = validateMonetaryInput(policy.requireAuditorForAbove, {
+        fieldName: 'Auditor threshold',
+        allowZero: true,
+      });
+      if (!check.isValid) {
+        setError(check.error);
+        return;
+      }
+    }
     setSaving(true);
     setError('');
     try {
-      const result = await api.setTreasuryPolicy(campaignId, policy);
+      const payload = {
+        ...policy,
+        requireAuditorForAbove:
+          policy.requireAuditorForAbove !== undefined && policy.requireAuditorForAbove !== ''
+            ? parseDecimal(policy.requireAuditorForAbove, { allowZero: true })
+            : '0',
+      };
+      const result = await api.setTreasuryPolicy(campaignId, payload);
       setSaved(true);
       if (onSaved) onSaved(result);
     } catch (err) {

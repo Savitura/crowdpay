@@ -14,6 +14,7 @@ const {
 } = require('@stellar/stellar-sdk');
 const db = require('../../config/database');
 const logger = require('../../config/logger');
+const { safeFetch } = require('../../utils/safeFetch');
 const { server, isTestnet } = require('../../config/stellar');
 const { cleanupStreamForWallet, watchCampaignWallet } = require('../ledgerMonitor');
 const {
@@ -312,7 +313,7 @@ async function runbookFundUnderfundedWallet(incident, logStep) {
   const webhookUrl = process.env.OPS_WEBHOOK_URL;
   if (webhookUrl) {
     try {
-      await fetch(webhookUrl, {
+      await safeFetch(webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -321,6 +322,7 @@ async function runbookFundUnderfundedWallet(incident, logStep) {
           incident_id: incident?.id,
           deficit_summary: instructions,
         }),
+        timeoutMs: 10_000,
       });
     } catch {
       // ignore

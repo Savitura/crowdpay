@@ -28,6 +28,35 @@ const {
   sendWithdrawalApprovedEmail,
   sendWithdrawalRejectedEmail,
 } = require('../services/emailService');
+
+const WITHDRAWAL_REQUEST_COLUMNS = [
+  'id',
+  'campaign_id',
+  'requested_by',
+  'amount',
+  'destination_key',
+  'unsigned_xdr',
+  'creator_signed',
+  'platform_signed',
+  'status',
+  'denial_reason',
+  'tx_hash',
+  'created_at',
+  'milestone_id',
+  'dispute_id',
+  'evidence',
+  'contract_milestone_index',
+  'asset',
+  'contract_pending_id',
+  'creator_signed_xdr',
+  'submitted_tx_hash',
+  'completed_at',
+];
+
+function withdrawalRequestColumnList(alias = '') {
+  const prefix = alias ? `${alias}.` : '';
+  return WITHDRAWAL_REQUEST_COLUMNS.map(col => `${prefix}${col}`).join(', ');
+}
 const { emitWebhookEventForUser, WEBHOOK_EVENTS } = require('../services/webhookDispatcher');
 const { withDecryptedWalletSecret } = require('../services/walletSecrets');
 const {
@@ -401,7 +430,7 @@ router.post(
   requireAuth,
   asyncHandler(async (req, res) => {
     const { rows: requests } = await db.query(
-      `SELECT wr.*, c.creator_id, c.wallet_public_key AS campaign_wallet_public_key, c.asset_type, c.status AS campaign_status
+      `SELECT ${withdrawalRequestColumnList('wr')}, c.creator_id, c.wallet_public_key AS campaign_wallet_public_key, c.asset_type, c.status AS campaign_status
      FROM withdrawal_requests wr
      JOIN campaigns c ON c.id = wr.campaign_id
      WHERE wr.id = $1`,
@@ -548,7 +577,7 @@ const platformApproveHandler = asyncHandler(async (req, res) => {
     await client.query('BEGIN');
 
     const { rows: requests } = await client.query(
-      `SELECT wr.*, c.status AS campaign_status, c.wallet_public_key AS campaign_wallet_public_key, c.asset_type, c.creator_id
+      `SELECT ${withdrawalRequestColumnList('wr')}, c.status AS campaign_status, c.wallet_public_key AS campaign_wallet_public_key, c.asset_type, c.creator_id
        FROM withdrawal_requests wr
        JOIN campaigns c ON c.id = wr.campaign_id
        WHERE wr.id = $1
@@ -920,7 +949,7 @@ router.post(
     const reason = (req.body && req.body.reason) || 'Cancelled by creator';
 
     const { rows: requests } = await db.query(
-      `SELECT wr.*, c.creator_id
+      `SELECT ${withdrawalRequestColumnList('wr')}, c.creator_id
      FROM withdrawal_requests wr
      JOIN campaigns c ON c.id = wr.campaign_id
      WHERE wr.id = $1`,
@@ -1031,9 +1060,10 @@ router.post(
      */
     const reason = (req.body && req.body.reason) || 'Rejected by platform';
 
-    const { rows: requests } = await db.query('SELECT * FROM withdrawal_requests WHERE id = $1', [
-      req.params.id,
-    ]);
+    const { rows: requests } = await db.query(
+      `SELECT ${withdrawalRequestColumnList('')} FROM withdrawal_requests WHERE id = $1`,
+      [req.params.id]
+    );
     if (!requests.length) return res.status(404).json({ error: 'Withdrawal request not found' });
     const requestRow = requests[0];
 
@@ -1222,9 +1252,10 @@ router.get(
   '/:id',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const { rows } = await db.query('SELECT * FROM withdrawal_requests WHERE id = $1', [
-      req.params.id,
-    ]);
+    const { rows } = await db.query(
+      `SELECT ${withdrawalRequestColumnList('')} FROM withdrawal_requests WHERE id = $1`,
+      [req.params.id]
+    );
     if (!rows.length) return res.status(404).json({ error: 'Withdrawal request not found' });
     const row = rows[0];
     const access = await assertWithdrawalAccess(req, row.campaign_id);

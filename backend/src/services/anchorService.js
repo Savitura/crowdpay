@@ -1,6 +1,7 @@
 const { Keypair, TransactionBuilder, WebAuth } = require('@stellar/stellar-sdk');
 const { Networks } = require('@stellar/stellar-sdk');
 const { configuredAssets } = require('../config/stellar');
+const { fetchWithTimeout } = require('../utils/fetchWithTimeout');
 
 function moneyGramEnvironmentConfig() {
   const env =
@@ -193,7 +194,7 @@ async function fetchJson(url, options = {}) {
   if (process.env.MONEYGRAM_API_KEY && !headers['x-api-key']) {
     headers['x-api-key'] = process.env.MONEYGRAM_API_KEY;
   }
-  const response = await fetch(url, { ...options, headers });
+  const response = await fetchWithTimeout(url, { ...options, headers });
   const text = await response.text();
   let data = {};
   if (text) {

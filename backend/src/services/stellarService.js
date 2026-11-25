@@ -19,6 +19,7 @@ const {
   Claimant,
   xdr,
 } = require('@stellar/stellar-sdk');
+const { fetchWithTimeout } = require('../utils/fetchWithTimeout');
 const {
   server,
   networkPassphrase,
@@ -1254,8 +1255,9 @@ function isClaimableBalanceGoneError(err) {
 
 async function friendbotFund(publicKey) {
   if (!isTestnet) throw new Error('Friendbot only available on testnet');
-  const response = await fetch(
-    `https://friendbot.stellar.org?addr=${encodeURIComponent(publicKey)}`
+  const response = await fetchWithTimeout(
+    `https://friendbot.stellar.org?addr=${encodeURIComponent(publicKey)}`,
+    { timeoutMs: 15_000 }
   );
   return response.json();
 }

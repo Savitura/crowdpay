@@ -9,6 +9,7 @@ import OnboardingCallout from '../components/OnboardingCallout';
 import KycPrompt from '../components/KycPrompt';
 import { isCreatorOnboardingVisible, dismissCreatorOnboarding } from '../lib/onboarding';
 import { saveDraft, loadDraft, clearDraft, hasDraftContent } from '../lib/campaignDraft';
+import { validateMonetaryInput, parseDecimal, compareDecimals } from '../utils/decimal';
 
 const DRAFT_SAVE_DEBOUNCE_MS = 800;
 const SERVER_DRAFT_SAVE_MS = 30_000;
@@ -409,8 +410,18 @@ export default function CreateCampaign() {
         setError(`Reward tier ${index + 1} needs a title.`);
         return false;
       }
-      if (!tier.min_amount || Number(tier.min_amount) <= 0) {
-        setError(`Reward tier ${index + 1} needs a minimum amount greater than zero.`);
+      const tierMinCheck = validateMonetaryInput(tier.min_amount, {
+        fieldName: `Reward tier ${index + 1} minimum amount`,
+        allowZero: false,
+      });
+      if (!tierMinCheck.isValid) {
+        setError(
+          tierMinCheck.error === `Reward tier ${index + 1} minimum amount is required.` ||
+            tierMinCheck.error ===
+              `Reward tier ${index + 1} minimum amount must be greater than zero.`
+            ? `Reward tier ${index + 1} needs a minimum amount greater than zero.`
+            : tierMinCheck.error
+        );
         return false;
       }
       if (tier.limit && (Number(tier.limit) <= 0 || !Number.isInteger(Number(tier.limit)))) {
@@ -432,8 +443,17 @@ export default function CreateCampaign() {
       setError('Please enter a campaign title.');
       return false;
     }
-    if (!form.target_amount || Number(form.target_amount) <= 0) {
-      setError('Enter a fundraising goal greater than zero.');
+    const targetCheck = validateMonetaryInput(form.target_amount, {
+      fieldName: 'Fundraising goal',
+      allowZero: false,
+    });
+    if (!targetCheck.isValid) {
+      setError(
+        targetCheck.error === 'Fundraising goal is required.' ||
+          targetCheck.error === 'Fundraising goal must be greater than zero.'
+          ? 'Enter a fundraising goal greater than zero.'
+          : targetCheck.error
+      );
       return false;
     }
     setError('');
@@ -449,30 +469,62 @@ export default function CreateCampaign() {
         return false;
       }
     }
-    if (form.min_contribution && Number(form.min_contribution) <= 0) {
-      setError('Minimum contribution must be greater than zero.');
-      return false;
-    }
-    if (form.max_contribution) {
-      if (Number(form.max_contribution) <= 0) {
-        setError('Maximum contribution must be greater than zero.');
+    if (form.min_contribution) {
+      const minCheck = validateMonetaryInput(form.min_contribution, {
+        fieldName: 'Minimum contribution',
+        allowZero: false,
+      });
+      if (!minCheck.isValid) {
+        setError(
+          minCheck.error === 'Minimum contribution is required.' ||
+            minCheck.error === 'Minimum contribution must be greater than zero.'
+            ? 'Minimum contribution must be greater than zero.'
+            : minCheck.error
+        );
         return false;
       }
-      if (form.min_contribution && Number(form.max_contribution) <= Number(form.min_contribution)) {
+    }
+    if (form.max_contribution) {
+      const maxCheck = validateMonetaryInput(form.max_contribution, {
+        fieldName: 'Maximum contribution',
+        allowZero: false,
+      });
+      if (!maxCheck.isValid) {
+        setError(
+          maxCheck.error === 'Maximum contribution is required.' ||
+            maxCheck.error === 'Maximum contribution must be greater than zero.'
+            ? 'Maximum contribution must be greater than zero.'
+            : maxCheck.error
+        );
+        return false;
+      }
+      if (
+        form.min_contribution &&
+        compareDecimals(form.max_contribution, form.min_contribution) <= 0
+      ) {
         setError('Maximum contribution must be greater than minimum contribution.');
         return false;
       }
-      if (form.target_amount && Number(form.max_contribution) > Number(form.target_amount)) {
+      if (form.target_amount && compareDecimals(form.max_contribution, form.target_amount) > 0) {
         setError('Maximum contribution cannot exceed the target amount.');
         return false;
       }
     }
     if (form.max_per_user) {
-      if (Number(form.max_per_user) <= 0) {
-        setError('Per-contributor cap must be greater than zero.');
+      const capCheck = validateMonetaryInput(form.max_per_user, {
+        fieldName: 'Per-contributor cap',
+        allowZero: false,
+      });
+      if (!capCheck.isValid) {
+        setError(
+          capCheck.error === 'Per-contributor cap is required.' ||
+            capCheck.error === 'Per-contributor cap must be greater than zero.'
+            ? 'Per-contributor cap must be greater than zero.'
+            : capCheck.error
+        );
         return false;
       }
-      if (form.min_contribution && Number(form.max_per_user) <= Number(form.min_contribution)) {
+      if (form.min_contribution && compareDecimals(form.max_per_user, form.min_contribution) <= 0) {
         setError('Per-contributor cap must be greater than minimum contribution.');
         return false;
       }
@@ -555,14 +607,14 @@ export default function CreateCampaign() {
       const campaign = await api.createCampaign({
         title: form.title.trim(),
         description: form.description.trim() || undefined,
-        target_amount: form.target_amount,
+        target_amount: parseDecimal(form.target_amount),
         asset_type: form.asset_type,
         deadline: formattedDeadline,
         category: form.category || undefined,
         country: form.country?.trim() || undefined,
-        min_contribution: form.min_contribution ? Number(form.min_contribution) : undefined,
-        max_contribution: form.max_contribution ? Number(form.max_contribution) : undefined,
-        max_per_user: form.max_per_user ? Number(form.max_per_user) : undefined,
+        min_contribution: form.min_contribution ? parseDecimal(form.min_contribution) : undefined,
+        max_contribution: form.max_contribution ? parseDecimal(form.max_contribution) : undefined,
+        max_per_user: form.max_per_user ? parseDecimal(form.max_per_user) : undefined,
         template_id: form.template_id || undefined,
         milestones: form.milestones.length
           ? form.milestones.map((milestone) => ({

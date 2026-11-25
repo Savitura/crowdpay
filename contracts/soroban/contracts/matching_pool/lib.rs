@@ -30,12 +30,73 @@ pub struct PoolStatus {
     pub status: Symbol,
 }
 
+const DAY_IN_LEDGERS: u32 = 17_280;
+/// A sponsor's pool must outlive the campaign it matches (weeks to months), so
+/// keep the pool state live well beyond the 4096-ledger default TTL.
+pub const STORAGE_TTL_LEDGERS: u32 = 180 * DAY_IN_LEDGERS;
+/// Entries are only re-extended once their remaining TTL drops this far below
+/// the target, so back-to-back calls don't pay for redundant bumps.
+const TTL_BUMP_SLACK: u32 = DAY_IN_LEDGERS;
+
 pub(crate) fn calculate_match_amount(
     contribution_amount: i128,
     match_ratio: i128,
     remaining_pool: i128,
 ) -> i128 {
     ((contribution_amount * match_ratio) / 100).min(remaining_pool)
+}
+
+fn state_key(env: &Env) -> Symbol {
+    Symbol::new(env, "state")
+}
+
+fn load_state(env: &Env) -> PoolStatus {
+    env.storage()
+        .persistent()
+        .get(&state_key(env))
+        .expect("Not initialized")
+}
+
+/// Persist the pool state and extend both it and the contract instance so a
+/// long-running campaign never loses its pool to archival.
+fn save_state(env: &Env, status: &PoolStatus) {
+    let key = state_key(env);
+    env.storage().persistent().set(&key, status);
+    let extend_to = STORAGE_TTL_LEDGERS.min(env.storage().max_ttl());
+    let threshold = extend_to.saturating_sub(TTL_BUMP_SLACK);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, threshold, extend_to);
+    env.storage().instance().extend_ttl(threshold, extend_to);
+}
+
+/// Pull `amount` from `from` into the pool and reactivate an exhausted pool.
+/// Callers are responsible for authorization and amount validation.
+fn add_funds(env: &Env, from: Address, amount: i128) -> PoolStatus {
+    let mut status = load_state(env);
+    if status.status == Symbol::new(env, "completed") {
+        panic!("Pool has been reclaimed");
+    }
+
+    token::Client::new(env, &status.token).transfer(
+        &from,
+        &env.current_contract_address(),
+        &amount,
+    );
+
+    status.total_pool += amount;
+    status.remaining_pool += amount;
+    if status.status == Symbol::new(env, "exhausted") && status.remaining_pool > 0 {
+        status.status = Symbol::new(env, "active");
+    }
+
+    save_state(env, &status);
+
+    env.events().publish(
+        (Symbol::new(env, "pool_deposited"), status.campaign_id),
+        (from, amount, status.remaining_pool),
+    );
+    status
 }
 
 #[contract]
@@ -64,8 +125,7 @@ impl MatchingPoolContract {
     ) {
         sponsor.require_auth();
 
-        let key = Symbol::new(&env, "state");
-        if env.storage().persistent().has(&key) {
+        if env.storage().persistent().has(&state_key(&env)) {
             panic!("Already initialized");
         }
         if match_ratio <= 0 {
@@ -89,13 +149,13 @@ impl MatchingPoolContract {
             authorized_caller: authorized_caller.clone(),
             token: token.clone(),
             match_ratio,
-            total_pool: 0,
+            total_pool,
             matched_amount: 0,
             remaining_pool: total_pool,
             status: Symbol::new(&env, "active"),
         };
 
-        env.storage().persistent().set(&key, &status);
+        save_state(&env, &status);
 
         env.events().publish(
             (Symbol::new(&env, "pool_initialized"), campaign_id),
@@ -109,46 +169,20 @@ impl MatchingPoolContract {
         if amount <= 0 {
             panic!("Deposit amount must be positive");
         }
-        let key = Symbol::new(&env, "state");
-        let mut status: PoolStatus = env.storage().persistent().get(&key).unwrap();
-
-        token::Client::new(&env, &status.token).transfer(
-            &from,
-            &env.current_contract_address(),
-            &amount,
-        );
-
-        status.total_pool += amount;
-        status.remaining_pool += amount;
-        if status.status == Symbol::new(&env, "exhausted") && status.remaining_pool > 0 {
-            status.status = Symbol::new(&env, "active");
-        }
-
-        env.storage().persistent().set(&key, &status);
-
-        env.events().publish(
-            (Symbol::new(&env, "pool_deposited"), status.campaign_id),
-            (from, amount, status.remaining_pool),
-        );
+        add_funds(&env, from, amount);
     }
 
-    /// Record the sponsor's pledge so matching funds can be released later.
+    /// Sponsor tops up their own pledge. Like `deposit`, but restricted to the
+    /// registered sponsor. Returns the new remaining pool.
     pub fn fund(env: Env, sponsor: Address, amount: i128) -> i128 {
         sponsor.require_auth();
-
         assert!(amount > 0, "Amount must be positive");
 
-        let key = Symbol::new(&env, "state");
-        let mut status: PoolStatus = env.storage().persistent().get(&key).unwrap();
-        if sponsor != status.sponsor {
+        if sponsor != load_state(&env).sponsor {
             panic!("Only the sponsor can fund the pool");
         }
 
-        status.total_pool += amount;
-        status.remaining_pool += amount;
-        env.storage().persistent().set(&key, &status);
-
-        status.remaining_pool
+        add_funds(&env, sponsor, amount).remaining_pool
     }
 
     /// Release matching funds when a contribution is confirmed.
@@ -156,6 +190,9 @@ impl MatchingPoolContract {
     /// Requires authorization from the designated authorized_caller (admin/platform/escrow).
     /// Calculates match_amount = contribution * ratio / 100 capped by remaining_pool,
     /// transfers actual_match to the recipient, emits event, and updates state.
+    ///
+    /// # Returns
+    /// The amount actually matched (0 if the pool is not active or exhausted)
     pub fn apply_match(
         env: Env,
         caller: Address,
@@ -164,71 +201,47 @@ impl MatchingPoolContract {
     ) -> i128 {
         caller.require_auth();
 
-        let key = Symbol::new(&env, "state");
-        let mut status: PoolStatus = env.storage().persistent().get(&key).unwrap();
+        let mut status = load_state(&env);
 
         if caller != status.authorized_caller {
             panic!("Unauthorized caller");
         }
 
-        if status.status != Symbol::new(&env, "active") || status.remaining_pool <= 0 {
+        if contribution_amount <= 0
+            || status.status != Symbol::new(&env, "active")
+            || status.remaining_pool <= 0
+        {
             return 0;
         }
-
-        let match_amount = (contribution_amount * status.match_ratio) / 100;
-        let actual_match = match_amount.min(status.remaining_pool);
-    /// Called by backend oracle when a contribution is verified on-chain.
-    /// Calculates match_amount = min(contribution * ratio, remaining_pool)
-    /// and transfers it to the campaign recipient address.
-    ///
-    /// # Arguments
-    /// * `env` - Soroban environment
-    /// * `contribution_amount` - Amount of user contribution
-    /// * `recipient` - Campaign wallet to receive the match
-    ///
-    /// # Returns
-    /// The amount actually matched (0 if pool exhausted)
-    ///
-    /// # Example
-    /// ```ignore
-    /// let matched = release_match(env, 100_0000000, recipient_address);
-    /// // matched = 100_0000000 for 1:1 ratio, or proportional amount if pool limited
-    /// ```
-    pub fn release_match(env: Env, contribution_amount: i128, recipient: Address) -> i128 {
-        let key = Symbol::new(&env, "state");
-        let mut status: PoolStatus = env.storage().persistent().get(&key).unwrap();
 
         let actual_match = calculate_match_amount(
             contribution_amount,
             status.match_ratio,
             status.remaining_pool,
         );
-
-        if actual_match > 0 {
-            status.matched_amount += actual_match;
-            status.remaining_pool -= actual_match;
-
-            if status.remaining_pool == 0 {
-                status.status = Symbol::new(&env, "exhausted");
-            }
-
-            env.storage().persistent().set(&key, &status);
-
-            token::Client::new(&env, &status.token).transfer(
-                &env.current_contract_address(),
-                &recipient,
-                &actual_match,
-            );
-
-            env.events().publish(
-                (Symbol::new(&env, "match_applied"), status.campaign_id),
-                (recipient, actual_match, status.remaining_pool),
-            );
+        if actual_match <= 0 {
+            return 0;
         }
 
+        status.matched_amount += actual_match;
+        status.remaining_pool -= actual_match;
+        if status.remaining_pool == 0 {
+            status.status = Symbol::new(&env, "exhausted");
         }
 
-        let _ = recipient;
+        save_state(&env, &status);
+
+        token::Client::new(&env, &status.token).transfer(
+            &env.current_contract_address(),
+            &recipient,
+            &actual_match,
+        );
+
+        env.events().publish(
+            (Symbol::new(&env, "match_applied"), status.campaign_id),
+            (recipient, actual_match, status.remaining_pool),
+        );
+
         actual_match
     }
 
@@ -249,47 +262,26 @@ impl MatchingPoolContract {
     /// - campaign_id
     /// - sponsor address
     /// - match_ratio
-    /// - total_pool (initial pledge)
+    /// - total_pool (initial pledge plus top-ups)
     /// - matched_amount (funds released so far)
     /// - remaining_pool (available for future matches)
-    /// - status ('active' or 'exhausted')
-    ///
-    /// # Example
-    /// ```ignore
-    /// let pool = get_pool_status(env);
-    /// if pool.status == "exhausted" { /* handle exhausted pool */ }
-    /// ```
+    /// - status ('active', 'exhausted' or 'completed')
     pub fn get_pool_status(env: Env) -> PoolStatus {
-        let key = Symbol::new(&env, "state");
-        env.storage().persistent().get(&key).unwrap()
+        load_state(&env)
     }
 
     /// Sponsor reclaims unmatched funds after campaign ends.
     ///
     /// Enforces that caller is the registered sponsor, sets remaining_pool to 0,
     /// marks status as 'completed', transfers unclaimed balance to sponsor,
-    /// and emits pool_reclaimed event.
-    /// Transfers remaining unmatched funds back to the sponsor.
-    /// Only callable by sponsor address. Campaign creator may also call
-    /// to initiate reclaim (backend verifies campaign end status).
-    ///
-    /// # Arguments
-    /// * `env` - Soroban environment
-    /// * `sponsor` - Sponsor address (must sign)
+    /// and emits pool_reclaimed event. Calling again returns 0.
     ///
     /// # Returns
     /// Amount reclaimed
-    ///
-    /// # Example
-    /// ```ignore
-    /// let reclaimed = reclaim(env, sponsor_address);
-    /// // sponsor receives reclaimed amount back to their Stellar account
-    /// ```
     pub fn reclaim(env: Env, sponsor: Address) -> i128 {
         sponsor.require_auth();
 
-        let key = Symbol::new(&env, "state");
-        let mut status: PoolStatus = env.storage().persistent().get(&key).unwrap();
+        let mut status = load_state(&env);
         if sponsor != status.sponsor {
             panic!("Only the sponsor can reclaim the pool");
         }
@@ -297,7 +289,7 @@ impl MatchingPoolContract {
         let unclaimed = status.remaining_pool;
         status.remaining_pool = 0;
         status.status = Symbol::new(&env, "completed");
-        env.storage().persistent().set(&key, &status);
+        save_state(&env, &status);
 
         if unclaimed > 0 {
             token::Client::new(&env, &status.token).transfer(
@@ -310,8 +302,6 @@ impl MatchingPoolContract {
                 (Symbol::new(&env, "pool_reclaimed"), status.campaign_id),
                 (sponsor, unclaimed),
             );
-            status.status = Symbol::new(&env, "completed");
-            env.storage().persistent().set(&key, &status);
         }
 
         unclaimed
@@ -564,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Unauthorized sponsor")]
+    #[should_panic(expected = "Only the sponsor can reclaim the pool")]
     fn test_reclaim_rejects_unauthorized_sponsor() {
         let f = setup_fixture(1_000);
         f.client.initialize(
@@ -625,4 +615,6 @@ mod tests {
         assert_eq!(f.token_client.balance(&f.client.address), 1_000);
     }
 }
+
+#[cfg(test)]
 mod test;

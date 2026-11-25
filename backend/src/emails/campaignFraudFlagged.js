@@ -1,4 +1,4 @@
-const { renderLayout, heading, paragraph, table } = require('./layout');
+const { escapeHtml, renderLayout, heading, paragraph, paragraphHtml, table } = require('./layout');
 
 function build({
   adminName,
@@ -40,7 +40,9 @@ function build({
     previewText: `Fraud alert for campaign: ${campaignTitle}`,
     bodyHtml: [
       heading(`Suspicious Activity Flagged`),
-      paragraph(`A campaign has been flagged with a fraud score of <strong>${score}</strong>.`),
+      paragraphHtml(
+        `A campaign has been flagged with a fraud score of <strong>${escapeHtml(score)}</strong>.`
+      ),
       table([
         ['Campaign Title', campaignTitle],
         ['Campaign ID', campaignId],

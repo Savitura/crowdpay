@@ -561,7 +561,7 @@ test('GET /api/milestones/:id/auto-release shows backers the pending release and
   const firesAt = new Date(Date.now() + 5 * 3600 * 1000);
   const { app, cleanup } = buildApp({
     queryImpl: async text => {
-      if (text.includes('SELECT * FROM milestones WHERE id')) {
+      if (text.includes('FROM milestones WHERE id')) {
         return {
           rows: [
             milestoneRow({

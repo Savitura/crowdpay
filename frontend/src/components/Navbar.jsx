@@ -208,6 +208,7 @@ export default function Navbar() {
               <>
                 <div style={styles.bellWrap} ref={bellRef}>
                   <button
+                    type="button"
                     onClick={() => setShowDropdown((v) => !v)}
                     className="icon-btn"
                     style={{ position: 'relative' }}
@@ -246,7 +247,12 @@ export default function Navbar() {
                   </div>
                   <span style={styles.name}>{user.name}</span>
                 </div>
-                <button onClick={handleLogout} className="btn-secondary" style={styles.logoutBtn}>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="btn-secondary"
+                  style={styles.logoutBtn}
+                >
                   {t('nav.logout')}
                 </button>
               </>

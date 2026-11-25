@@ -12,6 +12,7 @@ const {
   createCampaignValidation,
   contributionValidation,
   withdrawalValidation,
+  contributionQuoteValidation,
   createAnnouncementValidation,
   announcementIdValidation,
 } = require('../middleware/validation');
@@ -314,7 +315,7 @@ test('contribution validation accepts and sanitizes gift recipient details', asy
   assert.equal(result.ok, true);
   assert.equal(result.req.body.gift.recipient_name, 'Ada');
   assert.equal(result.req.body.gift.recipient_email, 'ada@example.com');
-  assert.equal(result.req.body.gift.message, 'HiSupport you!');
+  assert.equal(result.req.body.gift.message, 'Support you!');
 });
 
 test('contribution validation rejects invalid gift email and oversized message', async () => {
@@ -354,4 +355,50 @@ test('createCampaign validation rejects a target_amount with more than 7 decimal
   });
   assert.equal(result.ok, false);
   assert.ok(result.errors.some(e => e.path === 'target_amount'));
+});
+
+test('createCampaign validation rejects min_contribution and max_contribution with more than 7 decimals', async () => {
+  const resultMin = await runValidation(createCampaignValidation, {
+    title: 'Valid title',
+    target_amount: '100',
+    asset_type: 'USDC',
+    min_contribution: '1.00000001',
+  });
+  assert.equal(resultMin.ok, false);
+  assert.ok(resultMin.errors.some(e => e.path === 'min_contribution'));
+
+  const resultMax = await runValidation(createCampaignValidation, {
+    title: 'Valid title',
+    target_amount: '100',
+    asset_type: 'USDC',
+    max_contribution: '50.12345678',
+  });
+  assert.equal(resultMax.ok, false);
+  assert.ok(resultMax.errors.some(e => e.path === 'max_contribution'));
+});
+
+test('withdrawal validation rejects amount with more than 7 decimals', async () => {
+  const result = await runValidation(withdrawalValidation, {
+    campaign_id: '123e4567-e89b-12d3-a456-426614174000',
+    destination_key: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    amount: '10.00000001',
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some(e => e.path === 'amount'));
+});
+
+test('contributionQuoteValidation rejects dest_amount with more than 7 decimals', async () => {
+  const result = await runValidation(
+    contributionQuoteValidation,
+    {},
+    {
+      query: {
+        send_asset: 'XLM',
+        dest_asset: 'USDC',
+        dest_amount: '5.12345678',
+      },
+    }
+  );
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some(e => e.path === 'dest_amount'));
 });

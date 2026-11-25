@@ -28,6 +28,7 @@ const { buildContributionMemo } = require('./contributionService');
 const { createNotification } = require('./notifications');
 const { Keypair, TransactionBuilder } = require('@stellar/stellar-sdk');
 const { networkPassphrase } = require('../config/stellar');
+const { AmountError, toStroops, fromStroops, normalizeAmount } = require('../utils/stroops');
 
 const PERIOD_DAYS = 30;
 const ALLOWED_PERIOD_MONTHS = [1, 3, 6];
@@ -84,8 +85,14 @@ function httpError(message, statusCode, code) {
   return err;
 }
 
+/** Exact decimal amount -> JS number, for API responses only (#1197). */
 function toAmount(value) {
-  return Number(parseFloat(value).toFixed(7));
+  return Number(normalizeAmount(value, { allowZero: true }));
+}
+
+/** Total locked by a pledge, in exact stroops: amount per period x periods. */
+function commitmentStroops(input) {
+  return input.amountStroops * BigInt(input.totalPeriods);
 }
 
 /** Scheduled date of period N (1-based): now + N * periodMonths * 30 days. */
@@ -94,8 +101,15 @@ function scheduleDateForPeriod(startedAt, period, periodMonths) {
 }
 
 function validateSubscriptionInput({ amountPerPeriod, asset, periodMonths, totalPeriods }) {
-  const amount = parseFloat(amountPerPeriod);
-  if (!Number.isFinite(amount) || amount <= 0) {
+  // Parsed exactly (#1197): more than 7 decimals is rejected, never rounded.
+  let amountStroops;
+  try {
+    amountStroops = toStroops(amountPerPeriod, { allowZero: true, allowNegative: true });
+  } catch (err) {
+    if (!(err instanceof AmountError)) throw err;
+    throw httpError(`amountPerPeriod is invalid: ${err.message}`, 400, 'INVALID_SUBSCRIPTION');
+  }
+  if (amountStroops <= 0n) {
     throw httpError('amountPerPeriod must be greater than zero', 400, 'INVALID_SUBSCRIPTION');
   }
   if (!getSupportedAssetCodes().includes(asset)) {
@@ -116,7 +130,16 @@ function validateSubscriptionInput({ amountPerPeriod, asset, periodMonths, total
       'INVALID_SUBSCRIPTION'
     );
   }
-  return { amount: toAmount(amount), periodMonths: Number(periodMonths), totalPeriods: periods };
+  const amountString = fromStroops(amountStroops);
+  return {
+    // `amount` is the display number for API responses; Stellar operations and
+    // DB writes use the exact `amountString`, balance checks `amountStroops`.
+    amount: toAmount(amountString),
+    amountString,
+    amountStroops,
+    periodMonths: Number(periodMonths),
+    totalPeriods: periods,
+  };
 }
 
 /**
@@ -169,7 +192,7 @@ async function prepareSubscription({
     const scheduledDate = scheduleDateForPeriod(startedAt, period, input.periodMonths);
     schedule.push({
       scheduledDate,
-      amount: input.amount,
+      amount: input.amountString,
       reclaimAfterUnix: Math.floor(
         (scheduledDate.getTime() + CONTRIBUTOR_RECLAIM_AFTER_DAYS * DAY_MS) / 1000
       ),
@@ -196,9 +219,9 @@ async function prepareSubscription({
     totalPeriods: input.totalPeriods,
     schedule: schedule.map(s => ({
       scheduledDate: s.scheduledDate.toISOString(),
-      amount: s.amount,
+      amount: input.amount,
     })),
-    totalCommitment: toAmount(input.amount * input.totalPeriods),
+    totalCommitment: toAmount(fromStroops(commitmentStroops(input))),
   };
 }
 
@@ -291,7 +314,7 @@ async function submitSubscription({
     const scheduledDate = scheduleDateForPeriod(startedAt, period, input.periodMonths);
     schedule.push({
       scheduledDate,
-      amount: input.amount,
+      amount: input.amountString,
       reclaimAfterUnix: Math.floor(
         (scheduledDate.getTime() + CONTRIBUTOR_RECLAIM_AFTER_DAYS * DAY_MS) / 1000
       ),
@@ -320,7 +343,7 @@ async function submitSubscription({
         [
           campaignId,
           userId,
-          input.amount,
+          input.amountString,
           asset,
           input.periodMonths,
           input.totalPeriods,
@@ -364,7 +387,7 @@ async function submitSubscription({
   return {
     subscriptionId,
     balanceIds,
-    totalCommitment: toAmount(input.amount * input.totalPeriods),
+    totalCommitment: toAmount(fromStroops(commitmentStroops(input))),
     totalPeriods: input.totalPeriods,
     firstPaymentDate: schedule[0].scheduledDate.toISOString(),
     lastPaymentDate: schedule[schedule.length - 1].scheduledDate.toISOString(),
@@ -461,10 +484,11 @@ async function createSubscription({
   const contributor = userRows[0];
   if (!contributor) throw httpError('User not found', 404);
 
-  const totalCommitment = toAmount(input.amount * input.totalPeriods);
+  const totalCommitmentStroops = commitmentStroops(input);
+  const totalCommitment = toAmount(fromStroops(totalCommitmentStroops));
   const balances = await getCampaignBalance(contributor.wallet_public_key);
-  const available = parseFloat(balances[asset] || '0');
-  if (available < totalCommitment) {
+  const available = balances[asset] || '0';
+  if (toStroops(available, { allowZero: true }) < totalCommitmentStroops) {
     throw httpError(
       `Your wallet holds ${available} ${asset} but this pledge commits ${totalCommitment} ${asset}`,
       400,
@@ -477,7 +501,7 @@ async function createSubscription({
     const scheduledDate = scheduleDateForPeriod(startedAt, period, input.periodMonths);
     schedule.push({
       scheduledDate,
-      amount: input.amount,
+      amount: input.amountString,
       reclaimAfterUnix: Math.floor(
         (scheduledDate.getTime() + CONTRIBUTOR_RECLAIM_AFTER_DAYS * DAY_MS) / 1000
       ),
@@ -511,7 +535,7 @@ async function createSubscription({
          (campaign_id, contributor_user_id, amount_per_period, asset, period_months, total_periods)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id`,
-        [campaignId, userId, input.amount, asset, input.periodMonths, input.totalPeriods]
+        [campaignId, userId, input.amountString, asset, input.periodMonths, input.totalPeriods]
       );
       const createdSubscriptionId = inserted[0].id;
 

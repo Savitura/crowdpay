@@ -100,6 +100,7 @@ export default function LanguageToggle({
             const loc = t.locale || t.language;
             return (
               <button
+                type="button"
                 key={loc}
                 onClick={() => setActiveLang(loc)}
                 className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
