@@ -171,6 +171,36 @@ test('GET /api/campaigns/:id/og-image.png returns 404 when campaign not found', 
   assert.equal(res.body.error, 'Campaign not found');
 });
 
+test('GET /api/campaigns/:id/og-image.png returns 404 when campaign is hidden/private', async () => {
+  const app = buildApp({
+    queryImpl: async (sql, _params) => {
+      if (sql.includes('FROM campaigns c') && sql.includes('WHERE c.id = $1')) {
+        return { rows: [{ ...CAMPAIGN_ROW, is_hidden: true }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const res = await request(app).get(`/api/campaigns/${CAMPAIGN_ID}/og-image.png`);
+  assert.equal(res.status, 404);
+  assert.equal(res.body.error, 'Campaign not found');
+});
+
+test('GET /api/campaigns/:id/og-image.png returns 404 when campaign is soft-deleted', async () => {
+  const app = buildApp({
+    queryImpl: async (sql, _params) => {
+      if (sql.includes('FROM campaigns c') && sql.includes('WHERE c.id = $1')) {
+        return { rows: [{ ...CAMPAIGN_ROW, deleted_at: '2026-01-01T00:00:00.000Z' }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const res = await request(app).get(`/api/campaigns/${CAMPAIGN_ID}/og-image.png`);
+  assert.equal(res.status, 404);
+  assert.equal(res.body.error, 'Campaign not found');
+});
+
 test('GET /api/campaigns/:id includes og_image_url and share_url', async () => {
   const app = buildApp({
     queryImpl: async (sql, _params) => {

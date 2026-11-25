@@ -16,14 +16,14 @@ function createEmbedRouter(deps = {}) {
 
   const serveOgImage = asyncHandler(async (req, res) => {
     const { rows } = await db.query(
-      `SELECT c.id, c.title, c.target_amount, c.raised_amount, c.asset_type, c.status, c.deleted_at,
+      `SELECT c.id, c.title, c.target_amount, c.raised_amount, c.asset_type, c.status, c.deleted_at, c.is_hidden,
               u.full_name AS creator_name, u.email AS creator_email
        FROM campaigns c
        LEFT JOIN users u ON u.id = c.creator_id
        WHERE c.id = $1`,
       [req.params.id]
     );
-    if (!rows.length || rows[0].deleted_at) {
+    if (!rows.length || rows[0].deleted_at || rows[0].is_hidden) {
       return res.status(404).json({ error: 'Campaign not found' });
     }
     const campaign = rows[0];

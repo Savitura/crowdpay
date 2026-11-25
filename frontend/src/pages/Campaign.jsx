@@ -370,10 +370,8 @@ export default function Campaign() {
 
   // Page title and SEO meta
   useEffect(() => {
-    if (!campaign) return;
-    const tTitle = translation?.title || campaign.title;
-    const tDesc = translation?.description || campaign.description || '';
-    document.title = `${tTitle} | CrowdPay`;
+    const DEFAULT_TITLE = 'CrowdPay';
+    const DEFAULT_DESCRIPTION = 'Support transparent crowdfunding campaigns on CrowdPay.';
 
     const updateMeta = (name, content, property = false) => {
       let el = document.querySelector(
@@ -388,15 +386,46 @@ export default function Campaign() {
       el.setAttribute('content', content);
     };
 
+    const removeMeta = (name, property = false) => {
+      const el = document.querySelector(
+        property ? `meta[property="${name}"]` : `meta[name="${name}"]`
+      );
+      if (el) el.remove();
+    };
+
+    if (!campaign || campaign.is_hidden) {
+      document.title = DEFAULT_TITLE;
+      updateMeta('description', DEFAULT_DESCRIPTION);
+      updateMeta('og:type', 'website', true);
+      updateMeta('og:title', DEFAULT_TITLE, true);
+      updateMeta('og:description', DEFAULT_DESCRIPTION, true);
+      updateMeta('og:url', window.location.href, true);
+      removeMeta('og:image', true);
+      removeMeta('twitter:image');
+      updateMeta('twitter:card', 'summary');
+      updateMeta('twitter:title', DEFAULT_TITLE);
+      updateMeta('twitter:description', DEFAULT_DESCRIPTION);
+      return;
+    }
+
+    const tTitle = translation?.title || campaign.title || DEFAULT_TITLE;
+    const tDesc = translation?.description || campaign.description || DEFAULT_DESCRIPTION;
+    const imageUrl = campaign.cover_image_url || campaign.og_image_url || '';
+
+    document.title = `${tTitle} | CrowdPay`;
     updateMeta('description', tDesc);
+    updateMeta('og:type', 'website', true);
     updateMeta('og:title', tTitle, true);
     updateMeta('og:description', tDesc, true);
     updateMeta('og:url', window.location.href, true);
-    if (campaign.cover_image_url) {
-      updateMeta('og:image', campaign.cover_image_url, true);
-      updateMeta('twitter:image', campaign.cover_image_url);
+    if (imageUrl) {
+      updateMeta('og:image', imageUrl, true);
+      updateMeta('twitter:image', imageUrl);
+    } else {
+      removeMeta('og:image', true);
+      removeMeta('twitter:image');
     }
-    updateMeta('twitter:card', 'summary_large_image');
+    updateMeta('twitter:card', imageUrl ? 'summary_large_image' : 'summary');
     updateMeta('twitter:title', tTitle);
     updateMeta('twitter:description', tDesc);
   }, [campaign, translation]);
