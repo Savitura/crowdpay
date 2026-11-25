@@ -201,6 +201,9 @@ jobs:
           npm run migrate
           psql -h localhost -U postgres -d crowdpay_test -f db/seed.sql
 
+      - name: Unit test the performance budget checker
+        run: node --test load-tests/__tests__/budget-check.test.js
+
       - name: Validate performance budgets and exceptions
         run: node load-tests/budget-check.js --validate
 
