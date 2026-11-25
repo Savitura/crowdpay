@@ -92,6 +92,12 @@ jobs:
             exit 1
           fi
 
+      - name: Unit test migration prefix check
+        run: node --test scripts/check-migration-prefixes.test.js
+
+      - name: Enforce unique timestamped migration prefixes
+        run: node scripts/check-migration-prefixes.js
+
       - name: Run migrations
         working-directory: ./backend
         env:
