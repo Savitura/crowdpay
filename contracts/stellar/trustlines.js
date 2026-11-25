@@ -25,7 +25,10 @@ const {
   Horizon,
 } = require("@stellar/stellar-sdk");
 
-// Authoritative value lives in backend/src/config/constants.js TX_TIMEOUT_CONTRIBUTION_S
+// NOTE: The production Horizon/account/trustline logic has been decomposed out of
+// backend/src/services/stellarService.js into focused modules. This standalone
+// script is reference-only; keep its timeout in sync with the authoritative value
+// in backend/src/config/constants.js (TX_TIMEOUT_CONTRIBUTION_S).
 const TX_TIMEOUT_CONTRIBUTION_S = 30;
 
 const server = new Horizon.Server(
