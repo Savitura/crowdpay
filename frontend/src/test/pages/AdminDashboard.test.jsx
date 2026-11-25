@@ -54,7 +54,7 @@ describe('AdminDashboard page', () => {
     renderWithProviders(<AdminDashboard />);
 
     expect(await screen.findByRole('heading', { name: /Admin Dashboard/i })).toBeInTheDocument();
-    expect(screen.getByText(/Active campaigns/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Active campaigns/i)).toBeInTheDocument();
   });
 
   it('shows Audit Log tab in the navigation', async () => {

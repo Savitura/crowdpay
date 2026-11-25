@@ -10,11 +10,11 @@ describe('OpsCenter Component', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders API key authentication prompt when unauthenticated', () => {
+  it('renders API key authentication prompt when unauthenticated', async () => {
     render(<OpsCenter />);
-    expect(screen.getByText(/Security Gated/i)).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /Operations Centre/i })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/Enter key/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Security Gated/i)).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Operations Centre/i })).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText(/Enter key/i)).toBeInTheDocument();
   });
 
   it('submits API key and displays the telemetry dashboard', async () => {
@@ -85,7 +85,7 @@ describe('OpsCenter Component', () => {
 
     render(<OpsCenter />);
 
-    const input = screen.getByPlaceholderText(/Enter key/i);
+    const input = await screen.findByPlaceholderText(/Enter key/i);
     await user.type(input, 'test_ops_key');
     await user.click(screen.getByRole('button', { name: /Unlock Operations Centre/i }));
 
@@ -108,13 +108,13 @@ describe('OpsCenter Component', () => {
 
     render(<OpsCenter />);
 
-    const rememberCheckbox = screen.getByRole('checkbox', {
+    const rememberCheckbox = await screen.findByRole('checkbox', {
       name: /Remember key/i,
     });
     expect(rememberCheckbox).not.toBeChecked();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 
-    const input = screen.getByPlaceholderText(/Enter key/i);
+    const input = await screen.findByPlaceholderText(/Enter key/i);
     await user.type(input, 'session_only_key');
     await user.click(screen.getByRole('button', { name: /Unlock Operations Centre/i }));
 
@@ -132,7 +132,7 @@ describe('OpsCenter Component', () => {
 
     render(<OpsCenter />);
 
-    const rememberCheckbox = screen.getByRole('checkbox', {
+    const rememberCheckbox = await screen.findByRole('checkbox', {
       name: /Remember key/i,
     });
     await user.click(rememberCheckbox);
@@ -140,7 +140,7 @@ describe('OpsCenter Component', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent(/Warning.*localStorage.*XSS/i);
 
-    const input = screen.getByPlaceholderText(/Enter key/i);
+    const input = await screen.findByPlaceholderText(/Enter key/i);
     await user.type(input, 'local_persisted_key');
     await user.click(screen.getByRole('button', { name: /Unlock Operations Centre/i }));
 
