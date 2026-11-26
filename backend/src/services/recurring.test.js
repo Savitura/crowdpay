@@ -20,6 +20,11 @@ function buildService({ queryImpl, stellar = {}, clientQueryImpl, closeImpl }) {
   const client = {
     query: async (text, params) => {
       record(text, params);
+      if (text.includes('FOR UPDATE OF sb SKIP LOCKED')) {
+        const res = clientQueryImpl ? await clientQueryImpl(text, params) : { rows: [] };
+        if (res?.rows?.length) return res;
+        return queryImpl ? queryImpl(text, params) : { rows: [] };
+      }
       return clientQueryImpl ? clientQueryImpl(text, params) : { rows: [] };
     },
     release: () => {},

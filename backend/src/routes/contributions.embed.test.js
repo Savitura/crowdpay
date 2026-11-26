@@ -108,6 +108,7 @@ test('POST /api/contributions/embed succeeds with valid token and active campaig
   const app = buildApp({
     queryImpl,
     verifyJwtImpl: () => ({ sub: 'c-1', user_id: 'u-1' }),
+    validateDbTokenImpl: async () => ({ id: 'tok-1', user_id: 'u-1' }),
   });
 
   const res = await request(app)
@@ -117,7 +118,7 @@ test('POST /api/contributions/embed succeeds with valid token and active campaig
   assert.equal(res.body.success, true);
 });
 
-test('POST /api/contributions/embed returns 401 for revoked db-backed embed token', async () => {
+test('POST /api/contributions/embed returns 403 for revoked db-backed embed token', async () => {
   const app = buildApp({
     queryImpl: async () => ({ rows: [] }),
     verifyJwtImpl: () => ({ sub: 'c-1', user_id: 'u-1' }),
@@ -127,5 +128,5 @@ test('POST /api/contributions/embed returns 401 for revoked db-backed embed toke
   const res = await request(app)
     .post('/api/contributions/embed')
     .send({ campaign_id: 'c-1', amount: '50', embed_token: 'cped_revokedtoken123456789' });
-  assert.equal(res.status, 401);
+  assert.equal(res.status, 403);
 });

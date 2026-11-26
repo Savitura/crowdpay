@@ -1,7 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const { requireAuth } = require('../middleware/auth');
-const { contributionValidation, validateRequest } = require('../middleware/validation');
+const {
+  contributionValidation,
+  embedContributionValidation,
+  validateRequest,
+} = require('../middleware/validation');
 const { contributionRateLimiter } = require('../middleware/contributionRateLimiter');
 const { idempotency } = require('../middleware/idempotency');
 const contributionService = require('../services/contributionService');
@@ -220,10 +224,8 @@ router.post(
 router.post(
   '/embed',
   contributionRateLimiter,
-  contributionValidation,
-  validateRequest,
-  asyncHandler(async (req, res) => {
-    const { campaign_id, amount, send_asset, embed_token } = req.body;
+  asyncHandler(async (req, res, next) => {
+    const { campaign_id, embed_token } = req.body;
     if (!embed_token) {
       return res.status(401).json({ error: 'Embed token required' });
     }
@@ -233,8 +235,11 @@ router.post(
      * First verify token format and signature/expiry via JWT service.
      */
     const jwtPayload = verifyEmbedToken(embed_token);
-    if (!jwtPayload || jwtPayload.sub !== campaign_id) {
+    if (!jwtPayload) {
       return res.status(401).json({ error: 'Invalid or expired embed token' });
+    }
+    if (jwtPayload.sub !== campaign_id) {
+      return res.status(403).json({ error: 'Embed token does not match this campaign' });
     }
     /*
      * Now perform DB-backed revocation and existence validation via embedTokenService.
@@ -243,6 +248,14 @@ router.post(
     if (!tokenPayload) {
       return res.status(403).json({ error: 'Embed token has been revoked or is invalid' });
     }
+    req.embedTokenPayload = tokenPayload;
+    next();
+  }),
+  embedContributionValidation,
+  validateRequest,
+  asyncHandler(async (req, res) => {
+    const { campaign_id, amount, send_asset } = req.body;
+    const tokenPayload = req.embedTokenPayload;
 
     const { rows: campaignRows } = await db.query(
       'SELECT id, title, asset_type, wallet_public_key, escrow_contract_id, status, deadline, min_contribution, max_contribution, max_per_user FROM campaigns WHERE id = $1',

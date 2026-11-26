@@ -197,6 +197,7 @@ test('POST /api/withdrawals/request creates pending request and logs event', asy
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -278,6 +279,7 @@ test('POST /api/withdrawals/request returns 400 for failed campaigns', async () 
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -303,6 +305,7 @@ test('POST /api/withdrawals/request blocks when campaign not active or funded', 
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -329,6 +332,7 @@ test('POST /api/withdrawals/request blocks duplicate pending', async () => {
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -362,6 +366,7 @@ test('POST /api/withdrawals/request denies invalid multisig config', async () =>
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '10.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -942,6 +947,7 @@ test('POST /api/withdrawals/request splits the payout between the creator and re
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '1000.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -994,6 +1000,7 @@ test('POST /api/withdrawals/request rejects a withdrawal smaller than the commis
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '50.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();
@@ -1943,6 +1950,7 @@ test('POST /api/withdrawals/request calculates and persists creator_share and co
       campaign_id: '11111111-1111-1111-1111-111111111111',
       destination_key: VALID_DESTINATION,
       amount: '1000.0000000',
+      evidence: [{ type: 'receipt', url: 'https://example.com/receipt.pdf' }],
     });
 
   cleanup();

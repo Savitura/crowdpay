@@ -206,14 +206,18 @@ function checkJsPayload(config, distDir) {
   for (const [key, value] of Object.entries(config.paths)) {
     const label = value.label || key;
     const budget = value.web.js_payload_kb;
-    const failed = kb > budget;
+    const exception = (config.exceptions || []).find(
+      entry => entry.path === key && entry.metric === 'js_payload_kb'
+    );
+    const exceeded = kb > budget;
+    const failed = exceeded && !exception;
     rows.push({
       path: label,
       metric: 'js_payload_kb',
       budget: `${budget} KB`,
       baseline: 'n/a',
       actual: `${kb} KB`,
-      status: failed ? 'FAIL' : 'OK',
+      status: failed ? 'FAIL' : exception && exceeded ? 'EXCEPTION' : 'OK',
     });
     if (failed) failures.push(`${label} js_payload_kb: ${kb} KB exceeds budget ${budget} KB`);
   }

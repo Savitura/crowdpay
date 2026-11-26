@@ -265,6 +265,7 @@ function buildApp({
     },
     '../middleware/validation': {
       contributionValidation: [],
+      embedContributionValidation: [],
       contributionQuoteValidation: [],
       validateRequest: (_req, _res, next) => next(),
     },
@@ -2009,6 +2010,7 @@ function buildRefundApp({ contributionRow, refundImpl }) {
     },
     '../middleware/validation': {
       contributionValidation: [],
+      embedContributionValidation: [],
       contributionQuoteValidation: [],
       validateRequest: (_req, _res, next) => next(),
     },

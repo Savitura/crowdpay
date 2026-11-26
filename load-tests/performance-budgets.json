@@ -41,5 +41,20 @@
       }
     }
   },
-  "exceptions": []
+  "exceptions": [
+    {
+      "path": "campaign_discovery",
+      "metric": "js_payload_kb",
+      "owner": "@melanindebbie",
+      "reason": "Total dist/assets JS payload includes lazy-loaded charts and editor chunks; route-level code splitting reduction tracked separately",
+      "expires_at": "2027-02-28T00:00:00.000Z"
+    },
+    {
+      "path": "contribution_checkout",
+      "metric": "js_payload_kb",
+      "owner": "@melanindebbie",
+      "reason": "Total dist/assets JS payload includes lazy-loaded charts and editor chunks; route-level code splitting reduction tracked separately",
+      "expires_at": "2027-02-28T00:00:00.000Z"
+    }
+  ]
 }

@@ -1,8 +1,13 @@
 const path = require('path');
 const crypto = require('crypto');
-const fileType = require('file-type');
 const { S3Client, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { MAX_UPLOAD_SIZE, ALLOWED_UPLOAD_MIME_TYPES } = require('../config/constants');
+
+async function detectFileType(buffer) {
+  const mod = await import('file-type');
+  const fromBuffer = mod.fileTypeFromBuffer || mod.fromBuffer;
+  return fromBuffer(buffer);
+}
 
 function createStorageClient() {
   const endpoint = process.env.STORAGE_ENDPOINT;
@@ -49,7 +54,7 @@ async function validateAndProcessFile(file) {
     throw error;
   }
 
-  const type = await fileType.fromBuffer(file.buffer);
+  const type = await detectFileType(file.buffer);
   if (!type || !ALLOWED_UPLOAD_MIME_TYPES.includes(type.mime)) {
     const error = new Error('Unsupported Media Type');
     error.status = 415;

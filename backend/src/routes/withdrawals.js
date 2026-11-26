@@ -5,7 +5,7 @@ const { requireAuth } = require('../middleware/auth');
 const { idempotency } = require('../middleware/idempotency');
 const { createVelocityLimit } = require('../middleware/velocityLimit');
 const { sendAlert } = require('../services/alerting');
-const { withdrawalValidation, validateRequest } = require('../middleware/validation');
+const { withdrawalValidation, createValidateRequest } = require('../middleware/validation');
 const {
   buildWithdrawalTransaction,
   getAccountMultisigConfig,
@@ -200,7 +200,7 @@ router.post(
   '/request',
   requireAuth,
   withdrawalValidation,
-  validateRequest,
+  createValidateRequest(422),
   withdrawalVelocityLimit,
   asyncHandler(async (req, res) => {
     /**
