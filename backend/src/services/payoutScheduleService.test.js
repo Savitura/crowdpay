@@ -212,3 +212,353 @@ test('percentage payouts pass exact creator and commission amounts to the transa
     { destinationPublicKey: REFERRER_KEY, amount: '0.0000001' },
   ]);
 });
+
+test('calculateNextRunTime advances by cadence', () => {
+  const base = new Date('2026-01-01T00:00:00.000Z');
+  assert.equal(pure.calculateNextRunTime(base, 'daily').toISOString(), '2026-01-02T00:00:00.000Z');
+  assert.equal(pure.calculateNextRunTime(base, 'weekly').toISOString(), '2026-01-08T00:00:00.000Z');
+  assert.equal(
+    pure.calculateNextRunTime(base, 'biweekly').toISOString(),
+    '2026-01-15T00:00:00.000Z'
+  );
+  assert.equal(
+    pure.calculateNextRunTime(base, 'monthly').toISOString(),
+    '2026-02-01T00:00:00.000Z'
+  );
+  assert.equal(
+    pure.calculateNextRunTime(base, 'unknown').toISOString(),
+    '2026-02-01T00:00:00.000Z'
+  );
+});
+
+test('createPayoutSchedule validates inputs and inserts active schedule', async () => {
+  const { service } = loadService({
+    queryImpl: async (text, params) => {
+      if (text.includes('INSERT INTO recurring_payout_schedules')) {
+        return {
+          rows: [{ id: 'sched-new', amount: params[2], cadence: params[6], status: 'active' }],
+        };
+      }
+      return { rows: [] };
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      service.createPayoutSchedule({
+        campaignId: CAMPAIGN_ID,
+        creatorId: 'creator-1',
+        amount: '10',
+        assetType: 'USDC',
+        destinationKey: DESTINATION_KEY,
+        cadence: 'hourly',
+      }),
+    err => err.statusCode === 422 && /Invalid cadence/.test(err.message)
+  );
+
+  await assert.rejects(
+    () =>
+      service.createPayoutSchedule({
+        campaignId: CAMPAIGN_ID,
+        creatorId: 'creator-1',
+        assetType: 'USDC',
+        destinationKey: DESTINATION_KEY,
+        cadence: 'weekly',
+      }),
+    err => err.statusCode === 422 && /amount or percentage/.test(err.message)
+  );
+
+  await assert.rejects(
+    () =>
+      service.createPayoutSchedule({
+        campaignId: CAMPAIGN_ID,
+        creatorId: 'creator-1',
+        amount: '0',
+        assetType: 'USDC',
+        destinationKey: DESTINATION_KEY,
+        cadence: 'weekly',
+      }),
+    err => err.statusCode === 422 && /greater than 0/.test(err.message)
+  );
+
+  await assert.rejects(
+    () =>
+      service.createPayoutSchedule({
+        campaignId: CAMPAIGN_ID,
+        creatorId: 'creator-1',
+        percentage: '12.345',
+        assetType: 'USDC',
+        destinationKey: DESTINATION_KEY,
+        cadence: 'weekly',
+      }),
+    err => err.statusCode === 422 && /Percentage/.test(err.message)
+  );
+
+  await assert.rejects(
+    () =>
+      service.createPayoutSchedule({
+        campaignId: CAMPAIGN_ID,
+        creatorId: 'creator-1',
+        amount: '10',
+        assetType: 'USDC',
+        destinationKey: 'INVALID_KEY',
+        cadence: 'weekly',
+      }),
+    err => err.statusCode === 422 && /Stellar destination/.test(err.message)
+  );
+
+  await assert.rejects(
+    () =>
+      service.createPayoutSchedule({
+        campaignId: CAMPAIGN_ID,
+        creatorId: 'creator-1',
+        amount: '10',
+        assetType: 'USDC',
+        destinationKey: DESTINATION_KEY,
+        cadence: 'weekly',
+        startDate: 'not-a-date',
+      }),
+    err => err.statusCode === 422 && /Invalid start_date/.test(err.message)
+  );
+
+  await assert.rejects(
+    () =>
+      service.createPayoutSchedule({
+        campaignId: CAMPAIGN_ID,
+        creatorId: 'creator-1',
+        amount: '10',
+        assetType: 'USDC',
+        destinationKey: DESTINATION_KEY,
+        cadence: 'weekly',
+        startDate: '2026-05-10T00:00:00Z',
+        endDate: '2026-05-01T00:00:00Z',
+      }),
+    err => err.statusCode === 422 && /end_date must be after start_date/.test(err.message)
+  );
+
+  const created = await service.createPayoutSchedule({
+    campaignId: CAMPAIGN_ID,
+    creatorId: 'creator-1',
+    amount: '25.5',
+    assetType: 'USDC',
+    destinationKey: DESTINATION_KEY,
+    cadence: 'weekly',
+  });
+  assert.equal(created.id, 'sched-new');
+  assert.equal(created.amount, '25.5000000');
+  assert.equal(created.status, 'active');
+});
+
+test('listPayoutSchedules, getPayoutSchedule, pause, resume, and cancel lifecycle', async () => {
+  const pastRun = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+  let resumedNextRun = null;
+
+  const { service } = loadService({
+    queryImpl: async (text, params) => {
+      if (text.includes('ORDER BY created_at DESC')) {
+        return { rows: [{ id: 'sched-1' }] };
+      }
+      if (
+        text.includes('FROM recurring_payout_schedules') &&
+        text.includes('WHERE id = $1 AND campaign_id = $2 AND creator_id = $3') &&
+        !text.includes('paused')
+      ) {
+        if (params[0] === 'missing') return { rows: [] };
+        return { rows: [{ id: params[0], status: 'active' }] };
+      }
+      if (text.includes('FROM recurring_payout_runs')) {
+        return { rows: [{ id: 'run-1', status: 'success' }] };
+      }
+      if (text.includes("SET status = 'paused'")) {
+        if (params[0] === 'missing') return { rows: [] };
+        return { rows: [{ id: params[0], status: 'paused' }] };
+      }
+      if (text.includes("status = 'paused'")) {
+        if (params[0] === 'missing') return { rows: [] };
+        return {
+          rows: [
+            {
+              id: params[0],
+              status: 'paused',
+              cadence: 'weekly',
+              next_run_at: pastRun,
+              timezone: 'UTC',
+            },
+          ],
+        };
+      }
+      if (text.includes("SET status = 'active', next_run_at = $1")) {
+        resumedNextRun = params[0];
+        return { rows: [{ id: params[1], status: 'active', next_run_at: params[0] }] };
+      }
+      if (text.includes("SET status = 'cancelled'")) {
+        if (params[0] === 'missing') return { rows: [] };
+        return { rows: [{ id: params[0], status: 'cancelled' }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const list = await service.listPayoutSchedules(CAMPAIGN_ID, 'creator-1');
+  assert.equal(list.length, 1);
+
+  const detail = await service.getPayoutSchedule('sched-1', CAMPAIGN_ID, 'creator-1');
+  assert.equal(detail.runs.length, 1);
+  await assert.rejects(
+    () => service.getPayoutSchedule('missing', CAMPAIGN_ID, 'creator-1'),
+    err => err.statusCode === 404
+  );
+
+  const paused = await service.pausePayoutSchedule('sched-1', CAMPAIGN_ID, 'creator-1');
+  assert.equal(paused.status, 'paused');
+  await assert.rejects(
+    () => service.pausePayoutSchedule('missing', CAMPAIGN_ID, 'creator-1'),
+    err => err.statusCode === 404
+  );
+
+  const resumed = await service.resumePayoutSchedule('sched-1', CAMPAIGN_ID, 'creator-1');
+  assert.equal(resumed.status, 'active');
+  assert.ok(new Date(resumedNextRun) > new Date());
+  await assert.rejects(
+    () => service.resumePayoutSchedule('missing', CAMPAIGN_ID, 'creator-1'),
+    err => err.statusCode === 404
+  );
+
+  const cancelled = await service.cancelPayoutSchedule('sched-1', CAMPAIGN_ID, 'creator-1');
+  assert.equal(cancelled.status, 'cancelled');
+  await assert.rejects(
+    () => service.cancelPayoutSchedule('missing', CAMPAIGN_ID, 'creator-1'),
+    err => err.statusCode === 404
+  );
+});
+
+test('processDuePayoutSchedules returns [] when advisory lock is not acquired', async () => {
+  const service = proxyquire('./payoutScheduleService', {
+    '../config/database': {
+      query: async () => {
+        throw new Error('should not query schedules');
+      },
+      connect: async () => ({
+        query: async () => ({ rows: [{ locked: false }] }),
+        release: () => {},
+      }),
+    },
+    './stellarService': { buildWithdrawalTransaction: async () => 'XDR' },
+    './stellarTransactionService': { insertWithdrawalPendingSignatures: async () => {} },
+    './referral': { calculateCommissions: async () => ({ commissions: [] }) },
+    './notifications': { createNotification: async () => {} },
+  });
+
+  const processed = await service.processDuePayoutSchedules();
+  assert.deepEqual(processed, []);
+});
+
+test('processDuePayoutSchedules is idempotent when idempotency_key already exists and marks completed at max_occurrences', async () => {
+  let withdrawalInsertCount = 0;
+  let updatedStatus = null;
+  let updatedOccurrences = null;
+
+  const schedule = dueSchedule({
+    amount: '10.0000000',
+    raised_amount: '100.0000000',
+    occurrences_count: 2,
+    max_occurrences: 3,
+  });
+
+  const { service } = loadService({
+    queryImpl: async (text, params) => {
+      if (text.includes("status = 'active' AND s.next_run_at <= NOW()"))
+        return { rows: [schedule] };
+      if (text.includes('AS total_withdrawn')) return { rows: [{ total_withdrawn: '0' }] };
+      if (text.includes('WHERE idempotency_key = $1')) {
+        return { rows: [{ withdrawal_request_id: 'wr-existing' }] };
+      }
+      if (text.includes('INSERT INTO withdrawal_requests')) {
+        withdrawalInsertCount++;
+        return { rows: [{ id: 'wr-new' }] };
+      }
+      if (
+        text.includes('UPDATE recurring_payout_schedules') &&
+        text.includes('occurrences_count')
+      ) {
+        updatedOccurrences = params[0];
+        updatedStatus = params[3];
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const processed = await service.processDuePayoutSchedules();
+  assert.equal(processed.length, 1);
+  assert.equal(processed[0].withdrawalRequestId, 'wr-existing');
+  assert.equal(withdrawalInsertCount, 0);
+  assert.equal(updatedOccurrences, 3);
+  assert.equal(updatedStatus, 'completed');
+});
+
+test('processDuePayoutSchedules falls back to mock XDR on build failure and records last_error on tx failure', async () => {
+  const insertedXdrs = [];
+  let recordedError = null;
+  let rolledBack = false;
+
+  const schedOk = dueSchedule({
+    id: 'sched-ok',
+    amount: '5.0000000',
+    raised_amount: '100.0000000',
+  });
+  const schedFail = dueSchedule({
+    id: 'sched-fail',
+    amount: '5.0000000',
+    raised_amount: '100.0000000',
+  });
+
+  const service = proxyquire('./payoutScheduleService', {
+    '../config/database': {
+      query: async (text, params) => {
+        if (text.includes("status = 'active' AND s.next_run_at <= NOW()")) {
+          return { rows: [schedOk, schedFail] };
+        }
+        if (text.includes('AS total_withdrawn')) return { rows: [{ total_withdrawn: '0' }] };
+        if (text.includes('SET last_error = $1')) {
+          recordedError = params;
+          return { rows: [] };
+        }
+        return { rows: [] };
+      },
+      connect: async () => ({
+        query: async (text, params) => {
+          if (text.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] };
+          if (text === 'ROLLBACK') {
+            rolledBack = true;
+            return { rows: [] };
+          }
+          if (text.includes('INSERT INTO withdrawal_requests')) {
+            if (params[5].includes('sched-fail')) {
+              throw new Error('db insert boom');
+            }
+            insertedXdrs.push(params[4]);
+            return { rows: [{ id: 'wr-ok' }] };
+          }
+          return { rows: [] };
+        },
+        release: () => {},
+      }),
+    },
+    '../config/logger': { info: () => {}, warn: () => {}, error: () => {} },
+    './stellarService': {
+      buildWithdrawalTransaction: async () => {
+        throw new Error('horizon down');
+      },
+    },
+    './stellarTransactionService': { insertWithdrawalPendingSignatures: async () => {} },
+    './referral': { calculateCommissions: async () => ({ commissions: [] }) },
+    './notifications': { createNotification: async () => {} },
+  });
+
+  const processed = await service.processDuePayoutSchedules();
+  assert.equal(processed.length, 1);
+  assert.equal(insertedXdrs[0], 'MOCK_AUTOMATED_SCHEDULED_XDR_sched-ok');
+  assert.equal(rolledBack, true);
+  assert.deepEqual(recordedError, ['db insert boom', 'sched-fail']);
+});
