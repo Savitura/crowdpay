@@ -1,10 +1,15 @@
 const router = require('express').Router();
+/**
+ * @openapi
+ * tags:
+ *   - name: Withdrawals
+ *     description: Withdrawal requests and audit timeline
+ */
 const db = require('../config/database');
 const logger = require('../config/logger');
 const { requireAuth } = require('../middleware/auth');
 const { idempotency } = require('../middleware/idempotency');
 const { createVelocityLimit } = require('../middleware/velocityLimit');
-const { sendAlert } = require('../services/alerting');
 const { withdrawalValidation, validateRequest } = require('../middleware/validation');
 const {
   buildWithdrawalTransaction,
@@ -16,7 +21,6 @@ const {
   getPlatformPublicKey,
   validateSubmittedWithdrawalXdr,
   validateWithdrawalForPlatformSigning,
-  WithdrawalValidationError,
 } = require('../services/stellarService');
 const { calculateCreatorShare } = require('../services/feeRegistry');
 const {
@@ -71,131 +75,97 @@ const asyncHandler = require('../utils/asyncHandler');
 const withTransaction = require('../utils/withTransaction');
 const { toStroops, fromStroops } = require('../utils/stroops');
 const { logAuditEvent } = require('../services/auditService');
+const createWithdrawalsService = require('../services/withdrawalsService');
 
-async function recordPayoutAudit(payload) {
-  try {
-    return await logAuditEvent(payload);
-  } catch (err) {
-    logger.error('Payout audit event failed', {
-      action: payload.action,
-      resource_id: payload.resourceId,
-      error: err.message,
-    });
-    return null;
-  }
-}
+const service = createWithdrawalsService({
+  db,
+  logger,
+  buildWithdrawalTransaction,
+  getAccountMultisigConfig,
+  signTransactionXdr,
+  signatureCountFromXdr,
+  submitSignedWithdrawal,
+  isXdrExpired,
+  getPlatformPublicKey,
+  validateSubmittedWithdrawalXdr,
+  validateWithdrawalForPlatformSigning,
+  calculateCreatorShare,
+  insertWithdrawalPendingSignatures,
+  finalizeWithdrawalSubmitted,
+  markWithdrawalFailed,
+  sendWithdrawalApprovedEmail,
+  sendWithdrawalRejectedEmail,
+  emitWebhookEventForUser,
+  WEBHOOK_EVENTS,
+  withDecryptedWalletSecret,
+  assertCustodialWithdrawalAllowed,
+  CustodialSigningLimitError,
+  createNotification,
+  notifyContributorFundRelease,
+  calculateCommissions,
+  settleCommissions,
+  parsePagination,
+  withTransaction,
+  toStroops,
+  fromStroops,
+  logAuditEvent,
+});
 
-const ALLOWED_CAMPAIGN_STATUS_FOR_REQUEST = ['active', 'funded'];
-
-// Rolling-window velocity guard for withdrawal attempts (#1126). Counts rows
-// the actor created in `withdrawal_requests`, so it survives restarts and is
-// shared across API instances.
 const withdrawalVelocityLimit = createVelocityLimit({
   kind: 'withdrawal',
   actorId: req => req.user?.userId,
   query: (text, params) => db.query(text, params),
 });
 
-function frontendBaseUrl() {
-  return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
-}
-
-function emitWithdrawalUpdated(creatorId, withdrawalRow) {
-  if (!creatorId) return;
-  emitWebhookEventForUser(creatorId, WEBHOOK_EVENTS.WITHDRAWAL_UPDATED, {
-    withdrawal: withdrawalRow,
-  }).catch(err => logger.error('Withdrawal updated webhook emit failed', { error: err.message }));
-}
-
-/** Fail closed when PLATFORM_APPROVER_USER_ID is unset. */
-function canPerformPlatformSignature(userId) {
-  if (!process.env.PLATFORM_APPROVER_USER_ID) return false;
-  return userId === process.env.PLATFORM_APPROVER_USER_ID;
-}
-
 async function requirePlatformApprover(req, res, next) {
-  if (!canPerformPlatformSignature(req.user.userId)) {
+  if (!service.canPerformPlatformSignature(req.user.userId)) {
     return res
       .status(403)
       .json({ error: 'Only the designated platform approver can perform this action' });
   }
-
   const { rows } = await db.query('SELECT role, is_admin FROM users WHERE id = $1', [
     req.user.userId,
   ]);
   if (!rows.length || (rows[0].role !== 'admin' && !rows[0].is_admin)) {
     return res.status(403).json({ error: 'Account no longer has platform authorization' });
   }
-
   next();
 }
 
+router.get('/capabilities', requireAuth, (req, res) => {
+  res.json({ can_approve_platform: service.canPerformPlatformSignature(req.user.userId) });
+});
 /**
  * @openapi
- * tags:
- *   - name: Withdrawals
- *     description: Withdrawal requests and audit timeline
+ * /api/withdrawals/request:
+ *   post:
+ *     tags: [Withdrawals]
+ *     summary: Create a pending withdrawal request
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [campaign_id, destination_key, amount]
+ *             properties:
+ *               campaign_id: { type: string }
+ *               destination_key: { type: string }
+ *               amount: { type: string }
+ *     responses:
+ *       201:
+ *         description: Created
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: Campaign not found
+ *       429:
+ *         description: Withdrawal velocity limit exceeded
  */
-
-function hasSigner(signers, publicKey) {
-  return signers.some(s => s.key === publicKey && s.weight >= 1);
-}
-
-async function logWithdrawalEvent(
-  client,
-  { withdrawalRequestId, actorUserId, action, note, metadata }
-) {
-  const runner = client || db;
-  await runner.query(
-    `INSERT INTO withdrawal_approval_events
-       (withdrawal_request_id, actor_user_id, action, note, metadata)
-     VALUES ($1, $2, $3, $4, $5::jsonb)`,
-    [
-      withdrawalRequestId,
-      actorUserId || null,
-      action,
-      note || null,
-      metadata ? JSON.stringify(metadata) : null,
-    ]
-  );
-}
-
-async function checkOwnerAccess(req, campaignId) {
-  if (req.user.role === 'admin' || req.user.is_admin) return true;
-
-  const { rows: campaignRows } = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [
-    campaignId,
-  ]);
-  if (campaignRows.length && campaignRows[0].creator_id === req.user.userId) {
-    return true;
-  }
-
-  const { rows: memberRows } = await db.query(
-    "SELECT role, accepted_at FROM campaign_members WHERE campaign_id = $1 AND user_id = $2 AND role = 'owner'",
-    [campaignId, req.user.userId]
-  );
-  if (memberRows.length && memberRows[0].accepted_at) {
-    return true;
-  }
-
-  return false;
-}
-
-async function assertWithdrawalAccess(req, campaignId) {
-  const { rows } = await db.query('SELECT creator_id FROM campaigns WHERE id = $1', [campaignId]);
-  if (!rows.length) return { error: 'Campaign not found', status: 404 };
-
-  const isOwner = await checkOwnerAccess(req, campaignId);
-  if (!isOwner) {
-    return { error: 'Not authorized to view or manage withdrawals for this campaign', status: 403 };
-  }
-  return { creatorId: rows[0].creator_id, isCreator: true, isAdmin: req.user.role === 'admin' };
-}
-
-router.get('/capabilities', requireAuth, (req, res) => {
-  res.json({ can_approve_platform: canPerformPlatformSignature(req.user.userId) });
-});
-
 router.post(
   '/request',
   requireAuth,
@@ -931,15 +901,14 @@ router.post(
   requireAuth,
   requirePlatformApprover,
   idempotency('wallet:withdrawal-submit'),
-  platformApproveHandler
+  asyncHandler(service.platformApproveHandler)
 );
-// Alias for docs + issue acceptance criteria
 router.post(
   '/:id/approve',
   requireAuth,
   requirePlatformApprover,
   idempotency('wallet:withdrawal-submit'),
-  platformApproveHandler
+  asyncHandler(service.platformApproveHandler)
 );
 
 router.post(
@@ -1191,7 +1160,7 @@ router.get(
     res.json({ data: rows, total, limit, offset });
   })
 );
-
+router.get('/campaign/:campaignId', requireAuth, asyncHandler(service.listCampaignWithdrawals));
 router.get(
   '/campaign/:campaignId/contributor-history',
   requireAuth,
@@ -1265,52 +1234,31 @@ router.get(
     res.json(row);
   })
 );
-
-const withdrawalAuditHandler = asyncHandler(async (req, res) => {
-  /**
-   * @openapi
-   * /api/withdrawals/{id}/audit:
-   *   get:
-   *     tags: [Withdrawals]
-   *     summary: Withdrawal audit timeline (alias of /events)
-   *     security:
-   *       - bearerAuth: []
-   *     parameters:
-   *       - in: path
-   *         name: id
-   *         required: true
-   *         schema: { type: string }
-   *     responses:
-   *       200:
-   *         description: OK
-   *       401:
-   *         description: Unauthorized
-   *       403:
-   *         description: Forbidden
-   *       404:
-   *         description: Not found
-   */
-  const { rows: wr } = await db.query(
-    `SELECT wr.campaign_id FROM withdrawal_requests wr WHERE wr.id = $1`,
-    [req.params.id]
-  );
-  if (!wr.length) return res.status(404).json({ error: 'Withdrawal request not found' });
-
-  const access = await assertWithdrawalAccess(req, wr[0].campaign_id);
-  if (access.error) return res.status(access.status).json({ error: access.error });
-
-  const { rows } = await db.query(
-    `SELECT e.id, e.withdrawal_request_id, e.actor_user_id, e.action, e.note, e.metadata, e.created_at
-     FROM withdrawal_approval_events e
-     WHERE e.withdrawal_request_id = $1
-     ORDER BY e.created_at ASC`,
-    [req.params.id]
-  );
-  res.json(rows);
-});
-
-router.get('/:id/events', requireAuth, withdrawalAuditHandler);
-// Alias for docs + issue acceptance criteria
-router.get('/:id/audit', requireAuth, withdrawalAuditHandler);
+router.get('/:id', requireAuth, asyncHandler(service.getWithdrawal));
+/**
+ * @openapi
+ * /api/withdrawals/{id}/audit:
+ *   get:
+ *     tags: [Withdrawals]
+ *     summary: Withdrawal audit timeline (alias of /events)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: OK
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: Not found
+ */
+router.get('/:id/events', requireAuth, asyncHandler(service.withdrawalAuditHandler));
+router.get('/:id/audit', requireAuth, asyncHandler(service.withdrawalAuditHandler));
 
 module.exports = router;

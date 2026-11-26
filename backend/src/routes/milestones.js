@@ -106,39 +106,50 @@ const autoRelease = require('../services/milestoneAutoRelease');
 const { logAuditEvent } = require('../services/auditService');
 const asyncHandler = require('../utils/asyncHandler');
 const { validateRenderUrl } = require('../utils/urlValidation');
-
-function frontendBaseUrl() {
-  return (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
-}
 const crypto = require('crypto');
+const createMilestonesService = require('../services/milestonesService');
 
-function canPerformPlatformSignature(userId) {
-  if (!process.env.PLATFORM_APPROVER_USER_ID) return false;
-  return userId === process.env.PLATFORM_APPROVER_USER_ID;
-}
-
-async function requirePlatformApproverAuth(userId) {
-  if (!canPerformPlatformSignature(userId)) {
-    const err = new Error('Only the designated platform approver can perform this action');
-    err.status = 403;
-    throw err;
-  }
-  const { rows } = await db.query('SELECT role, is_admin FROM users WHERE id = $1', [userId]);
-  if (!rows.length || (rows[0].role !== 'admin' && !rows[0].is_admin)) {
-    const err = new Error('Account no longer has platform authorization');
-    err.status = 403;
-    throw err;
-  }
-}
-
-function validatePublicKey(publicKey) {
-  try {
-    Keypair.fromPublicKey(publicKey);
-    return true;
-  } catch (_err) {
-    return false;
-  }
-}
+const service = createMilestonesService({
+  Keypair,
+  db,
+  logger,
+  MILESTONE_LIMIT,
+  sendAlert,
+  buildWithdrawalTransaction,
+  signTransactionXdr,
+  signatureCountFromXdr,
+  submitSignedWithdrawal,
+  insertWithdrawalPendingSignatures,
+  finalizeWithdrawalSubmitted,
+  withDecryptedWalletSecret,
+  assertCustodialWithdrawalAllowed,
+  CustodialSigningLimitError,
+  resolveUserCampaignRole,
+  canSubmitMilestones,
+  emitWebhookEventForUser,
+  WEBHOOK_EVENTS,
+  invokeContract,
+  nativeToScVal,
+  releaseMilestone,
+  uploadMilestoneEvidence,
+  parseMilestoneEvidenceUrl,
+  milestoneEvidenceExists,
+  createNotification,
+  notifyFollowers,
+  notifyContributorFundRelease,
+  evaluateCampaign,
+  sendMilestoneReleasedCreatorEmail,
+  sendMilestoneEvidenceSubmittedAdminEmail,
+  ledger,
+  toReleaseAmount,
+  logWithdrawalEvent,
+  votesBlockRelease,
+  setCampaignStatusFromMilestoneProgress,
+  autoRelease,
+  logAuditEvent,
+  validateRenderUrl,
+  crypto,
+});
 
 const evidenceUpload = multer({
   storage: multer.memoryStorage(),
