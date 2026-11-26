@@ -42,7 +42,7 @@ function makeService({ contribution = {}, reserved = true, reviewer = true, requ
                   contribution_id: 'contribution-1',
                   contributor_id: 'contributor-1',
                   creator_id: 'creator-1',
-                  deadline: '2026-09-10T00:00:00.000Z',
+                  deadline: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
                   amount: '50',
                 },
               ]

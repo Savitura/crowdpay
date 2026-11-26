@@ -114,6 +114,46 @@ module.exports = {
   MILESTONE_AUTO_RELEASE_TX_TIMEOUT_S: 15 * 60,
 
   // --------------------------------------------------------------------------------------
+  // Campaign Data Room limits & settings
+  // --------------------------------------------------------------------------------------
+
+  /** Maximum file size (in bytes) for data room attachments (25 MB). */
+  DATA_ROOM_MAX_FILE_SIZE: 25 * 1024 * 1024,
+
+  /** Allowed MIME types for campaign data room attachments. */
+  DATA_ROOM_ALLOWED_MIME_TYPES: [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/plain',
+    'text/csv',
+    'text/markdown',
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'application/zip',
+    'application/x-zip-compressed',
+  ],
+
+  /** Valid categories for data room attachments. */
+  DATA_ROOM_CATEGORIES: [
+    'pitch_deck',
+    'financials',
+    'legal',
+    'technical',
+    'diligence',
+    'governance',
+    'other',
+  ],
+
+  /** Role-based access levels for data room attachments (ordered lowest to highest). */
+  DATA_ROOM_ACCESS_LEVELS: ['public', 'backer', 'viewer', 'editor', 'manager', 'owner'],
+
+  // --------------------------------------------------------------------------------------
   // Upload limits
   // --------------------------------------------------------------------------------------
 

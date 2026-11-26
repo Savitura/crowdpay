@@ -2,7 +2,12 @@ const path = require('path');
 const crypto = require('crypto');
 const fileType = require('file-type');
 const { S3Client, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
-const { MAX_UPLOAD_SIZE, ALLOWED_UPLOAD_MIME_TYPES } = require('../config/constants');
+const {
+  MAX_UPLOAD_SIZE,
+  ALLOWED_UPLOAD_MIME_TYPES,
+  DATA_ROOM_MAX_FILE_SIZE,
+  DATA_ROOM_ALLOWED_MIME_TYPES,
+} = require('../config/constants');
 
 function createStorageClient() {
   const endpoint = process.env.STORAGE_ENDPOINT;
@@ -49,7 +54,15 @@ async function validateAndProcessFile(file) {
     throw error;
   }
 
-  const type = await fileType.fromBuffer(file.buffer);
+  const detectFileType = fileType.fileTypeFromBuffer || fileType.fromBuffer;
+  let type = detectFileType ? await detectFileType(file.buffer) : null;
+  if (
+    !type &&
+    file.buffer.length >= 8 &&
+    file.buffer.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  ) {
+    type = { mime: 'image/png', ext: 'png' };
+  }
   if (!type || !ALLOWED_UPLOAD_MIME_TYPES.includes(type.mime)) {
     const error = new Error('Unsupported Media Type');
     error.status = 415;
@@ -147,10 +160,79 @@ async function milestoneEvidenceExists(key) {
   }
 }
 
+/**
+ * Validate and process an uploaded data room attachment.
+ */
+async function validateAndProcessDataRoomFile(file) {
+  if (!file || !file.buffer) {
+    throw new Error('Missing file buffer for upload');
+  }
+
+  if (file.buffer.length > DATA_ROOM_MAX_FILE_SIZE) {
+    const error = new Error('File exceeds maximum allowed size for data room attachments (25MB)');
+    error.status = 413;
+    throw error;
+  }
+
+  let mime = file.mimetype || 'application/octet-stream';
+  let ext = path.extname(file.originalname || '').toLowerCase();
+
+  try {
+    const detectFileType = fileType.fileTypeFromBuffer || fileType.fromBuffer;
+    const detected = detectFileType ? await detectFileType(file.buffer) : null;
+    if (detected) {
+      mime = detected.mime;
+      ext = `.${detected.ext}`;
+    }
+  } catch {
+    // Keep fallback
+  }
+
+  if (!DATA_ROOM_ALLOWED_MIME_TYPES.includes(mime)) {
+    const error = new Error(`Unsupported Media Type: ${mime}`);
+    error.status = 415;
+    throw error;
+  }
+
+  const hash = crypto.createHash('sha256').update(file.buffer).digest('hex');
+
+  return {
+    mime,
+    hash,
+    extension: ext,
+    size: file.buffer.length,
+  };
+}
+
+/**
+ * Upload a data room attachment for a campaign.
+ */
+async function uploadDataRoomAttachment(campaignId, file) {
+  const { mime, hash, extension } = await validateAndProcessDataRoomFile(file);
+  const key = `campaigns/${campaignId}/data-room/${hash}${extension}`;
+
+  if (process.env.STORAGE_ENDPOINT && process.env.STORAGE_BUCKET) {
+    const client = createStorageClient();
+    await client.send(
+      new PutObjectCommand({
+        Bucket: process.env.STORAGE_BUCKET,
+        Key: key,
+        Body: file.buffer,
+        ContentType: mime,
+      })
+    );
+    return buildPublicUrl(key);
+  }
+
+  return `/uploads/campaigns/${campaignId}/data-room/${hash}${extension}`;
+}
+
 module.exports = {
   uploadCampaignCoverImage,
   uploadMilestoneEvidence,
+  uploadDataRoomAttachment,
   validateAndProcessFile,
+  validateAndProcessDataRoomFile,
   parseMilestoneEvidenceUrl,
   milestoneEvidenceExists,
 };

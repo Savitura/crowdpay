@@ -30,6 +30,7 @@ import CampaignAboutTab from '../components/campaign/tabs/CampaignAboutTab';
 import CampaignRewardsTab from '../components/campaign/tabs/CampaignRewardsTab';
 import CampaignUpdatesTab from '../components/campaign/tabs/CampaignUpdatesTab';
 import CampaignCommentsTab from '../components/campaign/tabs/CampaignCommentsTab';
+import CampaignDataRoom from '../components/CampaignDataRoom';
 import CampaignTeamTab from '../components/campaign/tabs/CampaignTeamTab';
 import CampaignAnalyticsTab from '../components/campaign/tabs/CampaignAnalyticsTab';
 import CampaignContributionsTab from '../components/campaign/tabs/CampaignContributionsTab';
@@ -1189,6 +1190,11 @@ export default function Campaign() {
         maxBodyLength={UPDATE_BODY_MAX}
         warnThreshold={UPDATE_BODY_WARN_THRESHOLD}
       />
+
+      {/* Campaign Data Room */}
+      <div style={{ marginTop: '2rem', marginBottom: '2rem' }} data-no-print>
+        <CampaignDataRoom campaignId={campaign.id} user={user} />
+      </div>
 
       {/* Comments Tab */}
       <CampaignCommentsTab campaignId={campaign.id} campaign={campaign} />

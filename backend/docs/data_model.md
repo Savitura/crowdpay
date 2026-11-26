@@ -124,6 +124,40 @@ Join table mapping a contribution to the reward tier it qualified for.
 ### campaign_members
 Team/collaborator access to a campaign (owner / manager / editor / viewer), with email-based invites.
 
+### campaign_data_room_files
+Confidential and due diligence attachments associated with a campaign with role-based access control (`public`, `backer`, `viewer`, `editor`, `manager`, `owner`).
+
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID PK | `gen_random_uuid()` |
+| campaign_id | UUID FK → campaigns | `ON DELETE CASCADE` |
+| uploaded_by | UUID FK → users | `ON DELETE SET NULL` |
+| name | TEXT | Document display title |
+| original_filename | TEXT | Original filename |
+| file_url | TEXT | Object storage URL or link |
+| file_size | BIGINT | Size in bytes |
+| mime_type | TEXT | Validated MIME type |
+| file_hash | TEXT | SHA-256 checksum |
+| category | TEXT | `pitch_deck`, `financials`, `legal`, `technical`, `diligence`, `governance`, `other` |
+| access_level | TEXT | Minimum role required to view/download |
+| description | TEXT | Optional document notes |
+| status | TEXT | `active`, `archived`, `deleted` |
+| created_at, updated_at | TIMESTAMPTZ | Creation and update timestamps |
+
+### campaign_data_room_access_logs
+Chronological audit access logs tracking view, download, upload, update, and delete actions on data room documents.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID PK | `gen_random_uuid()` |
+| file_id | UUID FK → campaign_data_room_files | `ON DELETE CASCADE` |
+| campaign_id | UUID FK → campaigns | `ON DELETE CASCADE` |
+| user_id | UUID FK → users | `ON DELETE SET NULL` |
+| action | TEXT | `view`, `download`, `upload`, `update`, `delete` |
+| ip_address | TEXT | Client IP address |
+| user_agent | TEXT | Client user agent |
+| created_at | TIMESTAMPTZ | Event timestamp |
+
 ### anchor_deposits
 Fiat on/off-ramp deposit sessions via Stellar SEP-24 anchors (MoneyGram or custom). `deposit_type` distinguishes wallet-level vs campaign-level deposits.
 

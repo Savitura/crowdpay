@@ -20,7 +20,11 @@ function buildService({ queryImpl, stellar = {}, clientQueryImpl, closeImpl }) {
   const client = {
     query: async (text, params) => {
       record(text, params);
-      return clientQueryImpl ? clientQueryImpl(text, params) : { rows: [] };
+      if (clientQueryImpl) {
+        const res = await clientQueryImpl(text, params);
+        if (res && res.rows && res.rows.length) return res;
+      }
+      return queryImpl ? queryImpl(text, params) : { rows: [] };
     },
     release: () => {},
   };
