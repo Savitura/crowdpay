@@ -1,6 +1,20 @@
 const fs = require('fs');
 const path = require('path');
 
+const USAGE = `\
+Usage: node check_index.js [--help]
+
+Verifies that every router file under backend/src/routes/ is mounted in
+either backend/src/index.js or backend/src/routes/v1.js.
+
+Exits 0 when all routers are mounted, 1 otherwise.
+`;
+
+function parseArgs() {
+  const args = process.argv.slice(2);
+  return { help: args.includes('--help') || args.includes('-h') };
+}
+
 function verifyRouterMounts() {
   const routesDir = path.join(__dirname, '../routes');
   const indexPath = path.join(__dirname, '../index.js');
@@ -28,13 +42,20 @@ function verifyRouterMounts() {
   }
 
   if (unmounted.length > 0) {
-    console.error(
-      `[check_index] Error: The following router files are not mounted in index.js or v1.js:\n${unmounted.map(f => `  - backend/src/routes/${f}`).join('\n')}`
+    const list = unmounted.map(f => `  - backend/src/routes/${f}`).join('\n');
+    process.stderr.write(
+      `[check_index] Error: the following router files are not mounted in index.js or v1.js:\n${list}\n`
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
-  console.log('[check_index] All router files are properly mounted.');
+  process.stdout.write('[check_index] All router files are properly mounted.\n');
 }
 
-verifyRouterMounts();
+const { help } = parseArgs();
+if (help) {
+  process.stdout.write(USAGE);
+} else {
+  verifyRouterMounts();
+}
