@@ -7,7 +7,7 @@
 
 const db = require('../src/config/database');
 
-async function validateMilestonePercentages() {
+async function validateMilestonePercentages(client = db) {
   console.log('Validating milestone percentage totals...\n');
 
   try {
@@ -39,7 +39,7 @@ async function validateMilestonePercentages() {
       ORDER BY exceeds_100_percent DESC, total_percentage DESC
     `;
 
-    const { rows } = await db.query(query);
+    const { rows } = await client.query(query);
 
     const invalidCampaigns = rows.filter(row => row.exceeds_100_percent);
     const validCampaigns = rows.filter(row => !row.exceeds_100_percent);
@@ -87,13 +87,26 @@ async function validateMilestonePercentages() {
 // Run if called directly
 if (require.main === module) {
   validateMilestonePercentages()
-    .then(() => {
-      console.log('\n✅ Validation complete');
-      process.exit(0);
+    .then(result => {
+      if (result && result.invalidCampaigns && result.invalidCampaigns.length > 0) {
+        console.error(
+          `\n❌ Milestone validation failed: ${result.invalidCampaigns.length} campaign(s) exceed 100% milestone percentage total`
+        );
+        process.exitCode = 1;
+        return;
+      }
+      console.log('\n✅ Validation complete: all milestone percentages are valid');
     })
     .catch(error => {
       console.error('\n❌ Validation failed:', error.message);
-      process.exit(1);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      try {
+        await db.end();
+      } catch {
+        // Ignore pool close errors on exit
+      }
     });
 }
 
