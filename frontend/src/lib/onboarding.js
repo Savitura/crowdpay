@@ -1,55 +1,45 @@
+import { safeLocalStorage, safeSessionStorage } from './safeStorage';
+
 const CREATOR_KEY = 'cp_onboarding_creator_dismissed';
 const CONTRIBUTOR_KEY = 'cp_onboarding_contributor_dismissed';
 const CHECKLIST_DISMISSED_KEY = 'cp_creator_checklist_dismissed';
 
 export function isCreatorOnboardingVisible() {
-  return localStorage.getItem(CREATOR_KEY) !== '1';
+  return safeLocalStorage.getItem(CREATOR_KEY) !== '1';
 }
 
 export function dismissCreatorOnboarding() {
-  localStorage.setItem(CREATOR_KEY, '1');
+  safeLocalStorage.setItem(CREATOR_KEY, '1');
 }
 
 export function isContributorOnboardingVisible() {
-  return localStorage.getItem(CONTRIBUTOR_KEY) !== '1';
+  return safeLocalStorage.getItem(CONTRIBUTOR_KEY) !== '1';
 }
 
 export function dismissContributorOnboarding() {
-  localStorage.setItem(CONTRIBUTOR_KEY, '1');
+  safeLocalStorage.setItem(CONTRIBUTOR_KEY, '1');
 }
 
 export function markJustRegistered() {
-  sessionStorage.setItem('cp_just_registered', '1');
+  safeSessionStorage.setItem('cp_just_registered', '1');
 }
 
 export function consumeJustRegistered() {
-  if (sessionStorage.getItem('cp_just_registered') !== '1') return false;
-  sessionStorage.removeItem('cp_just_registered');
+  if (safeSessionStorage.getItem('cp_just_registered') !== '1') return false;
+  safeSessionStorage.removeItem('cp_just_registered');
   return true;
 }
 
 export function isCreatorChecklistDismissed() {
-  try {
-    return localStorage.getItem(CHECKLIST_DISMISSED_KEY) === '1';
-  } catch {
-    return false;
-  }
+  return safeLocalStorage.getItem(CHECKLIST_DISMISSED_KEY) === '1';
 }
 
 export function dismissCreatorChecklist() {
-  try {
-    localStorage.setItem(CHECKLIST_DISMISSED_KEY, '1');
-  } catch {
-    /* ignore */
-  }
+  safeLocalStorage.setItem(CHECKLIST_DISMISSED_KEY, '1');
 }
 
 export function restoreCreatorChecklist() {
-  try {
-    localStorage.removeItem(CHECKLIST_DISMISSED_KEY);
-  } catch {
-    /* ignore */
-  }
+  safeLocalStorage.removeItem(CHECKLIST_DISMISSED_KEY);
 }
 
 /** Checklist steps for new campaign creators. */

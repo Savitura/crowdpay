@@ -102,6 +102,7 @@ export default function BudgetBreakdown({ campaignId, targetAmount, disabled }) 
               style={{ width: '120px' }}
             />
             <button
+              type="button"
               className="btn-secondary"
               onClick={() => handleRemove(idx)}
               disabled={disabled}
@@ -114,7 +115,7 @@ export default function BudgetBreakdown({ campaignId, targetAmount, disabled }) 
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <button className="btn-secondary" onClick={handleAdd} disabled={disabled}>
+        <button type="button" className="btn-secondary" onClick={handleAdd} disabled={disabled}>
           + Add Item
         </button>
         <div
@@ -129,6 +130,7 @@ export default function BudgetBreakdown({ campaignId, targetAmount, disabled }) 
 
       <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end' }}>
         <button
+          type="button"
           className="btn-primary"
           onClick={handleSave}
           disabled={disabled || saving || !isMatch}

@@ -1,10 +1,12 @@
 const db = require('../config/database');
 const logger = require('../config/logger');
+const { toStroops, fromStroops, STROOPS_PER_UNIT } = require('../utils/stroops');
 
 const AMOUNT_PRECISION = 7;
 
 function roundAmount(value) {
-  return parseFloat(Number(value).toFixed(AMOUNT_PRECISION));
+  const stroops = toStroops(value, { allowZero: true });
+  return Number(fromStroops(stroops));
 }
 
 function roundPercent(value) {
@@ -115,6 +117,9 @@ async function createMatchingPledge({
  * contribution is claimed exactly once (guarded by `match_amount = 0`) so a
  * replayed/duplicated indexing pass cannot double-match or double-credit it.
  *
+ * All monetary calculations use exact 64-bit integer stroop arithmetic (#1195)
+ * to avoid binary floating-point rounding drift.
+ *
  * @param {Object} params - Parameters
  * @param {string} params.campaignId - Campaign UUID
  * @param {string} params.contributionId - Contribution UUID
@@ -134,8 +139,15 @@ async function processContributionMatch({
     throw new Error('campaignId, contributionId, and contributionAmount are required');
   }
 
-  const amount = parseFloat(contributionAmount);
-  if (isNaN(amount) || amount <= 0) {
+  const rawNum = Number(contributionAmount);
+  if (isNaN(rawNum) || rawNum <= 0) {
+    throw new Error('contributionAmount must be a positive number');
+  }
+
+  // Normalize amount to supported 7 decimal places for stroop conversion
+  const normalizedContrib = rawNum.toFixed(AMOUNT_PRECISION);
+  const contribStroops = toStroops(normalizedContrib);
+  if (contribStroops <= 0n) {
     throw new Error('contributionAmount must be a positive number');
   }
 
@@ -161,16 +173,21 @@ async function processContributionMatch({
 
   const match = matches[0];
 
-  // Calculate matched amount based on ratio, capped at the remaining pool.
-  const calculatedMatch = roundAmount(amount * parseFloat(match.match_ratio));
-  const remainingPool = roundAmount(
-    parseFloat(match.pledge_amount) - parseFloat(match.matched_amount)
-  );
-  const actualMatch = roundAmount(Math.min(calculatedMatch, remainingPool));
+  // Calculate matched amount using integer stroop arithmetic
+  const pledgeStroops = toStroops(match.pledge_amount, { allowZero: true });
+  const matchedStroops = toStroops(match.matched_amount, { allowZero: true });
+  const remainingStroops = pledgeStroops > matchedStroops ? pledgeStroops - matchedStroops : 0n;
 
-  if (actualMatch <= 0) {
+  const ratioStroops = toStroops(match.match_ratio);
+  const calculatedMatchStroops = (contribStroops * ratioStroops) / STROOPS_PER_UNIT;
+  const actualMatchStroops =
+    calculatedMatchStroops < remainingStroops ? calculatedMatchStroops : remainingStroops;
+
+  if (actualMatchStroops <= 0n) {
     return 0;
   }
+
+  const actualMatch = Number(fromStroops(actualMatchStroops));
 
   // Claim this contribution for matching exactly once. A second call for the
   // same contribution (retry, replayed transaction, concurrent indexer) is a
@@ -192,9 +209,10 @@ async function processContributionMatch({
     return 0;
   }
 
-  // Determine if pool becomes exhausted
-  const newMatchedAmount = roundAmount(parseFloat(match.matched_amount) + actualMatch);
-  const isExhausted = newMatchedAmount >= parseFloat(match.pledge_amount);
+  // Determine if pool becomes exhausted using integer stroop comparison
+  const newMatchedStroops = matchedStroops + actualMatchStroops;
+  const isExhausted = newMatchedStroops >= pledgeStroops;
+  const newMatchedAmount = Number(fromStroops(newMatchedStroops));
 
   // Update matching pool
   await runner.query(
@@ -224,7 +242,7 @@ async function processContributionMatch({
     campaignId,
     contributionId,
     matchId: match.id,
-    contributionAmount: amount,
+    contributionAmount: Number(fromStroops(contribStroops)),
     matchRatio: match.match_ratio,
     matchedAmount: actualMatch,
     poolExhausted: isExhausted,
@@ -238,6 +256,8 @@ async function processContributionMatch({
  *
  * The response is served by a public endpoint, so it deliberately omits sponsor
  * user IDs and any other internal identifiers.
+ *
+ * All monetary aggregations are calculated using integer stroops (#1195).
  *
  * @param {string} campaignId - Campaign UUID
  * @param {Object} [params] - Options
@@ -268,32 +288,55 @@ async function getCampaignMatchProgress(campaignId, { client } = {}) {
     [campaignId]
   );
 
-  // Calculate aggregates
-  const totalPledged = rows.reduce((sum, row) => sum + parseFloat(row.pledge_amount), 0);
-  const totalMatched = rows.reduce((sum, row) => sum + parseFloat(row.matched_amount), 0);
+  // Calculate aggregates using exact integer stroop arithmetic
+  const totalPledgedStroops = rows.reduce(
+    (sum, row) => sum + toStroops(row.pledge_amount, { allowZero: true }),
+    0n
+  );
+  const totalMatchedStroops = rows.reduce(
+    (sum, row) => sum + toStroops(row.matched_amount, { allowZero: true }),
+    0n
+  );
+  const remainingPoolStroops =
+    totalPledgedStroops > totalMatchedStroops ? totalPledgedStroops - totalMatchedStroops : 0n;
+
   const activeMatches = rows.filter(r => r.status === 'active');
   const exhaustedMatches = rows.filter(r => r.status === 'exhausted');
 
   return {
     campaignId,
-    matches: rows.map(r => ({
-      id: r.id,
-      sponsorName: r.sponsor_name,
-      matchRatio: parseFloat(r.match_ratio),
-      pledgeAmount: parseFloat(r.pledge_amount),
-      matchedAmount: parseFloat(r.matched_amount),
-      remainingAmount: Math.max(0, parseFloat(r.pledge_amount) - parseFloat(r.matched_amount)),
-      status: r.status,
-      contributionCount: parseInt(r.contribution_count, 10),
-      totalContributed: parseFloat(r.total_contributed),
-      createdAt: r.created_at,
-    })),
-    totalPledged: roundAmount(totalPledged),
-    totalMatched: roundAmount(totalMatched),
-    remainingPoolAmount: Math.max(0, roundAmount(totalPledged - totalMatched)),
+    matches: rows.map(r => {
+      const pStroops = toStroops(r.pledge_amount, { allowZero: true });
+      const mStroops = toStroops(r.matched_amount, { allowZero: true });
+      const rStroops = pStroops > mStroops ? pStroops - mStroops : 0n;
+      const cStroops = toStroops(r.total_contributed || 0, { allowZero: true });
+      return {
+        id: r.id,
+        sponsorName: r.sponsor_name,
+        matchRatio: Number(fromStroops(toStroops(r.match_ratio))),
+        pledgeAmount: Number(fromStroops(pStroops)),
+        matchedAmount: Number(fromStroops(mStroops)),
+        remainingAmount: Number(fromStroops(rStroops)),
+        status: r.status,
+        contributionCount: parseInt(r.contribution_count, 10),
+        totalContributed: Number(fromStroops(cStroops)),
+        createdAt: r.created_at,
+      };
+    }),
+    totalPledged: Number(fromStroops(totalPledgedStroops)),
+    totalMatched: Number(fromStroops(totalMatchedStroops)),
+    remainingPoolAmount: Number(fromStroops(remainingPoolStroops)),
     activePoolCount: activeMatches.length,
     exhaustedPoolCount: exhaustedMatches.length,
-    percentageUsed: totalPledged > 0 ? roundPercent((totalMatched / totalPledged) * 100) : 0,
+    percentageUsed:
+      totalPledgedStroops > 0n
+        ? Number(
+            (
+              (totalMatchedStroops * 10000n + totalPledgedStroops / 2n) /
+              totalPledgedStroops
+            ).toString()
+          ) / 100
+        : 0,
   };
 }
 
@@ -322,7 +365,10 @@ async function completeMatchingPledge(matchId, { client } = {}) {
   }
 
   const match = rows[0];
-  const unclaimedAmount = parseFloat(match.pledge_amount) - parseFloat(match.matched_amount);
+  const pStroops = toStroops(match.pledge_amount, { allowZero: true });
+  const mStroops = toStroops(match.matched_amount, { allowZero: true });
+  const unclaimedStroops = pStroops > mStroops ? pStroops - mStroops : 0n;
+  const unclaimedAmount = Number(fromStroops(unclaimedStroops));
 
   logger.info('Completed matching pledge', {
     matchId,
@@ -359,21 +405,26 @@ async function getSponsorMatchingPledges(sponsorUserId, { client } = {}) {
     [sponsorUserId]
   );
 
-  return rows.map(r => ({
-    id: r.id,
-    campaignId: r.campaign_id,
-    campaignTitle: r.campaign_title,
-    campaignStatus: r.campaign_status,
-    sponsorUserId: r.sponsor_user_id,
-    sponsorName: r.sponsor_name,
-    matchRatio: parseFloat(r.match_ratio),
-    pledgeAmount: parseFloat(r.pledge_amount),
-    matchedAmount: parseFloat(r.matched_amount),
-    remainingAmount: Math.max(0, parseFloat(r.pledge_amount) - parseFloat(r.matched_amount)),
-    status: r.status,
-    contractId: r.contract_id,
-    createdAt: r.created_at,
-  }));
+  return rows.map(r => {
+    const pStroops = toStroops(r.pledge_amount, { allowZero: true });
+    const mStroops = toStroops(r.matched_amount, { allowZero: true });
+    const rStroops = pStroops > mStroops ? pStroops - mStroops : 0n;
+    return {
+      id: r.id,
+      campaignId: r.campaign_id,
+      campaignTitle: r.campaign_title,
+      campaignStatus: r.campaign_status,
+      sponsorUserId: r.sponsor_user_id,
+      sponsorName: r.sponsor_name,
+      matchRatio: Number(fromStroops(toStroops(r.match_ratio))),
+      pledgeAmount: Number(fromStroops(pStroops)),
+      matchedAmount: Number(fromStroops(mStroops)),
+      remainingAmount: Number(fromStroops(rStroops)),
+      status: r.status,
+      contractId: r.contract_id,
+      createdAt: r.created_at,
+    };
+  });
 }
 
 module.exports = {

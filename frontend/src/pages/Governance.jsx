@@ -326,6 +326,7 @@ export default function Governance() {
               {user && activeProposal.status === 'active' && (
                 <div className="flex space-x-4 pt-4 border-t">
                   <button
+                    type="button"
                     onClick={() => handleVote(true)}
                     disabled={voting}
                     className="flex-1 bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -333,6 +334,7 @@ export default function Governance() {
                     {voting ? 'Voting...' : 'Vote For'}
                   </button>
                   <button
+                    type="button"
                     onClick={() => handleVote(false)}
                     disabled={voting}
                     className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -345,6 +347,7 @@ export default function Governance() {
               {activeProposal.status === 'active' &&
                 getTimeRemaining(activeProposal.deadline) === 'Voting ended' && (
                   <button
+                    type="button"
                     onClick={handleExecuteProposal}
                     className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700"
                   >
@@ -360,6 +363,7 @@ export default function Governance() {
           <div className="mb-6">
             {!showCreateForm ? (
               <button
+                type="button"
                 onClick={() => setShowCreateForm(true)}
                 className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 font-semibold"
               >

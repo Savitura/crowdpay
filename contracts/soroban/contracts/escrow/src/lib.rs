@@ -1,5 +1,28 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol,
+};
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum EscrowError {
+    AlreadyInitialized = 1,
+    NotInitialized = 2,
+    InvalidAmount = 3,
+    CampaignClosed = 4,
+    DeadlinePassed = 5,
+    WithdrawalBlocked = 6,
+    TargetNotMet = 7,
+    FeeAboveCap = 8,
+    NoPendingFeeChange = 9,
+    InsufficientApproval = 10,
+    InsufficientBalance = 11,
+    InvalidSigner = 12,
+    RefundsUnavailable = 13,
+    NoContribution = 14,
+    Unauthorized = 15,
+}
 
 /// Maximum platform fee the contract will ever accept, in basis points (10% = 1000 BPS).
 ///
@@ -47,6 +70,7 @@ pub struct EscrowContract;
 
 #[contractimpl]
 impl EscrowContract {
+    #[allow(clippy::too_many_arguments)]
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -69,64 +93,110 @@ impl EscrowContract {
             panic!("Platform fee BPS must not exceed MAX_FEE_BPS");
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::CampaignId, &campaign_id);
+        env.storage()
+            .instance()
+            .set(&DataKey::CampaignId, &campaign_id);
         env.storage().instance().set(&DataKey::Target, &target);
         env.storage().instance().set(&DataKey::Deadline, &deadline);
         env.storage().instance().set(&DataKey::Asset, &asset);
         env.storage().instance().set(&DataKey::TotalRaised, &0i128);
-        env.storage().instance().set(&DataKey::ApprovedWithdrawal, &0i128);
+        env.storage()
+            .instance()
+            .set(&DataKey::ApprovedWithdrawal, &0i128);
         env.storage().instance().set(&DataKey::IsInitialized, &true);
-        env.storage().instance().set(&DataKey::PlatformFeeBps, &platform_fee_bps);
-        env.storage().instance().set(&DataKey::PlatformFeeRecipient, &platform_fee_recipient);
+        env.storage()
+            .instance()
+            .set(&DataKey::PlatformFeeBps, &platform_fee_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::PlatformFeeRecipient, &platform_fee_recipient);
         Self::bump_instance(&env);
     }
 
-    pub fn set_milestones_contract(env: Env, milestones: Address) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    pub fn set_milestones_contract(env: Env, milestones: Address) -> Result<(), EscrowError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)?;
         admin.require_auth();
-        env.storage().instance().set(&DataKey::MilestonesContract, &milestones);
+        env.storage()
+            .instance()
+            .set(&DataKey::MilestonesContract, &milestones);
+        Ok(())
     }
 
     pub fn get_milestones_contract(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::MilestonesContract)
     }
 
-    pub fn set_second_signer(env: Env, second_signer: Address) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    pub fn set_second_signer(env: Env, second_signer: Address) -> Result<(), EscrowError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)?;
         admin.require_auth();
         if second_signer == admin {
             panic!("Second signer must be distinct from admin");
         }
-        env.storage().instance().set(&DataKey::SecondSigner, &second_signer);
+        env.storage()
+            .instance()
+            .set(&DataKey::SecondSigner, &second_signer);
+        Ok(())
     }
 
     pub fn get_second_signer(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::SecondSigner)
     }
 
-    pub fn mark_campaign_failed(env: Env) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    pub fn mark_campaign_failed(env: Env) -> Result<(), EscrowError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)?;
         admin.require_auth();
-        env.storage().instance().set(&DataKey::CampaignFailed, &true);
+        env.storage()
+            .instance()
+            .set(&DataKey::CampaignFailed, &true);
         Self::bump_instance(&env);
-        env.events().publish((Symbol::new(&env, "campaign_failed"), admin), ());
+        env.events()
+            .publish((Symbol::new(&env, "campaign_failed"), admin), ());
+        Ok(())
     }
 
     pub fn is_campaign_failed(env: Env) -> bool {
-        if env.storage().instance().get(&DataKey::CampaignFailed).unwrap_or(false) {
+        if env
+            .storage()
+            .instance()
+            .get(&DataKey::CampaignFailed)
+            .unwrap_or(false)
+        {
             return true;
         }
-        let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();
-        let total_raised: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0);
-        let target: i128 = env.storage().instance().get(&DataKey::Target).unwrap();
+        let deadline: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Deadline)
+            .unwrap_or(0);
+        let total_raised: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalRaised)
+            .unwrap_or(0);
+        let target: i128 = env.storage().instance().get(&DataKey::Target).unwrap_or(0);
         env.ledger().timestamp() > deadline && total_raised < target
     }
 
     pub fn is_refunding(env: Env) -> bool {
-        env.storage().instance().get(&DataKey::IsRefunding).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::IsRefunding)
+            .unwrap_or(false)
     }
 
-    pub fn deposit(env: Env, from: Address, amount: i128) {
+    pub fn deposit(env: Env, from: Address, amount: i128) -> Result<(), EscrowError> {
         if amount <= 0 {
             panic!("Deposit amount must be positive");
         }
@@ -137,42 +207,74 @@ impl EscrowContract {
             panic!("Campaign is closed for contributions");
         }
 
-        let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();
+        let deadline: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Deadline)
+            .ok_or(EscrowError::NotInitialized)?;
         let current_time = env.ledger().timestamp();
         if current_time > deadline {
             panic!("Campaign deadline has passed");
         }
 
-        let asset: Address = env.storage().instance().get(&DataKey::Asset).unwrap();
+        let asset: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Asset)
+            .ok_or(EscrowError::NotInitialized)?;
         let client = token::Client::new(&env, &asset);
         client.transfer(&from, &env.current_contract_address(), &amount);
 
         let balance_key = DataKey::Balances(from.clone());
         let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
-        env.storage().persistent().set(&balance_key, &(current_balance + amount));
+        env.storage()
+            .persistent()
+            .set(&balance_key, &(current_balance + amount));
         Self::bump_persistent(&env, &balance_key);
 
-        let total_raised: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0);
-        env.storage().instance().set(&DataKey::TotalRaised, &(total_raised + amount));
+        let total_raised: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalRaised)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalRaised, &(total_raised + amount));
         Self::bump_instance(&env);
 
-        env.events().publish(
-            (Symbol::new(&env, "deposit"), from),
-            amount,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "deposit"), from), amount);
+        Ok(())
     }
 
-    pub fn approve_withdrawal(env: Env, to: Address, release_amount: i128) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    pub fn approve_withdrawal(
+        env: Env,
+        to: Address,
+        release_amount: i128,
+    ) -> Result<(), EscrowError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)?;
         admin.require_auth();
 
         if Self::is_campaign_failed(env.clone()) || Self::is_refunding(env.clone()) {
             panic!("Campaign has failed or is refunding; withdrawals blocked");
         }
 
-        let total_raised: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0);
-        let target: i128 = env.storage().instance().get(&DataKey::Target).unwrap();
-        let milestones_opt: Option<Address> = env.storage().instance().get(&DataKey::MilestonesContract);
+        let total_raised: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalRaised)
+            .unwrap_or(0);
+        let target: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Target)
+            .ok_or(EscrowError::NotInitialized)?;
+        let milestones_opt: Option<Address> =
+            env.storage().instance().get(&DataKey::MilestonesContract);
         let is_from_milestones = match milestones_opt {
             Some(ref m) => admin == *m,
             None => false,
@@ -188,21 +290,37 @@ impl EscrowContract {
 
         let dest_key = DataKey::ApprovedWithdrawalFor(to.clone());
         let approved_for_to: i128 = env.storage().persistent().get(&dest_key).unwrap_or(0);
-        env.storage().persistent().set(&dest_key, &(approved_for_to + release_amount));
+        env.storage()
+            .persistent()
+            .set(&dest_key, &(approved_for_to + release_amount));
         Self::bump_persistent(&env, &dest_key);
         Self::bump_instance(&env);
 
-        let approved: i128 = env.storage().instance().get(&DataKey::ApprovedWithdrawal).unwrap_or(0);
-        env.storage().instance().set(&DataKey::ApprovedWithdrawal, &(approved + release_amount));
+        let approved: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ApprovedWithdrawal)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::ApprovedWithdrawal, &(approved + release_amount));
 
         env.events().publish(
             (Symbol::new(&env, "approve_withdrawal"), to),
             release_amount,
         );
+        Ok(())
     }
 
-    pub fn approve_milestone_withdrawal(env: Env, to: Address, release_amount: i128) {
-        let milestones: Address = env.storage().instance().get(&DataKey::MilestonesContract)
+    pub fn approve_milestone_withdrawal(
+        env: Env,
+        to: Address,
+        release_amount: i128,
+    ) -> Result<(), EscrowError> {
+        let milestones: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::MilestonesContract)
             .expect("Milestones contract not configured");
         milestones.require_auth();
 
@@ -216,39 +334,57 @@ impl EscrowContract {
 
         let dest_key = DataKey::ApprovedWithdrawalFor(to.clone());
         let approved_for_to: i128 = env.storage().persistent().get(&dest_key).unwrap_or(0);
-        env.storage().persistent().set(&dest_key, &(approved_for_to + release_amount));
+        env.storage()
+            .persistent()
+            .set(&dest_key, &(approved_for_to + release_amount));
         Self::bump_persistent(&env, &dest_key);
         Self::bump_instance(&env);
 
-        let approved: i128 = env.storage().instance().get(&DataKey::ApprovedWithdrawal).unwrap_or(0);
-        env.storage().instance().set(&DataKey::ApprovedWithdrawal, &(approved + release_amount));
+        let approved: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ApprovedWithdrawal)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::ApprovedWithdrawal, &(approved + release_amount));
 
         env.events().publish(
             (Symbol::new(&env, "approve_withdrawal"), to),
             release_amount,
         );
+        Ok(())
     }
 
     /// Step 1 of 2: the admin proposes a new platform fee.
-    pub fn propose_fee_change(env: Env, new_fee_bps: u32) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    pub fn propose_fee_change(env: Env, new_fee_bps: u32) -> Result<(), EscrowError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)?;
         admin.require_auth();
 
         if new_fee_bps > MAX_FEE_BPS {
             panic!("Platform fee BPS must not exceed MAX_FEE_BPS");
         }
 
-        env.storage().instance().set(&DataKey::PendingFeeBps, &new_fee_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingFeeBps, &new_fee_bps);
 
-        env.events().publish(
-            (Symbol::new(&env, "fee_proposed"), admin),
-            new_fee_bps,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "fee_proposed"), admin), new_fee_bps);
+        Ok(())
     }
 
     /// Step 2 of 2: the admin confirms the pending fee, applying it.
-    pub fn confirm_fee_change(env: Env) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    pub fn confirm_fee_change(env: Env) -> Result<(), EscrowError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)?;
         admin.require_auth();
 
         let new_fee_bps: u32 = match env.storage().instance().get(&DataKey::PendingFeeBps) {
@@ -260,18 +396,23 @@ impl EscrowContract {
             panic!("Platform fee BPS must not exceed MAX_FEE_BPS");
         }
 
-        env.storage().instance().set(&DataKey::PlatformFeeBps, &new_fee_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::PlatformFeeBps, &new_fee_bps);
         env.storage().instance().remove(&DataKey::PendingFeeBps);
 
-        env.events().publish(
-            (Symbol::new(&env, "fee_changed"), admin),
-            new_fee_bps,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "fee_changed"), admin), new_fee_bps);
+        Ok(())
     }
 
     /// Cancels any pending fee proposal without applying it.
-    pub fn cancel_fee_change(env: Env) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    pub fn cancel_fee_change(env: Env) -> Result<(), EscrowError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)?;
         admin.require_auth();
 
         if !env.storage().instance().has(&DataKey::PendingFeeBps) {
@@ -280,10 +421,9 @@ impl EscrowContract {
 
         env.storage().instance().remove(&DataKey::PendingFeeBps);
 
-        env.events().publish(
-            (Symbol::new(&env, "fee_cancelled"), admin),
-            (),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "fee_cancelled"), admin), ());
+        Ok(())
     }
 
     /// Returns the pending proposed fee in BPS, or `None` if no change is pending.
@@ -291,8 +431,16 @@ impl EscrowContract {
         env.storage().instance().get(&DataKey::PendingFeeBps)
     }
 
-    pub fn execute_withdrawal(env: Env, to: Address, release_amount: i128) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    pub fn execute_withdrawal(
+        env: Env,
+        to: Address,
+        release_amount: i128,
+    ) -> Result<(), EscrowError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)?;
         admin.require_auth();
 
         if Self::is_campaign_failed(env.clone()) || Self::is_refunding(env.clone()) {
@@ -309,15 +457,27 @@ impl EscrowContract {
             panic!("Insufficient approved amount for destination");
         }
 
-        let mut approved: i128 = env.storage().instance().get(&DataKey::ApprovedWithdrawal).unwrap_or(0);
+        let mut approved: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ApprovedWithdrawal)
+            .unwrap_or(0);
         if approved < release_amount {
             panic!("Insufficient approved amount");
         }
 
-        let asset: Address = env.storage().instance().get(&DataKey::Asset).unwrap();
+        let asset: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Asset)
+            .ok_or(EscrowError::NotInitialized)?;
         let client = token::Client::new(&env, &asset);
 
-        let fee_bps: u32 = env.storage().instance().get(&DataKey::PlatformFeeBps).unwrap_or(0);
+        let fee_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PlatformFeeBps)
+            .unwrap_or(0);
         let fee_amount = (release_amount * (fee_bps as i128)) / 10000;
         let net_amount = release_amount - fee_amount;
 
@@ -326,7 +486,11 @@ impl EscrowContract {
         }
 
         if fee_amount > 0 {
-            let fee_recipient: Address = env.storage().instance().get(&DataKey::PlatformFeeRecipient).unwrap();
+            let fee_recipient: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::PlatformFeeRecipient)
+                .ok_or(EscrowError::NotInitialized)?;
             client.transfer(&env.current_contract_address(), &fee_recipient, &fee_amount);
         }
 
@@ -336,12 +500,15 @@ impl EscrowContract {
         Self::bump_instance(&env);
 
         approved -= release_amount;
-        env.storage().instance().set(&DataKey::ApprovedWithdrawal, &approved);
+        env.storage()
+            .instance()
+            .set(&DataKey::ApprovedWithdrawal, &approved);
 
         env.events().publish(
             (Symbol::new(&env, "withdrawal"), to),
             (release_amount, net_amount, fee_amount),
         );
+        Ok(())
     }
 
     /// Admin override withdrawal requiring a second signer. Emits an event.
@@ -350,8 +517,12 @@ impl EscrowContract {
         second_signer: Address,
         to: Address,
         release_amount: i128,
-    ) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    ) -> Result<(), EscrowError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::NotInitialized)?;
         admin.require_auth();
         second_signer.require_auth();
 
@@ -359,7 +530,11 @@ impl EscrowContract {
             panic!("Second signer must be distinct from admin");
         }
 
-        if let Some(configured) = env.storage().instance().get::<_, Address>(&DataKey::SecondSigner) {
+        if let Some(configured) = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&DataKey::SecondSigner)
+        {
             if second_signer != configured {
                 panic!("Invalid second signer");
             }
@@ -369,14 +544,22 @@ impl EscrowContract {
             panic!("Release amount must be positive");
         }
 
-        let asset: Address = env.storage().instance().get(&DataKey::Asset).unwrap();
+        let asset: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Asset)
+            .ok_or(EscrowError::NotInitialized)?;
         let client = token::Client::new(&env, &asset);
         let contract_balance = client.balance(&env.current_contract_address());
         if contract_balance < release_amount {
             panic!("Insufficient contract balance for override withdrawal");
         }
 
-        let fee_bps: u32 = env.storage().instance().get(&DataKey::PlatformFeeBps).unwrap_or(0);
+        let fee_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PlatformFeeBps)
+            .unwrap_or(0);
         let fee_amount = (release_amount * (fee_bps as i128)) / 10000;
         let net_amount = release_amount - fee_amount;
 
@@ -385,7 +568,11 @@ impl EscrowContract {
         }
 
         if fee_amount > 0 {
-            let fee_recipient: Address = env.storage().instance().get(&DataKey::PlatformFeeRecipient).unwrap();
+            let fee_recipient: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::PlatformFeeRecipient)
+                .ok_or(EscrowError::NotInitialized)?;
             client.transfer(&env.current_contract_address(), &fee_recipient, &fee_amount);
         }
 
@@ -393,6 +580,7 @@ impl EscrowContract {
             (Symbol::new(&env, "admin_override_withdrawal"), to),
             (release_amount, second_signer),
         );
+        Ok(())
     }
 
     /// Refunds a contributor once the campaign has failed.
@@ -403,16 +591,32 @@ impl EscrowContract {
     /// the funds still held (`RefundPool`) and the total contributed
     /// (`RefundBase`); every contributor then receives
     /// `balance * RefundPool / RefundBase`, so refund order no longer matters.
-    pub fn refund(env: Env, contributor: Address) {
-        let explicitly_failed: bool = env.storage().instance().get(&DataKey::CampaignFailed).unwrap_or(false);
+    pub fn refund(env: Env, contributor: Address) -> Result<(), EscrowError> {
+        let explicitly_failed: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::CampaignFailed)
+            .unwrap_or(false);
         if !explicitly_failed {
-            let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();
+            let deadline: u64 = env
+                .storage()
+                .instance()
+                .get(&DataKey::Deadline)
+                .ok_or(EscrowError::NotInitialized)?;
             if env.ledger().timestamp() < deadline {
                 panic!("Deadline has not passed");
             }
 
-            let total_raised: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0);
-            let target: i128 = env.storage().instance().get(&DataKey::Target).unwrap();
+            let total_raised: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::TotalRaised)
+                .unwrap_or(0);
+            let target: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::Target)
+                .ok_or(EscrowError::NotInitialized)?;
 
             if total_raised >= target {
                 panic!("Campaign succeeded, refunds unavailable");
@@ -425,18 +629,40 @@ impl EscrowContract {
             panic!("No contribution to refund");
         }
 
-        let asset: Address = env.storage().instance().get(&DataKey::Asset).unwrap();
+        let asset: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Asset)
+            .ok_or(EscrowError::NotInitialized)?;
         let client = token::Client::new(&env, &asset);
 
         if !env.storage().instance().has(&DataKey::RefundBase) {
-            let total_raised: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0);
+            let total_raised: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::TotalRaised)
+                .unwrap_or(0);
             let held = client.balance(&env.current_contract_address());
-            let pool = if held < total_raised { held } else { total_raised };
+            let pool = if held < total_raised {
+                held
+            } else {
+                total_raised
+            };
             env.storage().instance().set(&DataKey::RefundPool, &pool);
-            env.storage().instance().set(&DataKey::RefundBase, &total_raised);
+            env.storage()
+                .instance()
+                .set(&DataKey::RefundBase, &total_raised);
         }
-        let pool: i128 = env.storage().instance().get(&DataKey::RefundPool).unwrap();
-        let base: i128 = env.storage().instance().get(&DataKey::RefundBase).unwrap();
+        let pool: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::RefundPool)
+            .ok_or(EscrowError::NotInitialized)?;
+        let base: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::RefundBase)
+            .ok_or(EscrowError::NotInitialized)?;
         let payout = amount * pool / base;
 
         // Mark campaign as refunding so any withdrawals are permanently blocked
@@ -445,33 +671,52 @@ impl EscrowContract {
         env.storage().persistent().set(&balance_key, &0i128);
         Self::bump_persistent(&env, &balance_key);
 
-        let total_raised_current: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0);
+        let total_raised_current: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalRaised)
+            .unwrap_or(0);
         let new_total = total_raised_current - amount;
-        env.storage().instance().set(&DataKey::TotalRaised, &new_total);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalRaised, &new_total);
         Self::bump_instance(&env);
 
         if payout > 0 {
             client.transfer(&env.current_contract_address(), &contributor, &payout);
         }
 
-        env.events().publish(
-            (Symbol::new(&env, "refund"), contributor),
-            payout,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "refund"), contributor), payout);
+        Ok(())
     }
 
     pub fn get_total_raised(env: Env) -> i128 {
-        env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::TotalRaised)
+            .unwrap_or(0)
     }
 
-    pub fn get_asset(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::Asset).unwrap()
+    pub fn get_asset(env: Env) -> Result<Address, EscrowError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Asset)
+            .ok_or(EscrowError::NotInitialized)
     }
 
-    pub fn get_platform_fee_config(env: Env) -> (u32, Address) {
-        let bps: u32 = env.storage().instance().get(&DataKey::PlatformFeeBps).unwrap_or(0);
-        let recipient: Address = env.storage().instance().get(&DataKey::PlatformFeeRecipient).unwrap();
-        (bps, recipient)
+    pub fn get_platform_fee_config(env: Env) -> Result<(u32, Address), EscrowError> {
+        let bps: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PlatformFeeBps)
+            .unwrap_or(0);
+        let recipient: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PlatformFeeRecipient)
+            .ok_or(EscrowError::NotInitialized)?;
+        Ok((bps, recipient))
     }
 
     pub fn get_approved_withdrawal(env: Env, to: Address) -> i128 {
@@ -480,16 +725,27 @@ impl EscrowContract {
     }
 
     pub fn get_balance(env: Env, contributor: Address) -> i128 {
-        env.storage().persistent().get(&DataKey::Balances(contributor)).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get(&DataKey::Balances(contributor))
+            .unwrap_or(0)
     }
 
     /// TTL (in ledgers) that keeps an entry live until the deadline plus the
     /// refund window, capped at the network's maximum entry TTL.
     fn ttl_target(env: &Env) -> u32 {
-        let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap_or(0);
+        let deadline: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Deadline)
+            .unwrap_or(0);
         let now = env.ledger().timestamp();
         let to_deadline = deadline.saturating_sub(now) / LEDGER_SECONDS;
-        let to_deadline = if to_deadline > u32::MAX as u64 { u32::MAX } else { to_deadline as u32 };
+        let to_deadline = if to_deadline > u32::MAX as u64 {
+            u32::MAX
+        } else {
+            to_deadline as u32
+        };
         to_deadline
             .saturating_add(REFUND_WINDOW_LEDGERS)
             .min(env.storage().max_ttl())
@@ -504,8 +760,10 @@ impl EscrowContract {
 
     fn bump_persistent(env: &Env, key: &DataKey) {
         let extend_to = Self::ttl_target(env);
-        env.storage()
-            .persistent()
-            .extend_ttl(key, extend_to.saturating_sub(TTL_BUMP_SLACK), extend_to);
+        env.storage().persistent().extend_ttl(
+            key,
+            extend_to.saturating_sub(TTL_BUMP_SLACK),
+            extend_to,
+        );
     }
 }

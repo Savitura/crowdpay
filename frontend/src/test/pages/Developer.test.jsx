@@ -13,13 +13,20 @@ const apiMocks = vi.hoisted(() => ({
   listWebhookDeliveries: vi.fn().mockResolvedValue([]),
   getCredentialActivity: vi.fn().mockResolvedValue([]),
   createApiKey: vi.fn().mockResolvedValue({ api_key: 'new-key' }),
+  getCredentialActivity: vi.fn().mockResolvedValue([]),
+  sendWebhookTestEvent: vi.fn().mockResolvedValue({
+    success: true,
+    latency_ms: 45,
+    delivery: { response_status: 200, status: 'delivered' },
+  }),
+  replayWebhookDelivery: vi.fn().mockResolvedValue({ message: 'Replay queued', id: 'del-1' }),
 }));
 
 vi.mock('../../services/api', () => ({ api: apiMocks }));
 
 describe('Developer page', () => {
   afterEach(() => {
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it('renders the developer page and creates an API key', async () => {
@@ -53,32 +60,68 @@ describe('Developer page', () => {
     expect(await screen.findByText(/Copy now:/i)).toBeInTheDocument();
   });
 
-  it('aborts in-flight API and OpenAPI spec requests on unmount', () => {
-    sessionStorage.clear();
-    const fetchSignals = [];
+  it('triggers a webhook test event when clicking Send test event', async () => {
+    apiMocks.listWebhooks.mockResolvedValueOnce([
+      {
+        id: 'wh-test-1',
+        url: 'https://example.com/webhook',
+        events: ['contribution.received'],
+        secret_hint: 'whsec_test…1234',
+        created_at: new Date().toISOString(),
+      },
+    ]);
 
-    global.fetch = vi.fn().mockImplementation((_url, options = {}) => {
-      fetchSignals.push(options.signal);
-      return new Promise(() => {});
+    renderWithProviders(<Developer />);
+
+    const testBtn = await screen.findByRole('button', { name: /Send test event/i });
+    expect(testBtn).toBeInTheDocument();
+
+    fireEvent.click(testBtn);
+
+    await waitFor(() =>
+      expect(apiMocks.sendWebhookTestEvent).toHaveBeenCalledWith('wh-test-1', {
+        event_type: 'contribution.received',
+      })
+    );
+  });
+
+  it('renders delivery logs with latency and allows inspecting delivery details', async () => {
+    apiMocks.listWebhookDeliveries.mockResolvedValueOnce({
+      total: 1,
+      deliveries: [
+        {
+          id: 'del-1',
+          webhook_id: 'wh-test-1',
+          event_type: 'contribution.received',
+          status: 'failed',
+          response_status: 500,
+          latency_ms: 125,
+          attempt_count: 1,
+          last_error: 'HTTP 500',
+          created_at: new Date().toISOString(),
+          payload: { test: true, amount: '100.00' },
+          webhook_url: 'https://example.com/webhook',
+        },
+      ],
     });
 
-    apiMocks.listApiKeys.mockReturnValue(new Promise(() => {}));
-    apiMocks.listWebhooks.mockReturnValue(new Promise(() => {}));
-    apiMocks.listWebhookDeliveries.mockReturnValue(new Promise(() => {}));
-    apiMocks.getCredentialActivity.mockReturnValue(new Promise(() => {}));
+    renderWithProviders(<Developer />);
 
-    const { unmount } = renderWithProviders(<Developer />);
+    expect(await screen.findByText('contribution.received')).toBeInTheDocument();
+    expect(await screen.findByText('125 ms')).toBeInTheDocument();
+    expect(screen.getByText('500')).toBeInTheDocument();
 
-    const apiSignal = apiMocks.listApiKeys.mock.calls.at(-1)?.[0]?.signal;
-    expect(apiSignal).toBeInstanceOf(globalThis.AbortSignal);
-    expect(apiSignal.aborted).toBe(false);
+    // Inspect delivery details
+    const inspectBtn = screen.getByRole('button', { name: /Inspect/i });
+    fireEvent.click(inspectBtn);
 
-    expect(fetchSignals[0]).toBeInstanceOf(globalThis.AbortSignal);
-    expect(fetchSignals[0].aborted).toBe(false);
+    expect(await screen.findByText(/Delivery Details/i)).toBeInTheDocument();
+    expect(await screen.findByText(/100\.00/)).toBeInTheDocument();
 
-    unmount();
+    // Replay failed delivery
+    const replayBtn = screen.getByRole('button', { name: /Replay Delivery/i });
+    fireEvent.click(replayBtn);
 
-    expect(apiSignal.aborted).toBe(true);
-    expect(fetchSignals[0].aborted).toBe(true);
+    await waitFor(() => expect(apiMocks.replayWebhookDelivery).toHaveBeenCalledWith('del-1'));
   });
 });

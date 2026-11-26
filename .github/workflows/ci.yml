@@ -98,8 +98,11 @@ jobs:
           DATABASE_URL: postgresql://postgres:password@localhost:5432/crowdpay_test
         run: npm run migrate
 
-      - name: Upgrade production-like migration fixture in a disposable database
+      - name: Upgrade production-like fixture and verify schema.sql/migrations converge
         working-directory: ./backend
+        # Two disposable databases are built here; bound the step so a dead
+        # database service fails fast instead of hanging the job.
+        timeout-minutes: 10
         env:
           DATABASE_URL: postgresql://postgres:password@localhost:5432/crowdpay_test
         run: npm run test:migration-upgrade
@@ -116,7 +119,10 @@ jobs:
 
       - name: Compare migration-only and schema bootstrap snapshots
         working-directory: ./backend
+        timeout-minutes: 5
         env:
+          # dropdb runs below and prompts interactively without this.
+          PGPASSWORD: password
           DATABASE_URL_MIGRATION_CHECK: postgresql://postgres:password@localhost:5432/crowdpay_test
           DATABASE_URL_SCHEMA_CHECK: postgresql://postgres:password@localhost:5432/crowdpay_schema_check
         run: |
@@ -385,6 +391,15 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+
+      - name: Check formatting
+        working-directory: ./contracts/soroban
+        run: cargo fmt --check
+
+      - name: Run clippy
+        working-directory: ./contracts/soroban
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Run cargo test
         working-directory: ./contracts/soroban

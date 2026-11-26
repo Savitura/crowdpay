@@ -1,4 +1,4 @@
-const { renderLayout, heading, paragraph, buttonRow } = require('./layout');
+const { escapeHtml, renderLayout, heading, paragraph, paragraphHtml, buttonRow } = require('./layout');
 
 function buildForContributor({
   contributorName,
@@ -31,10 +31,10 @@ function buildForContributor({
     previewText: `Impact report published for "${campaignTitle}"`,
     bodyHtml: [
       heading('📊 Impact report published'),
-      paragraph(
-        `"${campaignTitle}" has published an impact report: <strong>"${reportTitle}"</strong>`
+      paragraphHtml(
+        `"${escapeHtml(campaignTitle)}" has published an impact report: <strong>"${escapeHtml(reportTitle)}"</strong>`
       ),
-      reportSummary ? paragraph(`<em>${reportSummary}</em>`) : '',
+      reportSummary ? paragraphHtml(`<em>${escapeHtml(reportSummary)}</em>`) : '',
       buttonRow('View impact report', `${campaignUrl}#impact-report`),
       paragraph(
         'See how your contribution made a difference and the impact created by this campaign.'
