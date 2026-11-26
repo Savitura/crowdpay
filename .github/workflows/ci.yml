@@ -104,6 +104,16 @@ jobs:
           DATABASE_URL: postgresql://postgres:password@localhost:5432/crowdpay_test
         run: npm run migrate
 
+      - name: Verify seed idempotency and foreign keys
+        working-directory: ./backend
+        env:
+          PGPASSWORD: password
+        run: |
+          createdb -h localhost -U postgres crowdpay_seed_check
+          psql -h localhost -U postgres -d crowdpay_seed_check -v ON_ERROR_STOP=1 -f db/schema.sql
+          psql -h localhost -U postgres -d crowdpay_seed_check -v ON_ERROR_STOP=1 -f db/seed.sql
+          psql -h localhost -U postgres -d crowdpay_seed_check -v ON_ERROR_STOP=1 -f db/seed.sql
+          psql -h localhost -U postgres -d crowdpay_seed_check -v ON_ERROR_STOP=1 -f db/verify-seed.sql
       - name: Seed test data for validation scripts
         working-directory: ./backend
         env:
