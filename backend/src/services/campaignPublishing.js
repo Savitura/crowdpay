@@ -5,6 +5,7 @@ const { createCampaignWallet } = require('./stellarService');
 const { deployCampaignContracts } = require('./sorobanService');
 const { watchCampaignWallet } = require('./ledgerMonitor');
 const { toStroops } = require('../utils/stroops');
+const { invalidateCampaignFacets } = require('./campaignFacetService');
 
 const MILESTONE_PERCENT_SCALE = 10000;
 
@@ -94,6 +95,7 @@ async function publishDraftCampaign(campaignId) {
   }
 
   watchCampaignWallet(updated[0].id, wallet.publicKey);
+  invalidateCampaignFacets();
 
   return updated[0];
 }

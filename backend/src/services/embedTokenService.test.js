@@ -27,14 +27,14 @@ test('embedTokenService creates, lists, revokes, and validates tokens', async ()
         };
         return { rows: [insertedRow] };
       }
-      if (sql.includes('SELECT * FROM embed_tokens WHERE user_id')) {
+      if (sql.includes('FROM embed_tokens WHERE user_id')) {
         return { rows: [insertedRow] };
       }
       if (sql.includes('UPDATE embed_tokens SET revoked_at')) {
         insertedRow.revoked_at = new Date();
         return { rows: [{ id: insertedRow.id }] };
       }
-      if (sql.includes('SELECT * FROM embed_tokens WHERE token_prefix')) {
+      if (sql.includes('FROM embed_tokens WHERE token_prefix')) {
         if (insertedRow.revoked_at) {
           return { rows: [] };
         }

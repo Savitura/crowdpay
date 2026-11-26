@@ -222,7 +222,7 @@ test('GET /api/anchor/deposits/:id refreshes anchor session status', async () =>
       if (text.includes('UPDATE anchor_deposits') && text.includes('last_anchor_status')) {
         return { rows: [] };
       }
-      if (text.includes('SELECT * FROM anchor_deposits WHERE id = $1')) {
+      if (text.includes('FROM anchor_deposits WHERE id = $1')) {
         return {
           rows: [
             {
@@ -303,7 +303,7 @@ test('GET /api/anchor/deposits/:id updates users.wallet_funding_failed_at when w
       if (text.includes('UPDATE users SET wallet_funding_failed_at')) {
         return { rows: [] };
       }
-      if (text.includes('SELECT * FROM anchor_deposits WHERE id = $1')) {
+      if (text.includes('FROM anchor_deposits WHERE id = $1')) {
         return {
           rows: [
             {
@@ -402,7 +402,7 @@ test('GET /api/anchor/deposits/:id updates users.wallet_funded_at when wallet de
       if (text.includes('UPDATE users SET wallet_funded_at')) {
         return { rows: [] };
       }
-      if (text.includes('SELECT * FROM anchor_deposits WHERE id = $1')) {
+      if (text.includes('FROM anchor_deposits WHERE id = $1')) {
         return {
           rows: [
             {

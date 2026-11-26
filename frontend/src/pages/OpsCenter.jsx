@@ -9,14 +9,18 @@ import {
   Tooltip,
   CartesianGrid,
 } from 'recharts';
+import { safeLocalStorage, safeSessionStorage } from '../lib/safeStorage';
 
 export default function OpsCenter() {
   const { t } = useTranslation();
   const [apiKey, setApiKey] = useState(
-    () => localStorage.getItem('cp_ops_api_key') || sessionStorage.getItem('cp_ops_api_key') || ''
+    () =>
+      safeSessionStorage.getItem('cp_ops_api_key') ||
+      safeLocalStorage.getItem('cp_ops_api_key') ||
+      ''
   );
   const [tempKey, setTempKey] = useState('');
-  const [rememberKey, setRememberKey] = useState(true);
+  const [rememberKey, setRememberKey] = useState(false);
   const [authError, setAuthError] = useState('');
 
   const [loading, setLoading] = useState(false);
@@ -61,8 +65,10 @@ export default function OpsCenter() {
         if (match) headers['x-csrf-token'] = decodeURIComponent(match[1]);
       }
       const res = await fetch(url, { ...options, headers });
-      if (res.status === 401) {
-        throw new Error('UNAUTHORIZED_OPS');
+      if (res.status === 401 || res.status === 403) {
+        safeLocalStorage.removeItem('cp_ops_api_key');
+        safeSessionStorage.removeItem('cp_ops_api_key');
+        throw new Error(res.status === 403 ? 'FORBIDDEN_OPS' : 'UNAUTHORIZED_OPS');
       }
       return res;
     },
@@ -105,9 +111,15 @@ export default function OpsCenter() {
           setWalletAudit(aJson.wallets || []);
         }
       } catch (err) {
-        if (err.message === 'UNAUTHORIZED_OPS') {
-          setAuthError('Authentication failed: Invalid OPS_API_KEY.');
+        if (err.message === 'UNAUTHORIZED_OPS' || err.message === 'FORBIDDEN_OPS') {
+          setAuthError(
+            err.message === 'FORBIDDEN_OPS'
+              ? 'Access forbidden: Insufficient permissions for OPS_API_KEY.'
+              : 'Authentication failed: Invalid OPS_API_KEY.'
+          );
           setApiKey('');
+          safeLocalStorage.removeItem('cp_ops_api_key');
+          safeSessionStorage.removeItem('cp_ops_api_key');
         } else {
           setErrorMsg(err.message || 'Failed to fetch operations data.');
         }
@@ -133,17 +145,19 @@ export default function OpsCenter() {
     if (!tempKey.trim()) return;
     const clean = tempKey.trim();
     if (rememberKey) {
-      localStorage.setItem('cp_ops_api_key', clean);
+      safeLocalStorage.setItem('cp_ops_api_key', clean);
+      safeSessionStorage.removeItem('cp_ops_api_key');
     } else {
-      sessionStorage.setItem('cp_ops_api_key', clean);
+      safeSessionStorage.setItem('cp_ops_api_key', clean);
+      safeLocalStorage.removeItem('cp_ops_api_key');
     }
     setAuthError('');
     setApiKey(clean);
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('cp_ops_api_key');
-    sessionStorage.removeItem('cp_ops_api_key');
+    safeLocalStorage.removeItem('cp_ops_api_key');
+    safeSessionStorage.removeItem('cp_ops_api_key');
     setApiKey('');
     setHealthData(null);
   };
@@ -272,9 +286,17 @@ export default function OpsCenter() {
                 htmlFor="rememberKey"
                 style={{ fontSize: '0.85rem', color: '#94a3b8', cursor: 'pointer' }}
               >
-                Remember key in this browser session
+                Remember key in localStorage (not recommended on shared devices)
               </label>
             </div>
+
+            {rememberKey && (
+              <div style={styles.warningAlert} role="alert">
+                ⚠️ Warning: Storing privileged keys in localStorage persists across browser sessions
+                and increases exposure to XSS attacks. By default, keys are kept only in the current
+                session.
+              </div>
+            )}
 
             <button type="submit" style={styles.primaryBtn}>
               Unlock Operations Centre
@@ -299,13 +321,14 @@ export default function OpsCenter() {
 
         <div style={styles.headerActions}>
           <button
+            type="button"
             onClick={() => loadDashboardData(true)}
             disabled={refreshing}
             style={styles.refreshBtn}
           >
             {refreshing ? 'Refreshing...' : '↻ Refresh Telemetry'}
           </button>
-          <button onClick={handleLogout} style={styles.secondaryBtn}>
+          <button type="button" onClick={handleLogout} style={styles.secondaryBtn}>
             Lock / Change Key
           </button>
         </div>
@@ -424,12 +447,14 @@ export default function OpsCenter() {
         <h2 style={styles.sectionTitle}>Incident Management & Runbooks</h2>
         <div style={styles.tabSwitch}>
           <button
+            type="button"
             onClick={() => setIncidentTab('open')}
             style={incidentTab === 'open' ? styles.tabActive : styles.tabInactive}
           >
             Active Incidents ({incidents.length})
           </button>
           <button
+            type="button"
             onClick={() => setIncidentTab('resolved')}
             style={incidentTab === 'resolved' ? styles.tabActive : styles.tabInactive}
           >
@@ -476,11 +501,19 @@ export default function OpsCenter() {
 
                 <div style={styles.incidentActions}>
                   {inc.status === 'open' && (
-                    <button onClick={() => handleAcknowledge(inc.id)} style={styles.ackBtn}>
+                    <button
+                      type="button"
+                      onClick={() => handleAcknowledge(inc.id)}
+                      style={styles.ackBtn}
+                    >
                       ✓ Acknowledge
                     </button>
                   )}
-                  <button onClick={() => handleOpenRunbook(inc)} style={styles.runbookBtn}>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenRunbook(inc)}
+                    style={styles.runbookBtn}
+                  >
                     ⚡ Execute Runbook
                   </button>
                 </div>
@@ -577,6 +610,7 @@ export default function OpsCenter() {
                   <td style={styles.td}>
                     {w.deficit_xlm > 0 ? (
                       <button
+                        type="button"
                         onClick={() => handleApproveWalletFunding(w.campaign_id)}
                         style={styles.fundingBtn}
                       >
@@ -602,7 +636,11 @@ export default function OpsCenter() {
                 <h3 style={styles.modalTitle}>Automated Runbook Remediation</h3>
                 <p style={styles.modalSubtitle}>Incident: {selectedIncident?.incident_type}</p>
               </div>
-              <button onClick={() => setActiveRunbookModal(false)} style={styles.closeBtn}>
+              <button
+                type="button"
+                onClick={() => setActiveRunbookModal(false)}
+                style={styles.closeBtn}
+              >
                 ✕
               </button>
             </div>
@@ -614,7 +652,7 @@ export default function OpsCenter() {
                     Triggering this runbook will execute automated diagnostics, safe operational
                     locks, and state recovery.
                   </p>
-                  <button onClick={handleExecuteRunbook} style={styles.primaryBtn}>
+                  <button type="button" onClick={handleExecuteRunbook} style={styles.primaryBtn}>
                     Start Runbook Execution
                   </button>
                 </div>
@@ -688,7 +726,11 @@ export default function OpsCenter() {
             </div>
 
             <div style={styles.modalFooter}>
-              <button onClick={() => setActiveRunbookModal(false)} style={styles.secondaryBtn}>
+              <button
+                type="button"
+                onClick={() => setActiveRunbookModal(false)}
+                style={styles.secondaryBtn}
+              >
                 Close
               </button>
             </div>
@@ -705,7 +747,11 @@ export default function OpsCenter() {
                 <h3 style={styles.modalTitle}>Metric Telemetry History</h3>
                 <p style={styles.modalSubtitle}>{historyMetric}</p>
               </div>
-              <button onClick={() => setHistoryModalOpen(false)} style={styles.closeBtn}>
+              <button
+                type="button"
+                onClick={() => setHistoryModalOpen(false)}
+                style={styles.closeBtn}
+              >
                 ✕
               </button>
             </div>
@@ -745,7 +791,11 @@ export default function OpsCenter() {
             </div>
 
             <div style={styles.modalFooter}>
-              <button onClick={() => setHistoryModalOpen(false)} style={styles.secondaryBtn}>
+              <button
+                type="button"
+                onClick={() => setHistoryModalOpen(false)}
+                style={styles.secondaryBtn}
+              >
                 Close
               </button>
             </div>
@@ -1181,6 +1231,15 @@ const styles = {
     borderRadius: '8px',
     fontSize: '0.85rem',
     marginBottom: '16px',
+  },
+  warningAlert: {
+    backgroundColor: '#f59e0b22',
+    border: '1px solid #f59e0b',
+    color: '#fef3c7',
+    padding: '10px 14px',
+    borderRadius: '8px',
+    fontSize: '0.85rem',
+    marginBottom: '14px',
   },
   modalOverlay: {
     position: 'fixed',

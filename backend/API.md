@@ -103,6 +103,58 @@ Response includes `redirect_url` or `session_token`, plus the updated user. Pers
 
 KYC provider callback. Updates the matched user to `verified` or `rejected` from provider status. The campaign creation gate is controlled by `KYC_REQUIRED_FOR_CAMPAIGNS` and defaults to enabled; set it to `false` for testnet/dev.
 
+### `POST /api/webhooks`
+
+Authenticated user endpoint (`developer` or `full` scope). Registers a webhook URL for lifecycle events (`campaign.funded`, `contribution.received`, `milestone.approved`, `withdrawal.completed`). Returns endpoint details and single-reveal signing secret.
+
+### `GET /api/webhooks`
+
+Lists active webhooks owned by the authenticated user with masked `secret_hint`.
+
+### `DELETE /api/webhooks/:id`
+
+Revokes a registered webhook endpoint.
+
+### `POST /api/webhooks/:id/rotate`
+
+Rotates a webhook signing secret with an optional `grace_period_hours` (default 24h, 1–72h).
+
+### `POST /api/webhooks/:id/test`
+
+Dispatches a synthetic test event through the live delivery pipeline for endpoint verification and latency measurement. Body accepts optional `{ event_type: "contribution.received" }`. Returns delivery status, HTTP response code, and latency in milliseconds.
+
+### `GET /api/webhooks/deliveries`
+
+Lists webhook delivery logs. Supports query parameters `limit` (1–200, default 50), `offset` (default 0), `page` (1-based), `webhook_id`, `status` (`pending`, `delivering`, `delivered`, `failed`, `retrying`), and `event_type`. Returns paginated envelope with `total`, `page`, `limit`, `offset`, and `deliveries` when `paginate=true` or pagination parameters are passed.
+
+### `GET /api/webhooks/:id/deliveries`
+
+Returns paginated delivery history scoped strictly to webhook `:id`.
+
+### `GET /api/webhooks/deliveries/:id`
+
+Returns detailed delivery object, payload, response snippet, and individual attempt timestamps and latencies.
+
+### `POST /api/webhooks/deliveries/:id/replay`
+
+Replays a failed or retrying delivery attempt.
+
+### `POST /api/campaigns/:id/webhooks`
+
+Registers a campaign-scoped webhook for contribution events. Authenticated to campaign owner/manager.
+
+### `GET /api/campaigns/:id/webhooks`
+
+Lists webhooks for a campaign.
+
+### `POST /api/campaigns/:id/webhooks/:wid/test`
+
+Dispatches a test event for a campaign webhook.
+
+### `GET /api/campaigns/:id/webhooks/:wid/deliveries`
+
+Returns paginated delivery history for a campaign webhook.
+
 ### `POST /api/campaigns`
 
 Authenticated creator/admin endpoint. The user must have `email_verified=true`. Additionally, when `KYC_REQUIRED_FOR_CAMPAIGNS` is not `false`, the user must have `kyc_status=verified`; otherwise the API returns `403` with `code=KYC_REQUIRED` or `code=EMAIL_NOT_VERIFIED`.
@@ -306,13 +358,95 @@ Success response (`200`):
 ]
 ```
 
+### `GET /api/contributions/:id/refund-status`
+
+Fetch comprehensive contribution refund status tracking details, including stage, timeline events, and estimated completion times.
+
+Accessible by:
+
+- The contributor who made the contribution
+- The campaign creator or managers
+- Platform administrators
+
+Success response (`200`):
+
+```json
+{
+  "contribution_id": "c-1",
+  "campaign_id": "camp-1",
+  "campaign_title": "Clean Water Initiative",
+  "contributor_wallet": "GBBD...",
+  "amount": 100,
+  "asset": "native",
+  "refunded_amount": 0,
+  "remaining_refundable_amount": 100,
+  "refund_status": "pending",
+  "stage": "review",
+  "stage_label": "Under Review",
+  "stage_description": "The refund request has been submitted and is awaiting creator or administrator review.",
+  "estimated_completion_at": "2026-10-25T12:00:00.000Z",
+  "estimated_duration_seconds": 259200,
+  "estimated_time_text": "2–3 business days",
+  "tx_hash": null,
+  "stellar_tx_url": null,
+  "rejection_reason": null,
+  "failure_reason": null,
+  "events": [
+    {
+      "type": "contribution_confirmed",
+      "title": "Contribution confirmed",
+      "description": "Contributed 100 native",
+      "timestamp": "2026-09-01T12:00:00.000Z",
+      "completed": true
+    },
+    {
+      "type": "campaign_failed",
+      "title": "Campaign ended below goal",
+      "description": "The campaign did not reach its funding target by the deadline.",
+      "timestamp": "2026-09-10T00:00:00.000Z",
+      "completed": true
+    },
+    {
+      "type": "refund_requested",
+      "title": "Refund requested",
+      "description": "Reason: Campaign did not reach goal",
+      "timestamp": "2026-09-12T00:00:00.000Z",
+      "completed": true
+    }
+  ],
+  "created_at": "2026-09-01T12:00:00.000Z",
+  "updated_at": "2026-09-12T00:00:00.000Z"
+}
+```
+
+### `POST /api/contributions/:id/refund`
+
+Request or trigger an on-chain refund for an eligible contribution belonging to a failed campaign.
+
+Success response (`200`):
+
+```json
+{
+  "success": true,
+  "tx_hash": "b7263161...",
+  "refund_status": "completed"
+}
+```
+
+Error responses:
+
+- `400`: If campaign is not failed (`"Refunds are only available for failed campaigns"`).
+- `404`: If contribution does not exist.
+- `409`: If contribution has already been refunded.
+- `502`: If on-chain refund invocation fails.
+
 ### `GET /api/withdrawals/capabilities`
 
 Returns whether the authenticated user may perform **platform** signing/rejection (`can_approve_platform`). If `PLATFORM_APPROVER_USER_ID` is set in the backend environment, only that user’s JWT subject matches; otherwise (dev only) any authenticated user may act as platform for API calls.
 
 ### `POST /api/withdrawals/request`
 
-Create a pending withdrawal request (creator only). Verifies multisig on the campaign wallet, ensures the campaign is `active` or `funded`, and rejects if another `pending` withdrawal already exists for the same campaign.
+Create a pending withdrawal request (creator only). Verifies multisig on the campaign wallet, ensures the campaign is `active` or `funded`, and rejects if another `pending` withdrawal already exists for the same campaign. Requests are also subject to a per-user rolling-window velocity limit; see [Velocity limits](#velocity-limits-for-withdrawal-and-refund-attempts).
 
 Body:
 
@@ -329,6 +463,34 @@ Errors:
 - `403` not the campaign creator
 - `409` campaign status not eligible, or duplicate pending withdrawal
 - `422` multisig configuration invalid
+- `429` withdrawal velocity limit exceeded (includes `Retry-After` and `retry_after`)
+
+### Velocity limits for withdrawal and refund attempts
+
+`POST /api/withdrawals/request` and `POST /api/refund-requests` count the
+actor's requests inside a rolling window before creating a new row. The limit
+is enforced from the existing `withdrawal_requests` / `refund_requests` tables,
+so it survives process restarts and is shared by every API instance.
+
+When the limit is reached the API responds with `429 Too Many Requests`:
+
+```json
+{
+  "error": "Too Many Requests",
+  "code": "VELOCITY_LIMIT_EXCEEDED",
+  "message": "Withdrawal velocity limit exceeded. Please try again later.",
+  "retry_after": 3600,
+  "limit": 5,
+  "window_seconds": 3600
+}
+```
+
+The response also carries a `Retry-After` header in seconds. Defaults are 5
+withdrawal attempts and 10 refund attempts per actor per hour. Tune them with
+`WITHDRAWAL_VELOCITY_MAX_REQUESTS`, `WITHDRAWAL_VELOCITY_WINDOW_SECONDS`,
+`REFUND_VELOCITY_MAX_REQUESTS`, and `REFUND_VELOCITY_WINDOW_SECONDS`. Setting a
+max to `0` disables that limit. See `docs/velocity-limits.md` for operational
+and security details.
 
 ### `POST /api/withdrawals/:id/approve/creator`
 

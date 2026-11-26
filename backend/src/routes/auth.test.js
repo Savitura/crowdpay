@@ -137,10 +137,10 @@ function buildApp({
         if (sql.includes('SELECT id, email FROM users')) {
           return { rows: !userMissing && userRow ? [{ id: USER_ID, email: userRow.email }] : [] };
         }
-        if (sql.includes('SELECT * FROM users WHERE id = $1')) {
+        if (sql.includes('FROM users WHERE id = $1')) {
           return { rows: userRow ? [userRow] : [] };
         }
-        if (sql.includes('SELECT * FROM users WHERE LOWER(email)')) {
+        if (sql.includes('FROM users WHERE LOWER(email)')) {
           return { rows: userMissing ? [] : userRow ? [userRow] : [] };
         }
         if (sql.includes('INSERT INTO users')) {
@@ -183,6 +183,8 @@ function buildApp({
         calls.encrypted.push({ secret, opts });
         return `ENC-${secret}`;
       },
+      encryptTotpSecret: async secret => `ENC-TOTP-${secret}`,
+      withDecryptedTotpSecret: async (_secret, _userId, fn) => fn('TESTSECRET'),
     },
     '../services/kycProvider': {
       isKycRequiredForCampaigns: () => Boolean(kyc.requiredForCampaigns),
@@ -613,7 +615,7 @@ test('POST /api/auth/2fa/setup generates a secret for a creator', async () => {
   assert.equal(res.body.secret, 'TESTSECRET');
   assert.ok(res.body.qrCodeDataUrl.startsWith('data:image/png'));
   const update = calls.db.find(q => q.sql.includes('UPDATE users SET totp_secret'));
-  assert.equal(update.params[0], 'TESTSECRET');
+  assert.equal(update.params[0], 'ENC-TOTP-TESTSECRET');
   assert.ok(calls.totpAudit.some(a => a.event === 'totp_setup_initiated'));
 });
 
@@ -811,7 +813,7 @@ test('GET /api/auth/2fa/audit-log returns events and clamps the limit', async ()
     userRow: { ...BASE_USER, totp_enabled: true },
     queryImplOverride: async (sql, params, c) => {
       c.db.push({ sql, params });
-      if (sql.includes('SELECT * FROM users WHERE id = $1')) {
+      if (sql.includes('FROM users WHERE id = $1')) {
         return { rows: [{ ...BASE_USER, totp_enabled: true }] };
       }
       if (sql.includes('FROM security_audit_log')) {

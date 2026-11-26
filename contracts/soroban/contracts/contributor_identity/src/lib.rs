@@ -1,7 +1,27 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, Map, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, Map, String, Symbol,
+    Vec,
 };
+
+#[cfg(test)]
+mod test;
+
+// ---------------------------------------------------------------------------
+// Error enum
+// ---------------------------------------------------------------------------
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum IdentityError {
+    AlreadyInitialized = 1,
+    NotInitialized = 2,
+    IdentityNotFound = 3,
+    InvalidIndex = 4,
+    Unauthorized = 5,
+    NotApprovedIssuer = 6,
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -9,6 +29,14 @@ use soroban_sdk::{
 
 /// Maximum reputation score a contributor can hold.
 pub const MAX_REPUTATION: u32 = 1000;
+
+const DAY_IN_LEDGERS: u32 = 17_280;
+/// Identities and attestations are long-lived (an attestation may not expire
+/// for a year), so keep entries live well beyond the 4096-ledger default.
+pub const STORAGE_TTL_LEDGERS: u32 = 180 * DAY_IN_LEDGERS;
+/// Entries are only re-extended once their remaining TTL drops this far below
+/// the target, so back-to-back calls don't pay for redundant bumps.
+const TTL_BUMP_SLACK: u32 = DAY_IN_LEDGERS;
 
 // ---------------------------------------------------------------------------
 // Storage key enum
@@ -34,7 +62,7 @@ pub enum DataKey {
 // ---------------------------------------------------------------------------
 
 /// A single KYC / identity attestation issued by an approved issuer.
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct Attestation {
     /// Stellar address of the issuer (platform admin or approved third-party).
@@ -53,7 +81,7 @@ pub struct Attestation {
 }
 
 /// The full on-chain identity record for a contributor.
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct ContributorIdentity {
     /// Decentralised identifier string: `did:stellar:<public_key>`.
@@ -83,9 +111,13 @@ impl ContributorIdentityContract {
     ///
     /// * `admin`             — wallet that governs the issuers list.
     /// * `platform_contract` — the address authorised to call `update_reputation`.
-    pub fn initialize(env: Env, admin: Address, platform_contract: Address) {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        platform_contract: Address,
+    ) -> Result<(), IdentityError> {
         if env.storage().instance().has(&DataKey::IsInitialized) {
-            panic!("already initialized");
+            return Err(IdentityError::AlreadyInitialized);
         }
         admin.require_auth();
 
@@ -95,10 +127,10 @@ impl ContributorIdentityContract {
             .set(&DataKey::PlatformContract, &platform_contract);
         // Start with an empty issuers map.
         let issuers: Map<Address, bool> = Map::new(&env);
-        env.storage()
-            .instance()
-            .set(&DataKey::IssuersMap, &issuers);
+        env.storage().instance().set(&DataKey::IssuersMap, &issuers);
         env.storage().instance().set(&DataKey::IsInitialized, &true);
+        Self::bump_instance(&env);
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -106,8 +138,12 @@ impl ContributorIdentityContract {
     // -----------------------------------------------------------------------
 
     /// Grant attestation-issuing rights to `issuer`.
-    pub fn add_issuer(env: Env, issuer: Address) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    pub fn add_issuer(env: Env, issuer: Address) -> Result<(), IdentityError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(IdentityError::NotInitialized)?;
         admin.require_auth();
 
         let mut issuers: Map<Address, bool> = env
@@ -117,14 +153,20 @@ impl ContributorIdentityContract {
             .unwrap_or_else(|| Map::new(&env));
         issuers.set(issuer.clone(), true);
         env.storage().instance().set(&DataKey::IssuersMap, &issuers);
+        Self::bump_instance(&env);
 
         env.events()
             .publish((Symbol::new(&env, "issuer_added"), issuer), ());
+        Ok(())
     }
 
     /// Revoke attestation-issuing rights from `issuer`.
-    pub fn remove_issuer(env: Env, issuer: Address) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    pub fn remove_issuer(env: Env, issuer: Address) -> Result<(), IdentityError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(IdentityError::NotInitialized)?;
         admin.require_auth();
 
         let mut issuers: Map<Address, bool> = env
@@ -134,9 +176,11 @@ impl ContributorIdentityContract {
             .unwrap_or_else(|| Map::new(&env));
         issuers.remove(issuer.clone());
         env.storage().instance().set(&DataKey::IssuersMap, &issuers);
+        Self::bump_instance(&env);
 
         env.events()
             .publish((Symbol::new(&env, "issuer_removed"), issuer), ());
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -153,6 +197,7 @@ impl ContributorIdentityContract {
         // Idempotent — never overwrite an existing record.
         let key = DataKey::Identity(caller.clone());
         if env.storage().persistent().has(&key) {
+            Self::bump_identity(&env, &key);
             return;
         }
 
@@ -163,6 +208,7 @@ impl ContributorIdentityContract {
             last_updated: env.ledger().timestamp(),
         };
         env.storage().persistent().set(&key, &identity);
+        Self::bump_identity(&env, &key);
 
         env.events()
             .publish((Symbol::new(&env, "identity_registered"), caller), ());
@@ -182,16 +228,16 @@ impl ContributorIdentityContract {
         attestation_type: Symbol,
         expires_at: u64,
         proof_hash: BytesN<32>,
-    ) {
+    ) -> Result<(), IdentityError> {
         issuer.require_auth();
-        Self::assert_approved_issuer(&env, &issuer);
+        Self::assert_approved_issuer(&env, &issuer)?;
 
         let key = DataKey::Identity(subject.clone());
         let mut identity: ContributorIdentity = env
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic!("subject has no registered identity"));
+            .ok_or(IdentityError::IdentityNotFound)?;
 
         let attestation = Attestation {
             issuer: issuer.clone(),
@@ -205,11 +251,13 @@ impl ContributorIdentityContract {
         identity.last_updated = env.ledger().timestamp();
 
         env.storage().persistent().set(&key, &identity);
+        Self::bump_identity(&env, &key);
 
         env.events().publish(
             (Symbol::new(&env, "attestation_added"), subject),
             attestation_type,
         );
+        Ok(())
     }
 
     /// Revoke an attestation at `attestation_index` inside the subject's list.
@@ -220,7 +268,7 @@ impl ContributorIdentityContract {
         issuer: Address,
         subject: Address,
         attestation_index: u32,
-    ) {
+    ) -> Result<(), IdentityError> {
         issuer.require_auth();
 
         let key = DataKey::Identity(subject.clone());
@@ -228,18 +276,21 @@ impl ContributorIdentityContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic!("subject has no registered identity"));
+            .ok_or(IdentityError::IdentityNotFound)?;
 
         let idx = attestation_index as usize;
         if idx >= identity.attestations.len() as usize {
-            panic!("attestation index out of range");
+            return Err(IdentityError::InvalidIndex);
         }
 
-        let mut att = identity.attestations.get(attestation_index).unwrap();
+        let mut att = identity
+            .attestations
+            .get(attestation_index)
+            .ok_or(IdentityError::InvalidIndex)?;
 
         // Enforce that only the original issuer may revoke.
         if att.issuer != issuer {
-            panic!("only the original issuer may revoke this attestation");
+            return Err(IdentityError::Unauthorized);
         }
 
         att.revoked = true;
@@ -247,11 +298,13 @@ impl ContributorIdentityContract {
         identity.last_updated = env.ledger().timestamp();
 
         env.storage().persistent().set(&key, &identity);
+        Self::bump_identity(&env, &key);
 
         env.events().publish(
             (Symbol::new(&env, "attestation_revoked"), subject),
             attestation_index,
         );
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -262,12 +315,12 @@ impl ContributorIdentityContract {
     /// The score is clamped to [0, MAX_REPUTATION].
     ///
     /// Callable only by the platform contract address set during initialisation.
-    pub fn update_reputation(env: Env, subject: Address, delta: i32) {
+    pub fn update_reputation(env: Env, subject: Address, delta: i32) -> Result<(), IdentityError> {
         let platform: Address = env
             .storage()
             .instance()
             .get(&DataKey::PlatformContract)
-            .unwrap();
+            .ok_or(IdentityError::NotInitialized)?;
         platform.require_auth();
 
         let key = DataKey::Identity(subject.clone());
@@ -275,7 +328,7 @@ impl ContributorIdentityContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic!("subject has no registered identity"));
+            .ok_or(IdentityError::IdentityNotFound)?;
 
         let current = identity.reputation_score as i64;
         let updated = (current + delta as i64).max(0).min(MAX_REPUTATION as i64) as u32;
@@ -283,11 +336,11 @@ impl ContributorIdentityContract {
         identity.last_updated = env.ledger().timestamp();
 
         env.storage().persistent().set(&key, &identity);
+        Self::bump_identity(&env, &key);
 
-        env.events().publish(
-            (Symbol::new(&env, "reputation_updated"), subject),
-            updated,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "reputation_updated"), subject), updated);
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -295,12 +348,12 @@ impl ContributorIdentityContract {
     // -----------------------------------------------------------------------
 
     /// Return the full identity record for `subject`.
-    pub fn get_identity(env: Env, subject: Address) -> ContributorIdentity {
+    pub fn get_identity(env: Env, subject: Address) -> Result<ContributorIdentity, IdentityError> {
         let key = DataKey::Identity(subject);
         env.storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic!("no identity registered for subject"))
+            .ok_or(IdentityError::IdentityNotFound)
     }
 
     /// Return `true` if the subject has at least one non-revoked, non-expired
@@ -314,12 +367,13 @@ impl ContributorIdentityContract {
 
         let now = env.ledger().timestamp();
         for i in 0..identity.attestations.len() {
-            let att = identity.attestations.get(i).unwrap();
-            if att.attestation_type == attestation_type
-                && !att.revoked
-                && (att.expires_at == 0 || att.expires_at > now)
-            {
-                return true;
+            if let Some(att) = identity.attestations.get(i) {
+                if att.attestation_type == attestation_type
+                    && !att.revoked
+                    && (att.expires_at == 0 || att.expires_at > now)
+                {
+                    return true;
+                }
             }
         }
         false
@@ -341,13 +395,14 @@ impl ContributorIdentityContract {
 
         let now = env.ledger().timestamp();
         for i in 0..identity.attestations.len() {
-            let att = identity.attestations.get(i).unwrap();
-            if att.attestation_type == attestation_type
-                && !att.revoked
-                && (att.expires_at == 0 || att.expires_at > now)
-                && att.proof_hash == proof_hash
-            {
-                return true;
+            if let Some(att) = identity.attestations.get(i) {
+                if att.attestation_type == attestation_type
+                    && !att.revoked
+                    && (att.expires_at == 0 || att.expires_at > now)
+                    && att.proof_hash == proof_hash
+                {
+                    return true;
+                }
             }
         }
         false
@@ -357,14 +412,36 @@ impl ContributorIdentityContract {
     // Internal helpers
     // -----------------------------------------------------------------------
 
-    fn assert_approved_issuer(env: &Env, issuer: &Address) {
+    fn ttl_window(env: &Env) -> (u32, u32) {
+        let extend_to = STORAGE_TTL_LEDGERS.min(env.storage().max_ttl());
+        (extend_to.saturating_sub(TTL_BUMP_SLACK), extend_to)
+    }
+
+    /// Extend the instance entry (admin, platform contract, issuers map).
+    fn bump_instance(env: &Env) {
+        let (threshold, extend_to) = Self::ttl_window(env);
+        env.storage().instance().extend_ttl(threshold, extend_to);
+    }
+
+    /// Extend one contributor's identity record together with the instance, so
+    /// any write to an identity also keeps the issuer list it depends on alive.
+    fn bump_identity(env: &Env, key: &DataKey) {
+        let (threshold, extend_to) = Self::ttl_window(env);
+        env.storage()
+            .persistent()
+            .extend_ttl(key, threshold, extend_to);
+        env.storage().instance().extend_ttl(threshold, extend_to);
+    }
+
+    fn assert_approved_issuer(env: &Env, issuer: &Address) -> Result<(), IdentityError> {
         let issuers: Map<Address, bool> = env
             .storage()
             .instance()
             .get(&DataKey::IssuersMap)
             .unwrap_or_else(|| Map::new(env));
         if !issuers.contains_key(issuer.clone()) {
-            panic!("caller is not an approved attestation issuer");
+            return Err(IdentityError::NotApprovedIssuer);
         }
+        Ok(())
     }
 }

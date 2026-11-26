@@ -19,7 +19,12 @@
  *   node contracts/stellar/multiSig.js --submit <xdr>
  */
 
-require("dotenv").config({ path: "../../backend/.env" });
+try {
+  // Optional: the example CLIs also read plain environment variables.
+  require("dotenv").config({ path: "../../backend/.env" });
+} catch {
+  // dotenv is not installed for every checkout; the process env still works.
+}
 
 const {
   Keypair,
@@ -30,25 +35,44 @@ const {
   Networks,
   BASE_FEE,
   Horizon,
-} = require("@stellar/stellar-sdk");
+} = require("./sdk").loadStellarSdk();
 
 // Authoritative values live in backend/src/config/constants.js
 const TX_TIMEOUT_WITHDRAWAL_S = 300; // 5 minutes for standalone CLI script; backend uses 7-day TX_TIMEOUT_WITHDRAWAL_S
 
-const server = new Horizon.Server(
-  process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org",
-);
 const networkPassphrase = Networks.TESTNET;
-const USDC = new Asset("USDC", process.env.USDC_ISSUER);
 
+let horizonServer = null;
+
+/** Lazily create the Horizon client so importing this module never hits the network. */
+function getServer() {
+  if (!horizonServer) {
+    horizonServer = new Horizon.Server(
+      process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org",
+    );
+  }
+  return horizonServer;
+}
+
+function resolveAsset(assetCode) {
+  return assetCode === "XLM"
+    ? Asset.native()
+    : new Asset("USDC", process.env.USDC_ISSUER);
+}
+
+/**
+ * Build the unsigned withdrawal transaction the creator signs.
+ * Returns the built transaction; the caller decides what to do with the XDR.
+ */
 async function buildWithdrawal(
   walletPublicKey,
   destPublicKey,
   amount,
   assetCode,
+  server = getServer(),
 ) {
   const account = await server.loadAccount(walletPublicKey);
-  const asset = assetCode === "XLM" ? Asset.native() : USDC;
+  const asset = resolveAsset(assetCode);
 
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
@@ -64,12 +88,14 @@ async function buildWithdrawal(
     .setTimeout(TX_TIMEOUT_WITHDRAWAL_S)
     .build();
 
-  const xdr = tx.toXDR();
   console.log("Unsigned withdrawal XDR:");
-  console.log(xdr);
+  console.log(tx.toXDR());
   console.log("\nShare this XDR with the campaign creator to sign.");
+
+  return tx;
 }
 
+/** Add one signature and return the signed XDR. */
 function signTransaction(xdr, signerSecret) {
   const tx = new Transaction(xdr, networkPassphrase);
   const keypair = Keypair.fromSecret(signerSecret);
@@ -77,10 +103,11 @@ function signTransaction(xdr, signerSecret) {
   const signed = tx.toXDR();
   console.log("Signed XDR:");
   console.log(signed);
+  return signed;
 }
 
-async function submitTransaction(xdr) {
-  // Add platform signature before submitting
+/** Add the platform signature and submit. */
+async function submitTransaction(xdr, server = getServer()) {
   const tx = new Transaction(xdr, networkPassphrase);
   const platformKeypair = Keypair.fromSecret(process.env.PLATFORM_SECRET_KEY);
   tx.sign(platformKeypair);
@@ -88,19 +115,29 @@ async function submitTransaction(xdr) {
   const result = await server.submitTransaction(tx);
   console.log("Withdrawal submitted.");
   console.log("Tx hash:", result.hash);
+  return result;
 }
 
-const [, , flag, ...args] = process.argv;
+module.exports = {
+  TX_TIMEOUT_WITHDRAWAL_S,
+  buildWithdrawal,
+  signTransaction,
+  submitTransaction,
+};
 
-if (flag === "--build")
-  buildWithdrawal(args[0], args[1], args[2], args[3]).catch(console.error);
-else if (flag === "--sign") signTransaction(args[0], args[1]);
-else if (flag === "--submit") submitTransaction(args[0]).catch(console.error);
-else {
-  console.log("Usage:");
-  console.log(
-    "  node multiSig.js --build <walletPublicKey> <destPublicKey> <amount> <asset>",
-  );
-  console.log("  node multiSig.js --sign <xdr> <signerSecret>");
-  console.log("  node multiSig.js --submit <signedXdr>");
+if (require.main === module) {
+  const [, , flag, ...args] = process.argv;
+
+  if (flag === "--build")
+    buildWithdrawal(args[0], args[1], args[2], args[3]).catch(console.error);
+  else if (flag === "--sign") signTransaction(args[0], args[1]);
+  else if (flag === "--submit") submitTransaction(args[0]).catch(console.error);
+  else {
+    console.log("Usage:");
+    console.log(
+      "  node multiSig.js --build <walletPublicKey> <destPublicKey> <amount> <asset>",
+    );
+    console.log("  node multiSig.js --sign <xdr> <signerSecret>");
+    console.log("  node multiSig.js --submit <signedXdr>");
+  }
 }

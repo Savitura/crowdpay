@@ -67,6 +67,15 @@ function paragraph(text) {
   return `<p style="margin:0 0 16px;">${escapeHtml(text)}</p>`;
 }
 
+/**
+ * Paragraph whose HTML is already escaped by the caller. Use only when the
+ * paragraph needs inline markup; every interpolated value must go through
+ * `escapeHtml` first.
+ */
+function paragraphHtml(html) {
+  return `<p style="margin:0 0 16px;">${html}</p>`;
+}
+
 function heading(text) {
   return `<h1 style="margin:0 0 16px;font-size:20px;color:#0f1f3d;">${escapeHtml(text)}</h1>`;
 }
@@ -92,6 +101,7 @@ module.exports = {
   escapeHtml,
   renderLayout,
   paragraph,
+  paragraphHtml,
   heading,
   link,
   table,

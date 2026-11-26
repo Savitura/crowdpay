@@ -12,6 +12,22 @@ const ALLOWED_SCOPES = new Set(['read', 'write', 'withdrawals', 'developer', 'fu
 const DEFAULT_KEY_EXPIRY_DAYS = 90;
 const ROTATION_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+const API_KEY_COLUMNS = [
+  'id',
+  'user_id',
+  'key_prefix',
+  'key_hash',
+  'label',
+  'scopes',
+  'last_used_at',
+  'revoked_at',
+  'created_at',
+  'expires_at',
+  'predecessor_id',
+  'successor_id',
+  'rotation_state',
+].join(', ');
+
 function normalizeScopes(input) {
   if (!input || !Array.isArray(input) || !input.length) {
     return ['read', 'write', 'withdrawals'];
@@ -96,7 +112,7 @@ async function revokeApiKeyForUser(userId, keyId) {
 
 async function rotateApiKey(userId, keyId, { label, scopes, expires_at } = {}) {
   const { rows: keyRows } = await db.query(
-    `SELECT * FROM api_keys WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND rotation_state = 'active'`,
+    `SELECT ${API_KEY_COLUMNS} FROM api_keys WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND rotation_state = 'active'`,
     [keyId, userId]
   );
   const existing = keyRows[0];

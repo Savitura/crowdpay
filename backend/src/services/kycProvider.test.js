@@ -1,187 +1,308 @@
-const { test, beforeEach, afterEach } = require('node:test');
-const assert = require('node:assert');
+const test = require('node:test');
+const assert = require('node:assert/strict');
 const crypto = require('crypto');
 const proxyquire = require('proxyquire').noCallThru();
 
-const originalSecret = process.env.PERSONA_WEBHOOK_SECRET;
-const originalEnv = process.env.NODE_ENV;
-const originalProvider = process.env.KYC_PROVIDER;
+const ENV_KEYS = [
+  'KYC_PROVIDER',
+  'PERSONA_API_KEY',
+  'PERSONA_TEMPLATE_ID',
+  'PERSONA_WEBHOOK_SECRET',
+  'APP_BASE_URL',
+  'FRONTEND_URL',
+  'NODE_ENV',
+];
 
-beforeEach(() => {
-  process.env.PERSONA_WEBHOOK_SECRET = 'test-webhook-secret';
-  process.env.NODE_ENV = 'production';
-  delete process.env.KYC_PROVIDER;
-});
-
-afterEach(() => {
-  if (originalSecret === undefined) delete process.env.PERSONA_WEBHOOK_SECRET;
-  else process.env.PERSONA_WEBHOOK_SECRET = originalSecret;
-  process.env.NODE_ENV = originalEnv;
-  if (originalProvider === undefined) delete process.env.KYC_PROVIDER;
-  else process.env.KYC_PROVIDER = originalProvider;
-});
-
-function loadProvider() {
-  return proxyquire('./kycProvider', {});
+function saveEnv() {
+  const snapshot = {};
+  for (const key of ENV_KEYS) {
+    snapshot[key] = process.env[key];
+  }
+  return snapshot;
 }
 
-test('verifyPersonaWebhookSignature accepts valid Persona signature', () => {
-  const { verifyPersonaWebhookSignature } = loadProvider();
-  const rawBody = JSON.stringify({ data: { id: 'inq_123' } });
-  const timestamp = '1700000000';
-  const signature = crypto
-    .createHmac('sha256', 'test-webhook-secret')
-    .update(`${timestamp}.${rawBody}`)
-    .digest('hex');
+function restoreEnv(snapshot) {
+  for (const key of ENV_KEYS) {
+    if (snapshot[key] === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = snapshot[key];
+    }
+  }
+}
 
-  assert.strictEqual(
-    verifyPersonaWebhookSignature(rawBody, `t=${timestamp},v1=${signature}`),
-    true
-  );
-});
-
-test('verifyPersonaWebhookSignature rejects invalid signature', () => {
-  const { verifyPersonaWebhookSignature } = loadProvider();
-  const rawBody = JSON.stringify({ data: { id: 'inq_123' } });
-  assert.strictEqual(verifyPersonaWebhookSignature(rawBody, 't=1700000000,v1=deadbeef'), false);
-});
-
-test('verifyPersonaWebhookSignature allows unsigned webhooks in test mode without secret', () => {
-  delete process.env.PERSONA_WEBHOOK_SECRET;
-  process.env.NODE_ENV = 'test';
-  const { verifyPersonaWebhookSignature } = loadProvider();
-  assert.strictEqual(verifyPersonaWebhookSignature('{}', null), true);
-});
-
-test('createKycSession fails closed when Persona keys are missing (#814)', async () => {
-  delete process.env.PERSONA_API_KEY;
-  delete process.env.PERSONA_TEMPLATE_ID;
-  process.env.KYC_PROVIDER = 'persona';
-  const { createKycSession } = loadProvider();
-  await assert.rejects(
-    () => createKycSession({ user: { id: 'u1', name: 'Test', email: 't@example.com' } }),
-    /Persona KYC is not configured/
-  );
-});
-
-test('createKycSession allows explicit dev provider (#814)', async () => {
-  process.env.KYC_PROVIDER = 'dev';
-  const { createKycSession } = loadProvider();
-  const session = await createKycSession({
-    user: { id: 'u1', name: 'Test', email: 't@example.com' },
+function loadKycProvider({ featureEnabled = false, fetchImpl, warnings = [] } = {}) {
+  return proxyquire('./kycProvider', {
+    './featureFlags': {
+      isEnabled: name => (name === 'kyc-required-for-campaigns' ? featureEnabled : false),
+    },
+    '../config/logger': {
+      info: () => {},
+      warn: (msg, meta) => warnings.push({ msg, meta }),
+      error: () => {},
+      debug: () => {},
+    },
+    '../utils/fetchWithTimeout': {
+      fetchWithTimeout:
+        fetchImpl ||
+        (async () => {
+          throw new Error('fetchWithTimeout not mocked');
+        }),
+    },
   });
-  assert.strictEqual(session.provider, 'dev');
-  assert.ok(session.redirectUrl);
+}
+
+test('isKycRequiredForCampaigns delegates to featureFlags', () => {
+  assert.equal(loadKycProvider({ featureEnabled: true }).isKycRequiredForCampaigns(), true);
+  assert.equal(loadKycProvider({ featureEnabled: false }).isKycRequiredForCampaigns(), false);
 });
 
-test('extractWebhookResult maps approved inquiry to verified', () => {
-  const { extractWebhookResult } = loadProvider();
-  const result = extractWebhookResult({
+test('createKycSession creates a dev session with normalized redirectUrl', async () => {
+  const env = saveEnv();
+  try {
+    process.env.KYC_PROVIDER = 'dev';
+    process.env.APP_BASE_URL = 'https://app.crowdpay.test/';
+    const kyc = loadKycProvider();
+
+    const session = await kyc.createKycSession({
+      user: { id: 'user-42', name: 'Ada', email: 'ada@example.com' },
+    });
+
+    assert.equal(session.provider, 'dev');
+    assert.match(session.providerReference, /^dev_kyc_user-42_[0-9a-f]{16}$/);
+    assert.equal(session.sessionToken, session.providerReference);
+    assert.equal(
+      session.redirectUrl,
+      `https://app.crowdpay.test/dashboard?kyc=started&reference=${encodeURIComponent(session.providerReference)}`
+    );
+  } finally {
+    restoreEnv(env);
+  }
+});
+
+test('createKycSession throws when Persona env vars are missing', async () => {
+  const env = saveEnv();
+  try {
+    delete process.env.KYC_PROVIDER;
+    delete process.env.PERSONA_API_KEY;
+    delete process.env.PERSONA_TEMPLATE_ID;
+    const kyc = loadKycProvider();
+
+    await assert.rejects(
+      () => kyc.createKycSession({ user: { id: 'u1', name: 'Ada', email: 'ada@example.com' } }),
+      /Persona KYC is not configured/
+    );
+  } finally {
+    restoreEnv(env);
+  }
+});
+
+test('createKycSession throws on unsupported KYC_PROVIDER', async () => {
+  const env = saveEnv();
+  try {
+    process.env.KYC_PROVIDER = 'sumsub';
+    const kyc = loadKycProvider();
+
+    await assert.rejects(
+      () => kyc.createKycSession({ user: { id: 'u1' } }),
+      /Unsupported KYC_PROVIDER "sumsub"/
+    );
+  } finally {
+    restoreEnv(env);
+  }
+});
+
+test('createKycSession creates a Persona inquiry and maps response fields', async () => {
+  const env = saveEnv();
+  try {
+    process.env.KYC_PROVIDER = 'persona';
+    process.env.PERSONA_API_KEY = 'persona_key_123';
+    process.env.PERSONA_TEMPLATE_ID = 'tmpl_abc';
+    process.env.FRONTEND_URL = 'https://crowdpay.example/';
+
+    const calls = [];
+    const kyc = loadKycProvider({
+      fetchImpl: async (url, options) => {
+        calls.push({ url, options });
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            data: {
+              id: 'inq_123',
+              attributes: {
+                'hosted-inquiry-url': 'https://withpersona.com/verify?inquiry-id=inq_123',
+                'session-token': 'sess_tok_999',
+              },
+            },
+          }),
+        };
+      },
+    });
+
+    const session = await kyc.createKycSession({
+      user: { id: 'user-7', name: 'Grace Hopper', email: 'grace@example.com' },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://withpersona.com/api/v1/inquiries');
+    assert.equal(calls[0].options.method, 'POST');
+    assert.equal(calls[0].options.headers.Authorization, 'Bearer persona_key_123');
+
+    const payload = JSON.parse(calls[0].options.body);
+    assert.equal(payload.data.attributes['inquiry-template-id'], 'tmpl_abc');
+    assert.equal(payload.data.attributes['reference-id'], 'user-7');
+    assert.equal(
+      payload.data.attributes['redirect-uri'],
+      'https://crowdpay.example/dashboard?kyc=returned'
+    );
+    assert.deepEqual(payload.data.attributes.fields, {
+      name: 'Grace Hopper',
+      email: 'grace@example.com',
+    });
+
+    assert.deepEqual(session, {
+      provider: 'persona',
+      providerReference: 'inq_123',
+      redirectUrl: 'https://withpersona.com/verify?inquiry-id=inq_123',
+      sessionToken: 'sess_tok_999',
+    });
+  } finally {
+    restoreEnv(env);
+  }
+});
+
+test('createKycSession propagates Persona API error detail, title, fallback, and network errors', async () => {
+  const env = saveEnv();
+  try {
+    process.env.KYC_PROVIDER = 'persona';
+    process.env.PERSONA_API_KEY = 'persona_key_123';
+    process.env.PERSONA_TEMPLATE_ID = 'tmpl_abc';
+
+    const kycWithDetail = loadKycProvider({
+      fetchImpl: async () => ({
+        ok: false,
+        status: 422,
+        json: async () => ({ errors: [{ detail: 'Invalid template id', title: 'Unprocessable' }] }),
+      }),
+    });
+    await assert.rejects(
+      () => kycWithDetail.createKycSession({ user: { id: 'u1', name: 'A', email: 'a@b.com' } }),
+      /Invalid template id/
+    );
+
+    const kycWithTitle = loadKycProvider({
+      fetchImpl: async () => ({
+        ok: false,
+        status: 401,
+        json: async () => ({ errors: [{ title: 'Unauthorized' }] }),
+      }),
+    });
+    await assert.rejects(
+      () => kycWithTitle.createKycSession({ user: { id: 'u1', name: 'A', email: 'a@b.com' } }),
+      /Unauthorized/
+    );
+
+    const warnings = [];
+    const kycWithBadJson = loadKycProvider({
+      warnings,
+      fetchImpl: async () => ({
+        ok: false,
+        status: 502,
+        json: async () => {
+          throw new Error('Unexpected token <');
+        },
+      }),
+    });
+    await assert.rejects(
+      () => kycWithBadJson.createKycSession({ user: { id: 'u1', name: 'A', email: 'a@b.com' } }),
+      /Could not create KYC session/
+    );
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].meta.status, 502);
+
+    const kycWithNetworkErr = loadKycProvider({
+      fetchImpl: async () => {
+        throw new Error('Request timed out');
+      },
+    });
+    await assert.rejects(
+      () => kycWithNetworkErr.createKycSession({ user: { id: 'u1', name: 'A', email: 'a@b.com' } }),
+      /Request timed out/
+    );
+  } finally {
+    restoreEnv(env);
+  }
+});
+
+test('determineVerificationTier and getTierLimit map checks, packages, tags, and limits', () => {
+  const kyc = loadKycProvider();
+
+  assert.equal(kyc.determineVerificationTier({}), 'basic');
+  assert.equal(
+    kyc.determineVerificationTier({
+      data: { attributes: { checks: [{ type: 'government-id' }] } },
+    }),
+    'basic'
+  );
+  assert.equal(
+    kyc.determineVerificationTier({
+      data: {
+        attributes: {
+          checks: [{ name: 'government_id' }, { 'check-type': 'proof-of-address' }],
+        },
+      },
+    }),
+    'standard'
+  );
+  assert.equal(
+    kyc.determineVerificationTier({
+      payload: {
+        data: {
+          attributes: {
+            'verification-packages': [
+              { methods: [{ name: 'document' }, { name: 'address' }, { name: 'selfie' }] },
+            ],
+          },
+        },
+      },
+    }),
+    'enhanced'
+  );
+  assert.equal(
+    kyc.determineVerificationTier({
+      data: { attributes: { tags: ['liveness'] } },
+    }),
+    'enhanced'
+  );
+  assert.equal(
+    kyc.determineVerificationTier({
+      data: { attributes: { tags: ['address'] } },
+    }),
+    'standard'
+  );
+
+  assert.equal(kyc.getTierLimit('none'), 0);
+  assert.equal(kyc.getTierLimit('basic'), 5000);
+  assert.equal(kyc.getTierLimit('standard'), 50000);
+  assert.equal(kyc.getTierLimit('enhanced'), Infinity);
+  assert.equal(kyc.getTierLimit('unknown'), 0);
+});
+
+test('extractWebhookResult maps approved, declined, and pending statuses and metadata', () => {
+  const kyc = loadKycProvider();
+
+  const approved = kyc.extractWebhookResult({
     data: {
       id: 'evt_1',
       attributes: {
-        name: 'inquiry.approved',
+        name: 'inquiry.completed',
         payload: {
           data: {
-            id: 'inq_abc',
+            id: 'inq_999',
             attributes: {
               status: 'approved',
-              'reference-id': 'user-1',
-            },
-          },
-        },
-      },
-    },
-  });
-
-  assert.strictEqual(result.kycStatus, 'verified');
-  assert.strictEqual(result.providerReference, 'inq_abc');
-  assert.strictEqual(result.userId, 'user-1');
-});
-
-test('extractWebhookResult maps declined inquiry to rejected with reason', () => {
-  const { extractWebhookResult } = loadProvider();
-  const result = extractWebhookResult({
-    data: {
-      attributes: {
-        name: 'inquiry.declined',
-        payload: {
-          data: {
-            id: 'inq_declined',
-            attributes: {
-              status: 'declined',
-              'decline-reason': 'Document unreadable',
-            },
-          },
-        },
-      },
-    },
-  });
-
-  assert.strictEqual(result.kycStatus, 'rejected');
-  assert.strictEqual(result.reason, 'Document unreadable');
-});
-
-test('extractWebhookResult returns approved status and basic tier for approved inquiry with government-id check', () => {
-  const { extractWebhookResult } = loadProvider();
-  const result = extractWebhookResult({
-    data: {
-      attributes: {
-        name: 'inquiry.approved',
-        payload: {
-          data: {
-            id: 'inq_gov',
-            attributes: {
-              status: 'approved',
-              'reference-id': 'user-2',
-              checks: [{ type: 'government-id' }],
-            },
-          },
-        },
-      },
-    },
-  });
-
-  assert.strictEqual(result.verificationStatus, 'approved');
-  assert.strictEqual(result.tier, 'basic');
-});
-
-test('extractWebhookResult returns enhanced tier for approved inquiry with government-id, address, and liveness checks', () => {
-  const { extractWebhookResult } = loadProvider();
-  const result = extractWebhookResult({
-    data: {
-      attributes: {
-        name: 'inquiry.approved',
-        payload: {
-          data: {
-            id: 'inq_enhanced',
-            attributes: {
-              status: 'approved',
-              'reference-id': 'user-3',
-              checks: [{ type: 'government-id' }, { type: 'address' }, { type: 'liveness' }],
-            },
-          },
-        },
-      },
-    },
-  });
-
-  assert.strictEqual(result.verificationStatus, 'approved');
-  assert.strictEqual(result.tier, 'enhanced');
-});
-
-test('extractWebhookResult returns standard tier for government-id and address checks without liveness', () => {
-  const { extractWebhookResult } = loadProvider();
-  const result = extractWebhookResult({
-    data: {
-      attributes: {
-        name: 'inquiry.approved',
-        payload: {
-          data: {
-            id: 'inq_std',
-            attributes: {
-              status: 'approved',
-              'reference-id': 'user-4',
+              'reference-id': 'user-99',
               checks: [{ type: 'government-id' }, { type: 'address' }],
             },
           },
@@ -189,74 +310,84 @@ test('extractWebhookResult returns standard tier for government-id and address c
       },
     },
   });
+  assert.deepEqual(approved, {
+    providerReference: 'inq_999',
+    userId: 'user-99',
+    kycStatus: 'verified',
+    verificationStatus: 'approved',
+    tier: 'standard',
+    reason: null,
+  });
 
-  assert.strictEqual(result.verificationStatus, 'approved');
-  assert.strictEqual(result.tier, 'standard');
-});
-
-test('extractWebhookResult returns none tier for declined inquiry', () => {
-  const { extractWebhookResult } = loadProvider();
-  const result = extractWebhookResult({
+  const declined = kyc.extractWebhookResult({
     data: {
+      id: 'inq_555',
       attributes: {
-        name: 'inquiry.declined',
-        payload: {
-          data: {
-            id: 'inq_decl',
-            attributes: {
-              status: 'declined',
-              'reference-id': 'user-5',
-            },
-          },
-        },
+        status: 'declined',
+        reference_id: 'user-55',
+        'decline-reason': 'Expired ID document',
       },
     },
   });
-
-  assert.strictEqual(result.verificationStatus, 'declined');
-  assert.strictEqual(result.tier, 'none');
-});
-
-test('getTierLimit returns correct limits for each tier', () => {
-  const { getTierLimit } = loadProvider();
-  assert.strictEqual(getTierLimit('none'), 0);
-  assert.strictEqual(getTierLimit('basic'), 5000);
-  assert.strictEqual(getTierLimit('standard'), 50000);
-  assert.strictEqual(getTierLimit('enhanced'), Infinity);
-});
-
-test('determineVerificationTier returns basic for government-id check only', () => {
-  const { determineVerificationTier } = loadProvider();
-  const tier = determineVerificationTier({
-    data: {
-      attributes: {
-        payload: {
-          data: {
-            attributes: {
-              checks: [{ type: 'government-id' }],
-            },
-          },
-        },
-      },
-    },
+  assert.deepEqual(declined, {
+    providerReference: 'inq_555',
+    userId: 'user-55',
+    kycStatus: 'rejected',
+    verificationStatus: 'declined',
+    tier: 'none',
+    reason: 'Expired ID document',
   });
-  assert.strictEqual(tier, 'basic');
+
+  const pending = kyc.extractWebhookResult({
+    inquiry_id: 'inq_111',
+    user_id: 'user-11',
+    status: 'created',
+  });
+  assert.deepEqual(pending, {
+    providerReference: 'inq_111',
+    userId: 'user-11',
+    kycStatus: 'pending',
+    verificationStatus: 'pending',
+    tier: 'none',
+    reason: null,
+  });
 });
 
-test('determineVerificationTier returns enhanced for liveness check', () => {
-  const { determineVerificationTier } = loadProvider();
-  const tier = determineVerificationTier({
-    data: {
-      attributes: {
-        payload: {
-          data: {
-            attributes: {
-              checks: [{ type: 'government-id' }, { type: 'address' }, { type: 'liveness' }],
-            },
-          },
-        },
-      },
-    },
-  });
-  assert.strictEqual(tier, 'enhanced');
+test('verifyPersonaWebhookSignature handles missing secret, malformed headers, and HMAC verification', () => {
+  const env = saveEnv();
+  try {
+    const kyc = loadKycProvider();
+
+    delete process.env.PERSONA_WEBHOOK_SECRET;
+    process.env.NODE_ENV = 'test';
+    assert.equal(kyc.verifyPersonaWebhookSignature('{}', ''), true);
+
+    process.env.NODE_ENV = 'production';
+    process.env.KYC_PROVIDER = 'persona';
+    assert.equal(kyc.verifyPersonaWebhookSignature('{}', ''), false);
+
+    process.env.KYC_PROVIDER = 'dev';
+    assert.equal(kyc.verifyPersonaWebhookSignature('{}', ''), true);
+
+    process.env.PERSONA_WEBHOOK_SECRET = 'whsec_test_secret';
+    const rawBody = Buffer.from('{"data":{"id":"inq_1"}}', 'utf8');
+    const timestamp = '1700000000';
+    const validSig = crypto
+      .createHmac('sha256', 'whsec_test_secret')
+      .update(`${timestamp}.${rawBody.toString('utf8')}`)
+      .digest('hex');
+
+    assert.equal(kyc.verifyPersonaWebhookSignature(rawBody, null), false);
+    assert.equal(kyc.verifyPersonaWebhookSignature(rawBody, 't=1700000000'), false);
+    assert.equal(
+      kyc.verifyPersonaWebhookSignature(rawBody, `t=${timestamp},v1=deadbeef,v1=${validSig}`),
+      true
+    );
+    assert.equal(
+      kyc.verifyPersonaWebhookSignature('{"tampered":true}', `t=${timestamp},v1=${validSig}`),
+      false
+    );
+  } finally {
+    restoreEnv(env);
+  }
 });

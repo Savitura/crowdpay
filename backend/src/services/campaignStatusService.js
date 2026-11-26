@@ -2,6 +2,7 @@ const db = require('../config/database');
 const logger = require('../config/logger');
 const { triggerCampaignStatusActions } = require('./campaignStatusActions');
 const { logAuditEvent } = require('./auditService');
+const { invalidateCampaignFacets } = require('./campaignFacetService');
 
 /** Postgres advisory lock id — serializes batch status refresh across cron instances. */
 const CAMPAIGN_STATUS_REFRESH_LOCK_KEY = 323001;
@@ -108,6 +109,7 @@ async function refreshCampaignStatus(campaignId, client) {
     logTransition(transitioned, 'active');
     await auditCampaignTransition(transitioned, 'active', 'system:campaign_status_refresh', client);
     await triggerCampaignStatusActions(transitioned, 'active');
+    invalidateCampaignFacets();
   }
 
   return {
@@ -159,6 +161,8 @@ async function refreshActiveCampaignStatuses() {
         funded_count: funded.length,
         failed_count: failed.length,
       });
+
+      invalidateCampaignFacets();
     }
 
     return { funded, failed, skipped: false };

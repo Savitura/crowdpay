@@ -316,6 +316,7 @@ CREATE TABLE webhook_deliveries (
   last_error            TEXT,
   next_retry_at         TIMESTAMPTZ,
   delivered_at          TIMESTAMPTZ,
+  latency_ms            INT,
   created_at            TIMESTAMPTZ DEFAULT NOW(),
   updated_at            TIMESTAMPTZ DEFAULT NOW()
 );
@@ -398,6 +399,8 @@ ALTER TABLE withdrawal_requests
   ADD COLUMN milestone_id UUID REFERENCES milestones(id);
 
 CREATE INDEX withdrawal_requests_milestone_idx ON withdrawal_requests (milestone_id);
+CREATE INDEX withdrawal_requests_requested_by_created_idx
+  ON withdrawal_requests (requested_by, created_at DESC);
 
 CREATE TABLE anchor_deposits (
   id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),

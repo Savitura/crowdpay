@@ -1,12 +1,26 @@
 #![cfg(test)]
-
+#![allow(
+    deprecated,
+    unused_imports,
+    unused_variables,
+    mismatched_lifetime_syntaxes,
+    clippy::all
+)]
 use super::*;
-use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::testutils::storage::{Instance as _, Persistent as _};
+use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::IntoVal;
-use soroban_sdk::{token, Address, Env, Vec, symbol_short};
+use soroban_sdk::{symbol_short, token, Address, Env, Vec};
 
-fn setup_test(env: &Env) -> (Address, Address, token::Client, token::StellarAssetClient, CrowdPayContractClient) {
+fn setup_test(
+    env: &Env,
+) -> (
+    Address,
+    Address,
+    token::Client,
+    token::StellarAssetClient,
+    CrowdPayContractClient,
+) {
     let creator = Address::generate(env);
     let token_admin = Address::generate(env);
     let token_id = env.register_stellar_asset_contract(token_admin);
@@ -20,14 +34,36 @@ fn setup_test(env: &Env) -> (Address, Address, token::Client, token::StellarAsse
 }
 
 #[test]
+fn test_uninitialized_contribute_returns_error() {
+    let env = Env::default();
+    let (_creator, _token_id, _token, _token_admin, client) = setup_test(&env);
+    let contributor = Address::generate(&env);
+    assert_eq!(
+        client.mock_all_auths().try_contribute(&contributor, &100),
+        Err(Ok(crate::CrowdPayError::NotInitialized))
+    );
+}
+
+#[test]
 fn test_initialize() {
     let env = Env::default();
     let (creator, token_id, _token, _token_admin, client) = setup_test(&env);
 
-    let milestones = Vec::from_array(&env, [
-        Milestone { target: 1000, amount: 1000, released: false },
-        Milestone { target: 2000, amount: 1000, released: false },
-    ]);
+    let milestones = Vec::from_array(
+        &env,
+        [
+            Milestone {
+                target: 1000,
+                amount: 1000,
+                released: false,
+            },
+            Milestone {
+                target: 2000,
+                amount: 1000,
+                released: false,
+            },
+        ],
+    );
 
     client.mock_all_auths().initialize(
         &symbol_short!("cp1"),
@@ -48,9 +84,14 @@ fn test_initialize_requires_creator_auth() {
     let env = Env::default();
     let (creator, token_id, _token, _token_admin, client) = setup_test(&env);
 
-    let milestones = Vec::from_array(&env, [
-        Milestone { target: 1000, amount: 1000, released: false },
-    ]);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
 
     client.initialize(
         &symbol_short!("cp1"),
@@ -69,12 +110,33 @@ fn test_double_initialization_rejection() {
     let env = Env::default();
     let (creator, token_id, _token, _token_admin, client) = setup_test(&env);
 
-    let milestones = Vec::from_array(&env, [
-        Milestone { target: 1000, amount: 1000, released: false },
-    ]);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
 
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &Address::generate(&env), &token_id, &1000, &10000, &milestones);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &Address::generate(&env), &token_id, &1000, &10000, &milestones);
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &Address::generate(&env),
+        &token_id,
+        &1000,
+        &10000,
+        &milestones,
+    );
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &Address::generate(&env),
+        &token_id,
+        &1000,
+        &10000,
+        &milestones,
+    );
 }
 
 #[test]
@@ -83,8 +145,23 @@ fn test_contribute_and_goal_reached() {
     let (creator, token_id, token, token_admin, client) = setup_test(&env);
     let contributor = Address::generate(&env);
 
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &Address::generate(&env), &token_id, &1000, &10000, &milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &Address::generate(&env),
+        &token_id,
+        &1000,
+        &10000,
+        &milestones,
+    );
 
     token_admin.mock_all_auths().mint(&contributor, &1000);
     client.mock_all_auths().contribute(&contributor, &1000);
@@ -101,8 +178,23 @@ fn test_contribute_after_deadline_fails() {
     let (creator, token_id, _token, token_admin, client) = setup_test(&env);
     let contributor = Address::generate(&env);
 
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &Address::generate(&env), &token_id, &1000, &1000, &milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &Address::generate(&env),
+        &token_id,
+        &1000,
+        &1000,
+        &milestones,
+    );
 
     token_admin.mock_all_auths().mint(&contributor, &500);
 
@@ -118,8 +210,23 @@ fn test_contribute_rejects_zero_amount() {
     let (creator, token_id, token, token_admin, client) = setup_test(&env);
     let contributor = Address::generate(&env);
 
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &Address::generate(&env), &token_id, &1000, &10000, &milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &Address::generate(&env),
+        &token_id,
+        &1000,
+        &10000,
+        &milestones,
+    );
 
     token_admin.mock_all_auths().mint(&contributor, &100);
     client.mock_all_auths().contribute(&contributor, &0);
@@ -132,8 +239,23 @@ fn test_contribute_rejects_negative_amount() {
     let (creator, token_id, token, token_admin, client) = setup_test(&env);
     let contributor = Address::generate(&env);
 
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &token_id, &1000, &10000, &milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &Address::generate(&env),
+        &token_id,
+        &1000,
+        &10000,
+        &milestones,
+    );
 
     token_admin.mock_all_auths().mint(&contributor, &100);
     client.mock_all_auths().contribute(&contributor, &-1);
@@ -145,8 +267,23 @@ fn test_milestone_release() {
     let (creator, token_id, token, token_admin, client) = setup_test(&env);
     let contributor = Address::generate(&env);
 
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &Address::generate(&env), &token_id, &1000, &10000, &milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &Address::generate(&env),
+        &token_id,
+        &1000,
+        &10000,
+        &milestones,
+    );
 
     token_admin.mock_all_auths().mint(&contributor, &1000);
     client.mock_all_auths().contribute(&contributor, &1000);
@@ -165,11 +302,30 @@ fn test_milestone_release_releases_only_milestone_amount() {
     let (creator, token_id, token, token_admin, client) = setup_test(&env);
     let contributor = Address::generate(&env);
 
-    let milestones = Vec::from_array(&env, [
-        Milestone { target: 1000, amount: 400, released: false },
-        Milestone { target: 2000, amount: 600, released: false },
-    ]);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &Address::generate(&env), &token_id, &2000, &10000, &milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [
+            Milestone {
+                target: 1000,
+                amount: 400,
+                released: false,
+            },
+            Milestone {
+                target: 2000,
+                amount: 600,
+                released: false,
+            },
+        ],
+    );
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &Address::generate(&env),
+        &token_id,
+        &2000,
+        &10000,
+        &milestones,
+    );
 
     token_admin.mock_all_auths().mint(&contributor, &2000);
     client.mock_all_auths().contribute(&contributor, &2000);
@@ -196,11 +352,30 @@ fn test_multiple_milestone_releases() {
     let (creator, token_id, token, token_admin, client) = setup_test(&env);
     let contributor = Address::generate(&env);
 
-    let milestones = Vec::from_array(&env, [
-        Milestone { target: 1000, amount: 1000, released: false },
-        Milestone { target: 2000, amount: 1000, released: false },
-    ]);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &Address::generate(&env), &token_id, &2000, &10000, &milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [
+            Milestone {
+                target: 1000,
+                amount: 1000,
+                released: false,
+            },
+            Milestone {
+                target: 2000,
+                amount: 1000,
+                released: false,
+            },
+        ],
+    );
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &Address::generate(&env),
+        &token_id,
+        &2000,
+        &10000,
+        &milestones,
+    );
 
     token_admin.mock_all_auths().mint(&contributor, &2000);
     client.mock_all_auths().contribute(&contributor, &2000);
@@ -228,8 +403,23 @@ fn test_milestone_already_released_rejection() {
     let (creator, token_id, _token, token_admin, client) = setup_test(&env);
     let contributor = Address::generate(&env);
 
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &Address::generate(&env), &token_id, &1000, &10000, &milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &Address::generate(&env),
+        &token_id,
+        &1000,
+        &10000,
+        &milestones,
+    );
 
     token_admin.mock_all_auths().mint(&contributor, &1000);
     client.mock_all_auths().contribute(&contributor, &1000);
@@ -248,8 +438,23 @@ fn test_milestone_release_fails_if_target_not_met() {
     let (creator, token_id, _token, token_admin, client) = setup_test(&env);
     let contributor = Address::generate(&env);
 
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &Address::generate(&env), &token_id, &1000, &10000, &milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &Address::generate(&env),
+        &token_id,
+        &1000,
+        &10000,
+        &milestones,
+    );
 
     token_admin.mock_all_auths().mint(&contributor, &500);
     client.mock_all_auths().contribute(&contributor, &500);
@@ -265,8 +470,23 @@ fn test_refund_after_failure() {
     let (creator, token_id, token, token_admin, client) = setup_test(&env);
     let contributor = Address::generate(&env);
 
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &Address::generate(&env), &token_id, &1000, &100, &milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &Address::generate(&env),
+        &token_id,
+        &1000,
+        &100,
+        &milestones,
+    );
 
     token_admin.mock_all_auths().mint(&contributor, &500);
     client.mock_all_auths().contribute(&contributor, &500);
@@ -288,8 +508,23 @@ fn test_refund_fails_if_active() {
     let (creator, token_id, _token, token_admin, client) = setup_test(&env);
     let contributor = Address::generate(&env);
 
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &Address::generate(&env), &token_id, &1000, &10000, &milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &Address::generate(&env),
+        &token_id,
+        &1000,
+        &10000,
+        &milestones,
+    );
 
     token_admin.mock_all_auths().mint(&contributor, &500);
     client.mock_all_auths().contribute(&contributor, &500);
@@ -302,10 +537,24 @@ fn setup_with_platform(
     goal: i128,
     deadline: u64,
     milestones: Vec<Milestone>,
-) -> (Address, Address, token::Client, token::StellarAssetClient, CrowdPayContractClient) {
+) -> (
+    Address,
+    Address,
+    token::Client,
+    token::StellarAssetClient,
+    CrowdPayContractClient,
+) {
     let (creator, token_id, token, token_admin, client) = setup_test(env);
     let platform = Address::generate(env);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &platform, &token_id, &goal, &deadline, &milestones);
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &platform,
+        &token_id,
+        &goal,
+        &deadline,
+        &milestones,
+    );
     (creator, platform, token, token_admin, client)
 }
 
@@ -313,8 +562,16 @@ fn setup_with_platform(
 #[should_panic(expected = "Milestone not approved")]
 fn test_release_without_approval_panics() {
     let env = Env::default();
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    let (_creator, _platform, _token, token_admin, client) = setup_with_platform(&env, 1000, 10000, milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    let (_creator, _platform, _token, token_admin, client) =
+        setup_with_platform(&env, 1000, 10000, milestones);
     let contributor = Address::generate(&env);
 
     token_admin.mock_all_auths().mint(&contributor, &1000);
@@ -328,8 +585,16 @@ fn test_release_without_approval_panics() {
 #[should_panic]
 fn test_creator_cannot_approve_own_milestone() {
     let env = Env::default();
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    let (creator, _platform, _token, _token_admin, client) = setup_with_platform(&env, 1000, 10000, milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    let (creator, _platform, _token, _token_admin, client) =
+        setup_with_platform(&env, 1000, 10000, milestones);
 
     client
         .mock_auths(&[MockAuth {
@@ -347,8 +612,16 @@ fn test_creator_cannot_approve_own_milestone() {
 #[test]
 fn test_platform_approval_unlocks_release() {
     let env = Env::default();
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    let (creator, platform, token, token_admin, client) = setup_with_platform(&env, 1000, 10000, milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    let (creator, platform, token, token_admin, client) =
+        setup_with_platform(&env, 1000, 10000, milestones);
     let contributor = Address::generate(&env);
 
     token_admin.mock_all_auths().mint(&contributor, &1000);
@@ -376,8 +649,16 @@ fn test_platform_approval_unlocks_release() {
 #[should_panic(expected = "Campaign has failed")]
 fn test_release_blocked_after_failure() {
     let env = Env::default();
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    let (_creator, _platform, _token, token_admin, client) = setup_with_platform(&env, 1000, 10000, milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    let (_creator, _platform, _token, token_admin, client) =
+        setup_with_platform(&env, 1000, 10000, milestones);
     let contributor = Address::generate(&env);
 
     token_admin.mock_all_auths().mint(&contributor, &1000);
@@ -393,18 +674,45 @@ fn test_release_blocked_after_failure() {
 fn test_initialize_rejects_creator_as_platform() {
     let env = Env::default();
     let (creator, token_id, _token, _token_admin, client) = setup_test(&env);
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    client.mock_all_auths().initialize(&symbol_short!("cp1"), &creator, &creator, &token_id, &1000, &10000, &milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    client.mock_all_auths().initialize(
+        &symbol_short!("cp1"),
+        &creator,
+        &creator,
+        &token_id,
+        &1000,
+        &10000,
+        &milestones,
+    );
 }
 
 #[test]
 fn test_refund_is_pro_rata_after_partial_release() {
     let env = Env::default();
-    let milestones = Vec::from_array(&env, [
-        Milestone { target: 3000, amount: 1500, released: false },
-        Milestone { target: 3000, amount: 1500, released: false },
-    ]);
-    let (creator, _platform, token, token_admin, client) = setup_with_platform(&env, 3000, 10000, milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [
+            Milestone {
+                target: 3000,
+                amount: 1500,
+                released: false,
+            },
+            Milestone {
+                target: 3000,
+                amount: 1500,
+                released: false,
+            },
+        ],
+    );
+    let (creator, _platform, token, token_admin, client) =
+        setup_with_platform(&env, 3000, 10000, milestones);
 
     let a = Address::generate(&env);
     let b = Address::generate(&env);
@@ -435,8 +743,16 @@ fn test_refund_is_pro_rata_after_partial_release() {
 #[should_panic(expected = "No contribution to refund")]
 fn test_double_refund_rejected() {
     let env = Env::default();
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    let (_creator, _platform, _token, token_admin, client) = setup_with_platform(&env, 1000, 100, milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    let (_creator, _platform, _token, token_admin, client) =
+        setup_with_platform(&env, 1000, 100, milestones);
     let contributor = Address::generate(&env);
 
     token_admin.mock_all_auths().mint(&contributor, &500);
@@ -453,8 +769,16 @@ fn test_storage_ttl_outlives_default_and_refund_survives() {
     let env = Env::default();
     // Deadline 30 days out: well past the 4096-ledger default TTL.
     let deadline: u64 = 30 * 24 * 60 * 60;
-    let milestones = Vec::from_array(&env, [Milestone { target: 1000, amount: 1000, released: false }]);
-    let (_creator, _platform, token, token_admin, client) = setup_with_platform(&env, 1000, deadline, milestones);
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone {
+            target: 1000,
+            amount: 1000,
+            released: false,
+        }],
+    );
+    let (_creator, _platform, token, token_admin, client) =
+        setup_with_platform(&env, 1000, deadline, milestones);
     let contributor = Address::generate(&env);
 
     token_admin.mock_all_auths().mint(&contributor, &500);
@@ -471,7 +795,9 @@ fn test_storage_ttl_outlives_default_and_refund_survives() {
     // Keep the test token alive; only this contract's storage is under test.
     let jump = default_ttl * 100;
     env.as_contract(&token.address, || {
-        env.storage().instance().extend_ttl(jump + 1000, jump + 1000);
+        env.storage()
+            .instance()
+            .extend_ttl(jump + 1000, jump + 1000);
     });
 
     // Jump well past the default TTL and past the deadline.
