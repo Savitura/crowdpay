@@ -73,6 +73,14 @@ const discoveryErrors = new Rate('discovery_error_rate');
 const checkoutErrors = new Rate('checkout_error_rate');
 
 export function setup() {
+  const csrfRes = http.get(`${BASE_URL}/api/auth/csrf-token`, {
+    tags: { name: 'setup csrf' },
+  });
+  if (csrfRes.status !== 200) {
+    throw new Error(`Performance CSRF bootstrap failed: ${csrfRes.status}`);
+  }
+  const csrfToken = JSON.parse(csrfRes.body).csrfToken;
+
   const response = http.post(
     `${BASE_URL}/api/auth/login`,
     JSON.stringify({
@@ -80,7 +88,11 @@ export function setup() {
       password: CONTRIBUTOR_PASSWORD,
     }),
     {
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken,
+        Cookie: `cp_csrf=${csrfToken}`,
+      },
       tags: { name: 'setup login' },
     }
   );
@@ -88,7 +100,7 @@ export function setup() {
     throw new Error(`Performance seed login failed: ${response.status}`);
   }
   const body = JSON.parse(response.body);
-  return { token: body.token || body.accessToken || null };
+  return { token: body.token || body.accessToken || null, csrfToken };
 }
 
 export function discovery() {
@@ -116,6 +128,8 @@ export function checkout(data) {
   const headers = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${data.token}`,
+    'X-CSRF-Token': data.csrfToken,
+    Cookie: `cp_csrf=${data.csrfToken}`,
   };
   const preview = http.post(
     `${BASE_URL}/api/campaigns/${CAMPAIGN_ID}/contribution/preview`,

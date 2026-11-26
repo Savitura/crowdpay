@@ -85,6 +85,7 @@ function buildApp({ resolveReferralLink, onSubmit }) {
     },
     '../middleware/validation': {
       contributionValidation: [],
+      embedContributionValidation: [],
       contributionQuoteValidation: [],
       validateRequest: (_req, _res, next) => next(),
     },
