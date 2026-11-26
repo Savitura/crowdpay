@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   evaluateIncidentConditions,
+  dispatchIncidentNotification,
   HORIZON_WARN_LATENCY_MS,
   HORIZON_CRIT_LATENCY_MS,
 } = require('./incidentDetector');
@@ -102,4 +103,23 @@ test('evaluateIncidentConditions triggers warning for underfunded campaign walle
   assert.ok(types.includes('campaign_wallet_underfunded'));
   assert.ok(types.includes('stuck_pending_contributions'));
   assert.ok(types.includes('database_slow_query'));
+});
+
+test('dispatchIncidentNotification safely blocks SSRF targets like loopback or metadata endpoints', async () => {
+  const originalUrl = process.env.OPS_WEBHOOK_URL;
+  try {
+    process.env.OPS_WEBHOOK_URL = 'http://169.254.169.254/latest/meta-data';
+    await assert.doesNotReject(async () => {
+      await dispatchIncidentNotification({
+        id: 'test-incident-1',
+        incident_type: 'horizon_latency_critical',
+        severity: 'warning',
+        status: 'open',
+        details: {},
+        triggering_metric_values: {},
+      });
+    });
+  } finally {
+    process.env.OPS_WEBHOOK_URL = originalUrl;
+  }
 });

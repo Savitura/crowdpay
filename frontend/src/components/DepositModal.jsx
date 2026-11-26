@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { useModalA11y } from '../hooks/useModalA11y';
 import { api } from '../services/api';
+import { validateMonetaryInput, parseDecimal } from '../utils/decimal';
 
 const POLL_INTERVAL_MS = 4000;
 // Consecutive-failure backoff. A 5th failure gives up instead of polling forever.
@@ -20,6 +22,7 @@ export default function DepositModal({ onClose, onSuccess }) {
   const [balance, setBalance] = useState(null);
   const popupRef = useRef(null);
   const modalRef = useRef(null);
+  useModalA11y(modalRef, { onClose: handleClose, resetKey: phase });
 
   const selectedAnchor = anchorInfo.anchors.find((a) => a.id === selectedAnchorId) || null;
 
@@ -38,13 +41,6 @@ export default function DepositModal({ onClose, onSuccess }) {
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') handleClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
 
   useEffect(() => {
     if (phase !== 'anchor' || !session?.id) return;
@@ -113,37 +109,20 @@ export default function DepositModal({ onClose, onSuccess }) {
     };
   }, [session?.id, onSuccess, phase]);
 
-  useEffect(() => {
-    const modal = modalRef.current;
-    if (!modal) return;
-    const focusable = modal.querySelectorAll(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-    );
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    first?.focus();
-    function trapTab(e) {
-      if (e.key !== 'Tab') return;
-      if (e.shiftKey) {
-        if (document.activeElement === first) {
-          e.preventDefault();
-          last?.focus();
-        }
-      } else {
-        if (document.activeElement === last) {
-          e.preventDefault();
-          first?.focus();
-        }
-      }
-    }
-    modal.addEventListener('keydown', trapTab);
-    return () => modal.removeEventListener('keydown', trapTab);
-  }, [phase]);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!amount || Number(amount) <= 0) {
-      setError('Enter an amount greater than zero.');
+    const amountCheck = validateMonetaryInput(amount, {
+      fieldName: 'Deposit amount',
+      allowZero: false,
+    });
+    if (!amountCheck.isValid) {
+      setError(
+        amountCheck.error === 'Deposit amount is required.' ||
+          amountCheck.error === 'Deposit amount must be greater than zero.'
+          ? 'Enter an amount greater than zero.'
+          : amountCheck.error
+      );
       return;
     }
     if (!selectedAnchorId) {
@@ -160,7 +139,7 @@ export default function DepositModal({ onClose, onSuccess }) {
       popupRef.current = popup;
 
       const result = await api.startWalletDeposit({
-        amount: String(amount),
+        amount: parseDecimal(amount),
         anchor_id: selectedAnchorId,
       });
 

@@ -13,7 +13,12 @@
  *   node contracts/stellar/trustlines.js --check <accountPublicKey> <assetCode>
  */
 
-require("dotenv").config({ path: "../../backend/.env" });
+try {
+  // Optional: the example CLIs also read plain environment variables.
+  require("dotenv").config({ path: "../../backend/.env" });
+} catch {
+  // dotenv is not installed for every checkout; the process env still works.
+}
 
 const {
   Keypair,
@@ -23,17 +28,38 @@ const {
   Networks,
   BASE_FEE,
   Horizon,
-} = require("@stellar/stellar-sdk");
+} = require("./sdk").loadStellarSdk();
 
 // Authoritative value lives in backend/src/config/constants.js TX_TIMEOUT_CONTRIBUTION_S
 const TX_TIMEOUT_CONTRIBUTION_S = 30;
 
-const server = new Horizon.Server(
-  process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org",
-);
 const networkPassphrase = Networks.TESTNET;
 
-async function addTrustline(accountSecret, assetCode, issuerPublicKey) {
+let horizonServer = null;
+
+/** Lazily create the Horizon client so importing this module never hits the network. */
+function getServer() {
+  if (!horizonServer) {
+    horizonServer = new Horizon.Server(
+      process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org",
+    );
+  }
+  return horizonServer;
+}
+
+/** Returns the balance entry for `assetCode`, or undefined when there is no trustline. */
+function findTrustline(balances, assetCode) {
+  if (!Array.isArray(balances)) return undefined;
+  return balances.find((balance) => balance.asset_code === assetCode);
+}
+
+/** Establish a trustline and submit it. */
+async function addTrustline(
+  accountSecret,
+  assetCode,
+  issuerPublicKey,
+  server = getServer(),
+) {
   const keypair = Keypair.fromSecret(accountSecret);
   const account = await server.loadAccount(keypair.publicKey());
   const asset = new Asset(assetCode, issuerPublicKey);
@@ -50,28 +76,40 @@ async function addTrustline(accountSecret, assetCode, issuerPublicKey) {
   const result = await server.submitTransaction(tx);
   console.log(`Trustline established for ${assetCode}:${issuerPublicKey}`);
   console.log("Tx hash:", result.hash);
+  return result;
 }
 
-async function checkTrustline(publicKey, assetCode) {
+/** Report whether the account holds a trustline for `assetCode`. */
+async function checkTrustline(publicKey, assetCode, server = getServer()) {
   const account = await server.loadAccount(publicKey);
-  const trusted = account.balances.find((b) => b.asset_code === assetCode);
+  const trusted = findTrustline(account.balances, assetCode);
   if (trusted) {
     console.log(`${assetCode} trustline found. Balance: ${trusted.balance}`);
-  } else {
-    console.log(`No trustline for ${assetCode} on this account.`);
+    return true;
   }
+  console.log(`No trustline for ${assetCode} on this account.`);
+  return false;
 }
 
-const [, , flag, ...args] = process.argv;
+module.exports = {
+  TX_TIMEOUT_CONTRIBUTION_S,
+  findTrustline,
+  addTrustline,
+  checkTrustline,
+};
 
-if (flag === "--add")
-  addTrustline(args[0], args[1], args[2]).catch(console.error);
-else if (flag === "--check")
-  checkTrustline(args[0], args[1]).catch(console.error);
-else {
-  console.log("Usage:");
-  console.log(
-    "  node trustlines.js --add <accountSecret> <assetCode> <issuerPublicKey>",
-  );
-  console.log("  node trustlines.js --check <accountPublicKey> <assetCode>");
+if (require.main === module) {
+  const [, , flag, ...args] = process.argv;
+
+  if (flag === "--add")
+    addTrustline(args[0], args[1], args[2]).catch(console.error);
+  else if (flag === "--check")
+    checkTrustline(args[0], args[1]).catch(console.error);
+  else {
+    console.log("Usage:");
+    console.log(
+      "  node trustlines.js --add <accountSecret> <assetCode> <issuerPublicKey>",
+    );
+    console.log("  node trustlines.js --check <accountPublicKey> <assetCode>");
+  }
 }

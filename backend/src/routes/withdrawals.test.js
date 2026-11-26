@@ -607,7 +607,7 @@ test('POST /api/withdrawals/:id/approve/platform submits with dual signatures', 
       if (text.includes('SELECT role, is_admin FROM users WHERE id')) {
         return { rows: [{ role: 'admin', is_admin: true }] };
       }
-      if (text.includes('SELECT wr.*, c.status')) {
+      if (text.includes('FROM withdrawal_requests wr') && text.includes('c.status')) {
         return {
           rows: [
             {
@@ -656,7 +656,7 @@ test('POST /api/withdrawals/:id/approve/platform rejects duplicate approval afte
       if (text.includes('SELECT role, is_admin FROM users WHERE id')) {
         return { rows: [{ role: 'admin', is_admin: true }] };
       }
-      if (text.includes('SELECT wr.*, c.status')) {
+      if (text.includes('FROM withdrawal_requests wr') && text.includes('c.status')) {
         return {
           rows: [
             {
@@ -774,7 +774,7 @@ test('POST /api/withdrawals/:id/reject marks denied after creator signed', async
       if (text.includes('SELECT role, is_admin FROM users WHERE id')) {
         return { rows: [{ role: 'admin', is_admin: true }] };
       }
-      if (text.includes('SELECT * FROM withdrawal_requests WHERE id')) {
+      if (text.includes('FROM withdrawal_requests WHERE id')) {
         return {
           rows: [
             {
@@ -812,7 +812,7 @@ test('POST /api/withdrawals/:id/approve/platform logs failure when Stellar rejec
       if (text.includes('SELECT role, is_admin FROM users WHERE id')) {
         return { rows: [{ role: 'admin', is_admin: true }] };
       }
-      if (text.includes('SELECT wr.*, c.status')) {
+      if (text.includes('FROM withdrawal_requests wr') && text.includes('c.status')) {
         return {
           rows: [
             {
@@ -859,7 +859,7 @@ test('POST /api/withdrawals/:id/approve/platform returns 410 when XDR time bound
       if (text.includes('SELECT role, is_admin FROM users WHERE id')) {
         return { rows: [{ role: 'admin', is_admin: true }] };
       }
-      if (text.includes('SELECT wr.*, c.status')) {
+      if (text.includes('FROM withdrawal_requests wr') && text.includes('c.status')) {
         return {
           rows: [
             {
@@ -1678,7 +1678,7 @@ test('POST /api/withdrawals/:id/approve/platform validates real XDR parameters b
       if (text.includes('SELECT role, is_admin FROM users WHERE id')) {
         return { rows: [{ role: 'admin', is_admin: true }] };
       }
-      if (text.includes('SELECT wr.*, c.status')) {
+      if (text.includes('FROM withdrawal_requests wr') && text.includes('c.status')) {
         return {
           rows: [
             {
@@ -1747,7 +1747,7 @@ test('POST /api/withdrawals/:id/approve/platform rejects tampered arbitrary dest
       if (text.includes('SELECT role, is_admin FROM users WHERE id')) {
         return { rows: [{ role: 'admin', is_admin: true }] };
       }
-      if (text.includes('SELECT wr.*, c.status')) {
+      if (text.includes('FROM withdrawal_requests wr') && text.includes('c.status')) {
         return {
           rows: [
             {
@@ -1802,7 +1802,7 @@ test('POST /api/withdrawals/:id/approve/platform rejects stored XDR missing crea
       if (text.includes('SELECT role, is_admin FROM users WHERE id')) {
         return { rows: [{ role: 'admin', is_admin: true }] };
       }
-      if (text.includes('SELECT wr.*, c.status')) {
+      if (text.includes('FROM withdrawal_requests wr') && text.includes('c.status')) {
         return {
           rows: [
             {
@@ -1865,7 +1865,7 @@ test('POST /api/withdrawals/:id/approve/platform rejects stored XDR with non-pay
       if (text.includes('SELECT role, is_admin FROM users WHERE id')) {
         return { rows: [{ role: 'admin', is_admin: true }] };
       }
-      if (text.includes('SELECT wr.*, c.status')) {
+      if (text.includes('FROM withdrawal_requests wr') && text.includes('c.status')) {
         return {
           rows: [
             {

@@ -111,6 +111,7 @@ export default function ReadingList() {
                     )}
                   </Link>
                   <button
+                    type="button"
                     onClick={() => handleRemove(camp.id)}
                     className="shrink-0 px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded"
                     title={t('readingList.removeFromList')}

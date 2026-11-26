@@ -16,6 +16,19 @@ const logger = require('../config/logger');
 
 const TOKEN_PREFIX_LENGTH = 12;
 
+const EMBED_TOKEN_COLUMNS = [
+  'id',
+  'user_id',
+  'label',
+  'token_hash',
+  'token_prefix',
+  'default_topic',
+  'default_asset',
+  'last_used_at',
+  'created_at',
+  'revoked_at',
+].join(', ');
+
 function generateRawEmbedToken() {
   return `cped_${crypto.randomBytes(24).toString('hex')}`;
 }
@@ -69,7 +82,7 @@ async function createEmbedToken(userId, { label, defaultTopic, defaultAsset } = 
 
 async function listEmbedTokensForUser(userId) {
   const { rows } = await db.query(
-    `SELECT * FROM embed_tokens WHERE user_id = $1 ORDER BY created_at DESC`,
+    `SELECT ${EMBED_TOKEN_COLUMNS} FROM embed_tokens WHERE user_id = $1 ORDER BY created_at DESC`,
     [userId]
   );
   return rows.map(mapTokenRow);
@@ -97,7 +110,7 @@ async function validateEmbedToken(rawToken) {
 
   const prefix = getTokenPrefix(rawToken);
   const { rows } = await db.query(
-    `SELECT * FROM embed_tokens WHERE token_prefix = $1 AND revoked_at IS NULL`,
+    `SELECT ${EMBED_TOKEN_COLUMNS} FROM embed_tokens WHERE token_prefix = $1 AND revoked_at IS NULL`,
     [prefix]
   );
 

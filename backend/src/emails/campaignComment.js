@@ -1,4 +1,4 @@
-const { renderLayout, heading, paragraph, buttonRow } = require('./layout');
+const { escapeHtml, renderLayout, heading, paragraphHtml, buttonRow } = require('./layout');
 
 function buildForCreator({
   creatorName,
@@ -27,8 +27,8 @@ function buildForCreator({
     previewText,
     bodyHtml: [
       heading(`New question on "${campaignTitle}"`),
-      paragraph(`<strong>${commenter}</strong> left a comment or question:`),
-      paragraph(`<em>"${commentBody}"</em>`),
+      paragraphHtml(`<strong>${escapeHtml(commenter)}</strong> left a comment or question:`),
+      paragraphHtml(`<em>"${escapeHtml(commentBody)}"</em>`),
       buttonRow('View & Reply', campaignUrl),
     ].join(''),
     unsubscribeUrl,
@@ -65,10 +65,10 @@ function buildForCommenter({
     previewText,
     bodyHtml: [
       heading(`New reply on "${campaignTitle}"`),
-      paragraph(
-        `<strong>${replier}</strong> ${isCreatorReply ? '(Campaign Creator) ' : ''}replied to your comment:`
+      paragraphHtml(
+        `<strong>${escapeHtml(replier)}</strong> ${isCreatorReply ? '(Campaign Creator) ' : ''}replied to your comment:`
       ),
-      paragraph(`<em>"${replyBody}"</em>`),
+      paragraphHtml(`<em>"${escapeHtml(replyBody)}"</em>`),
       buttonRow('View Conversation', campaignUrl),
     ].join(''),
     unsubscribeUrl,
