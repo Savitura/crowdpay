@@ -790,3 +790,16 @@ Deterministic projection, not a guarantee. Each month consumes the next run of
 each active schedule, capping a payout at the remaining projected balance.
 projected_total_payout is the sum across the horizon. No new funds, fees, or
 refunds are assumed.
+
+## Disaster-Relief Campaign Mode & Rapid Verification
+
+Mounted under `/api/campaigns`:
+
+- `GET /api/campaigns/disaster-relief/queue` — Admin-only prioritized rapid verification queue (`?status=pending_review`), ordered by severity (`catastrophic`, `critical`, `urgent`, `watch`) and submission age, with 4-hour SLA metrics.
+- `GET /api/campaigns/:campaignId/disaster-relief` — Contextual read. Public callers receive `{ disaster_relief: null }` until the dossier is `verified` or `revoked`, with `emergency_contact` and reviewer notes redacted. Campaign owners, accepted managers, and admins receive the full dossier and `sla` telemetry across all states.
+- `POST /api/campaigns/:campaignId/disaster-relief` — Campaign creator/manager/admin creates a `draft` disaster-relief dossier.
+- `PUT /api/campaigns/:campaignId/disaster-relief` — Campaign creator/manager/admin updates a `draft` or `changes_requested` dossier.
+- `POST /api/campaigns/:campaignId/disaster-relief/submit` — Submits a dossier with at least one HTTPS evidence item and an emergency contact into `pending_review` (rate-limited).
+- `POST /api/campaigns/:campaignId/disaster-relief/review` — Admin records a rapid verification decision (`verified`, `changes_requested`, or `rejected`), optional `verification_badge`, and `rapid_disbursement_enabled`.
+- `POST /api/campaigns/:campaignId/disaster-relief/revoke` — Admin revokes a `verified` dossier with a required `reason` and disables rapid disbursement.
+- `GET /api/campaigns/:campaignId/disaster-relief/events` — Returns the ordered lifecycle audit trail for the campaign's disaster-relief dossier.
