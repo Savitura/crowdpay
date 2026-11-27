@@ -15,8 +15,10 @@ const {
   acquireMigrationLock,
   releaseMigrationLock,
   MIGRATION_ADVISORY_LOCK_KEY,
+  readDownSql,
+  assertMigrationOrdering,
 } = require('../../db/migrateLib');
-const { runUp } = require('../../db/migrate');
+const { runUp, runDown } = require('../../db/migrate');
 
 test('isUpMigration excludes .down.sql rollback scripts', () => {
   assert.equal(isUpMigration('20260401_users.sql'), true);
@@ -201,4 +203,131 @@ test('runUp releases advisory lock after successful migrations', async () => {
   assert.equal(unlockCalled, true, 'pg_advisory_unlock must be called on successful completion');
   assert.ok(queries.some(q => q.includes('pg_advisory_lock')));
   assert.ok(queries.some(q => q.includes('pg_advisory_unlock')));
+});
+
+// #1115: Migration ordering, rollback limits, and recovery procedure tests
+test('assertMigrationOrdering verifies committed migrations are strictly ordered', () => {
+  const upFiles = listUpMigrationFilenames();
+  assert.ok(upFiles.length > 0, 'committed migration list must not be empty');
+  assert.equal(assertMigrationOrdering(upFiles), true);
+});
+
+test('assertMigrationOrdering throws when migration sequence is out of order', () => {
+  const disordered = [
+    '20260401_users.sql',
+    '20260403_withdrawal.sql',
+    '20260402_wallets.sql',
+  ];
+  assert.throws(
+    () => assertMigrationOrdering(disordered),
+    /Migration ordering violation: '20260403_withdrawal\.sql' is not strictly before '20260402_wallets\.sql'/
+  );
+});
+
+test('assertMigrationOrdering throws when migration sequence contains duplicate entries', () => {
+  const duplicates = [
+    '20260401_users.sql',
+    '20260402_wallets.sql',
+    '20260402_wallets.sql',
+  ];
+  assert.throws(
+    () => assertMigrationOrdering(duplicates),
+    /Migration ordering violation: '20260402_wallets\.sql' is not strictly before '20260402_wallets\.sql'/
+  );
+});
+
+test('readDownSql returns null when down migration is missing (documenting rollback limits)', () => {
+  // Almost all migrations in crowdpay omit down files to enforce forward-only schema progression
+  const downContent = readDownSql('20260401_users_campaigns_contributions.sql');
+  assert.equal(downContent, null, 'missing .down.sql must yield null');
+});
+
+test('readDownSql returns down SQL content when down migration is present', () => {
+  const downContent = readDownSql('20250601000000_add_velocity_alert_threshold.sql');
+  assert.ok(typeof downContent === 'string' && downContent.length > 0);
+  assert.ok(downContent.includes('ALTER TABLE'));
+});
+
+test('runDown rejects with documented rollback limitation error', async () => {
+  const mockClient = { query: async () => ({ rows: [] }) };
+  await assert.rejects(
+    async () => {
+      await runDown(mockClient);
+    },
+    /\[migrate:down\] Rollback is not supported due to lack of down migration files\./
+  );
+});
+
+test('runUp rejects when an applied migration file hash differs (hash mismatch immutability guard)', async () => {
+  const upFiles = listUpMigrationFilenames();
+  const targetFile = upFiles[0];
+
+  const mockClient = {
+    query: async text => {
+      if (text.includes('pg_advisory_lock')) return { rows: [] };
+      if (text.includes('pg_advisory_unlock')) return { rows: [{ unlocked: true }] };
+      if (text.includes('CREATE TABLE IF NOT EXISTS schema_migrations')) return { rows: [] };
+      if (text.includes('SELECT filename, file_hash, applied_at FROM schema_migrations')) {
+        return {
+          rows: [
+            {
+              filename: targetFile,
+              file_hash: 'tampered_tampered_tampered_tampered_tampered_tampered_tampered_000',
+              applied_at: new Date(),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    },
+  };
+
+  await assert.rejects(
+    async () => {
+      await runUp(mockClient);
+    },
+    new RegExp(`Migration '${targetFile}' was applied but its content has changed since then \\(hash mismatch\\)`)
+  );
+});
+
+test('runUp does not record failed migration in schema_migrations on error (recovery path)', async () => {
+  const queries = [];
+  let executedRollback = false;
+
+  const mockClient = {
+    query: async (text, params) => {
+      queries.push({ text, params });
+      if (text.includes('pg_advisory_lock') || text.includes('pg_advisory_unlock')) {
+        return { rows: [{ unlocked: true }] };
+      }
+      if (text.includes('CREATE TABLE IF NOT EXISTS schema_migrations')) {
+        return { rows: [] };
+      }
+      if (text.includes('SELECT filename, file_hash, applied_at FROM schema_migrations')) {
+        // Pretend none have been applied yet
+        return { rows: [] };
+      }
+      if (text === 'BEGIN') {
+        return { rows: [] };
+      }
+      if (text === 'ROLLBACK') {
+        executedRollback = true;
+        return { rows: [] };
+      }
+      // Fail on the first migration's SQL execution
+      throw new Error('Database disk error during migration');
+    },
+  };
+
+  await assert.rejects(async () => {
+    await runUp(mockClient);
+  }, /Database disk error during migration/);
+
+  assert.equal(executedRollback, true, 'ROLLBACK must be executed when migration statement fails');
+
+  // Verify that INSERT INTO schema_migrations was never reached for the failed file
+  const recordedInserts = queries.filter(q =>
+    q.text && q.text.includes('INSERT INTO schema_migrations')
+  );
+  assert.equal(recordedInserts.length, 0, 'failed migration must not be recorded in schema_migrations');
 });
