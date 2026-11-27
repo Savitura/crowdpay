@@ -280,6 +280,6 @@ function main() {
   console.log('[perf-budget] OK');
 }
 
-main();
+if (require.main === module) main();
 
-module.exports = { budgetFailures, compareToBudgets, checkJsPayload };
+module.exports = { parseArgs, budgetFailures, compareToBudgets, checkJsPayload };
