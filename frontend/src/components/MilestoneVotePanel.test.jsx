@@ -28,9 +28,7 @@ describe('MilestoneVotePanel component', () => {
   });
 
   it('fetches and displays vote tallies for pending milestones', async () => {
-    const milestones = [
-      { id: 'm1', title: 'Phase 1 Delivery', status: 'pending_review' },
-    ];
+    const milestones = [{ id: 'm1', title: 'Phase 1 Delivery', status: 'pending_review' }];
 
     api.getMilestoneVotes.mockResolvedValueOnce({
       approve_count: 5,
@@ -51,9 +49,7 @@ describe('MilestoneVotePanel component', () => {
   });
 
   it('submits an approve vote', async () => {
-    const milestones = [
-      { id: 'm1', title: 'Phase 1 Delivery', status: 'pending_review' },
-    ];
+    const milestones = [{ id: 'm1', title: 'Phase 1 Delivery', status: 'pending_review' }];
 
     api.getMilestoneVotes.mockResolvedValueOnce({
       approve_count: 2,
@@ -82,9 +78,7 @@ describe('MilestoneVotePanel component', () => {
   });
 
   it('submits a reject vote with note', async () => {
-    const milestones = [
-      { id: 'm1', title: 'Phase 1 Delivery', status: 'pending_review' },
-    ];
+    const milestones = [{ id: 'm1', title: 'Phase 1 Delivery', status: 'pending_review' }];
 
     api.getMilestoneVotes.mockResolvedValueOnce({
       approve_count: 4,
@@ -120,9 +114,7 @@ describe('MilestoneVotePanel component', () => {
   });
 
   it('disables vote buttons when user has already voted', async () => {
-    const milestones = [
-      { id: 'm1', title: 'Phase 1 Delivery', status: 'pending_review' },
-    ];
+    const milestones = [{ id: 'm1', title: 'Phase 1 Delivery', status: 'pending_review' }];
 
     api.getMilestoneVotes.mockResolvedValueOnce({
       approve_count: 10,
@@ -142,9 +134,7 @@ describe('MilestoneVotePanel component', () => {
   });
 
   it('handles vote loading failure', async () => {
-    const milestones = [
-      { id: 'm1', title: 'Phase 1 Delivery', status: 'pending_review' },
-    ];
+    const milestones = [{ id: 'm1', title: 'Phase 1 Delivery', status: 'pending_review' }];
 
     api.getMilestoneVotes.mockRejectedValueOnce(new Error('Failed to load vote count'));
 
@@ -156,9 +146,7 @@ describe('MilestoneVotePanel component', () => {
   });
 
   it('handles vote submission failure', async () => {
-    const milestones = [
-      { id: 'm1', title: 'Phase 1 Delivery', status: 'pending_review' },
-    ];
+    const milestones = [{ id: 'm1', title: 'Phase 1 Delivery', status: 'pending_review' }];
 
     api.getMilestoneVotes.mockResolvedValueOnce({
       approve_count: 2,

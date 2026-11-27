@@ -206,10 +206,12 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error('[verify-schema] Failed to run check:', err.message);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error('[verify-schema] Failed to run check:', err.message);
+    process.exitCode = 1;
+  });
+}
 
 module.exports = {
   compareSnapshots,

@@ -103,7 +103,7 @@ describe('ReadingList', () => {
     await waitFor(() => {
       expect(screen.queryByText(/loading/i)).not.toBeInTheDocument();
     });
-    
+
     // Should show empty state message, not tax receipts message
     expect(screen.getByText(/browse campaigns/i)).toBeInTheDocument();
   });
@@ -199,7 +199,7 @@ describe('ReadingList', () => {
     const searchInput = screen.getByPlaceholderText(/search/i);
     await user.type(searchInput, 'nonexistent');
 
-    expect(screen.getByText(/no matches/i)).toBeInTheDocument();
+    expect(screen.getByText(/no campaigns match/i)).toBeInTheDocument();
   });
 
   it('removes campaign from list when remove button clicked', async () => {
@@ -263,7 +263,8 @@ describe('ReadingList', () => {
       expect(screen.getByText('50.0%')).toBeInTheDocument(); // Solar Energy: 5000/10000
     });
 
-    expect(screen.getByText('100.0%')).toBeInTheDocument(); // Education: 20000/20000
+    // Community Garden (15000/10000) and Education Program (20000/20000) both cap at 100%
+    expect(screen.getAllByText('100.0%')).toHaveLength(2);
   });
 
   it('displays campaign raised amounts', async () => {
@@ -275,11 +276,11 @@ describe('ReadingList', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/5,000/)).toBeInTheDocument();
+      expect(screen.getByText('5,000 raised')).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/15,000/)).toBeInTheDocument();
-    expect(screen.getByText(/20,000/)).toBeInTheDocument();
+    expect(screen.getByText('15,000 raised')).toBeInTheDocument();
+    expect(screen.getByText('20,000 raised')).toBeInTheDocument();
   });
 
   it('displays campaign count correctly', async () => {
@@ -291,7 +292,7 @@ describe('ReadingList', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('3')).toBeInTheDocument();
+      expect(screen.getByText('3 campaigns')).toBeInTheDocument();
     });
   });
 

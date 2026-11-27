@@ -60,7 +60,9 @@ VALUES
     'USDC',
     'GDDT53Q2XW4UXFK2JX7GQW7OH7MZBLU6SOO6OP4N3T6QY57K3WKN2X2L',
     'active',
-    '2026-07-15'
+    -- Relative deadlines keep the fixture from going stale: campaign status
+    -- refresh fails any active campaign whose deadline has passed.
+    CURRENT_DATE + 45
   ),
   (
     '22222222-2222-2222-2222-222222222222',
@@ -72,7 +74,7 @@ VALUES
     'USDC',
     'GBW6WQ3D2R7AOB2T6SXY5IKT2E3FKE3LHLRPF3N3VQGJHRKAHWJZXWQJ',
     'funded',
-    '2026-05-30'
+    CURRENT_DATE + 10
   ),
   (
     '33333333-3333-3333-3333-333333333333',
@@ -84,7 +86,7 @@ VALUES
     'XLM',
     'GATLEKJ6A4N5LG3JXG6JQWJPO2V7DNU7C43E2C7ERKJPFK5MCR7MVEQ6',
     'active',
-    '2026-08-20'
+    CURRENT_DATE + 90
   ),
   (
     '44444444-4444-4444-4444-444444444444',
@@ -96,7 +98,7 @@ VALUES
     'USDC',
     'GDW4P5M7H2QQFXPZV2WCKWAZ5FQY5N7IKB3Y7N4OFU7QJDSO46LQNG7O',
     'in_progress',
-    '2026-04-10'
+    CURRENT_DATE + 120
   )
 ON CONFLICT (id) DO UPDATE
 SET

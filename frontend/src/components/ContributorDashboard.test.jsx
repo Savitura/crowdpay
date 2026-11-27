@@ -43,10 +43,12 @@ describe('ContributorDashboard Component', () => {
     target_amount: 1000,
     contributed_amount: 100,
     asset_type: 'USDC',
+    escrow_contract_id: 'escrow-1',
     contributions: [
       {
         id: 'ct1',
         amount: 100,
+        asset: 'USDC',
         refund_status: 'pending',
         created_at: '2025-01-01',
       },

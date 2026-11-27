@@ -170,7 +170,7 @@ export default function MilestoneVotePanel({ milestones }) {
               >
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || !!currentVote}
                   onClick={() => submitVote(milestone.id, 'approve')}
                   style={{ ...buttonBase, background: 'var(--color-success, #15803d)' }}
                 >
@@ -178,7 +178,7 @@ export default function MilestoneVotePanel({ milestones }) {
                 </button>
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || !!currentVote}
                   onClick={() => submitVote(milestone.id, 'reject')}
                   style={{ ...buttonBase, background: 'var(--color-error, #b91c1c)' }}
                 >

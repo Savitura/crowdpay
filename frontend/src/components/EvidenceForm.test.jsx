@@ -119,7 +119,10 @@ describe('EvidenceForm component', () => {
   it('disables buttons during active submission', async () => {
     let resolveSubmit;
     api.submitDisputeEvidence.mockImplementation(
-      () => new Promise((resolve) => { resolveSubmit = resolve; })
+      () =>
+        new Promise((resolve) => {
+          resolveSubmit = resolve;
+        })
     );
 
     const handleClose = vi.fn();

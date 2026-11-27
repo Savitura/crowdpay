@@ -401,6 +401,24 @@ const contributionValidation = [
     .withMessage('idempotency_key must be 1-255 printable ASCII characters without whitespace'),
 ];
 
+const embedContributionValidation = [
+  body('campaign_id').notEmpty().withMessage('campaign_id is required'),
+  body('amount')
+    .exists()
+    .withMessage('amount is required')
+    .isFloat({ gt: 0 })
+    .withMessage('amount must be greater than zero')
+    .bail()
+    .custom(value => isValidAmount(value))
+    .withMessage(
+      `amount must have at most ${STROOP_DECIMALS} decimal places and fit a Stellar amount`
+    ),
+  body('send_asset')
+    .optional({ nullable: true })
+    .isIn(SUPPORTED_ASSETS)
+    .withMessage(`send_asset must be one of: ${SUPPORTED_ASSETS.join(', ')}`),
+];
+
 const withdrawalValidation = [
   body('campaign_id')
     .notEmpty()
@@ -609,6 +627,7 @@ module.exports = {
   createCampaignUpdateValidation,
   thankYouValidation,
   contributionValidation,
+  embedContributionValidation,
   contributionQuoteValidation,
   withdrawalValidation,
   createAnnouncementValidation,

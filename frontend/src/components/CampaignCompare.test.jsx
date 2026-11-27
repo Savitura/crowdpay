@@ -18,11 +18,46 @@ vi.mock('react-i18next', () => ({
 }));
 
 const mockCampaignsList = [
-  { id: '1', title: 'Tech Innovation', category: 'technology', raised_amount: 5000, target_amount: 10000, asset_type: 'USDC' },
-  { id: '2', title: 'Community Garden', category: 'community', raised_amount: 2000, target_amount: 4000, asset_type: 'USDC' },
-  { id: '3', title: 'Arts Festival', category: 'arts', raised_amount: 1000, target_amount: 5000, asset_type: 'USDC' },
-  { id: '4', title: 'Clean Energy', category: 'environment', raised_amount: 8000, target_amount: 8000, asset_type: 'USDC' },
-  { id: '5', title: 'Medical Aid', category: 'health', raised_amount: 3000, target_amount: 6000, asset_type: 'USDC' },
+  {
+    id: '1',
+    title: 'Tech Innovation',
+    category: 'technology',
+    raised_amount: 5000,
+    target_amount: 10000,
+    asset_type: 'USDC',
+  },
+  {
+    id: '2',
+    title: 'Community Garden',
+    category: 'community',
+    raised_amount: 2000,
+    target_amount: 4000,
+    asset_type: 'USDC',
+  },
+  {
+    id: '3',
+    title: 'Arts Festival',
+    category: 'arts',
+    raised_amount: 1000,
+    target_amount: 5000,
+    asset_type: 'USDC',
+  },
+  {
+    id: '4',
+    title: 'Clean Energy',
+    category: 'environment',
+    raised_amount: 8000,
+    target_amount: 8000,
+    asset_type: 'USDC',
+  },
+  {
+    id: '5',
+    title: 'Medical Aid',
+    category: 'health',
+    raised_amount: 3000,
+    target_amount: 6000,
+    asset_type: 'USDC',
+  },
 ];
 
 describe('CampaignCompare component', () => {
@@ -106,7 +141,9 @@ describe('CampaignCompare component', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Add Campaign' }));
-    fireEvent.change(screen.getByPlaceholderText('Search campaigns...'), { target: { value: 'Nonexistent' } });
+    fireEvent.change(screen.getByPlaceholderText('Search campaigns...'), {
+      target: { value: 'Nonexistent' },
+    });
 
     expect(screen.getByText('No matching campaigns')).toBeInTheDocument();
   });
@@ -153,9 +190,8 @@ describe('CampaignCompare component', () => {
 
     expect(screen.getAllByText('Tech Innovation').length).toBeGreaterThan(0);
 
-    // Click remove button for Tech Innovation
-    const removeButton = screen.getAllByRole('button').find(b => b.textContent !== 'Add Campaign' && b.getAttribute('type') === 'button');
-    expect(removeButton).toBeDefined();
+    // Click the table's Remove action for Tech Innovation
+    const removeButton = screen.getByRole('button', { name: 'Remove' });
     fireEvent.click(removeButton);
 
     expect(screen.queryByText('Tech Innovation')).not.toBeInTheDocument();

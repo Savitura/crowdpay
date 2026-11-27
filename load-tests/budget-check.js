@@ -119,8 +119,11 @@ function budgetFailures(config, baseline, now = Date.now()) {
 function summaryValue(summary, metricName, stat) {
   const metric = summary?.metrics?.[metricName];
   if (!metric) return undefined;
-  if (stat === 'rate') return metric.values?.rate;
-  return metric.values?.[stat];
+  // `k6 run --summary-export` writes metrics flat ({ avg, 'p(95)': ... }), while
+  // handleSummary() output nests them under `values`; support both shapes.
+  const values = metric.values || metric;
+  if (stat === 'rate') return values.rate ?? values.value;
+  return values[stat];
 }
 
 function compareToBudgets(config, baseline, summary) {
@@ -206,14 +209,18 @@ function checkJsPayload(config, distDir) {
   for (const [key, value] of Object.entries(config.paths)) {
     const label = value.label || key;
     const budget = value.web.js_payload_kb;
-    const failed = kb > budget;
+    const exception = (config.exceptions || []).find(
+      entry => entry.path === key && entry.metric === 'js_payload_kb'
+    );
+    const exceeded = kb > budget;
+    const failed = exceeded && !exception;
     rows.push({
       path: label,
       metric: 'js_payload_kb',
       budget: `${budget} KB`,
       baseline: 'n/a',
       actual: `${kb} KB`,
-      status: failed ? 'FAIL' : 'OK',
+      status: failed ? 'FAIL' : exception && exceeded ? 'EXCEPTION' : 'OK',
     });
     if (failed) failures.push(`${label} js_payload_kb: ${kb} KB exceeds budget ${budget} KB`);
   }

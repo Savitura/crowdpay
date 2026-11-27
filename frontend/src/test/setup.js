@@ -23,6 +23,14 @@ if (typeof global.localStorage === 'undefined') {
 if (typeof window !== 'undefined' && typeof window.localStorage === 'undefined') {
   window.localStorage = global.localStorage;
 }
+
+// JSDOM does not implement the Blob URL APIs used by receipt and CSV downloads.
+if (typeof URL !== 'undefined' && typeof URL.createObjectURL !== 'function') {
+  URL.createObjectURL = () => 'blob:mock-url';
+}
+if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL !== 'function') {
+  URL.revokeObjectURL = () => {};
+}
 import en from '../locales/en.json';
 import fr from '../locales/fr.json';
 import { describe, it, expect } from 'vitest';

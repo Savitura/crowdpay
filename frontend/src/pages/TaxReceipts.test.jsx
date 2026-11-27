@@ -64,35 +64,29 @@ describe('TaxReceipts', () => {
     },
   ];
 
-  let createElementSpy;
-  let appendChildSpy;
   let clickSpy;
   let removeSpy;
   let revokeObjectURLSpy;
+  let createObjectURLSpy;
 
   beforeEach(() => {
     api.getTaxReceipts.mockReset();
     api.downloadTaxReceiptsPdf.mockReset();
     api.downloadTaxReceiptPdf.mockReset();
 
-    // Mock DOM methods for download functionality
-    clickSpy = vi.fn();
-    removeSpy = vi.fn();
-    createElementSpy = vi.spyOn(document, 'createElement').mockReturnValue({
-      href: '',
-      download: '',
-      click: clickSpy,
-      remove: removeSpy,
-    });
-    appendChildSpy = vi.spyOn(document.body, 'appendChild').mockImplementation(() => {});
+    // Spy on the anchor download steps instead of replacing document.createElement,
+    // which React needs to build the tree.
+    clickSpy = vi.spyOn(window.HTMLElement.prototype, 'click').mockImplementation(() => {});
+    removeSpy = vi.spyOn(window.Element.prototype, 'remove').mockImplementation(() => {});
     revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-url');
+    createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-url');
   });
 
   afterEach(() => {
-    createElementSpy.mockRestore();
-    appendChildSpy.mockRestore();
+    clickSpy.mockRestore();
+    removeSpy.mockRestore();
     revokeObjectURLSpy.mockRestore();
+    createObjectURLSpy.mockRestore();
   });
 
   it('renders loading state initially', () => {
@@ -145,7 +139,7 @@ describe('TaxReceipts', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/could not load tax receipts/i)).toBeInTheDocument();
+      expect(screen.getByText('Network error')).toBeInTheDocument();
     });
   });
 
@@ -241,9 +235,9 @@ describe('TaxReceipts', () => {
       expect(screen.getByText('Solar Energy Project')).toBeInTheDocument();
     });
 
-    const campaignLinks = screen.getAllByRole('link').filter((link) =>
-      link.getAttribute('href')?.startsWith('/campaigns/')
-    );
+    const campaignLinks = screen
+      .getAllByRole('link')
+      .filter((link) => link.getAttribute('href')?.startsWith('/campaigns/'));
     expect(campaignLinks).toHaveLength(3);
     expect(campaignLinks[0]).toHaveAttribute('href', '/campaigns/campaign-1');
     expect(campaignLinks[1]).toHaveAttribute('href', '/campaigns/campaign-2');
@@ -409,7 +403,7 @@ describe('TaxReceipts', () => {
     await user.click(downloadButtons[0]);
 
     await waitFor(() => {
-      expect(screen.getByText(/could not download receipt/i)).toBeInTheDocument();
+      expect(screen.getByText('Download failed')).toBeInTheDocument();
     });
   });
 
@@ -455,7 +449,7 @@ describe('TaxReceipts', () => {
     await user.click(downloadAllButton);
 
     await waitFor(() => {
-      expect(screen.getByText(/could not download receipts/i)).toBeInTheDocument();
+      expect(screen.getByText('Download all failed')).toBeInTheDocument();
     });
   });
 
@@ -479,7 +473,7 @@ describe('TaxReceipts', () => {
     });
 
     const downloadButtons = screen.getAllByRole('button', { name: /download pdf/i });
-    
+
     await user.click(downloadButtons[0]);
     await waitFor(() => {
       expect(api.downloadTaxReceiptPdf).toHaveBeenCalledWith('receipt-1');
@@ -528,7 +522,7 @@ describe('TaxReceipts', () => {
     );
 
     expect(screen.getByText(/loading receipts/i)).toBeInTheDocument();
-    
+
     // Unmount should not cause errors or warnings
     unmount();
   });

@@ -44,7 +44,7 @@ export default function EvidenceForm({ disputeId, onSubmitted, onClose }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: 'grid', gap: '0.75rem' }}>
+    <form onSubmit={handleSubmit} noValidate style={{ display: 'grid', gap: '0.75rem' }}>
       <div>
         <label style={labelStyle} htmlFor="evidence-text">
           Describe your evidence

@@ -29,7 +29,7 @@ async function claimPending() {
 }
 
 function retryDelaySeconds(attempts) {
-  return Math.min(24 * 60 * 60, 60 * 2 ** Math.min(Math.max(attempts - 1, 0), 10));
+  return Math.min(24 * 60 * 60, 60 * 2 ** Math.min(Math.max(attempts - 1, 0), 11));
 }
 
 async function deliverOne(notification) {

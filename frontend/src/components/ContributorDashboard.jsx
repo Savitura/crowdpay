@@ -418,7 +418,16 @@ export default function ContributorDashboard() {
     );
   }
 
-  const { stats, campaigns } = data;
+  const { campaigns } = data;
+  const stats = {
+    total_contributed: 0,
+    campaigns_backed: campaigns.length,
+    active_campaigns_backed: 0,
+    campaigns_completed: 0,
+    avg_contribution: 0,
+    total_refunded: 0,
+    ...data.stats,
+  };
 
   return (
     <div>
