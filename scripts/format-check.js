@@ -14,13 +14,27 @@ if (!sourceDirectories) {
 }
 
 const baseSha = process.env.FORMAT_BASE_SHA;
+// Compare the PR's own commits when the head SHA is supplied. CI checks out the
+// pull-request merge commit, so diffing against HEAD would also flag files that
+// other people changed on the base branch after this PR branched.
+const headSha = resolveHead(process.env.FORMAT_HEAD_SHA);
 let files = sourceDirectories;
 
+function resolveHead(sha) {
+  if (!sha) return 'HEAD';
+  const exists = spawnSync('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: workspaceRoot });
+  return exists.status === 0 ? sha : 'HEAD';
+}
+
 if (baseSha) {
-  const changed = spawnSync('git', ['diff', '--name-only', '--diff-filter=ACMR', `${baseSha}...HEAD`], {
-    cwd: workspaceRoot,
-    encoding: 'utf8',
-  });
+  const changed = spawnSync(
+    'git',
+    ['diff', '--name-only', '--diff-filter=ACMR', `${baseSha}...${headSha}`],
+    {
+      cwd: workspaceRoot,
+      encoding: 'utf8',
+    }
+  );
   if (changed.status !== 0) {
     process.stderr.write(changed.stderr);
     process.exit(changed.status || 1);

@@ -134,6 +134,7 @@ module.exports = [
       'src/services/sponsorMatchingService.js',
       'src/services/stellarService.js',
       'src/services/stellarService.referral.test.js',
+      'src/services/trendingService.test.js',
     ],
     rules: {
       'no-restricted-syntax': ['warn', ...NO_PARSE_FLOAT_SELECTORS],

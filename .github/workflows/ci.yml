@@ -82,6 +82,7 @@ jobs:
         working-directory: ./backend
         env:
           FORMAT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          FORMAT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: npm run format:check
 
       - name: Check for blanket eslint-disable
@@ -299,6 +300,7 @@ jobs:
         working-directory: ./frontend
         env:
           FORMAT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          FORMAT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: npm run format:check
 
       - name: Check for blanket eslint-disable
