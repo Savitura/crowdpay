@@ -87,8 +87,12 @@ async function validateMilestonePercentages() {
 // Run if called directly
 if (require.main === module) {
   validateMilestonePercentages()
-    .then(() => {
+    .then(({ invalidCampaigns }) => {
       console.log('\n✅ Validation complete');
+      if (invalidCampaigns.length > 0) {
+        console.error(`\n❌ Found ${invalidCampaigns.length} campaign(s) with invalid milestone percentages`);
+        process.exit(1);
+      }
       process.exit(0);
     })
     .catch(error => {

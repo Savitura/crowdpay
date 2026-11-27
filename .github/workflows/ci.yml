@@ -92,11 +92,31 @@ jobs:
             exit 1
           fi
 
+      - name: Unit test migration prefix check
+        run: node --test scripts/check-migration-prefixes.test.js
+
+      - name: Enforce unique timestamped migration prefixes
+        run: node scripts/check-migration-prefixes.js
+
       - name: Run migrations
         working-directory: ./backend
         env:
           DATABASE_URL: postgresql://postgres:password@localhost:5432/crowdpay_test
         run: npm run migrate
+
+      - name: Seed test data for validation scripts
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/crowdpay_test
+          PGPASSWORD: password
+        run: |
+          psql -h localhost -U postgres -d crowdpay_test -f db/seed.sql
+
+      - name: Validate milestone percentages
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/crowdpay_test
+        run: npm run validate-milestones
 
       - name: Upgrade production-like fixture and verify schema.sql/migrations converge
         working-directory: ./backend
@@ -200,6 +220,9 @@ jobs:
         run: |
           npm run migrate
           psql -h localhost -U postgres -d crowdpay_test -f db/seed.sql
+
+      - name: Unit test the performance budget checker
+        run: node --test load-tests/__tests__/budget-check.test.js
 
       - name: Validate performance budgets and exceptions
         run: node load-tests/budget-check.js --validate
