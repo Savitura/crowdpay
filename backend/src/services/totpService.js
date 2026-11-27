@@ -1,9 +1,11 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const { authenticator } = require('otplib');
+const otplib = require('otplib');
 const qrcode = require('qrcode');
 const db = require('../config/database');
 const logger = require('../config/logger');
+
+const authenticator = otplib.authenticator;
 
 const TOTP_WINDOW = 1;
 const BACKUP_CODE_COUNT = 10;
@@ -32,15 +34,44 @@ function getDeviceTrustTtlMs() {
 }
 
 function verifyTotp(secret, token) {
-  return authenticator.verify({ token, secret, window: TOTP_WINDOW });
+  if (authenticator?.verify) {
+    try {
+      return Boolean(authenticator.verify({ token, secret, window: TOTP_WINDOW }));
+    } catch {
+      return false;
+    }
+  }
+  try {
+    if (!token || typeof token !== 'string' || !secret) {
+      return false;
+    }
+    const guardrails = otplib.createGuardrails
+      ? otplib.createGuardrails({ MIN_SECRET_BYTES: 10 })
+      : undefined;
+    const result = otplib.verifySync({
+      token,
+      secret,
+      epochTolerance: TOTP_WINDOW * 30,
+      guardrails,
+    });
+    return Boolean(result?.valid);
+  } catch {
+    return false;
+  }
 }
 
 function generateSecret() {
-  return authenticator.generateSecret();
+  if (authenticator?.generateSecret) {
+    return authenticator.generateSecret();
+  }
+  return otplib.generateSecret();
 }
 
 function buildOtpauthUri(email, secret) {
-  return authenticator.keyuri(email, 'CrowdPay', secret);
+  if (authenticator?.keyuri) {
+    return authenticator.keyuri(email, 'CrowdPay', secret);
+  }
+  return otplib.generateURI({ issuer: 'CrowdPay', label: email, secret });
 }
 
 async function generateQrCode(otpauth) {
