@@ -12,6 +12,14 @@ const fcmPush = require('./fcmPushService');
 // configured and enabled. Non-critical notifications that arrive during a
 // user's quiet hours are parked in `notification_queue` and flushed later as a
 // digest by `flushQuietHours`.
+//
+// `notification_queue` is list-partitioned by channel (see the
+// 20261015 migration). Each channel is flushed in its own pass so a backlog on
+// one channel never delays or locks rows belonging to another.
+
+// Channels that can carry queued digests. Mirrors the partition list in the
+// migration; 'in_app' is never queued.
+const QUEUEABLE_CHANNELS = ['email', 'push', 'slack', 'discord', 'sms'];
 
 // Persist the in-app notification row. This is the baseline channel and is
 // always delivered.
@@ -91,7 +99,12 @@ function inQuietHours(settings, nowHour) {
   return nowHour >= start || nowHour < end;
 }
 
+// Queue rows are written with the channel as the partition key, so Postgres
+// routes them straight into the matching partition.
 async function queueForDigest(userId, channel, message) {
+  if (!QUEUEABLE_CHANNELS.includes(channel)) {
+    throw new Error(`channel ${channel} is not queueable`);
+  }
   await db.query(
     `INSERT INTO notification_queue (user_id, channel, type, title, body, link)
      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -99,11 +112,14 @@ async function queueForDigest(userId, channel, message) {
   );
 }
 
-async function releaseQueuedRows(rowIds) {
+// Release rows back to the pending set. Filtering on channel lets Postgres
+// prune to the relevant partitions instead of probing every one.
+async function releaseQueuedRows(channel, rowIds) {
   if (!rowIds.length) return;
-  await db.query('UPDATE notification_queue SET flushed_at = NULL WHERE id = ANY($1::uuid[])', [
-    rowIds,
-  ]);
+  await db.query(
+    'UPDATE notification_queue SET flushed_at = NULL WHERE channel = $1 AND id = ANY($2::uuid[])',
+    [channel, rowIds]
+  );
 }
 
 /**
@@ -161,8 +177,10 @@ async function createNotificationsBulk(userIds, message, options = {}) {
   await Promise.all(userIds.map(userId => createNotification(userId, message, options)));
 }
 
-async function flushQuietHours(options = {}) {
-  const nowHour = options.nowHour !== undefined ? options.nowHour : new Date().getHours();
+// Claim and drain the pending queue for a single channel. Each channel runs in
+// its own transaction so claims never cross partitions and one channel's
+// failure cannot roll back another's work.
+async function flushChannel(channel, nowHour) {
   let rows = [];
   await withTransaction(async client => {
     const res = await client.query(
@@ -172,25 +190,24 @@ async function flushQuietHours(options = {}) {
             EXISTS (SELECT 1 FROM push_subscriptions WHERE user_id = q.user_id) AS push_enabled
      FROM notification_queue q
      JOIN notification_channel_settings s ON s.user_id = q.user_id
-     WHERE q.flushed_at IS NULL
+     WHERE q.channel = $1 AND q.flushed_at IS NULL
      ORDER BY q.created_at ASC
        LIMIT 200
-       FOR UPDATE SKIP LOCKED`
+       FOR UPDATE OF q SKIP LOCKED`,
+      [channel]
     );
     rows = res.rows;
     if (rows.length > 0) {
       const rowIds = rows.map(r => r.id);
       await client.query(
-        'UPDATE notification_queue SET flushed_at = NOW() WHERE id = ANY($1::uuid[])',
-        [rowIds]
+        'UPDATE notification_queue SET flushed_at = NOW() WHERE channel = $1 AND id = ANY($2::uuid[])',
+        [channel, rowIds]
       );
     }
   }, db);
 
-  // Group deliverable rows by (user_id, channel) so we can batch them into a
-  // single digest message per user/channel pair.
+  // Group deliverable rows by user so each user gets one digest per channel.
   const groups = new Map();
-  const allFlushedIds = [];
   const quietHourIds = [];
 
   for (const row of rows) {
@@ -199,11 +216,9 @@ async function flushQuietHours(options = {}) {
       continue;
     }
 
-    const key = `${row.user_id}:${row.channel}`;
-    if (!groups.has(key)) {
-      groups.set(key, {
+    if (!groups.has(row.user_id)) {
+      groups.set(row.user_id, {
         userId: row.user_id,
-        channel: row.channel,
         settings: {
           push_token: row.push_token,
           push_enabled: row.push_enabled,
@@ -214,7 +229,7 @@ async function flushQuietHours(options = {}) {
         items: [],
       });
     }
-    groups.get(key).items.push({
+    groups.get(row.user_id).items.push({
       id: row.id,
       type: row.type,
       title: row.title,
@@ -223,7 +238,7 @@ async function flushQuietHours(options = {}) {
     });
   }
 
-  await releaseQueuedRows(quietHourIds);
+  await releaseQueuedRows(channel, quietHourIds);
 
   let deliveredCount = 0;
 
@@ -242,36 +257,47 @@ async function flushQuietHours(options = {}) {
     };
 
     try {
-      const delivered = await deliverChannel(
-        group.userId,
-        group.channel,
-        group.settings,
-        digestMessage
-      );
+      const delivered = await deliverChannel(group.userId, channel, group.settings, digestMessage);
       if (!delivered) {
-        await releaseQueuedRows(group.items.map(item => item.id));
+        await releaseQueuedRows(channel, group.items.map(item => item.id));
         continue;
       }
       deliveredCount++;
     } catch (err) {
       logger.error('Failed to flush digest notification', {
         user_id: group.userId,
-        channel: group.channel,
+        channel,
         error: err.message,
       });
-      await releaseQueuedRows(group.items.map(item => item.id));
+      await releaseQueuedRows(channel, group.items.map(item => item.id));
     }
   }
 
   return deliveredCount;
 }
 
+/**
+ * Drain queued digests, one channel partition at a time.
+ *
+ * @returns {Promise<number>} Count of digests delivered across all channels.
+ */
+async function flushQuietHours(options = {}) {
+  const nowHour = options.nowHour !== undefined ? options.nowHour : new Date().getHours();
+  let total = 0;
+  for (const channel of QUEUEABLE_CHANNELS) {
+    total += await flushChannel(channel, nowHour);
+  }
+  return total;
+}
+
 module.exports = {
   createNotification,
   createNotificationsBulk,
   flushQuietHours,
+  flushChannel,
   loadChannelSettings,
   loadPreferences,
   channelEnabled,
   inQuietHours,
+  QUEUEABLE_CHANNELS,
 };

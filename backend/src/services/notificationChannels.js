@@ -6,8 +6,23 @@ const { fetchWithTimeout } = require('../utils/fetchWithTimeout');
 // `{ type, title, body, link }`. Adapters isolate the transport details
 // (HTTP webhook shape, SMS provider, push provider) from the notification
 // service, which only decides *whether* and *where* to deliver.
+//
+// High-volume channels are partitioned into independent delivery queues so a
+// slow or failing provider (e.g. SMS rate limits) cannot starve other
+// channels. Each channel has its own queue with bounded concurrency; items
+// beyond the concurrency limit wait in FIFO order within that channel only.
 
 const CHANNELS = ['in_app', 'email', 'push', 'slack', 'discord', 'sms'];
+
+// Per-channel concurrency limits for the delivery queues. Channels not listed
+// (e.g. in_app, which is persisted rather than sent externally) default to 1.
+const CHANNEL_CONCURRENCY = {
+  push: 20,
+  slack: 5,
+  discord: 5,
+  sms: 5,
+};
+const DEFAULT_CHANNEL_CONCURRENCY = 1;
 
 // Events important enough to bypass quiet-hours batching and deliver
 // immediately (issue #429: campaign deadline, withdrawal approved, etc).
@@ -131,11 +146,68 @@ async function deliver(channel, settings, message) {
   }
 }
 
+// Per-channel delivery queues. Each channel gets an independent FIFO queue
+// with its own concurrency cap, so backlog on one channel never blocks another.
+const queues = new Map();
+
+function getQueue(channel) {
+  let queue = queues.get(channel);
+  if (!queue) {
+    queue = {
+      concurrency: CHANNEL_CONCURRENCY[channel] || DEFAULT_CHANNEL_CONCURRENCY,
+      active: 0,
+      pending: [],
+    };
+    queues.set(channel, queue);
+  }
+  return queue;
+}
+
+function drainQueue(channel) {
+  const queue = getQueue(channel);
+  while (queue.active < queue.concurrency && queue.pending.length > 0) {
+    const job = queue.pending.shift();
+    queue.active += 1;
+    Promise.resolve()
+      .then(() => deliver(channel, job.settings, job.message))
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        queue.active -= 1;
+        drainQueue(channel);
+      });
+  }
+}
+
+// Enqueue a delivery onto the channel's partitioned queue. Resolves with the
+// same boolean as `deliver`. Callers for different channels never contend.
+function enqueueDelivery(channel, settings, message) {
+  return new Promise((resolve, reject) => {
+    getQueue(channel).pending.push({ settings, message, resolve, reject });
+    drainQueue(channel);
+  });
+}
+
+// Snapshot of queue depth per channel, for operational monitoring.
+function queueStats() {
+  const stats = {};
+  for (const [channel, queue] of queues) {
+    stats[channel] = {
+      active: queue.active,
+      pending: queue.pending.length,
+      concurrency: queue.concurrency,
+    };
+  }
+  return stats;
+}
+
 module.exports = {
   CHANNELS,
   CRITICAL_EVENT_TYPES,
+  CHANNEL_CONCURRENCY,
   isCriticalEvent,
   destinationFor,
   deliver,
+  enqueueDelivery,
+  queueStats,
   messageText,
 };

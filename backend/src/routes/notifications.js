@@ -6,6 +6,36 @@ const asyncHandler = require('../utils/asyncHandler');
 
 const EXTERNAL_CHANNELS = CHANNELS.filter(c => c !== 'in_app');
 
+// Delivery queues are partitioned by channel so that high-volume channels
+// (e.g. push, sms) cannot starve lower-volume ones. Each queue is a distinct
+// logical partition keyed by channel name; consumers pull from a single
+// partition, preserving per-channel ordering and isolation.
+const QUEUE_PARTITIONS = CHANNELS.reduce((acc, channel) => {
+  acc[channel] = `notifications.delivery.${channel}`;
+  return acc;
+}, {});
+
+function queueForChannel(channel) {
+  const queue = QUEUE_PARTITIONS[channel];
+  if (!queue) {
+    throw new Error(`Unknown notification channel: ${channel}`);
+  }
+  return queue;
+}
+
+// Enqueue a delivery job onto the partition for its channel.
+// Exposed for use by the notification producer; the partition name is derived
+// strictly from the validated channel, never from client-supplied input.
+async function enqueueDelivery(channel, job) {
+  const queue = queueForChannel(channel);
+  await db.query(
+    `INSERT INTO notification_delivery_queue (queue, channel, payload, created_at)
+     VALUES ($1, $2, $3, NOW())`,
+    [queue, channel, JSON.stringify(job)]
+  );
+  return queue;
+}
+
 router.get(
   '/',
   requireAuth,
@@ -225,3 +255,6 @@ router.put(
 );
 
 module.exports = router;
+module.exports.QUEUE_PARTITIONS = QUEUE_PARTITIONS;
+module.exports.queueForChannel = queueForChannel;
+module.exports.enqueueDelivery = enqueueDelivery;
