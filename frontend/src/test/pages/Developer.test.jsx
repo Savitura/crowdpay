@@ -11,6 +11,7 @@ const apiMocks = vi.hoisted(() => ({
   listApiKeys: vi.fn().mockResolvedValue([]),
   listWebhooks: vi.fn().mockResolvedValue([]),
   listWebhookDeliveries: vi.fn().mockResolvedValue([]),
+  getCredentialActivity: vi.fn().mockResolvedValue([]),
   createApiKey: vi.fn().mockResolvedValue({ api_key: 'new-key' }),
   getCredentialActivity: vi.fn().mockResolvedValue([]),
   sendWebhookTestEvent: vi.fn().mockResolvedValue({

@@ -165,4 +165,24 @@ describe('OpsCenter Component', () => {
       expect(localStorage.getItem('cp_ops_api_key')).toBeNull();
     });
   });
+
+  it('aborts in-flight dashboard requests on unmount', () => {
+    sessionStorage.setItem('cp_ops_api_key', 'test_ops_key');
+    const capturedSignals = [];
+
+    global.fetch = vi.fn().mockImplementation((_url, options = {}) => {
+      capturedSignals.push(options.signal);
+      return new Promise(() => {});
+    });
+
+    const { unmount } = render(<OpsCenter />);
+
+    expect(capturedSignals.length).toBeGreaterThan(0);
+    expect(capturedSignals[0]).toBeInstanceOf(globalThis.AbortSignal);
+    expect(capturedSignals[0].aborted).toBe(false);
+
+    unmount();
+
+    expect(capturedSignals[0].aborted).toBe(true);
+  });
 });

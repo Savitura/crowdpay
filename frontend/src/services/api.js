@@ -62,6 +62,7 @@ apiClient.interceptors.response.use(
   (error) => {
     const config = error.config;
     if (
+      !isRequestCanceled(error) &&
       !error.response &&
       config &&
       config.method === 'get' &&
@@ -109,7 +110,37 @@ export function retryQueuedRequests() {
   );
 }
 
+export function isRequestCanceled(error) {
+  return Boolean(
+    axios.isCancel?.(error) ||
+      error?.canceled ||
+      error?.code === 'ERR_CANCELED' ||
+      error?.name === 'CanceledError' ||
+      error?.name === 'AbortError'
+  );
+}
+
+function withSignal(config, options) {
+  const signal = options?.signal;
+  if (!signal) return config;
+  return { ...config, signal };
+}
+
+function getWithSignal(url, config, options) {
+  const merged = withSignal(config, options);
+  return merged ? apiClient.get(url, merged) : apiClient.get(url);
+}
+
 function normalizeError(error) {
+  if (isRequestCanceled(error)) {
+    return {
+      status: 0,
+      message: error?.message || 'Request canceled',
+      code: 'ERR_CANCELED',
+      name: 'CanceledError',
+      canceled: true,
+    };
+  }
   if (error?.response?.data?.error) {
     const e = error.response.data.error;
     return { status: error.response.status, message: e.message, code: e.code, fields: e.fields };
@@ -118,8 +149,8 @@ function normalizeError(error) {
 }
 
 export const api = {
-  async getMe() {
-    const res = await apiClient.get('/users/me');
+  async getMe(options) {
+    const res = await getWithSignal('/users/me', undefined, options);
     return res.data;
   },
   async login(email, password) {
@@ -199,40 +230,40 @@ export const api = {
     const res = await apiClient.post(`/milestones/${id}/upload-evidence`, formData);
     return res.data;
   },
-  async getPlatformConfig() {
-    const res = await apiClient.get('/governance/fee');
+  async getPlatformConfig(options) {
+    const res = await getWithSignal('/governance/fee', undefined, options);
     return res.data;
   },
-  async getExchangeRates(target = 'NGN') {
-    const res = await apiClient.get('/rates', { params: { target } });
+  async getExchangeRates(target = 'NGN', options) {
+    const res = await getWithSignal('/rates', { params: { target } }, options);
     return res.data;
   },
-  async getFeaturedCampaigns() {
-    const res = await apiClient.get('/campaigns/featured');
+  async getFeaturedCampaigns(options) {
+    const res = await getWithSignal('/campaigns/featured', undefined, options);
     return res.data;
   },
-  async getCampaigns(params) {
-    const res = await apiClient.get('/campaigns', { params });
+  async getCampaigns(params, options) {
+    const res = await getWithSignal('/campaigns', { params }, options);
     return res.data;
   },
-  async getCampaignCategories() {
-    const res = await apiClient.get('/campaigns/categories');
+  async getCampaignCategories(options) {
+    const res = await getWithSignal('/campaigns/categories', undefined, options);
     return res.data;
   },
-  async getCampaignFacets() {
-    const res = await apiClient.get('/campaigns/facets');
+  async getCampaignFacets(options) {
+    const res = await getWithSignal('/campaigns/facets', undefined, options);
     return res.data;
   },
-  async getRecommendedCampaigns(params) {
-    const res = await apiClient.get('/campaigns/recommended', { params });
+  async getRecommendedCampaigns(params, options) {
+    const res = await getWithSignal('/campaigns/recommended', { params }, options);
     return res.data;
   },
-  async getCampaign(id, params) {
-    const res = await apiClient.get(`/campaigns/${id}`, { params });
+  async getCampaign(id, params, options) {
+    const res = await getWithSignal(`/campaigns/${id}`, { params }, options);
     return res.data;
   },
-  async getMilestones(id, params) {
-    const res = await apiClient.get(`/campaigns/${id}/milestones`, { params });
+  async getMilestones(id, params, options) {
+    const res = await getWithSignal(`/campaigns/${id}/milestones`, { params }, options);
     return res.data;
   },
   async getCampaignBudgets(campaignId) {
@@ -545,8 +576,8 @@ export const api = {
   },
 
   // --- Credential activity (#833) ---
-  async getCredentialActivity() {
-    const res = await apiClient.get('/users/me/credentials/activity');
+  async getCredentialActivity(options) {
+    const res = await getWithSignal('/users/me/credentials/activity', undefined, options);
     return res.data.activity;
   },
 
@@ -556,8 +587,8 @@ export const api = {
     return res.data;
   },
 
-  async listApiKeys() {
-    const res = await apiClient.get('/users/api-keys');
+  async listApiKeys(options) {
+    const res = await getWithSignal('/users/api-keys', undefined, options);
     return res.data;
   },
   async createApiKey(data) {
@@ -568,8 +599,8 @@ export const api = {
     const res = await apiClient.delete(`/users/api-keys/${id}`);
     return res.data;
   },
-  async listWebhooks() {
-    const res = await apiClient.get('/webhooks');
+  async listWebhooks(options) {
+    const res = await getWithSignal('/webhooks', undefined, options);
     return res.data;
   },
   async createWebhook(data) {
@@ -584,8 +615,8 @@ export const api = {
     const res = await apiClient.post(`/webhooks/${id}/rotate`, data);
     return res.data;
   },
-  async listWebhookDeliveries(params) {
-    const res = await apiClient.get('/webhooks/deliveries', { params });
+  async listWebhookDeliveries(params, options) {
+    const res = await getWithSignal('/webhooks/deliveries', { params }, options);
     return res.data;
   },
   async sendWebhookTestEvent(id, data = {}) {

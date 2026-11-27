@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as Sentry from '@sentry/react';
 import { useAuth } from '../context/AuthContext';
@@ -16,6 +16,15 @@ const EVENT_OPTIONS = [
 const SCOPE_OPTIONS = ['read', 'write', 'withdrawals', 'developer', 'full'];
 
 const V1_API_BASE = `${(import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')}/api/v1`;
+
+function isAbortError(err) {
+  return Boolean(
+    err?.canceled ||
+      err?.code === 'ERR_CANCELED' ||
+      err?.name === 'CanceledError' ||
+      err?.name === 'AbortError'
+  );
+}
 
 export default function Developer() {
   const { user } = useAuth();
@@ -49,9 +58,11 @@ export default function Developer() {
   const [explorerResponse, setExplorerResponse] = useState('');
   const [explorerBusy, setExplorerBusy] = useState(false);
   const [explorerError, setExplorerError] = useState('');
+  const explorerAbortRef = useRef(null);
 
-  async function refresh() {
+  async function refresh(signal) {
     setError('');
+    const options = signal ? { signal } : undefined;
     try {
       const [k, h, d, a] = await Promise.all([
         api.listApiKeys(),
@@ -71,9 +82,12 @@ export default function Developer() {
       setDeliveryPage(1);
       setCredentialsActivity(a);
     } catch (e) {
+      if (isAbortError(e) || signal?.aborted) return;
       setError(e.message || 'Failed to load');
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
     }
   }
 
@@ -168,9 +182,14 @@ export default function Developer() {
         }
       }
 
-      const res = await fetch(`${V1_API_BASE}/docs/openapi.json`);
+      const res = await fetch(
+        `${V1_API_BASE}/docs/openapi.json`,
+        signal ? { signal } : undefined
+      );
+      if (signal?.aborted) return;
       if (!res.ok) throw new Error('Failed to fetch OpenAPI spec');
       const spec = await res.json();
+      if (signal?.aborted) return;
 
       const endpoints = [];
       for (const [path, methods] of Object.entries(spec.paths || {})) {
@@ -224,14 +243,20 @@ export default function Developer() {
         setExplorerEndpoint(endpoints[0].id);
       }
     } catch (err) {
+      if (isAbortError(err) || signal?.aborted) return;
       toast?.('Failed to load API spec. Please try again.', 'error');
       Sentry.captureException(err);
     }
   }
 
   useEffect(() => {
-    refresh();
-    loadOpenApi();
+    const controller = new AbortController();
+    refresh(controller.signal);
+    loadOpenApi(controller.signal);
+    return () => {
+      controller.abort();
+      explorerAbortRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -408,6 +433,10 @@ export default function Developer() {
   async function runExplorerRequest(e) {
     e.preventDefault();
     if (!selectedEndpoint) return;
+    explorerAbortRef.current?.abort();
+    const controller = new AbortController();
+    explorerAbortRef.current = controller;
+
     setExplorerBusy(true);
     setExplorerError('');
     setExplorerResponse('');
@@ -428,6 +457,7 @@ export default function Developer() {
       }
       const options = {
         method: selectedEndpoint.method,
+        signal: controller.signal,
         headers:
           selectedEndpoint.method === 'GET'
             ? explorerApiKey && selectedEndpoint.auth
@@ -439,7 +469,9 @@ export default function Developer() {
         options.body = explorerBody;
       }
       const res = await fetch(buildExplorerUrl(), options);
+      if (controller.signal.aborted) return;
       const text = await res.text();
+      if (controller.signal.aborted) return;
       let parsed;
       try {
         parsed = JSON.parse(text);
@@ -454,9 +486,12 @@ export default function Developer() {
         )
       );
     } catch (err) {
+      if (isAbortError(err) || controller.signal.aborted) return;
       setExplorerError(err.message || 'Request failed');
     } finally {
-      setExplorerBusy(false);
+      if (!controller.signal.aborted) {
+        setExplorerBusy(false);
+      }
     }
   }
 
