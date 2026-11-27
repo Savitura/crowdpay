@@ -7,6 +7,11 @@ const DEFAULT_RETENTION_DAYS = {
   CAMPAIGN_WEBHOOK_DELIVERIES: 90,
   WEBHOOKS: 365,
   PUSH_SUBSCRIPTIONS: 90,
+  REVOKED_SESSIONS: 90,
+  LOGIN_ATTEMPTS: 365,
+  LOGIN_ALERTS: 365,
+  NOTIFICATIONS: 180,
+  FLUSHED_NOTIFICATION_QUEUE: 30,
 };
 
 async function purgeKycData({ retentionDays = DEFAULT_RETENTION_DAYS.KYC } = {}) {
@@ -94,8 +99,95 @@ async function purgeExpiredPushSubscriptions({
 }
 
 /**
+ * Purge sessions that were revoked more than `retentionDays` ago.
+ * Active (unrevoked) sessions are never removed here.
+ */
+async function purgeRevokedSessions({
+  retentionDays = DEFAULT_RETENTION_DAYS.REVOKED_SESSIONS,
+} = {}) {
+  const { rows } = await db.query(
+    `DELETE FROM user_sessions
+     WHERE revoked_at IS NOT NULL
+       AND revoked_at < NOW() - ($1::text || ' days')::interval
+     RETURNING id, user_id`,
+    [String(retentionDays)]
+  );
+  if (rows.length) {
+    logger.info('retention: purged revoked sessions', { deleted: rows.length, retentionDays });
+  }
+  return rows.length;
+}
+
+/** Purge login attempts (audit trail) older than `retentionDays`. */
+async function purgeLoginAttempts({
+  retentionDays = DEFAULT_RETENTION_DAYS.LOGIN_ATTEMPTS,
+} = {}) {
+  const { rows } = await db.query(
+    `DELETE FROM login_attempts
+     WHERE created_at < NOW() - ($1::text || ' days')::interval
+     RETURNING id`,
+    [String(retentionDays)]
+  );
+  if (rows.length) {
+    logger.info('retention: purged login attempts', { deleted: rows.length, retentionDays });
+  }
+  return rows.length;
+}
+
+/** Purge login alerts (audit trail) older than `retentionDays`. */
+async function purgeLoginAlerts({ retentionDays = DEFAULT_RETENTION_DAYS.LOGIN_ALERTS } = {}) {
+  const { rows } = await db.query(
+    `DELETE FROM login_alerts
+     WHERE created_at < NOW() - ($1::text || ' days')::interval
+     RETURNING id`,
+    [String(retentionDays)]
+  );
+  if (rows.length) {
+    logger.info('retention: purged login alerts', { deleted: rows.length, retentionDays });
+  }
+  return rows.length;
+}
+
+/** Purge in-app notifications older than `retentionDays`. */
+async function purgeNotifications({ retentionDays = DEFAULT_RETENTION_DAYS.NOTIFICATIONS } = {}) {
+  const { rows } = await db.query(
+    `DELETE FROM notifications
+     WHERE created_at < NOW() - ($1::text || ' days')::interval
+     RETURNING id`,
+    [String(retentionDays)]
+  );
+  if (rows.length) {
+    logger.info('retention: purged notifications', { deleted: rows.length, retentionDays });
+  }
+  return rows.length;
+}
+
+/**
+ * Purge already-flushed digest queue rows. Unflushed rows are never removed
+ * because they still represent undelivered notifications.
+ */
+async function purgeFlushedNotificationQueue({
+  retentionDays = DEFAULT_RETENTION_DAYS.FLUSHED_NOTIFICATION_QUEUE,
+} = {}) {
+  const { rows } = await db.query(
+    `DELETE FROM notification_queue
+     WHERE flushed_at IS NOT NULL
+       AND flushed_at < NOW() - ($1::text || ' days')::interval
+     RETURNING id`,
+    [String(retentionDays)]
+  );
+  if (rows.length) {
+    logger.info('retention: purged flushed notification queue rows', {
+      deleted: rows.length,
+      retentionDays,
+    });
+  }
+  return rows.length;
+}
+
+/**
  * Run all purge jobs.
- * @returns {Promise<{kyc: number, webhookDeliveries: number, campaignWebhookDeliveries: number, webhooks: number, pushSubscriptions: number}>}
+ * @returns {Promise<object>} Counts of deleted rows per category.
  */
 async function runAllPurges() {
   const results = {
@@ -104,6 +196,11 @@ async function runAllPurges() {
     campaignWebhookDeliveries: await purgeCampaignWebhookDeliveries(),
     webhooks: await purgeWebhooks(),
     pushSubscriptions: await purgeExpiredPushSubscriptions(),
+    revokedSessions: await purgeRevokedSessions(),
+    loginAttempts: await purgeLoginAttempts(),
+    loginAlerts: await purgeLoginAlerts(),
+    notifications: await purgeNotifications(),
+    flushedNotificationQueue: await purgeFlushedNotificationQueue(),
   };
   logger.info('retention: completed all purge runs', results);
   return results;
@@ -115,6 +212,11 @@ module.exports = {
   purgeCampaignWebhookDeliveries,
   purgeWebhooks,
   purgeExpiredPushSubscriptions,
+  purgeRevokedSessions,
+  purgeLoginAttempts,
+  purgeLoginAlerts,
+  purgeNotifications,
+  purgeFlushedNotificationQueue,
   runAllPurges,
   DEFAULT_RETENTION_DAYS,
 };

@@ -7,6 +7,29 @@
 -- - Webhook subscriptions: 365 days after revocation
 --
 -- Legal hold: a hold prevents purging of associated records with auditability.
+--
+-- Retention documentation (sessions, audit logs, notifications):
+-- This migration documents the retention periods that apply to the data classes
+-- below. Sessions, audit logs and notifications are not altered by this migration;
+-- their periods are recorded here so that operators, auditors and privacy reviewers
+-- have a single authoritative reference.
+--
+-- | Data class              | Retention                          | Purge mechanism                         |
+-- |-------------------------|------------------------------------|-----------------------------------------|
+-- | KYC data (users)        | 365 days after last activity       | kyc_retention_expires_at, unless hold   |
+-- | Webhooks                | 365 days after revocation          | retention_expires_at, unless hold       |
+-- | Webhook deliveries      | 90 days                            | expires_at, unless hold                 |
+-- | Campaign webhook dlvrs  | 90 days                            | expires_at, unless hold                 |
+-- | Sessions                | Governed by application session TTL; expired sessions are removed by the session store cleanup job. Not retained beyond expiry. |
+-- | Audit logs              | Retained for the minimum period required for security and compliance review; not subject to automated purge by this migration. Purge requires an explicit, reviewed policy change. |
+-- | Notifications           | Retained while the recipient account is active; read notifications may be purged by the notification cleanup job after the operational window. Not subject to legal-hold purge by this migration. |
+--
+-- Privacy/security notes:
+-- - Legal holds block purge for the associated records; release transitions to 'released'.
+-- - Audit log entries are intentionally excluded from automated purge so that
+--   accountability records survive account deletion.
+-- - Session and notification cleanup are performed by application jobs; this file
+--   does not change their behaviour (no API/UI compatibility impact).
 
 DO $$
 BEGIN

@@ -12,6 +12,29 @@ const fcmPush = require('./fcmPushService');
 // configured and enabled. Non-critical notifications that arrive during a
 // user's quiet hours are parked in `notification_queue` and flushed later as a
 // digest by `flushQuietHours`.
+//
+// Retention (documented per issue "Document retention periods for sessions,
+// audit logs, and notifications"):
+// - In-app notifications (`notifications` table): retained for
+//   NOTIFICATION_RETENTION_DAYS (default 365) after creation, then eligible for
+//   purge by the scheduled retention job. Critical events follow the same
+//   period; no event type is retained indefinitely.
+// - Digest queue (`notification_queue`): rows are removed once flushed. Rows
+//   that remain unflushed are kept for at most QUEUE_RETENTION_DAYS (default 30)
+//   and then purged, regardless of flush state, to bound stored personal data.
+// - Retention periods are configurable via environment variables and are not
+//   applied to audit logs or sessions by this module (see their owning modules).
+
+const NOTIFICATION_RETENTION_DAYS = parseRetentionDays(
+  process.env.NOTIFICATION_RETENTION_DAYS,
+  365
+);
+const QUEUE_RETENTION_DAYS = parseRetentionDays(process.env.NOTIFICATION_QUEUE_RETENTION_DAYS, 30);
+
+function parseRetentionDays(raw, fallback) {
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
 // Persist the in-app notification row. This is the baseline channel and is
 // always delivered.
@@ -107,6 +130,30 @@ async function releaseQueuedRows(rowIds) {
 }
 
 /**
+ * Purge notifications and queued digest rows past their retention windows.
+ * Intended to be run from a scheduled job. Returns counts per table.
+ */
+async function purgeExpiredNotifications(options = {}) {
+  const notificationDays = options.notificationRetentionDays || NOTIFICATION_RETENTION_DAYS;
+  const queueDays = options.queueRetentionDays || QUEUE_RETENTION_DAYS;
+
+  const notif = await db.query(
+    `DELETE FROM notifications
+     WHERE created_at < NOW() - ($1::int * INTERVAL '1 day')`,
+    [notificationDays]
+  );
+  const queue = await db.query(
+    `DELETE FROM notification_queue
+     WHERE created_at < NOW() - ($1::int * INTERVAL '1 day')`,
+    [queueDays]
+  );
+  return {
+    notifications: notif.rowCount || 0,
+    notification_queue: queue.rowCount || 0,
+  };
+}
+
+/**
  * Create a notification for a user and fan it out across every enabled channel.
  *
  * Always writes the in-app notification. External channels (push, Slack,
@@ -190,7 +237,6 @@ async function flushQuietHours(options = {}) {
   // Group deliverable rows by (user_id, channel) so we can batch them into a
   // single digest message per user/channel pair.
   const groups = new Map();
-  const allFlushedIds = [];
   const quietHourIds = [];
 
   for (const row of rows) {
@@ -270,8 +316,11 @@ module.exports = {
   createNotification,
   createNotificationsBulk,
   flushQuietHours,
+  purgeExpiredNotifications,
   loadChannelSettings,
   loadPreferences,
   channelEnabled,
   inQuietHours,
+  NOTIFICATION_RETENTION_DAYS,
+  QUEUE_RETENTION_DAYS,
 };

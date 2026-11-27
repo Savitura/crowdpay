@@ -7,6 +7,17 @@ const { parsePagination } = require('../utils/pagination');
 
 const MAX_AUDIT_LIMIT = 200;
 
+/**
+ * Data retention policy for audit_logs.
+ * - Audit events are append-only and are retained for AUDIT_LOG_RETENTION_DAYS
+ *   (default 365 days) to satisfy compliance and incident-investigation needs.
+ * - Metadata, before/after state, IP address, and user agent are subject to the
+ *   same retention window; personal data (actor email, IP) must be purged or
+ *   anonymized when the window expires.
+ * - Retention is enforced by an external scheduled job, not by this service.
+ */
+const AUDIT_LOG_RETENTION_DAYS = 365;
+
 const SENSITIVE_KEY_PATTERN =
   /(password|passwd|secret|private.?key|seed|token|authorization|cookie|totp|xdr|signature|hmac|api.?key|credential)/i;
 const STELLAR_SECRET_PATTERN = /^S[A-Z2-7]{55}$/;
@@ -83,6 +94,7 @@ function sanitizeAuditRow(row) {
 /**
  * Record an append-only audit event.
  *
+ * Retention: governed by AUDIT_LOG_RETENTION_DAYS (see policy above).
  * @param {object} payload
  * @param {string|null|undefined} payload.actorId    User performing the action
  * @param {string} payload.action                    Action verb, e.g. 'login', 'refund_issued'
@@ -404,5 +416,6 @@ module.exports = {
   buildExportCsv,
   EXPORT_COLUMNS,
   MAX_AUDIT_LIMIT,
+  AUDIT_LOG_RETENTION_DAYS,
   getCredentialActivity,
 };

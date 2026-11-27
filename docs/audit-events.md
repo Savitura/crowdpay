@@ -61,3 +61,16 @@ Filters for `/api/admin/audit-logs`: `actor`, `action`, `resourceType`, `correla
 `dateTo`, `limit`, `offset`. The route is protected by `requireAuth` plus `requireRole('admin')`.
 
 Filters for `/api/admin/audit-log`: `action_type`, `target_type`, `target_id`, `admin_user_id`, `limit`, `offset`.
+
+## Retention
+
+Retention periods for related operational data are documented here so operators can plan storage and compliance:
+
+- **Audit logs (`audit_logs`)**: retained indefinitely by default. Rows are append-only and are never updated or
+  deleted by the application. Any purge must be performed by a database administrator under an approved retention
+  policy, since update, delete, and truncate privileges are revoked from the application role.
+- **Admin actions (`admin_actions`)**: retained for the same period as `audit_logs` to keep operational history aligned
+  with the compliance trail.
+- **Sessions**: session records expire according to the configured session TTL and are removed by the session cleanup job.
+- **Notifications**: notification records are retained for the period configured by the notification service and are
+  removed by its cleanup job once expired.

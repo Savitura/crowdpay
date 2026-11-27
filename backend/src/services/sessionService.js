@@ -5,6 +5,21 @@ const { lookupIp } = require('./geoipService');
 const MAX_SESSIONS_PER_USER = 5;
 
 /**
+ * Retention periods (in days) for session-related data.
+ *
+ * - SESSION_RETENTION_DAYS: revoked or expired user sessions are purged after this period.
+ * - LOGIN_ATTEMPT_RETENTION_DAYS: login attempt records (successful and failed) are purged after this period.
+ * - LOGIN_ALERT_RETENTION_DAYS: login alerts are purged after this period, acknowledged or not.
+ *
+ * These values are the product-defined retention windows and must be kept in sync
+ * with the privacy policy. Changing them affects how long IP addresses, device
+ * fingerprints, and geolocation data are stored.
+ */
+const SESSION_RETENTION_DAYS = 90;
+const LOGIN_ATTEMPT_RETENTION_DAYS = 90;
+const LOGIN_ALERT_RETENTION_DAYS = 180;
+
+/**
  * Generate a device fingerprint from request headers.
  * @param {object} req - Express request object
  * @returns {string}
@@ -121,6 +136,48 @@ async function updateSessionLastSeen(refreshTokenId) {
     `UPDATE user_sessions SET last_seen_at = NOW() WHERE refresh_token_id = $1 AND revoked_at IS NULL`,
     [refreshTokenId]
   );
+}
+
+/**
+ * Purge session, login attempt, and login alert records older than their
+ * configured retention periods. Intended to be run periodically by a scheduled job.
+ *
+ * Retention rules:
+ *   - user_sessions: revoked sessions older than SESSION_RETENTION_DAYS (based on revoked_at)
+ *   - login_attempts: records older than LOGIN_ATTEMPT_RETENTION_DAYS (based on created_at)
+ *   - login_alerts: records older than LOGIN_ALERT_RETENTION_DAYS (based on created_at)
+ *
+ * Active (non-revoked) sessions are never purged here; they are governed by
+ * their refresh token lifetime and the concurrent session limit.
+ *
+ * @returns {Promise<{sessions: number, loginAttempts: number, loginAlerts: number}>}
+ *   Counts of deleted rows per table.
+ */
+async function purgeExpiredSessionData() {
+  const { rowCount: sessions } = await db.query(
+    `DELETE FROM user_sessions
+     WHERE revoked_at IS NOT NULL
+       AND revoked_at < NOW() - ($1 || ' days')::interval`,
+    [SESSION_RETENTION_DAYS]
+  );
+
+  const { rowCount: loginAttempts } = await db.query(
+    `DELETE FROM login_attempts
+     WHERE created_at < NOW() - ($1 || ' days')::interval`,
+    [LOGIN_ATTEMPT_RETENTION_DAYS]
+  );
+
+  const { rowCount: loginAlerts } = await db.query(
+    `DELETE FROM login_alerts
+     WHERE created_at < NOW() - ($1 || ' days')::interval`,
+    [LOGIN_ALERT_RETENTION_DAYS]
+  );
+
+  return {
+    sessions: sessions || 0,
+    loginAttempts: loginAttempts || 0,
+    loginAlerts: loginAlerts || 0,
+  };
 }
 
 /**
@@ -324,5 +381,9 @@ module.exports = {
   getUserLoginAlerts,
   acknowledgeLoginAlert,
   getUserLoginAttempts,
+  purgeExpiredSessionData,
   MAX_SESSIONS_PER_USER,
+  SESSION_RETENTION_DAYS,
+  LOGIN_ATTEMPT_RETENTION_DAYS,
+  LOGIN_ALERT_RETENTION_DAYS,
 };
