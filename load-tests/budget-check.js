@@ -119,8 +119,11 @@ function budgetFailures(config, baseline, now = Date.now()) {
 function summaryValue(summary, metricName, stat) {
   const metric = summary?.metrics?.[metricName];
   if (!metric) return undefined;
-  if (stat === 'rate') return metric.values?.rate;
-  return metric.values?.[stat];
+  // `k6 run --summary-export` writes metrics flat ({ avg, 'p(95)': ... }), while
+  // handleSummary() output nests them under `values`; support both shapes.
+  const values = metric.values || metric;
+  if (stat === 'rate') return values.rate ?? values.value;
+  return values[stat];
 }
 
 function compareToBudgets(config, baseline, summary) {

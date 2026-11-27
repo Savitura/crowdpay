@@ -213,8 +213,10 @@ jobs:
           REDIS_URL: redis://localhost:6379
           WORKER_ENABLED: "false"
           JWT_SECRET: testsecret
-          JWT_ISSUER: crowdpay-test
-          JWT_AUDIENCE: crowdpay-test
+          # Must match the issuer/audience the API stamps on the access tokens it
+          # issues, otherwise the authenticated checkout preview returns 401.
+          JWT_ISSUER: https://crowdpay.io
+          JWT_AUDIENCE: crowdpay-api
           API_KEY_PEPPER: test-pepper
           PLATFORM_SECRET_KEY: SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR
           ARBITRATOR_SECRET_KEY: SCVMQUS5EMTHWBLJTE5XCSCMHB2ZOVKRR4ATVTRPUNRCOGKRENIL3LHR
@@ -242,6 +244,7 @@ jobs:
         continue-on-error: true
         run: |
           k6 run --summary-export "$RUNNER_TEMP/k6-summary.json" \
+            --summary-trend-stats "avg,min,med,max,p(90),p(95),p(99)" \
             -e BASE_URL=http://127.0.0.1:3001 \
             -e PERF_PROFILE=ci \
             load-tests/performance-budgets.js
