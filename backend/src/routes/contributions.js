@@ -336,7 +336,7 @@ router.get(
       offset
     );
 
-    return res.json({ contributions, total, limit, offset });
+    return res.json(paginatedResponse(contributions, total, limit, offset));
   })
 );
 

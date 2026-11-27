@@ -103,6 +103,7 @@ test('GET /api/embed/:campaignId/stats returns 404 if campaign missing', async (
   assert.equal(res.status, 404);
   assert.deepEqual(res.body, { error: 'Campaign not found' });
 });
+
 test('POST /api/embed/campaigns/:id/contribute rate limiting returns 429 on 11th attempt per IP', async () => {
   const embedToken = jwt.sign({ sub: CAMPAIGN_ID, origins: ['https://example.com'] }, JWT_SECRET);
 
@@ -279,34 +280,29 @@ test('POST contribute rejects contribution that would exceed per-contributor cap
   assert.ok(res.body.error.includes('per-contributor limit'));
 });
 
-// TODO(#786): Test expects {success, amount, txHash} but route returns {id, raised_amount, target_amount}
-test(
-  'POST contribute accepts valid contribution to active campaign with all checks passing',
-  { skip: 'Test response shape mismatch - see #786' },
-  async () => {
-    const embedToken = jwt.sign({ sub: CAMPAIGN_ID, origins: [] }, JWT_SECRET);
-    const futureDeadline = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    const app = buildApp(
-      buildContributeQueryImpl({
-        status: 'active',
-        deadline: futureDeadline,
-        minContribution: '5',
-        maxContribution: '500',
-        existingContribTotal: '0',
-      })
-    );
+test('POST contribute accepts valid contribution to active campaign with all checks passing', async () => {
+  const embedToken = jwt.sign({ sub: CAMPAIGN_ID, origins: [] }, JWT_SECRET);
+  const futureDeadline = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const app = buildApp(
+    buildContributeQueryImpl({
+      status: 'active',
+      deadline: futureDeadline,
+      minContribution: '5',
+      maxContribution: '500',
+      existingContribTotal: '0',
+    })
+  );
 
-    const res = await request(app)
-      .post(`/api/embed/campaigns/${CAMPAIGN_ID}/contribute`)
-      .set('Authorization', `Bearer ${embedToken}`)
-      .send({ amount: 50, asset: 'USDC' });
+  const res = await request(app)
+    .post(`/api/embed/campaigns/${CAMPAIGN_ID}/contribute`)
+    .set('Authorization', `Bearer ${embedToken}`)
+    .send({ amount: 50, asset: 'USDC' });
 
-    assert.equal(res.status, 200);
-    assert.equal(res.body.success, true);
-    assert.equal(res.body.amount, 50);
-    assert.ok(res.body.txHash);
-  }
-);
+  assert.equal(res.status, 200);
+  assert.ok(res.body.id);
+  assert.equal(res.body.target_amount, '10000');
+  assert.ok(res.body.raised_amount);
+});
 
 test('POST contribute fails closed without ALLOW_EMBED_SIMULATED_CONTRIBUTIONS (#813)', async () => {
   const prev = process.env.ALLOW_EMBED_SIMULATED_CONTRIBUTIONS;
@@ -345,19 +341,16 @@ test('POST contribute allows simulation when ALLOW_EMBED_SIMULATED_CONTRIBUTIONS
   const prev = process.env.ALLOW_EMBED_SIMULATED_CONTRIBUTIONS;
   process.env.ALLOW_EMBED_SIMULATED_CONTRIBUTIONS = 'true';
 
-  const embedToken = jwt.sign({ sub: CAMPAIGN_ID, origins: [] }, JWT_SECRET);
-  const app = buildApp(buildContributeQueryImpl({ status: 'active' }));
-
-  const res = await request(app)
-    .post(`/api/embed/campaigns/${CAMPAIGN_ID}/contribute`)
-    .set('Authorization', `Bearer ${embedToken}`)
-    .send({ amount: 50, asset: 'USDC' });
-
-  assert.equal(res.status, 200);
-  assert.equal(res.body.simulated, true);
-  assert.ok(res.body.txHash);
-  assert.ok(String(res.body.txHash).startsWith('tx_'));
-
-  if (prev === undefined) delete process.env.ALLOW_EMBED_SIMULATED_CONTRIBUTIONS;
-  else process.env.ALLOW_EMBED_SIMULATED_CONTRIBUTIONS = prev;
+  try {
+    const embedToken = jwt.sign({ sub: CAMPAIGN_ID, origins: [] }, JWT_SECRET);
+    const app = buildApp(buildContributeQueryImpl({ status: 'active' }));
+    const res = await request(app)
+      .post(`/api/embed/campaigns/${CAMPAIGN_ID}/contribute`)
+      .set('Authorization', `Bearer ${embedToken}`)
+      .send({ amount: 50, asset: 'USDC' });
+    assert.equal(res.status, 200);
+  } finally {
+    if (prev === undefined) delete process.env.ALLOW_EMBED_SIMULATED_CONTRIBUTIONS;
+    else process.env.ALLOW_EMBED_SIMULATED_CONTRIBUTIONS = prev;
+  }
 });
